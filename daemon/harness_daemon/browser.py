@@ -18,10 +18,14 @@ import asyncio
 import base64
 import logging
 import os
+import shlex
+import subprocess
 import threading
 import time
 from collections import deque
 from typing import Any, Awaitable, Callable, TypeVar
+
+from . import frozen
 
 log = logging.getLogger("harness.browser")
 
@@ -41,10 +45,9 @@ INSTALL_HINT = (
     "The agent browser needs Playwright on the daemon computer. Install it with: "
     "pip install playwright, then: python -m playwright install chromium"
 )
-CHROMIUM_HINT = (
-    "Chromium for Playwright is not installed on the daemon computer. Install it with: "
-    "python -m playwright install chromium"
-)
+def chromium_hint() -> str:
+    command = subprocess.list2cmdline(frozen.install_browser_argv()) if os.name == "nt"         else shlex.join(frozen.install_browser_argv())
+    return f"Chromium for Playwright is not installed on the daemon computer. Install it with: {command}"
 STALE_REF = "The element reference {ref} is not on the page. The page changed. Take a new snapshot with preview_snapshot."
 
 
@@ -361,7 +364,7 @@ class AgentBrowser:
                 await self._pw.stop()
                 self._pw = None
                 if "Executable doesn't exist" in str(e) or "playwright install" in str(e):
-                    raise BrowserError(CHROMIUM_HINT) from None
+                    raise BrowserError(chromium_hint()) from None
                 raise BrowserError(f"The agent browser did not start: {e}") from None
             self._context = await self._browser.new_context(viewport=VIEWPORT)
             self._context.on("page", self._adopt)

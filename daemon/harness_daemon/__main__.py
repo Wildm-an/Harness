@@ -13,6 +13,11 @@ The token comes from, in order:
 When the daemon is ready, it prints one JSON line to stdout::
 
     {"event": "ready", "host": "127.0.0.1", "port": 53817}
+
+Other commands:
+
+    harness-daemon --install-browser   Install Chromium for the agent browser, then stop.
+    harness-daemon --version           Show the version, then stop.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from pathlib import Path
 
 import uvicorn
 
+from . import __version__, frozen
 from .config import harness_home
 from .server import create_app, stop_all_servers
 from .tunnels import TUNNELS
@@ -66,6 +72,12 @@ def load_or_create_token(path: Path, replace: bool = False) -> tuple[str, bool]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == [frozen.PYTHON_STDIN_FLAG]:
+        # The frozen daemon runs the Cookbook host script this way (cookbook/hosts.py).
+        frozen.run_python_stdin()
+        return
+    frozen.repair_environment()
     parser = argparse.ArgumentParser(prog="harness-daemon")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address. Default 127.0.0.1.")
     parser.add_argument("--port", type=int, default=0, help="Port. 0 selects a random free port.")
@@ -75,7 +87,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--log-level", default="warning")
     parser.add_argument("--exit-on-stdin-eof", action="store_true",
                         help="Stop when stdin closes. The desktop client uses this for the sidecar.")
+    parser.add_argument("--install-browser", action="store_true",
+                        help="Install Chromium for the agent browser (Playwright), then stop.")
+    parser.add_argument("--version", action="version", version=f"harness-daemon {__version__}")
     args = parser.parse_args(argv)
+    if args.install_browser:
+        sys.exit(frozen.install_browser())
 
     logging.basicConfig(level=args.log_level.upper(), stream=sys.stderr)
     token = args.token or os.environ.get("HARNESS_TOKEN")

@@ -16,3 +16,6 @@ client/src-tauri/target/
 
 # TypeScript build info
 *.tsbuildinfo
+
+# The daemon sidecar for the installers (daemon/scripts/build_sidecar.py)
+client/src-tauri/binaries/

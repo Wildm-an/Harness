@@ -78,6 +78,23 @@ python scripts/ws_client.py --port <port> --token <token> --cwd /path/to/project
 
 The daemon prints `{"event": "ready", "port": ..., "token": ...}` on start. Use these values in the client.
 
+## Package the sidecar
+
+The installers of the desktop app include the daemon as one executable (PyInstaller). Build it on each operating system:
+
+```bash
+.venv/Scripts/python -m pip install -e ".[package]"   # Use .venv/bin on macOS and Linux.
+.venv/Scripts/python scripts/build_sidecar.py
+```
+
+The script builds `build/sidecar/dist/harness-daemon`, runs the smoke test (`scripts/smoke_sidecar.py`), and copies the file to `client/src-tauri/binaries/harness-daemon-<target triple>`. Then build the installers. See [../client/README.md](../client/README.md).
+
+The packaged daemon has no `python` command:
+
+- `harness-daemon --install-browser` installs Chromium for the agent browser. The bundle has the Playwright driver, but not Chromium.
+- The Cookbook runs the host script on "This computer" with `harness-daemon --python-stdin`. A `python` in the `local` entry of `hosts.json` replaces it.
+- On macOS and Linux, the daemon reads `PATH` from the login shell of the user, because a desktop app gets only the system `PATH`. The daemon also gives the original `LD_LIBRARY_PATH` to its child processes.
+
 ## Remote daemon
 
 The same daemon runs on a remote computer. The desktop client connects to it from the Connections screen.
@@ -124,6 +141,10 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 | `harness_daemon/server.py` | The WebSocket server and the message handlers. |
 | `harness_daemon/storage.py` | SQLite storage for sessions and messages. |
 | `harness_daemon/config.py` | Paths and settings. |
+| `harness_daemon/frozen.py` | The packaged daemon: `--python-stdin`, `--install-browser`, and the environment repair. |
+| `packaging/harness-daemon.spec` | The PyInstaller spec for the sidecar. |
+| `scripts/build_sidecar.py` | Builds the sidecar and copies it to the client. |
+| `scripts/smoke_sidecar.py` | The smoke test for a built sidecar. |
 
 ## Skills
 

@@ -1,0 +1,109 @@
+# The installers for Windows, macOS, and Linux (SPEC.md section 10, phase 13).
+#
+# A tag v* starts the workflow, or start it by hand (workflow_dispatch).
+# Each job builds the daemon sidecar with PyInstaller, then the Tauri installers.
+# PyInstaller cannot cross-compile, so each operating system and CPU type has its own job.
+# A tag also makes a draft GitHub release with the installers.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+          - os: macos-latest
+            name: macos-arm64
+          - os: macos-15-intel
+            name: macos-x64
+          # The oldest supported Ubuntu gives the widest glibc support for the AppImage.
+          - os: ubuntu-22.04
+            name: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config patchelf file
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install the daemon
+        run: python -m pip install -e "./daemon[package,dev]"
+
+      - name: Test the daemon
+        working-directory: daemon
+        run: python -m pytest -q
+
+      - name: Build the sidecar
+        working-directory: daemon
+        run: python scripts/build_sidecar.py
+
+      - name: Install the client packages
+        working-directory: client
+        run: npm ci
+
+      - name: Test the client
+        working-directory: client
+        run: |
+          npm test
+          npm run typecheck
+
+      - name: Build the installers
+        working-directory: client
+        run: npm run package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harness-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            client/src-tauri/target/release/bundle/msi/*.msi
+            client/src-tauri/target/release/bundle/nsis/*.exe
+            client/src-tauri/target/release/bundle/dmg/*.dmg
+            client/src-tauri/target/release/bundle/deb/*.deb
+            client/src-tauri/target/release/bundle/rpm/*.rpm
+            client/src-tauri/target/release/bundle/appimage/*.AppImage
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: Make a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" installers/* --draft --generate-notes --repo "${{ github.repository }}"

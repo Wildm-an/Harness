@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+package = ["pyinstaller>=6.10"]  # The sidecar for the installers: scripts/build_sidecar.py
 
 [project.scripts]
 harness-daemon = "harness_daemon.__main__:main"

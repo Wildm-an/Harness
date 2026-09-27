@@ -9,6 +9,7 @@
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "tauri": "tauri",
+    "package": "tauri build --config src-tauri/tauri.bundle.json",
     "test": "vitest run"
   },
   "dependencies": {

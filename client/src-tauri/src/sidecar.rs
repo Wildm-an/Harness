@@ -7,18 +7,26 @@
 //!
 //! The daemon command:
 //! 1. `HARNESS_DAEMON` environment variable: a path to a daemon executable.
-//! 2. Development layout: `<repo>/daemon/.venv` with `python -m harness_daemon`.
+//! 2. The bundled sidecar: `harness-daemon` next to the app executable. The installers put it
+//!    there (`bundle.externalBin` in `tauri.bundle.json`).
+//! 3. Development layout: `<repo>/daemon/.venv` with `python -m harness_daemon`.
+//!
+//! The development daemon writes its log to the terminal. The other daemons write it to
+//! `~/.harness/logs/daemon.log` (the log of the previous start is `daemon.log.1`).
 
 use serde::Serialize;
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
-const STOP_TIMEOUT: Duration = Duration::from_secs(3);
+// Longer than the shutdown grace of the daemon (5 seconds), so that it can stop its servers.
+const STOP_TIMEOUT: Duration = Duration::from_secs(6);
+const SIDECAR_NAME: &str = if cfg!(windows) { "harness-daemon.exe" } else { "harness-daemon" };
 
 #[derive(Clone, Serialize)]
 pub struct DaemonInfo {
@@ -76,9 +84,18 @@ fn random_token() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn daemon_command() -> Result<Command, String> {
+/// The daemon command, and true if the daemon log goes to the terminal.
+fn daemon_command() -> Result<(Command, bool), String> {
     if let Ok(path) = std::env::var("HARNESS_DAEMON") {
-        return Ok(Command::new(path));
+        return Ok((Command::new(path), false));
+    }
+    if let Some(sidecar) = bundled_sidecar() {
+        let mut cmd = Command::new(sidecar);
+        // The daemon gets the project folder in each session. Its own folder does not matter.
+        if let Some(home) = home_dir() {
+            cmd.current_dir(home);
+        }
+        return Ok((cmd, false));
     }
     let daemon_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("daemon");
     let python = if cfg!(windows) {
@@ -88,23 +105,71 @@ fn daemon_command() -> Result<Command, String> {
     };
     if !python.exists() {
         return Err(format!(
-            "The daemon was not found. Set HARNESS_DAEMON, or create the virtual environment at {}.",
+            "The daemon was not found. The app looked for {SIDECAR_NAME} next to the app executable and for {}.              Set HARNESS_DAEMON to a daemon executable, or reinstall the app.",
             python.display()
         ));
     }
     let mut cmd = Command::new(python);
     cmd.args(["-m", "harness_daemon"]).current_dir(daemon_dir);
-    Ok(cmd)
+    Ok((cmd, true))
+}
+
+/// The sidecar that the installer put next to the app executable (Contents/MacOS on macOS).
+fn bundled_sidecar() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let path = exe.parent()?.join(SIDECAR_NAME);
+    path.is_file().then_some(path)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// The same folder as `harness_home()` in the daemon: `HARNESS_HOME`, or `~/.harness`.
+fn harness_home() -> Option<PathBuf> {
+    match std::env::var_os("HARNESS_HOME").filter(|v| !v.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None => home_dir().map(|home| home.join(".harness")),
+    }
+}
+
+/// Opens a new daemon log. Keeps the log of the previous start as `daemon.log.1`.
+fn open_log(logs: &Path) -> std::io::Result<(File, PathBuf)> {
+    std::fs::create_dir_all(logs)?;
+    let path = logs.join("daemon.log");
+    if path.exists() {
+        let _ = std::fs::rename(&path, logs.join("daemon.log.1"));
+    }
+    Ok((File::create(&path)?, path))
 }
 
 fn spawn_daemon() -> Result<Running, String> {
     let token = random_token()?;
-    let mut cmd = daemon_command()?;
+    let (mut cmd, log_to_terminal) = daemon_command()?;
     cmd.args(["--host", "127.0.0.1", "--port", "0", "--exit-on-stdin-eof"])
         .env("HARNESS_TOKEN", &token)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::piped());
+    // A release app on Windows has no console, so its stderr is not a valid handle.
+    let log_hint = if log_to_terminal {
+        cmd.stderr(Stdio::inherit());
+        "See the daemon log in the terminal.".to_string()
+    } else {
+        let log = harness_home()
+            .ok_or_else(|| "no home folder".to_string())
+            .and_then(|home| open_log(&home.join("logs")).map_err(|e| e.to_string()));
+        match log {
+            Ok((file, path)) => {
+                cmd.stderr(file);
+                format!("See the daemon log: {}", path.display())
+            }
+            Err(e) => {
+                cmd.stderr(Stdio::null());
+                format!("The daemon log is not available: {e}.")
+            }
+        }
+    };
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -131,11 +196,11 @@ fn spawn_daemon() -> Result<Running, String> {
         Ok(Ok(line)) if !line.trim().is_empty() => line,
         Ok(Ok(_)) | Ok(Err(_)) => {
             let _ = child.kill();
-            return Err("The daemon stopped before it was ready. See the daemon log.".into());
+            return Err(format!("The daemon stopped before it was ready. {log_hint}"));
         }
         Err(_) => {
             let _ = child.kill();
-            return Err(format!("The daemon was not ready after {} seconds.", READY_TIMEOUT.as_secs()));
+            return Err(format!("The daemon was not ready after {} seconds. {log_hint}", READY_TIMEOUT.as_secs()));
         }
     };
 
@@ -150,4 +215,23 @@ fn spawn_daemon() -> Result<Running, String> {
         child,
         info: DaemonInfo { host: "127.0.0.1".into(), port, token },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_log_keeps_the_previous_log() {
+        let logs = std::env::temp_dir().join(format!("harness-log-test-{}", random_token().unwrap()));
+        let (mut first, path) = open_log(&logs).unwrap();
+        std::io::Write::write_all(&mut first, b"first start").unwrap();
+        drop(first);
+        let (second, again) = open_log(&logs).unwrap();
+        assert_eq!(path, again);
+        assert_eq!(std::fs::read_to_string(logs.join("daemon.log.1")).unwrap(), "first start");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        drop(second);
+        let _ = std::fs::remove_dir_all(&logs);
+    }
 }

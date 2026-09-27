@@ -19,9 +19,42 @@ npm run tauri dev
 The app starts the daemon as a sidecar on `127.0.0.1` with a random port and a random token. The daemon command comes from:
 
 1. The `HARNESS_DAEMON` environment variable (a path to a daemon executable).
-2. Otherwise, `../daemon/.venv` with `python -m harness_daemon`.
+2. The bundled sidecar: `harness-daemon` next to the app executable. The installers put it there.
+3. Otherwise, `../daemon/.venv` with `python -m harness_daemon`.
 
 The daemon stops when the app closes, because the app closes the daemon stdin.
+
+The development daemon (3) writes its log to the terminal. The other daemons write it to `~/.harness/logs/daemon.log`. The log of the previous start is `daemon.log.1`.
+
+## Package
+
+The installers include the daemon sidecar. Build them on each operating system, because PyInstaller cannot cross-compile.
+
+1. Build the sidecar. See "Package the sidecar" in [../daemon/README.md](../daemon/README.md).
+
+   ```bash
+   ../daemon/.venv/Scripts/python ../daemon/scripts/build_sidecar.py
+   ```
+
+2. Build the installers:
+
+   ```bash
+   npm run package
+   ```
+
+`npm run package` is `tauri build` with `src-tauri/tauri.bundle.json`, which adds the sidecar (`bundle.externalBin`). The development config does not name the sidecar, so `npm run tauri dev` works without it. The installers are in `src-tauri/target/release/bundle/`:
+
+| Operating system | Installers |
+|---|---|
+| Windows | `msi/` (WiX) and `nsis/` (a setup `.exe` for the current user). WebView2 installs if it is not on the computer. |
+| macOS | `dmg/` and `macos/` (the `.app`). macOS 11 or later. |
+| Linux | `deb/`, `rpm/`, and `appimage/`. |
+
+The GitHub Actions workflow `.github/workflows/release.yml` builds all the installers. A tag `v*` also makes a draft release.
+
+The installers are not signed. Windows SmartScreen shows a warning. On macOS, a downloaded app that is not signed does not open: remove the quarantine attribute with `xattr -dr com.apple.quarantine /Applications/Harness.app`, or add signing (the Tauri `APPLE_*` environment variables).
+
+After an install, the agent browser needs Chromium. Run the installed sidecar with `--install-browser`, for example `"%LOCALAPPDATA%\Harness\harness-daemon.exe" --install-browser` on Windows. The agent gets the same command in the error message when Chromium is not installed.
 
 ## Connections
 
@@ -81,7 +114,8 @@ npm run build
 
 | File | Function |
 |---|---|
-| `src-tauri/src/sidecar.rs` | Starts and stops the local daemon. |
+| `src-tauri/src/sidecar.rs` | Starts and stops the local daemon, and writes its log. |
+| `src-tauri/tauri.bundle.json` | The config addition for the installers: the daemon sidecar. |
 | `src-tauri/src/tunnel.rs` | SSH tunnels to remote daemons. |
 | `src-tauri/src/secrets.rs` | Tokens in the keychain of the operating system. |
 | `src-tauri/src/browser.rs` | The Browser pane webview. |

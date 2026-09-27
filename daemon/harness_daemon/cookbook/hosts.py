@@ -7,6 +7,7 @@ Remote hosts are in ``~/.harness/hosts.json``::
 The "local" entry can set "llama_server" for the daemon computer.
 
 The daemon runs hostscript.py on the host: ``python -`` locally, or ``ssh <host> python3 -``.
+A packaged daemon has no ``python``: it runs the script itself (``harness-daemon --python-stdin``).
 SSH uses the key in ``~/.harness/ssh/id_ed25519``. The Cookbook shows its public key: the user
 adds it to ``~/.ssh/authorized_keys`` on the remote host.
 """
@@ -18,7 +19,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 from ..config import ConfigError, harness_home, read_json, write_json
 from ..tunnels import SshTarget, parse_ssh
-from .. import tunnels
+from .. import frozen, tunnels
 
 LOCAL = "local"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,40}$")
@@ -84,7 +84,7 @@ class Host:
     def argv(self) -> list[str]:
         """The command that runs a Python script from stdin on the host."""
         if self.ssh is None:
-            return [self.python or sys.executable, "-"]
+            return [self.python, "-"] if self.python else frozen.python_stdin_argv()
         args = [*tunnels.SSH_COMMAND, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                 "-o", "StrictHostKeyChecking=accept-new"]
         if self.ssh.port:
