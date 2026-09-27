@@ -25,4 +25,5 @@ A desktop app for agentic coding with local models. See [SPEC.md](SPEC.md) for t
 | 9. Servers and browser | Complete. `launch.json` with auto-detection, the Servers pane and toolbar menu, the Browser pane (Tauri child webview), project file URLs, and port forwarding for remote daemons. |
 | 10. Agent preview tools | Complete. A headless Chromium through Playwright in the daemon, the nine `preview_*` tools, the navigation allow list, the agent view in the Browser pane, screenshots for models with image input, and the Auto-verify setting. |
 | 11. Cookbook | Complete. Hardware detection (local and through SSH), the fit calculator from the GGUF header, the Hugging Face model browser with fit badges, downloads with pause, continue, and cancel, installed models, and llama-server serve control that adds the model to the providers. |
-| 12–13 | Not started. |
+| 12. MCP | Complete. MCP client for stdio, streamable HTTP, and SSE servers from `~/.harness/mcp.json` and `.harness/mcp.json`, `mcp__<server>__<tool>` tools with approval (and `mcp__<server>__*` rules), tool list updates, and the MCP panel. |
+| 13 | Not started. |

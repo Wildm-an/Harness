@@ -110,6 +110,7 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 |---|---|
 | `harness_daemon/agent.py` | The agent loop. |
 | `harness_daemon/providers.py` | Providers, the tool support check, and the streaming model client. |
+| `harness_daemon/mcp_client.py` | The MCP client: the configuration, the connections in their own thread, and the `mcp__*` tools. |
 | `harness_daemon/cookbook/` | The Cookbook: `hosts.py` (hosts, SSH, the host script runner), `hostscript.py` (runs on the host), `gguf.py` (the GGUF header), `fit.py` (the fit calculator), `hub.py` (the Hugging Face browser), `service.py` (downloads and serve control). |
 | `harness_daemon/provider_config.py` | Changes to `providers.json` from the Providers screen, the client keys, and the connection test. |
 | `harness_daemon/tools/` | The `read`, `glob`, `grep`, `edit`, `write`, `bash`, `skill`, and `preview_*` tools. |
@@ -156,6 +157,28 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 | `auto_verify` | `false` | The agent checks the app with the preview tools after each change to the user interface. The Servers pane of the client changes this value in the project settings. |
 | `image_input` | auto | `true` or `false` overrides the image input check of the model. See "Agent preview tools". |
 | `allow`, `deny` | `[]` | Permission rules. See `harness_daemon/permissions.py`. |
+
+## MCP servers
+
+The agent uses the tools of MCP servers (SPEC.md section 5.7). The servers come from `~/.harness/mcp.json` (user) and `<project>/.harness/mcp.json` (project). A project server replaces a user server with the same name. The format is the one of Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+    "search": { "type": "http", "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${SEARCH_TOKEN}" } },
+    "old":    { "type": "sse", "url": "http://127.0.0.1:8000/sse", "disabled": true }
+  }
+}
+```
+
+- `type` is `stdio` (the default with `command`), `http` (streamable HTTP), or `sse`. A stdio server runs in the project folder unless it sets `cwd`.
+- `${VAR}` and `${VAR:-default}` take values from the environment of the daemon. The MCP panel shows a warning for a variable that is not set.
+- `timeout` sets the seconds for one tool call. The default is 120.
+- Each tool of a server is a tool of the agent: `mcp__<server>__<tool>`. Each call needs approval. "Always" adds a rule for that tool. The rule `mcp__<server>__*` allows all the tools of one server.
+- The servers connect when a session opens. The first turn waits for them up to 20 seconds. A server that sends `tools/list_changed` updates the tools of the agent.
+- The output of a stdio server goes to `~/.harness/logs/mcp-<server>.log`. The MCP panel shows its last lines when the server fails.
+- `/mcp` opens the MCP panel: the servers, their state, their tools, restart, and a button that creates and opens `.harness/mcp.json`.
 
 ## Cookbook
 

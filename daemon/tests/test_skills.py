@@ -205,7 +205,7 @@ def test_slash_menu_and_skill_commands(daemon, project, project_skills, fake_mod
     c.send({"type": "skills.list"})
     items = c.until("skills")[0]["items"]
     names = [i["name"] for i in items]
-    assert names[:len(names) - 3] == ["clear", "compact", "model", "skills", "cookbook", "providers", "servers", "preview", "help"]
+    assert names[:len(names) - 3] == ["clear", "compact", "model", "skills", "cookbook", "providers", "mcp", "servers", "preview", "help"]
     assert names[-3:] == ["greet", "research", "secret"]  # Not "hidden" (user-invocable false). Not the "help" skill.
     greet = next(i for i in items if i["name"] == "greet")
     assert greet["source"] == "project (.harness)" and greet["builtin"] is False

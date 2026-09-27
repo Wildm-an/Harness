@@ -243,6 +243,22 @@ def test_errors_for_bad_messages(daemon, project, fake_model):
     c.close()
 
 
+def test_unexpected_turn_error_ends_the_turn(daemon, project, fake_model, monkeypatch):
+    from harness_daemon.agent import Agent
+
+    async def boom(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(Agent, "run_turn", boom)
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "hi"})
+    end, seen = c.until("turn.end")
+    assert end["stop_reason"] == "error"
+    assert any(m["type"] == "error" and "RuntimeError: boom" in m["message"] for m in seen)
+    c.close()
+
+
 def test_warning_for_model_without_tools(daemon, project, fake_model):
     fake_model.capabilities = ["completion"]
     c = Client(daemon)

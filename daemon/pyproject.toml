@@ -16,6 +16,7 @@ dependencies = [
     "pyyaml>=6",
     "playwright>=1.45",  # The agent browser. It also needs: python -m playwright install chromium
     "huggingface_hub>=0.25",  # The Cookbook model browser and downloads.
+    "mcp>=2.2",  # The MCP client (stdio, streamable HTTP, and SSE).
 ]
 
 [project.optional-dependencies]

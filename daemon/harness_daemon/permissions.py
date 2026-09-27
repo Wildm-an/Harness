@@ -12,6 +12,8 @@ Rule forms:
 - ``bash(<prefix>:*)`` matches a command that starts with the prefix. It does not
   match a command with shell operators such as ``;``, ``&&``, ``|``, or ``$(``.
 - ``edit(<glob>)`` matches a relative file path with ``fnmatch`` rules.
+- ``mcp__<server>__*`` (a tool name that ends with ``*``) matches each tool with that prefix,
+  for example all the tools of one MCP server.
 
 A deny rule has priority over an allow rule.
 """
@@ -27,7 +29,7 @@ from typing import Any, Awaitable, Callable
 from .config import project_settings_path, read_json, write_json
 from .tools import Approval, Tool
 
-RULE_RE = re.compile(r"([A-Za-z0-9_\-]+)(?:\((.*)\))?", re.S)
+RULE_RE = re.compile(r"([A-Za-z0-9_\-]+\*?)(?:\((.*)\))?", re.S)
 SHELL_OPERATORS = re.compile(r"[;&|`\n<>]|\$\(")
 
 DECISIONS = ("allow_once", "allow_always", "deny")
@@ -41,7 +43,10 @@ def rule_matches(rule: str, tool: str, key: str) -> bool:
     if not m:
         return False
     name, pattern = m.group(1), m.group(2)
-    if name.lower() != tool.lower():
+    if name.endswith("*"):
+        if not tool.lower().startswith(name[:-1].lower()):
+            return False
+    elif name.lower() != tool.lower():
         return False
     if pattern is None or pattern == "*":
         return True

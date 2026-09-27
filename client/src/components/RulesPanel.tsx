@@ -9,8 +9,8 @@ export interface Rules {
 
 type Kind = "allow" | "deny";
 
-// The same rule form as the daemon: tool or tool(pattern).
-const RULE_RE = /^[A-Za-z0-9_-]+(\(.*\))?$/s;
+// The same rule form as the daemon: tool, tool(pattern), or a tool prefix with "*" (mcp__server__*).
+const RULE_RE = /^[A-Za-z0-9_-]+\*?(\(.*\))?$/s;
 
 function RuleList({
   kind,
@@ -170,6 +170,10 @@ export const RulesPanel = memo(function RulesPanel({
                   <tr>
                     <td><code>edit(src/*.py)</code></td>
                     <td>Edits to files that match the pattern.</td>
+                  </tr>
+                  <tr>
+                    <td><code>mcp__github__*</code></td>
+                    <td>Each tool of the MCP server “github”.</td>
                   </tr>
                 </tbody>
               </table>

@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   MessageSquare,
   Monitor,
+  Plug,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -23,6 +24,7 @@ import type {
   Decision,
   DirListing,
   HostInfo,
+  McpStatus,
   ProjectItem,
   ProviderFields,
   ProviderItem,
@@ -40,6 +42,7 @@ import {
   saveProviderKey,
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
+import { McpPanel } from "./components/McpPanel";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { FolderPicker } from "./components/FolderPicker";
@@ -217,6 +220,10 @@ export default function App() {
   }, [conn]);
 
   const [hfTokenSaved, setHfTokenSaved] = useState(false);
+  // The MCP servers of the session (the MCP panel).
+  const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
+  const [mcpBusy, setMcpBusy] = useState(false);
+  const [pendingEdit, setPendingEdit] = useState<{ path: string; key: number } | null>(null); // A file for the editor.
 
   /** Opens the Cookbook screen (SPEC.md section 7). */
   const showCookbook = useCallback(() => {
@@ -260,6 +267,7 @@ export default function App() {
             setReviewId(null);
             setRules(null);
             setAgentFrame(null);
+            setMcpStatus(null);
             setLayout(loadLayout(currentRef.current?.id ?? "local", msg.cwd));
           }
           setSession({ id: msg.session_id, cwd: msg.cwd, model: msg.model, title: msg.title, project: msg.project?.name ?? null });
@@ -327,6 +335,15 @@ export default function App() {
           setSkillDetail(detail);
           return;
         }
+        case "mcp": {
+          const { type: _type, ...status } = msg;
+          setMcpStatus(status);
+          setMcpBusy(status.items.some((i) => i.state === "starting"));
+          return;
+        }
+        case "mcp.init":
+          setPendingEdit((p) => ({ path: msg.path, key: (p?.key ?? 0) + 1 }));
+          return;
         case "permission.request":
           // Show each change for approval in the diff review pane.
           if (msg.diff) {
@@ -345,6 +362,7 @@ export default function App() {
             rulesSaving.current = false;
           }
           if (msg.ref === "skills.get") setSkillDetail(null);
+          if (msg.ref === "mcp.restart" || msg.ref === "mcp") setMcpBusy(false);
           if (msg.ref === "projects.save" || msg.ref === "projects.delete") {
             if (projectWait.current) {
               projectWait.current.reject(new Error(msg.message));
@@ -390,6 +408,11 @@ export default function App() {
           }
           if (msg.action === "open_panel" && msg.panel === "cookbook") {
             showCookbook();
+            return;
+          }
+          if (msg.action === "open_panel" && msg.panel === "mcp") {
+            setLayout((l) => openPane(l, "mcp"));
+            conn.send({ type: "mcp.list" });
             return;
           }
           if (msg.action === "open_panel" && msg.panel === "skills") {
@@ -782,6 +805,16 @@ export default function App() {
     if (conn.status === "open") conn.send({ type: "skills.list" });
   }, [conn]);
 
+  const openMcp = () => {
+    setLayout((l) => openPane(l, "mcp"));
+    sendSafely({ type: "mcp.list" });
+  };
+
+  const restartMcp = (name?: string) => {
+    setMcpBusy(true);
+    if (!sendSafely({ type: "mcp.restart", ...(name ? { name } : {}) })) setMcpBusy(false);
+  };
+
   const openSkills = () => {
     setSkillItems(null);
     setSkillDetail(null);
@@ -905,6 +938,13 @@ export default function App() {
     [editor.openFile, filesToken, showInBrowser],
   );
 
+  // mcp.init created (or found) .harness/mcp.json: open it in the editor.
+  useEffect(() => {
+    if (!pendingEdit) return;
+    editor.openFile(pendingEdit.path);
+    setLayout((l) => openPane(l, "editor"));
+  }, [pendingEdit?.key]);
+
   const editLaunchConfig = useCallback(() => {
     editor.openFile(".harness/launch.json");
     setLayout((l) => openPane(l, "editor"));
@@ -932,6 +972,28 @@ export default function App() {
   const reviewItem = reviewId ? chat.items.find((i) => i.id === reviewId) : undefined;
   const reviewDiff = reviewItem && (reviewItem.kind === "tool" || reviewItem.kind === "permission") ? reviewItem.diff : null;
   const paneVisible = (pane: PaneId) => findGroupOf(layout, pane)?.active === pane;
+
+  // A Rules or MCP tab from the saved layout has no data yet: load it when the tab shows.
+  const rulesShown = session !== null && status === "open" && paneVisible("rules");
+  const mcpShown = session !== null && status === "open" && paneVisible("mcp");
+  useEffect(() => {
+    if (rulesShown && rules === null && !rulesBusy) {
+      setRulesBusy(true);
+      try {
+        conn.send({ type: "permissions.get" });
+      } catch {
+        setRulesBusy(false);
+      }
+    }
+  }, [rulesShown, rules === null]);
+  useEffect(() => {
+    if (!mcpShown || mcpStatus !== null) return;
+    try {
+      conn.send({ type: "mcp.list" });
+    } catch {
+      // The panel stays at "Loading" until the connection opens.
+    }
+  }, [mcpShown, mcpStatus === null]);
 
   const folder = session?.project ?? session?.cwd.split(/[\\/]/).filter(Boolean).pop();
 
@@ -1027,6 +1089,23 @@ export default function App() {
       closable: true,
       render: () => (
         <RulesPanel rules={rules} busy={rulesBusy} savedAt={rulesSavedAt} onSave={saveRules} onClose={() => hidePane("rules")} />
+      ),
+    },
+    mcp: {
+      title: "MCP",
+      icon: Plug,
+      closable: true,
+      badge: mcpStatus?.items.some((i) => i.state === "failed") ? (
+        <span className="tab-badge" title="An MCP server failed">!</span>
+      ) : undefined,
+      render: () => (
+        <McpPanel
+          status={mcpStatus}
+          busy={mcpBusy}
+          onRestart={restartMcp}
+          onEditConfig={() => sendSafely({ type: "mcp.init" })}
+          onClose={() => hidePane("mcp")}
+        />
       ),
     },
     skills: {
@@ -1168,6 +1247,24 @@ export default function App() {
             >
               <Sparkles size={15} aria-hidden />
               <span className="btn-label">Skills</span>
+            </button>
+          )}
+          {screen === "chat" && (
+            <button
+              type="button"
+              aria-label="MCP servers"
+              className={`btn btn-ghost${paneVisible("mcp") ? " active" : ""}`}
+              onClick={paneVisible("mcp") ? () => hidePane("mcp") : openMcp}
+              aria-pressed={paneVisible("mcp")}
+              title={
+                mcpStatus
+                  ? `MCP: ${mcpStatus.items.filter((i) => i.state === "connected").length} of ${mcpStatus.items.length} servers connected`
+                  : "MCP servers"
+              }
+            >
+              <Plug size={15} aria-hidden />
+              <span className="btn-label">MCP</span>
+              {mcpStatus?.items.some((i) => i.state === "failed") && <span className="mcp-dot bad" aria-hidden />}
             </button>
           )}
           {screen === "chat" && (

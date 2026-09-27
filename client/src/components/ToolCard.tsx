@@ -13,6 +13,7 @@ import {
   MousePointerClick,
   Pencil,
   Play,
+  Plug,
   ScrollText,
   Search,
   Sparkles,
@@ -48,6 +49,14 @@ const ICONS: Record<string, typeof Terminal> = {
 
 /** A one-line summary of the tool input: the path or the command. */
 export function toolSummary(name: string, input: unknown): string {
+  if (name.startsWith("mcp__") && input && typeof input === "object") {
+    // An MCP tool: the first short text argument, or the argument names.
+    const values = Object.values(input as Record<string, unknown>);
+    const text = values.find((v): v is string => typeof v === "string" && v.length > 0 && v.length <= 120);
+    if (text) return text;
+    const keys = Object.keys(input as object);
+    return keys.length ? keys.map((k) => `${k}=${JSON.stringify((input as Record<string, unknown>)[k])}`).join(" ").slice(0, 120) : "";
+  }
   if (input && typeof input === "object") {
     const args = input as Record<string, unknown>;
     if (typeof args.command === "string") return args.command;
@@ -85,7 +94,7 @@ export const ToolCard = memo(function ToolCard({
   const filePath = input && typeof input === "object" && typeof input.path === "string" && item.name !== "glob" && item.name !== "grep"
     ? input.path
     : null;
-  const Icon = ICONS[item.name] ?? Wrench;
+  const Icon = ICONS[item.name] ?? (item.name.startsWith("mcp__") ? Plug : Wrench);
   const summary = toolSummary(item.name, item.input);
   const statusLabel = item.status === "running" ? "Running" : item.status === "error" ? "Failed" : "Done";
 

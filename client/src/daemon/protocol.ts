@@ -160,6 +160,28 @@ export interface ProjectItem {
   last_used: number;
 }
 
+// -- MCP servers (SPEC.md section 5.7) --
+
+export type McpState = "starting" | "connected" | "failed" | "disabled" | "stopped";
+
+export interface McpServerItem {
+  name: string;
+  scope: "user" | "project";
+  transport: "stdio" | "http" | "sse";
+  target: string; // The command, or the URL.
+  state: McpState;
+  error: string | null;
+  server_name: string | null;
+  tools: { name: string; agent_name: string; description: string }[];
+  log?: string[]; // The last lines of the server output, for a failed server.
+}
+
+export interface McpStatus {
+  items: McpServerItem[];
+  problems: string[];
+  paths: { user: string; project: string };
+}
+
 // -- the Cookbook (SPEC.md section 7) --
 
 export interface CookbookHost {
@@ -318,6 +340,9 @@ export type ClientMessage =
   | { type: "providers.keys"; keys: Record<string, string | null> }
   | ({ type: "providers.test"; ref: string; api_key?: string } & ProviderFields)
   | { type: "models.list" }
+  | { type: "mcp.list" }
+  | { type: "mcp.restart"; name?: string }
+  | { type: "mcp.init" }
   | { type: "cookbook.hosts" }
   | { type: "cookbook.host.save"; name: string; ssh?: string | null; python?: string | null; llama_server?: string | null; previous?: string }
   | { type: "cookbook.host.delete"; name: string }
@@ -391,6 +416,8 @@ export type DaemonMessage =
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
   | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[] }
+  | ({ type: "mcp" } & McpStatus)
+  | { type: "mcp.init"; path: string; created: boolean }
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }
   | { type: "hardware"; host: string; info: HardwareInfo }
   | { type: "hf.token"; set: boolean }

@@ -1,8 +1,8 @@
 // The pane layout (SPEC.md section 8.4): tab groups in nested rows and columns.
 // All functions are pure. Each one returns a new layout.
 
-export type PaneId = "chat" | "editor" | "browser" | "servers" | "diff" | "rules" | "skills";
-export const PANE_IDS: PaneId[] = ["chat", "editor", "browser", "servers", "diff", "rules", "skills"];
+export type PaneId = "chat" | "editor" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp";
+export const PANE_IDS: PaneId[] = ["chat", "editor", "browser", "servers", "diff", "rules", "skills", "mcp"];
 
 export type Zone = "center" | "left" | "right" | "top" | "bottom";
 

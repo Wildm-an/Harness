@@ -134,6 +134,16 @@ class Agent:
             # preview_screenshot is only for a model with image input.
             self.tools.update({t.name: t for t in preview_tools(self.image_input)})
 
+    def set_mcp_tools(self, tools: list[Tool]) -> None:
+        """Replace the MCP tools (``mcp__<server>__<tool>``). The MCP servers of the session change them."""
+        for name in [n for n in self.tools if n.startswith("mcp__")]:
+            del self.tools[name]
+        self.tools.update({t.name: t for t in tools})
+        self._known_tokens = None  # The tool schemas are part of the request size.
+
+    def mcp_tools(self) -> list[Tool]:
+        return [t for n, t in self.tools.items() if n.startswith("mcp__")]
+
     def reload_settings(self, settings: dict[str, Any]) -> None:
         """Use changed settings, for example "auto_verify" from the client."""
         self.settings.clear()
@@ -338,6 +348,7 @@ class Agent:
         )
         if self.ctx.preview is not None:
             sub.enable_preview(self.ctx.preview)
+        sub.set_mcp_tools(self.mcp_tools())
         prompt = f"{render_skill(skill, args, self.cwd)}\n\n{FORK_REPORT_REQUEST}"
         stop = await sub.run_turn(prompt)
         if stop == "interrupted":

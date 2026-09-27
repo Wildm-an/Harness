@@ -63,6 +63,9 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `providers.keys` | `keys` | API keys from the keychain of the client: `{"<provider>": "<key>"}`. `null` removes a key. The daemon keeps the keys in memory only. |
 | `providers.test` | the `providers.save` fields, `ref`, `api_key` (optional) | Tests the form values: `GET <base_url>/models`. `api_key` is a key that is not saved yet. With no `api_key`, the daemon uses the saved key. |
 | `models.list` | — | Asks for the models of each provider that is on. |
+| `mcp.list` | — | Asks for the MCP servers of the session. |
+| `mcp.restart` | `name` (optional) | Reads the MCP configuration again and connects again: one server, or all servers with no name. Not during a turn. |
+| `mcp.init` | — | Creates `.harness/mcp.json` of the project from a template, if it does not exist. |
 | `cookbook.hosts` | — | Asks for the Cookbook hosts and the public SSH key. |
 | `cookbook.host.save` | `name`, `ssh`, `python`, `llama_server`, `previous` (optional) | Adds or changes a host in `~/.harness/hosts.json`. For `local`, only `llama_server`. |
 | `cookbook.host.delete` | `name` | Deletes a remote host. |
@@ -116,6 +119,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `server.logs` | `name`, `lines` | Reply to `server.logs`. Each line has `stream` and `text`. |
 | `permissions` | `path`, `allow`, `deny` | Reply to `permissions.get` and `permissions.set`. `path` is the settings file, relative to the project. |
 | `settings` | `auto_verify` | Reply to `settings.get` and `settings.set`. |
+| `mcp` | `items`, `problems`, `paths` | The MCP servers of the session. The daemon sends it when a server state or a tool list changes, and as the reply to `mcp.list`. Each item has `name`, `scope` (`user` or `project`), `transport`, `target` (the command or the URL), `state` (`starting`, `connected`, `failed`, `disabled`, or `stopped`), `error`, `server_name`, `tools` (`name`, `agent_name`, `description`), and `log` (the last output lines of a failed server). `problems` holds the configuration errors and warnings. |
+| `mcp.init` | `path`, `created` | Reply to `mcp.init`. `path` is relative to the project. |
 | `cookbook.hosts` | `items`, `public_key`, `key_path` | Reply to the `cookbook.host*` and `cookbook.ssh_key` messages. Each item has `name`, `ssh`, `remote`, `python`, `llama_server`, and `label`. `public_key` is null if there is no key. |
 | `hardware` | `host`, `info` | `info` has `hostname`, `platform`, `gpus` (`name`, `vendor`, `vram_total`, `vram_used`), `ram_total`, `cpu_cores`, `python`, `huggingface_hub`, `llama_server`, `tmux`, and `hf_cache`. Sizes are in bytes. |
 | `hf.token` | `set` | Reply to `hf.token`. |
@@ -208,6 +213,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 - `/compact` runs like a turn: `interrupt` stops it, and it ends with `turn.end`. If there is too little history, a `command.result` comes before `turn.end`.
 
 - After `auth.ok`, the client sends `providers.list`. For each provider with `key.source: "client"` and `key.set: false`, the client reads the key from its keychain and sends it with `providers.keys`. A change to the key or the settings of the session provider applies to the next model call.
+- An unexpected error in a turn sends `error`, then `turn.end` with `stop_reason: "error"`.
 - `interrupt` stops the turn. A running `bash` command stops with all its child processes.
 
 - A hash is the SHA-256 of the file bytes, in lowercase hex.

@@ -28,6 +28,7 @@ from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve
 from .permissions import DECISIONS, PermissionRules
 from .preview import PreviewHost
 from . import provider_config
+from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, project_config_path
 from .cookbook import hosts as cookbook_hosts
 from .cookbook.hosts import HostError
 from .cookbook.hub import HubError
@@ -68,6 +69,7 @@ BUILTIN_COMMANDS: dict[str, str] = {
     "skills": "Open the Skills panel: the skills and their sources.",
     "cookbook": "Open the Cookbook panel.",
     "providers": "Open the Providers screen: the model endpoints and their API keys.",
+    "mcp": "Open the MCP panel: the MCP servers of the project and their tools.",
     "servers": "Open the Servers pane.",
     "preview": "Start the default server and open it in the Browser pane.",
     "help": "List the commands.",
@@ -84,6 +86,9 @@ FILE_ROOTS: dict[str, Path] = {}
 MANAGERS: set[ServerManager] = set()
 # The preview hosts of all connections. The daemon stops their agent browsers when it stops.
 PREVIEWS: set[PreviewHost] = set()
+# The MCP clients of all connections. The daemon stops their servers when it stops.
+MCPS: set[McpManager] = set()
+MCP_WAIT = 20  # Seconds that the first turn waits for the MCP servers.
 
 # Project settings that the client can change with "settings.set", and their types.
 CLIENT_SETTINGS: dict[str, type] = {"auto_verify": bool}
@@ -107,6 +112,8 @@ def stop_all_servers() -> None:
     for host in list(PREVIEWS):
         host.close_now()
     COOKBOOK.stop_all()  # The downloads can continue after the next start. Served models keep running.
+    for manager in list(MCPS):
+        manager.close_now()
 
 
 def create_app(token: str, storage: Storage | None = None) -> FastAPI:
@@ -292,6 +299,7 @@ class Connection:
         self.watched: dict[str, str | None] = {}
         self.servers: ServerManager | None = None
         self.preview: PreviewHost | None = None
+        self.mcp: McpManager | None = None
         self.files_token: str | None = None
         self._watcher: asyncio.Task | None = None
 
@@ -382,7 +390,11 @@ class Connection:
         return self.session
 
     async def _close_session(self) -> None:
-        """Stop the agent browser and the servers of the session, and end its file URLs."""
+        """Stop the MCP servers, the agent browser, and the servers of the session, and end its file URLs."""
+        if self.mcp is not None:
+            manager, self.mcp = self.mcp, None
+            MCPS.discard(manager)
+            await manager.close()
         if self.preview is not None:
             await self.preview.close()
             PREVIEWS.discard(self.preview)
@@ -406,6 +418,21 @@ class Connection:
         session.agent.enable_preview(self.preview)
         self.files_token = secrets.token_urlsafe(24)
         FILE_ROOTS[self.files_token] = session.cwd
+        # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
+        self.mcp = McpManager(session.cwd, self.send, session.agent.set_mcp_tools)
+        MCPS.add(self.mcp)
+        asyncio.create_task(self._start_mcp(self.mcp))
+
+    async def _start_mcp(self, manager: McpManager) -> None:
+        try:
+            await manager.start()
+        except Exception as e:  # noqa: BLE001 - a bad mcp.json must not stop the session.
+            log.exception("The MCP servers did not start")
+            await self.error(f"The MCP servers did not start: {e}", ref="mcp")
+
+    async def wait_for_mcp(self) -> None:
+        if self.mcp is not None:
+            await self.mcp.ready(MCP_WAIT)
 
     def require_servers(self) -> ServerManager:
         self.require_session()
@@ -531,13 +558,30 @@ class Connection:
         session.set_title_from(text)
         # "@src/app.py:10-25" references from the editor: add the lines to the prompt.
         expanded = await asyncio.to_thread(expand_references, text, session.cwd)
+        await self.wait_for_mcp()
         try:
             await session.agent.run_turn(expanded, display=text if expanded != text else None)
         finally:
             session.persist()
 
     def start_turn(self, text: str) -> None:
-        self.turn = asyncio.create_task(self.run_turn(text))
+        self.turn = asyncio.create_task(self.guarded(self.run_turn(text)))
+
+    async def guarded(self, work: Awaitable[None]) -> None:
+        """Run a turn. An unexpected error ends the turn with an error, so the client does not wait forever."""
+        try:
+            await work
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.exception("The turn failed")
+            await self.error(f"Internal error in the turn: {type(e).__name__}: {e}")
+            usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "last_prompt_tokens": 0,
+                                     "context_tokens": 0, "context_length": 0}
+            if self.session is not None:
+                usage.update(context_tokens=self.session.agent.context_tokens(),
+                             context_length=self.session.agent.context_length)
+            await self.send({"type": "turn.end", "usage": usage, "stop_reason": "error"})
 
     def skills(self) -> dict[str, Skill]:
         """The skills now on disk. The user can add a skill during a session."""
@@ -546,6 +590,7 @@ class Connection:
     async def run_skill(self, skill: Skill, args: str) -> None:
         session = self.require_session()
         session.set_title_from(f"/{skill.name} {args}")
+        await self.wait_for_mcp()
         try:
             await session.agent.run_skill(skill, args)
         finally:
@@ -667,6 +712,45 @@ async def on_projects_save(conn: Connection, msg: dict[str, Any]) -> None:
     except ValueError as e:
         raise ProtocolError(str(e)) from None
     await _send_projects(conn, saved)
+
+
+# -- MCP servers (SPEC.md section 5.7) ---------------------------------------------------------------
+
+
+def _require_mcp(conn: Connection) -> McpManager:
+    conn.require_session()
+    if conn.mcp is None:
+        raise ProtocolError("The MCP client of the session is not ready.")
+    return conn.mcp
+
+
+@handler("mcp.list")
+async def on_mcp_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await conn.send(_require_mcp(conn).items())
+
+
+@handler("mcp.restart")
+async def on_mcp_restart(conn: Connection, msg: dict[str, Any]) -> None:
+    """Read mcp.json again and connect again: one server ("name"), or all servers (no name)."""
+    manager = _require_mcp(conn)
+    conn.require_idle()
+    name = msg.get("name") if isinstance(msg.get("name"), str) else None
+
+    async def work() -> None:
+        await manager.restart(name)
+
+    _background(conn, "mcp.restart", work)
+
+
+@handler("mcp.init")
+async def on_mcp_init(conn: Connection, msg: dict[str, Any]) -> None:
+    """Create .harness/mcp.json of the project from a template, if it does not exist."""
+    session = conn.require_session()
+    path = project_config_path(session.cwd)
+    created = not path.exists()
+    if created:
+        write_json(path, MCP_TEMPLATE)
+    await conn.send({"type": "mcp.init", "path": relpath(session.cwd, path), "created": created})
 
 
 # -- the Cookbook (SPEC.md section 7) ----------------------------------------------------------------
@@ -900,7 +984,7 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"The skill {name} is for the model only. It is not a / command.")
         conn.require_session()
         conn.require_idle()
-        conn.turn = asyncio.create_task(conn.run_skill(skill, args))
+        conn.turn = asyncio.create_task(conn.guarded(conn.run_skill(skill, args)))
         return
 
     async def result(**fields: Any) -> None:
@@ -930,11 +1014,11 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
     elif name == "compact":
         conn.require_session()
         conn.require_idle()
-        conn.turn = asyncio.create_task(conn.run_compact())
+        conn.turn = asyncio.create_task(conn.guarded(conn.run_compact()))
     elif name == "skills":
         items = [s.summary() for s in conn.skills().values()]
         await result(action="open_panel", panel="skills", items=items)
-    elif name in ("cookbook", "servers", "providers"):
+    elif name in ("cookbook", "servers", "providers", "mcp"):
         await result(action="open_panel", panel=name)
     elif name == "preview":
         manager = conn.require_servers()

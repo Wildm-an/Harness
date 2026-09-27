@@ -12,6 +12,12 @@ describe("the preview tools in the chat", () => {
     expect(toolSummary("preview_snapshot", {})).toBe("preview_snapshot");
   });
 
+  it("summarizes the input of an MCP tool", () => {
+    expect(toolSummary("mcp__github__create_issue", { repo: "a/b", title: "Bug" })).toBe("a/b");
+    expect(toolSummary("mcp__calc__add", { a: 2, b: 3 })).toBe("a=2 b=3");
+    expect(toolSummary("mcp__x__ping", {})).toBe("");
+  });
+
   it("keeps the screenshot of a tool result, live and from the history", () => {
     const image = "data:image/jpeg;base64,AAAA";
     const live = [
