@@ -66,3 +66,66 @@ export async function secretDelete(key: string): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("secret_delete", { key });
 }
+
+export interface ForwardSpec {
+  daemonHost: string;
+  daemonPort: number;
+  token: string;
+  sessionId: string;
+  server: string;
+}
+
+/** A local port for a server on a remote daemon (SPEC.md section 8.6). */
+export async function forwardOpen(spec: ForwardSpec): Promise<number> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<number>("forward_open", { spec });
+}
+
+export async function forwardCloseAll(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("forward_close_all");
+}
+
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The Browser pane webview. Each call does nothing outside the desktop app. */
+export const browserView = {
+  async open(url: string, bounds: Bounds) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_open", { url, bounds });
+  },
+  async bounds(bounds: Bounds) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_bounds", { bounds });
+  },
+  async visible(visible: boolean) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_visible", { visible });
+  },
+  async navigate(url: string) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_navigate", { url });
+  },
+  async history(action: "back" | "forward" | "reload") {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_history", { action });
+  },
+  async devtools() {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_devtools");
+  },
+  async clearData() {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_clear_data");
+  },
+  /** Page loads in the browser webview. Returns a function that stops the listener. */
+  async onEvent(fn: (event: { url: string; loading: boolean }) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<{ url: string; loading: boolean }>("browser-event", (e) => fn(e.payload));
+  },
+};

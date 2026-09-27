@@ -1,21 +1,31 @@
 import { memo, useState } from "react";
 import {
+  Camera,
   Check,
   ChevronRight,
   FileDiff,
   FilePlus,
   FileText,
   FolderSearch,
+  Globe,
+  ListTree,
   LoaderCircle,
+  MousePointerClick,
   Pencil,
+  Play,
+  ScrollText,
   Search,
   Sparkles,
+  Square,
+  SquareTerminal,
   Terminal,
+  TextCursorInput,
   Wrench,
   X,
 } from "lucide-react";
 import type { ToolItem } from "../chat/state";
 import { DiffStats } from "./DiffStats";
+import { useOpenPath } from "../lib/openPath";
 
 const ICONS: Record<string, typeof Terminal> = {
   read: FileText,
@@ -25,6 +35,15 @@ const ICONS: Record<string, typeof Terminal> = {
   grep: Search,
   bash: Terminal,
   skill: Sparkles,
+  preview_start: Play,
+  preview_stop: Square,
+  preview_logs: ScrollText,
+  preview_navigate: Globe,
+  preview_snapshot: ListTree,
+  preview_click: MousePointerClick,
+  preview_fill: TextCursorInput,
+  preview_console: SquareTerminal,
+  preview_screenshot: Camera,
 };
 
 /** A one-line summary of the tool input: the path or the command. */
@@ -43,6 +62,10 @@ export function toolSummary(name: string, input: unknown): string {
       const range = typeof args.offset === "number" ? `:${args.offset}` : "";
       return `${args.path}${range}`;
     }
+    // The preview tools: a URL, an element reference, or a server name.
+    if (typeof args.url === "string") return typeof args.server === "string" ? `${args.url}  on ${args.server}` : args.url;
+    if (typeof args.ref === "string") return typeof args.text === "string" ? `${args.ref}  "${args.text}"` : args.ref;
+    if (typeof args.name === "string") return args.name;
   }
   return typeof input === "string" ? input : name;
 }
@@ -57,6 +80,11 @@ export const ToolCard = memo(function ToolCard({
   onReview: (toolId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const openPath = useOpenPath();
+  const input = item.input as Record<string, unknown> | null;
+  const filePath = input && typeof input === "object" && typeof input.path === "string" && item.name !== "glob" && item.name !== "grep"
+    ? input.path
+    : null;
   const Icon = ICONS[item.name] ?? Wrench;
   const summary = toolSummary(item.name, item.input);
   const statusLabel = item.status === "running" ? "Running" : item.status === "error" ? "Failed" : "Done";
@@ -88,6 +116,12 @@ export const ToolCard = memo(function ToolCard({
       </button>
       {open && (
         <div className="tool-body">
+          {filePath && openPath && (
+            <button type="button" className="btn btn-small tool-review" onClick={() => openPath(filePath, typeof input?.offset === "number" ? input.offset : undefined)}>
+              <FileText size={14} aria-hidden />
+              Open in the editor
+            </button>
+          )}
           {item.diff && (
             <button
               type="button"
@@ -105,6 +139,12 @@ export const ToolCard = memo(function ToolCard({
             <>
               <div className="tool-section-label">Output</div>
               <pre className="tool-pre">{item.output}</pre>
+            </>
+          )}
+          {item.image && (
+            <>
+              <div className="tool-section-label">Image</div>
+              <img className="tool-image" src={item.image} alt={`The image from ${item.name}`} />
             </>
           )}
         </div>

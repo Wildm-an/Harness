@@ -19,6 +19,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "max_output_chars": 20000,
     "shell": None,
     "default_model": None,
+    "auto_verify": False,  # The agent checks the app with the preview tools after each UI change.
+    "image_input": None,  # True or False overrides the image input check of the model.
 }
 
 # Keys in the project settings file that are permission rules, not settings.

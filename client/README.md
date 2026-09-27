@@ -32,6 +32,27 @@ The Connections screen (the connection chip in the title bar) lists "This comput
 - The tokens are in the keychain of the operating system (`src-tauri/src/secrets.rs`). The connection list has no secrets.
 - For a remote daemon, "Browse" opens a folder picker that lists the folders of the remote computer.
 
+## Panes and the editor
+
+- The main window has tab groups: Chat, Editor, Diff, Rules, and Skills. Drag a tab to another group, or to a side of a group to make a split. The menu of each group (⋮) has the same actions for the keyboard. Drag a handle, or use the arrow keys on it, to change the size.
+- The app saves the layout for each project. On a window under 900 px, all panes are tabs of one group.
+- The editor (Monaco, bundled) reads and saves files through the daemon. It works the same way with a remote daemon.
+  - `Ctrl+S` saves. `Ctrl+L` adds the selected lines to the prompt as `@path:10-25`.
+  - A clean tab loads a change from the agent at once. A tab with unsaved changes shows a choice: compare, load the disk version, or keep your version.
+  - A save stops if the file changed after the editor read it. The editor then shows the same choice.
+  - The lines that the agent changed in the current turn have a green mark.
+  - A file path in the chat, such as `src/app.py:42`, opens the file at that line.
+
+## Servers and the browser
+
+- The Servers pane (and the Servers menu in the toolbar) lists the servers of `.harness/launch.json`: start, stop, restart, stop all, the live log (stdout and stderr), "Open in browser", and "Edit configuration". If the file does not exist, the pane shows the servers that the daemon proposes. The daemon writes the file only when you save the proposal.
+- `/servers` opens the pane. `/preview` starts the default server and opens it in the Browser pane.
+- The Browser pane is a separate Tauri webview over the pane area (`src-tauri/src/browser.rs`). Its pages cannot call Tauri commands: the capability names only the `main` webview. It has its own data folder, so a clear of its cookies does not clear the app settings.
+- The browser webview is drawn above the page, so it hides while a menu, a dialog, or a tab drag is open (`src/lib/overlay.ts`).
+- A server on a remote daemon opens through a local port: the app forwards each TCP connection over a WebSocket to the daemon (`src-tauri/src/forward.rs`).
+- A chat link to an HTML, PDF, image, or video file opens it in the Browser pane.
+- Outside the desktop app, the Browser pane uses an iframe.
+
 ## Run in a browser (UI work only)
 
 ```bash
@@ -46,7 +67,7 @@ For a model with no GPU, use the scripted demo model:
 python ../daemon/scripts/demo_model.py --port 11500
 ```
 
-Then add `"demo": { "base_url": "http://127.0.0.1:11500/v1", "api_key": "demo" }` to `~/.harness/providers.json` and use the model `demo/scripted`.
+Then add a provider on the Providers screen with the URL `http://127.0.0.1:11500/v1` and "No key", and use the model `<name>/scripted`. You can also add `"demo": { "base_url": "http://127.0.0.1:11500/v1", "api_key": "demo" }` to `~/.harness/providers.json`.
 
 ## Test
 
@@ -63,6 +84,13 @@ npm run build
 | `src-tauri/src/sidecar.rs` | Starts and stops the local daemon. |
 | `src-tauri/src/tunnel.rs` | SSH tunnels to remote daemons. |
 | `src-tauri/src/secrets.rs` | Tokens in the keychain of the operating system. |
+| `src-tauri/src/browser.rs` | The Browser pane webview. |
+| `src-tauri/src/forward.rs` | Port forwarding for servers on a remote daemon. |
+| `src/servers/` | The servers state, the Servers pane, and the toolbar menu. |
+| `src/browser/` | The Browser pane. |
+| `src/layout/` | The pane layout model (pure functions) and the workspace component. |
+| `src/editor/` | The editor state, the Monaco pane, the file tree, and the project search. |
+| `src/lib/monaco.ts` | The Monaco setup: local workers, themes, and no semantic TypeScript checks. |
 | `src/lib/connections.ts` | The connection list, the tokens, and the target of each connection. |
 | `src/daemon/connection.ts` | The WebSocket connection and the auth step. |
 | `src/daemon/protocol.ts` | The message types. See `docs/PROTOCOL.md`. |

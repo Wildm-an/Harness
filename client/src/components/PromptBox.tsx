@@ -42,7 +42,9 @@ export function PromptBox({
   onRequestCommands,
   onSubmit,
   onInterrupt,
+  insert,
 }: {
+  insert?: { text: string; key: number } | null; // Text to add, for example "@src/app.py:10-25" from the editor.
   running: boolean;
   disabled: boolean;
   commands: CommandItem[] | null; // null: not loaded yet.
@@ -92,6 +94,12 @@ export function PromptBox({
   useEffect(() => {
     if (!disabled) area.current?.focus();
   }, [disabled]);
+
+  useEffect(() => {
+    if (!insert) return;
+    setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}${insert.text} `);
+    area.current?.focus();
+  }, [insert]);
 
   const change = (value: string) => {
     setText(value);

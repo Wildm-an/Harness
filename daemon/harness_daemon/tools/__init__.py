@@ -7,6 +7,7 @@ from .bash import BashTool
 from .edit import EditTool
 from .glob import GlobTool
 from .grep import GrepTool
+from .preview import preview_tools
 from .read import ReadTool
 from .shell import ShellInfo, detect_shell
 from .skill import SkillTool
@@ -32,6 +33,7 @@ __all__ = [
     "ToolResult",
     "default_tools",
     "detect_shell",
+    "preview_tools",
     "truncate",
     "WriteTool",
 ]

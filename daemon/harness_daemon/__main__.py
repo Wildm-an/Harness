@@ -32,7 +32,8 @@ from pathlib import Path
 import uvicorn
 
 from .config import harness_home
-from .server import create_app
+from .server import create_app, stop_all_servers
+from .tunnels import TUNNELS
 
 SHUTDOWN_GRACE = 5
 
@@ -106,6 +107,13 @@ def main(argv: list[str] | None = None) -> None:
     asyncio.run(server.serve(sockets=[sock]))
 
 
+def _hard_exit() -> None:
+    # os._exit does not run the shutdown code. Do not leave ssh or server processes.
+    TUNNELS.close_all()
+    stop_all_servers()
+    os._exit(0)
+
+
 def _exit_on_stdin_eof(server: uvicorn.Server) -> None:
     """Stop the server when the parent process closes stdin or stops."""
     try:
@@ -115,7 +123,7 @@ def _exit_on_stdin_eof(server: uvicorn.Server) -> None:
         pass
     server.should_exit = True
     # A graceful stop cancels the turns. If it takes too long, stop now.
-    timer = threading.Timer(SHUTDOWN_GRACE, os._exit, args=(0,))
+    timer = threading.Timer(SHUTDOWN_GRACE, _hard_exit)
     timer.daemon = True
     timer.start()
 

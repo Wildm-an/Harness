@@ -64,6 +64,26 @@ class GrepTool(Tool):
         return ToolResult(_limit(lines, mode))
 
 
+MATCH_LINE_RE = re.compile(r"^(.+?):(\d+):(.*)$")
+
+
+def search_project(cwd: Path, query: str, *, regex: bool, ignore_case: bool, file_glob: str | None,
+                   ripgrep: str | None, limit: int = 500) -> tuple[list[dict[str, Any]], bool]:
+    """The project search of the editor. Return the matches and True if the list is truncated."""
+    rg = find_ripgrep(ripgrep)
+    search = _search_rg if rg else _search_python
+    args = (rg,) if rg else ()
+    lines = search(*args, cwd, cwd, query, "content", file_glob, ignore_case, 0, fixed=not regex)
+    items = []
+    for line in lines:
+        m = MATCH_LINE_RE.match(line)
+        if m:
+            items.append({"path": m.group(1), "line": int(m.group(2)), "text": m.group(3)[:MAX_LINE_CHARS]})
+        if len(items) >= limit:
+            return items, True
+    return items, False
+
+
 def _limit(lines: list[str], mode: str) -> str:
     limit = MAX_LINES if mode == "content" else MAX_FILES
     out = [line if len(line) <= MAX_LINE_CHARS else line[:MAX_LINE_CHARS] + " [...]" for line in lines[:limit]]
@@ -73,10 +93,12 @@ def _limit(lines: list[str], mode: str) -> str:
 
 
 def _search_rg(rg: str, cwd: Path, target: Path, pattern: str, mode: str,
-               file_glob: str | None, ignore_case: bool, context: int) -> list[str]:
+               file_glob: str | None, ignore_case: bool, context: int, fixed: bool = False) -> list[str]:
     args = ["--color", "never", "--no-messages", "--hidden", "-g", "!.git", "--path-separator", "/"]
     if ignore_case:
         args.append("-i")
+    if fixed:
+        args.append("-F")
     if file_glob:
         args += ["-g", file_glob]
     if mode == "files":
@@ -97,9 +119,9 @@ def _search_rg(rg: str, cwd: Path, target: Path, pattern: str, mode: str,
 
 
 def _search_python(cwd: Path, target: Path, pattern: str, mode: str,
-                   file_glob: str | None, ignore_case: bool, context: int) -> list[str]:
+                   file_glob: str | None, ignore_case: bool, context: int, fixed: bool = False) -> list[str]:
     try:
-        regex = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+        regex = re.compile(re.escape(pattern) if fixed else pattern, re.IGNORECASE if ignore_case else 0)
     except re.error as e:
         raise ToolError(f"The pattern is not a valid regular expression: {e}") from None
     base = target if target.is_dir() else target.parent

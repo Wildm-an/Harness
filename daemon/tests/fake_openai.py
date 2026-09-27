@@ -23,6 +23,8 @@ class FakeModel:
         self.requests: list[dict[str, Any]] = []
         self.capabilities = capabilities if capabilities is not None else ["completion", "tools"]
         self.num_ctx: int | None = 32768  # Reported by /api/show. None: not set.
+        self.required_key: str | None = None  # If set, /v1/models needs "Authorization: Bearer <key>".
+        self.models = ["test-model", "other-model"]
         self.app = self._build_app()
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -44,6 +46,12 @@ class FakeModel:
             if self.num_ctx:
                 body["parameters"] = f"num_ctx                        {self.num_ctx}"
             return body
+
+        @app.get("/v1/models")
+        async def models(request: Request):
+            if self.required_key and request.headers.get("authorization") != f"Bearer {self.required_key}":
+                return JSONResponse({"error": {"message": "Incorrect API key."}}, status_code=401)
+            return {"object": "list", "data": [{"id": m, "object": "model"} for m in self.models]}
 
         @app.post("/v1/chat/completions")
         async def completions(request: Request):

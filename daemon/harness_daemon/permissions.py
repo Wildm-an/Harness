@@ -110,16 +110,17 @@ class PermissionGate:
     async def check(self, tool: Tool, args: dict[str, Any], approval: Approval | None) -> bool:
         if not tool.needs_approval or approval is None:
             return True
-        if self.rules.denies(tool.name, approval.key):
+        name = approval.tool or tool.name
+        if self.rules.denies(name, approval.key):
             return False
-        if self.rules.allows(tool.name, approval.key):
+        if self.rules.allows(name, approval.key):
             return True
-        if any(rule_matches(r, tool.name, approval.key) for r in (*self.session_allow, *self.turn_allow)):
+        if any(rule_matches(r, name, approval.key) for r in (*self.session_allow, *self.turn_allow)):
             return True
         decision = await self.approver({
             "request_id": uuid.uuid4().hex,
             "tool": tool.name,
-            "input": args,
+            "input": approval.input if approval.input is not None else args,
             "diff": approval.diff,
             "rule": approval.rule,
         })

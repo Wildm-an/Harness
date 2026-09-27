@@ -21,4 +21,7 @@ A desktop app for agentic coding with local models. See [SPEC.md](SPEC.md) for t
 | 5. All tools and context control | Complete. `write`, `glob`, and `grep` tools, the project instruction file, and context compaction (automatic at 80%, and `/compact`). |
 | 6. Skills | Complete. SKILL.md loader, `skill` tool, `/` menu, argument substitution, `allowed-tools`, `context: fork` subagents, and the Skills panel. |
 | 7. Remote mode | Complete. Connections screen, direct and SSH tunnel connections, tokens in the keychain, a stable daemon token file, and a remote folder picker. |
-| 8–13 | Not started. |
+| 8. Code editor | Complete. Pane layout (splits, tabs, drag and drop, saved for each project), Monaco editor, file tree, project search, save conflicts, agent edit updates, and chat path links. |
+| 9. Servers and browser | Complete. `launch.json` with auto-detection, the Servers pane and toolbar menu, the Browser pane (Tauri child webview), project file URLs, and port forwarding for remote daemons. |
+| 10. Agent preview tools | Complete. A headless Chromium through Playwright in the daemon, the nine `preview_*` tools, the navigation allow list, the agent view in the Browser pane, screenshots for models with image input, and the Auto-verify setting. |
+| 11–13 | Not started. |

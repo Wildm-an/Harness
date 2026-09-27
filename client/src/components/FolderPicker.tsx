@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, Check, Folder, FolderGit2, HardDrive, House, LoaderCircle, X } from "lucide-react";
 import type { DirListing, HostInfo } from "../daemon/protocol";
+import { useOverlay } from "../lib/overlay";
 
 /**
  * Selects a project folder on the daemon host. The native dialog shows only the disk of
@@ -26,6 +27,7 @@ export function FolderPicker({
   const [hidden, setHidden] = useState(false);
   const [typed, setTyped] = useState("");
   const dialog = useRef<HTMLDivElement>(null);
+  useOverlay(true);
 
   useEffect(() => {
     onNavigate(initialPath || undefined, false);

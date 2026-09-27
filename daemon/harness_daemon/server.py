@@ -7,22 +7,43 @@ import getpass
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import platform
+import secrets
 import socket
 import string
 import subprocess
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 
 from . import __version__
 from .agent import Agent
-from .config import ConfigError, harness_home, load_settings
-from .files import PathError, hash_bytes, is_binary, relpath, resolve_in_cwd
+from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
+from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, PermissionRules
-from .providers import ModelClient, check_tool_support, load_providers, resolve_context_length, resolve_model
+from .preview import PreviewHost
+from . import provider_config
+from .providers import (
+    DEFAULT_CONTEXT_LENGTH,
+    ModelClient,
+    endpoint,
+    image_input,
+    load_providers,
+    model_capabilities,
+    resolve_context_length,
+    resolve_model,
+)
+from .tools.base import ToolError
+from .tools.grep import search_project
+from .tunnels import TUNNELS, TunnelError
+from .launch import load_launch, propose, save_launch
+from .references import expand_references
+from .servers import ServerManager
 from .session import Session
 from .skills import Skill, discover_skills
 from .storage import Storage
@@ -30,6 +51,8 @@ from .storage import Storage
 log = logging.getLogger("harness.daemon")
 
 AUTH_TIMEOUT = 10
+WATCH_INTERVAL = 1.5
+MAX_WATCHED = 200
 AUTH_FAILED = 4401
 MAX_EDITOR_FILE = 5 * 1024 * 1024
 HIDDEN_NAMES = {".git"}
@@ -40,6 +63,7 @@ BUILTIN_COMMANDS: dict[str, str] = {
     "model": "Show the model, or change it: /model <provider>/<model>.",
     "skills": "Open the Skills panel: the skills and their sources.",
     "cookbook": "Open the Cookbook panel.",
+    "providers": "Open the Providers screen: the model endpoints and their API keys.",
     "servers": "Open the Servers pane.",
     "preview": "Start the default server and open it in the Browser pane.",
     "help": "List the commands.",
@@ -52,17 +76,40 @@ NOT_AVAILABLE = {
     "hf.search": "the Cookbook",
     "hf.model": "the Cookbook",
     "hf.download": "the Cookbook",
-    "server.start": "the Servers pane",
-    "server.stop": "the Servers pane",
 }
+
+# Project files for the Browser pane: a random token for each session -> the project folder.
+FILE_ROOTS: dict[str, Path] = {}
+# The server managers of all connections. The daemon stops their servers when it stops.
+MANAGERS: set[ServerManager] = set()
+# The preview hosts of all connections. The daemon stops their agent browsers when it stops.
+PREVIEWS: set[PreviewHost] = set()
+
+# Project settings that the client can change with "settings.set", and their types.
+CLIENT_SETTINGS: dict[str, type] = {"auto_verify": bool}
 
 
 class ProtocolError(Exception):
     pass
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    TUNNELS.close_all()  # Close the SSH tunnels to model endpoints.
+    stop_all_servers()
+
+
+def stop_all_servers() -> None:
+    """Stop the local servers and the agent browsers of all sessions at once. For a daemon that stops."""
+    for manager in list(MANAGERS):
+        manager.kill_all_now()
+    for host in list(PREVIEWS):
+        host.close_now()
+
+
 def create_app(token: str, storage: Storage | None = None) -> FastAPI:
-    app = FastAPI(title="harness-daemon", version=__version__)
+    app = FastAPI(title="harness-daemon", version=__version__, lifespan=lifespan)
     app.state.storage = storage or Storage(harness_home() / "harness.db")
 
     @app.get("/health")
@@ -88,7 +135,121 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
         await conn.send({"type": "auth.ok", "version": __version__, "host": host_info()})
         await conn.run()
 
+    @app.websocket("/forward")
+    async def forward_endpoint(websocket: WebSocket):
+        """Forward a TCP connection to a server of launch.json (SPEC.md section 8.6, remote mode).
+
+        Messages: {"type": "auth", "token"}, then {"type": "forward", "session_id", "server"}.
+        The daemon replies {"type": "forward.ok"}. Then the binary messages carry the TCP bytes.
+        Only the ports of the servers in launch.json can be reached.
+        """
+        await websocket.accept()
+        try:
+            first = json.loads(await asyncio.wait_for(websocket.receive_text(), AUTH_TIMEOUT))
+            given = first.get("token") if isinstance(first, dict) and first.get("type") == "auth" else None
+            if not isinstance(given, str) or not hmac.compare_digest(given.encode(), token.encode()):
+                await websocket.close(code=AUTH_FAILED, reason="Bad token")
+                return
+            request = json.loads(await asyncio.wait_for(websocket.receive_text(), AUTH_TIMEOUT))
+            port = _forward_port(app.state.storage, request)
+        except (asyncio.TimeoutError, json.JSONDecodeError, WebSocketDisconnect, RuntimeError):
+            return
+        except ProtocolError as e:
+            await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
+            await websocket.close(code=4404)
+            return
+        await _pipe(websocket, port)
+
+    @app.get("/files/{file_token}/{rel_path:path}")
+    async def project_file(file_token: str, rel_path: str):
+        """A project file for the Browser pane: HTML, PDF, images, and video. Read only."""
+        root = FILE_ROOTS.get(file_token)
+        if root is None:
+            raise HTTPException(status_code=404)
+        try:
+            path = resolve_in_cwd(root, rel_path or "index.html")
+        except PathError:
+            raise HTTPException(status_code=404) from None
+        if path.is_dir():
+            path = path / "index.html"
+        if not path.is_file():
+            raise HTTPException(status_code=404)
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
+        if media_type in ("text/html", "image/svg+xml"):
+            # The page runs in a sandbox with its own origin: it cannot read other daemon URLs.
+            headers["Content-Security-Policy"] = "sandbox allow-scripts allow-forms allow-popups allow-modals"
+        return FileResponse(path, media_type=media_type, headers=headers)
+
     return app
+
+
+def _forward_port(storage: Storage, request: Any) -> int:
+    if not isinstance(request, dict) or request.get("type") != "forward":
+        raise ProtocolError("The second message must be a forward request.")
+    row = storage.get_session(str(request.get("session_id") or ""))
+    if row is None:
+        raise ProtocolError("Unknown session.")
+    project = Path(row["cwd"])
+    name = request.get("server")
+    # A running server can have another port than launch.json (for example, Vite picks a free port).
+    for manager in MANAGERS:
+        if manager.project == project and name in manager.servers:
+            server = manager.servers[name]
+            if server.port:
+                return server.port
+    configs = load_launch(project) or []
+    config = next((c for c in configs if c.name == name), None)
+    if config is None or not config.port:
+        raise ProtocolError(f"The server {name!r} is not in launch.json, or it has no port.")
+    return config.port
+
+
+async def _pipe(websocket: WebSocket, port: int) -> None:
+    """Copy bytes between the WebSocket and the local server port."""
+    reader = writer = None
+    for host in ("127.0.0.1", "::1"):
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+            break
+        except OSError:
+            continue
+    if writer is None:
+        await websocket.send_text(json.dumps({"type": "error", "message": f"Nothing listens on port {port}."}))
+        await websocket.close(code=4502)
+        return
+    await websocket.send_text(json.dumps({"type": "forward.ok"}))
+
+    async def upstream() -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            data = message.get("bytes")
+            if data:
+                writer.write(data)
+                await writer.drain()
+
+    async def downstream() -> None:
+        while True:
+            data = await reader.read(65536)
+            if not data:
+                return
+            await websocket.send_bytes(data)
+
+    tasks = [asyncio.create_task(upstream()), asyncio.create_task(downstream())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    except Exception:  # noqa: BLE001 - one side closed.
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        writer.close()
+        try:
+            await websocket.close()
+        except (RuntimeError, WebSocketDisconnect):
+            pass
 
 
 def host_info() -> dict[str, str]:
@@ -126,10 +287,19 @@ class Connection:
         self.pending: dict[str, asyncio.Future] = {}
         self._send_lock = asyncio.Lock()
         self._open = True
+        # The files that the editor has open: relative path -> the last known hash.
+        self.watched: dict[str, str | None] = {}
+        self.servers: ServerManager | None = None
+        self.preview: PreviewHost | None = None
+        self.files_token: str | None = None
+        self._watcher: asyncio.Task | None = None
 
     async def send(self, message: dict[str, Any]) -> None:
         if not self._open:
             return
+        if message.get("type") == "fs.changed" and message.get("path") in self.watched:
+            # The agent changed an open file. The watcher must not report it again.
+            self.watched[message["path"]] = message.get("hash")
         async with self._send_lock:
             try:
                 await self.ws.send_text(json.dumps(message))
@@ -142,7 +312,30 @@ class Connection:
             body["ref"] = ref
         await self.send(body)
 
+    async def watch_files(self) -> None:
+        """Report changes to the open files that the agent tools and the editor did not make.
+
+        A change during a turn is probably from a bash command of the agent.
+        """
+        while self._open:
+            await asyncio.sleep(WATCH_INTERVAL)
+            session = self.session
+            if session is None or not self.watched:
+                continue
+            for rel, known in list(self.watched.items())[:MAX_WATCHED]:
+                try:
+                    path = resolve_in_cwd(session.cwd, rel)
+                    current = await asyncio.to_thread(file_hash, path)
+                except (PathError, OSError):
+                    continue
+                if rel in self.watched and current != self.watched[rel]:
+                    self.watched[rel] = current
+                    running = self.turn is not None and not self.turn.done()
+                    await self.send({"type": "fs.changed", "path": rel, "hash": current,
+                                     "by": "agent" if running else "external"})
+
     async def run(self) -> None:
+        self._watcher = asyncio.create_task(self.watch_files())
         try:
             while True:
                 try:
@@ -173,7 +366,10 @@ class Connection:
                     await self.error(f"Internal error: {type(e).__name__}: {e}", ref=kind)
         finally:
             self._open = False
+            if self._watcher:
+                self._watcher.cancel()
             await self._stop_turn()
+            await self._close_session()
 
     # -- helpers ---------------------------------------------------------
 
@@ -181,6 +377,69 @@ class Connection:
         if self.session is None:
             raise ProtocolError("No session. Send 'session.new' or 'session.resume' first.")
         return self.session
+
+    async def _close_session(self) -> None:
+        """Stop the agent browser and the servers of the session, and end its file URLs."""
+        if self.preview is not None:
+            await self.preview.close()
+            PREVIEWS.discard(self.preview)
+            self.preview = None
+        if self.servers is not None:
+            await self.servers.stop_all()
+            MANAGERS.discard(self.servers)
+            self.servers = None
+        if self.files_token:
+            FILE_ROOTS.pop(self.files_token, None)
+            self.files_token = None
+
+    async def open_session(self, session: Session) -> None:
+        await self._close_session()
+        self.session = session
+        self.watched.clear()
+        self.servers = ServerManager(session.cwd, session.agent.ctx.shell, self.send)
+        MANAGERS.add(self.servers)
+        self.preview = PreviewHost(self.servers, self.send)
+        PREVIEWS.add(self.preview)
+        session.agent.enable_preview(self.preview)
+        self.files_token = secrets.token_urlsafe(24)
+        FILE_ROOTS[self.files_token] = session.cwd
+
+    def require_servers(self) -> ServerManager:
+        self.require_session()
+        assert self.servers is not None
+        return self.servers
+
+    async def approve_server(self, name: str) -> bool:
+        """The first start of a server command needs approval. "Always" adds a server(<command>) rule."""
+        session = self.require_session()
+        config = self.require_servers().get(name).config
+        rules = PermissionRules(session.cwd)
+        if rules.denies("server", config.command):
+            return False
+        if rules.allows("server", config.command):
+            return True
+        rule = f"server({config.command})"
+        decision = await self.approve({
+            "request_id": secrets.token_hex(16),
+            "tool": "server",
+            "input": {"name": name, "command": config.command, "cwd": config.cwd},
+            "diff": None,
+            "rule": rule,
+        })
+        if decision == "allow_always":
+            rules.add_allow(rule)
+        return decision in ("allow_once", "allow_always")
+
+    async def start_server(self, name: str) -> None:
+        manager = self.require_servers()
+        try:
+            manager.get(name)
+        except KeyError:
+            raise ProtocolError(f"Unknown server: {name}. The servers are in .harness/launch.json.") from None
+        if not await self.approve_server(name):
+            await self.send({**manager.get(name).status(), "error": "You denied the start of this server."})
+            return
+        await manager.start(name)
 
     def require_idle(self) -> None:
         if self.turn is not None and not self.turn.done():
@@ -211,24 +470,38 @@ class Connection:
                          history: list[dict] | None = None, summary: str | None = None) -> tuple[Agent, list[str]]:
         settings = load_settings(cwd)
         provider, model_name = resolve_model(model or settings.get("default_model"), provider_name)
-        warnings, context_length = await self.model_checks(provider, model_name, settings)
+        warnings, context_length, images = await self.model_checks(provider, model_name, settings)
         agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=self.send,
                       approver=self.approve, settings=settings, history=history,
-                      summary=summary, context_length=context_length, skills=discover_skills(cwd))
+                      summary=summary, context_length=context_length, skills=discover_skills(cwd),
+                      image_input=images)
         return agent, warnings
 
     @staticmethod
-    async def model_checks(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], int]:
-        """Check tool support and find the context length. Return the warnings and the length."""
-        support, context = await asyncio.gather(
-            check_tool_support(provider, model), resolve_context_length(provider, model, settings))
+    async def model_checks(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], int, bool]:
+        """Check tool support, find the context length, and find if the model accepts images.
+
+        Return the warnings, the context length, and the image input flag.
+        """
+        try:
+            reachable = await endpoint(provider)  # Opens the SSH tunnel of the provider, if it has one.
+        except TunnelError as e:
+            configured = settings.get("context_length") or provider.context_length or DEFAULT_CONTEXT_LENGTH
+            return [str(e)], int(configured), image_input(provider, model, settings, None)
+        caps, context = await asyncio.gather(
+            model_capabilities(reachable, model), resolve_context_length(reachable, model, settings))
+        support = None if caps is None else "tools" in caps
         warnings = []
+        if provider.key_missing:
+            warnings.append(f"The provider {provider.name} has no API key. {provider.key_missing} "
+                            "Open the Providers screen to enter the key.")
         if support is False:
             warnings.append(f"The model {model} does not support tool calls. "
                             "The agent cannot read files, edit files, or run commands.")
         if context.warning:
             warnings.append(context.warning)
-        return warnings, context.length
+        # "provider" (not "reachable"): the models of providers.json use the configured name.
+        return warnings, context.length, image_input(provider, model, settings, caps)
 
     async def send_ready(self, warnings: list[str]) -> None:
         s = self.require_session()
@@ -244,13 +517,19 @@ class Connection:
             "context_length": s.agent.context_length,
             "context_tokens": s.agent.context_tokens(),
             "instructions": s.agent.instructions.name if s.agent.instructions else None,
+            "files_token": self.files_token,
+            "project": _project_ref(self.storage, s.cwd),
+            "auto_verify": bool(s.agent.settings.get("auto_verify")),
+            "image_input": s.agent.image_input,
         })
 
     async def run_turn(self, text: str) -> None:
         session = self.require_session()
         session.set_title_from(text)
+        # "@src/app.py:10-25" references from the editor: add the lines to the prompt.
+        expanded = await asyncio.to_thread(expand_references, text, session.cwd)
         try:
-            await session.agent.run_turn(text)
+            await session.agent.run_turn(expanded, display=text if expanded != text else None)
         finally:
             session.persist()
 
@@ -275,6 +554,12 @@ class Connection:
             await session.agent.run_compact()
         finally:
             session.persist()
+
+
+def _project_ref(storage: Storage, cwd: Path) -> dict[str, str] | None:
+    """The saved project of a session folder: its id and name."""
+    found = storage.find_project(str(cwd))
+    return {"id": found["id"], "name": found["name"]} if found else None
 
 
 def _project_dir(value: Any) -> Path:
@@ -304,7 +589,8 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
     cwd = _project_dir(msg.get("cwd"))
     agent, warnings = await conn.make_agent(cwd, msg.get("provider"), msg.get("model"))
     session_id = conn.storage.create_session(str(cwd), agent.client.provider.name, agent.client.model)
-    conn.session = Session(conn.storage, session_id, agent)
+    conn.storage.touch_project(str(cwd))  # A new folder becomes a project.
+    await conn.open_session(Session(conn.storage, session_id, agent))
     await conn.send_ready(warnings)
 
 
@@ -318,14 +604,73 @@ async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
     cwd = _project_dir(row["cwd"])
     history = conn.storage.load_messages(session_id)
     agent, warnings = await conn.make_agent(cwd, row["provider"], row["model"], history, row["summary"])
-    conn.session = Session(conn.storage, session_id, agent, title=row["title"])
+    conn.storage.touch_project(str(cwd))
+    await conn.open_session(Session(conn.storage, session_id, agent, title=row["title"]))
     await conn.send_ready(warnings)
 
 
 @handler("session.list")
 async def on_session_list(conn: Connection, msg: dict[str, Any]) -> None:
     cwd = msg.get("cwd")
-    await conn.send({"type": "sessions", "items": conn.storage.list_sessions(cwd if isinstance(cwd, str) else None)})
+    await conn.send({"type": "sessions", "items": conn.storage.list_sessions(cwd if isinstance(cwd, str) else None),
+                     "cwd": cwd if isinstance(cwd, str) else None})
+
+
+# -- projects: saved project folders (the start screen) -----------------------------------
+
+MAX_PROJECT_NAME = 80
+
+
+async def _send_projects(conn: Connection, saved: str | None = None) -> None:
+    items = conn.storage.list_projects()
+    for item in items:
+        item["exists"] = Path(item["path"]).is_dir()
+    body: dict[str, Any] = {"type": "projects", "items": items}
+    if saved:
+        body["saved"] = saved
+    await conn.send(body)
+
+
+@handler("projects.list")
+async def on_projects_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_projects(conn)
+
+
+@handler("projects.save")
+async def on_projects_save(conn: Connection, msg: dict[str, Any]) -> None:
+    """Add or change a project: {"id"?, "name"?, "path", "create"?}. "create" makes a missing folder."""
+    raw = _text_arg(msg, "path").strip()
+    if not raw:
+        raise ProtocolError("Give the project folder.")
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise ProtocolError("The project folder must be an absolute path.")
+    if not path.exists():
+        if not msg.get("create"):
+            raise ProtocolError(f"The folder does not exist: {path}. Select \"Create the folder\" to make it.")
+        try:
+            path.mkdir(parents=True)
+        except OSError as e:
+            raise ProtocolError(f"The daemon cannot create the folder: {e}") from None
+    if not path.is_dir():
+        raise ProtocolError(f"Not a folder: {path}")
+    path = path.resolve()
+    name = str(msg.get("name") or "").strip() or path.name or str(path)
+    if len(name) > MAX_PROJECT_NAME:
+        raise ProtocolError(f"The name can have {MAX_PROJECT_NAME} characters or less.")
+    project_id = msg.get("id") if isinstance(msg.get("id"), str) else None
+    try:
+        saved = conn.storage.save_project(name, str(path), project_id)
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
+    await _send_projects(conn, saved)
+
+
+@handler("projects.delete")
+async def on_projects_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    """Remove a project from the list. The folder, its files, and its sessions stay."""
+    conn.storage.delete_project(_text_arg(msg, "id"))
+    await _send_projects(conn)
 
 
 # -- turns ---------------------------------------------------------------------
@@ -399,11 +744,11 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
             return
         conn.require_idle()
         provider, model = resolve_model(args.strip())
-        warnings, context_length = await conn.model_checks(provider, model, session.agent.settings)
-        session.agent.set_client(ModelClient(provider, model), context_length)
+        warnings, context_length, images = await conn.model_checks(provider, model, session.agent.settings)
+        session.agent.set_client(ModelClient(provider, model), context_length, images)
         conn.storage.update_session(session.id, provider=provider.name, model=model)
         await result(text=f"The model is now {session.agent.client.label}.", model=session.agent.client.label,
-                     warnings=warnings, context_length=context_length)
+                     warnings=warnings, context_length=context_length, image_input=images)
     elif name == "compact":
         conn.require_session()
         conn.require_idle()
@@ -411,10 +756,19 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
     elif name == "skills":
         items = [s.summary() for s in conn.skills().values()]
         await result(action="open_panel", panel="skills", items=items)
-    elif name in ("cookbook", "servers"):
+    elif name in ("cookbook", "servers", "providers"):
         await result(action="open_panel", panel=name)
-    else:  # preview
-        raise ProtocolError(f"/{name} is not in this build yet.")
+    elif name == "preview":
+        manager = conn.require_servers()
+        manager.reload()
+        server = manager.default()
+        if server is None:
+            await result(action="open_panel", panel="servers",
+                         text="There is no server in .harness/launch.json. The Servers pane can propose one.")
+            return
+        # The start can wait for an approval: run it as a task, so that the connection stays free.
+        asyncio.create_task(_start_quietly(conn, server.config.name))
+        await result(action="preview", server=server.config.name, url=server.url)
 
 
 # -- permission rules ----------------------------------------------------------
@@ -441,6 +795,129 @@ async def on_permissions_set(conn: Connection, msg: dict[str, Any]) -> None:
     except ValueError as e:
         raise ProtocolError(str(e)) from e
     await _send_rules(conn, session)
+
+
+# -- providers (the Providers screen) ---------------------------------------------------
+
+
+async def _send_providers(conn: Connection) -> None:
+    items, exists = provider_config.list_items()
+    await conn.send({"type": "providers", "items": items, "path": str(provider_config.providers_path()),
+                     "exists": exists})
+
+
+def _refresh_session_provider(conn: Connection, names: list[str] | None = None) -> None:
+    """Use the changed settings or key of the provider of the session in the next model call."""
+    session = conn.session
+    if session is None:
+        return
+    client = session.agent.client
+    if names is not None and client.provider.name not in names:
+        return
+    try:
+        provider = load_providers(include_disabled=True)[client.provider.name]
+    except (ConfigError, KeyError):
+        return  # The provider was deleted or renamed. The session keeps its old settings.
+    session.agent.set_client(ModelClient(provider, client.model))
+
+
+def _provider_fields(msg: dict[str, Any]) -> dict[str, Any]:
+    keys = ("name", "base_url", "kind", "context_length", "ssh", "key", "api_key_env", "previous_name")
+    return {k: msg.get(k) for k in keys}
+
+
+@handler("providers.list")
+async def on_providers_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_providers(conn)
+
+
+@handler("providers.save")
+async def on_providers_save(conn: Connection, msg: dict[str, Any]) -> None:
+    """Add or change a provider. With "previous_name", change (and maybe rename) that provider."""
+    previous = msg.get("previous_name")
+    name = provider_config.save_provider(_provider_fields(msg), previous if isinstance(previous, str) else None)
+    _refresh_session_provider(conn, [name])
+    await _send_providers(conn)
+
+
+@handler("providers.delete")
+async def on_providers_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    provider_config.delete_provider(_text_arg(msg, "name"))
+    await _send_providers(conn)
+
+
+@handler("providers.enable")
+async def on_providers_enable(conn: Connection, msg: dict[str, Any]) -> None:
+    enabled = msg.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ProtocolError("'enabled' must be true or false.")
+    provider_config.set_enabled(_text_arg(msg, "name"), enabled)
+    await _send_providers(conn)
+
+
+@handler("providers.keys")
+async def on_providers_keys(conn: Connection, msg: dict[str, Any]) -> None:
+    """API keys from the keychain of the client: {"keys": {"<provider>": "<key>" or null}}. Memory only."""
+    keys = msg.get("keys")
+    if not isinstance(keys, dict):
+        raise ProtocolError("'keys' must be an object that maps provider names to keys.")
+    changed = provider_config.set_client_keys(keys)
+    if changed:
+        _refresh_session_provider(conn, changed)
+    await _send_providers(conn)
+
+
+@handler("providers.test")
+async def on_providers_test(conn: Connection, msg: dict[str, Any]) -> None:
+    """Test the form values of a provider: GET <base_url>/models. "api_key" is a new key that is not saved yet."""
+    api_key = msg.get("api_key")
+    provider = provider_config.provider_for_test(_provider_fields(msg), api_key if isinstance(api_key, str) else None)
+    ref = msg.get("ref")
+
+    async def run() -> None:  # A slow endpoint must not block the other messages.
+        found = await provider_config.list_models(provider)
+        await conn.send({"type": "providers.test", "ref": ref, "name": provider.name, **found})
+
+    asyncio.create_task(run())
+
+
+@handler("models.list")
+async def on_models_list(conn: Connection, msg: dict[str, Any]) -> None:
+    """The models of each provider that is on, for the model field of the client."""
+    async def run() -> None:
+        await conn.send({"type": "models", **await provider_config.all_models()})
+
+    asyncio.create_task(run())
+
+
+async def _send_settings(conn: Connection, session: Session) -> None:
+    await conn.send({"type": "settings", **{k: session.agent.settings.get(k) for k in CLIENT_SETTINGS}})
+
+
+@handler("settings.get")
+async def on_settings_get(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_settings(conn, conn.require_session())
+
+
+@handler("settings.set")
+async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """Change project settings, for example {"auto_verify": true}. The other keys stay the same."""
+    session = conn.require_session()
+    changes = {k: v for k, v in msg.items() if k != "type"}
+    if not changes:
+        raise ProtocolError(f"Give one or more settings: {', '.join(CLIENT_SETTINGS)}.")
+    for key, value in changes.items():
+        kind = CLIENT_SETTINGS.get(key)
+        if kind is None:
+            raise ProtocolError(f"Unknown setting: {key}. The settings are: {', '.join(CLIENT_SETTINGS)}.")
+        if not isinstance(value, kind):
+            raise ProtocolError(f"'{key}' must be a {kind.__name__}.")
+    path = project_settings_path(session.cwd)
+    data = read_json(path, {})
+    data.update(changes)
+    write_json(path, data)
+    session.agent.reload_settings(load_settings(session.cwd))
+    await _send_settings(conn, session)
 
 
 @handler("skills.list")
@@ -473,9 +950,94 @@ async def on_skills_get(conn: Connection, msg: dict[str, Any]) -> None:
     })
 
 
+async def _start_quietly(conn: Connection, name: str) -> None:
+    try:
+        await conn.start_server(name)
+    except ProtocolError as e:
+        await conn.error(str(e), ref="server.start")
+
+
+async def _send_servers(conn: Connection) -> None:
+    manager = conn.require_servers()
+    exists = manager.reload()
+    body: dict[str, Any] = {
+        "type": "servers",
+        "items": manager.items(),
+        "path": ".harness/launch.json",
+        "config": "invalid" if manager.config_error else ("exists" if exists else "missing"),
+    }
+    if manager.config_error:
+        body["error"] = manager.config_error
+    if not exists:
+        body["proposal"] = [c.to_json() for c in propose(manager.project)]
+    await conn.send(body)
+
+
 @handler("server.list")
 async def on_server_list(conn: Connection, msg: dict[str, Any]) -> None:
-    await conn.send({"type": "servers", "items": []})
+    await _send_servers(conn)
+
+
+@handler("server.save")
+async def on_server_save(conn: Connection, msg: dict[str, Any]) -> None:
+    """Write launch.json: the approved proposal, or a changed configuration."""
+    manager = conn.require_servers()
+    servers = msg.get("servers")
+    if not isinstance(servers, list) or not servers:
+        raise ProtocolError("'servers' must be a list with one or more servers.")
+    save_launch(manager.project, servers)
+    await _send_servers(conn)
+
+
+@handler("server.start")
+async def on_server_start(conn: Connection, msg: dict[str, Any]) -> None:
+    name = _text_arg(msg, "name")
+    conn.require_servers().reload()
+    asyncio.create_task(_start_quietly(conn, name))
+
+
+@handler("server.stop")
+async def on_server_stop(conn: Connection, msg: dict[str, Any]) -> None:
+    manager = conn.require_servers()
+    if msg.get("all") or msg.get("name") == "all":
+        await manager.stop_all()
+        return
+    name = _text_arg(msg, "name")
+    try:
+        await manager.stop(name)
+    except KeyError:
+        raise ProtocolError(f"Unknown server: {name}") from None
+
+
+@handler("server.restart")
+async def on_server_restart(conn: Connection, msg: dict[str, Any]) -> None:
+    manager = conn.require_servers()
+    name = _text_arg(msg, "name")
+    try:
+        await manager.stop(name)
+    except KeyError:
+        raise ProtocolError(f"Unknown server: {name}") from None
+
+    async def later() -> None:
+        server = manager.get(name)
+        for _ in range(100):  # Wait for the old process to stop.
+            if server.proc is None:
+                break
+            await asyncio.sleep(0.05)
+        await _start_quietly(conn, name)
+
+    asyncio.create_task(later())
+
+
+@handler("server.logs")
+async def on_server_logs(conn: Connection, msg: dict[str, Any]) -> None:
+    name = _text_arg(msg, "name")
+    try:
+        server = conn.require_servers().get(name)
+    except KeyError:
+        raise ProtocolError(f"Unknown server: {name}") from None
+    await conn.send({"type": "server.logs", "name": name,
+                     "lines": [{"stream": st, "text": t} for st, t in server.logs]})
 
 
 # -- files ---------------------------------------------------------------------
@@ -589,6 +1151,7 @@ async def on_fs_read(conn: Connection, msg: dict[str, Any]) -> None:
         content = data.decode("utf-8")
     except UnicodeDecodeError:
         raise ProtocolError("The file is not UTF-8 text.") from None
+    conn.watched[relpath(session.cwd, path)] = hash_bytes(data)
     await conn.send({"type": "fs.content", "path": relpath(session.cwd, path), "content": content,
                      "hash": hash_bytes(data)})
 
@@ -609,4 +1172,29 @@ async def on_fs_write(conn: Connection, msg: dict[str, Any]) -> None:
     data = content.encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+    if rel in conn.watched:
+        conn.watched[rel] = hash_bytes(data)
     await conn.send({"type": "fs.saved", "path": rel, "hash": hash_bytes(data)})
+
+
+@handler("fs.unwatch")
+async def on_fs_unwatch(conn: Connection, msg: dict[str, Any]) -> None:
+    """The editor closed a file. Stop the change reports for it."""
+    conn.watched.pop(_text_arg(msg, "path"), None)
+
+
+@handler("fs.search")
+async def on_fs_search(conn: Connection, msg: dict[str, Any]) -> None:
+    """The project search of the editor. It uses ripgrep if it is available."""
+    session = conn.require_session()
+    query = _text_arg(msg, "query")
+    if not query:
+        raise ProtocolError("The search text is empty.")
+    glob = msg.get("glob") if isinstance(msg.get("glob"), str) and msg.get("glob").strip() else None
+    try:
+        items, truncated = await asyncio.to_thread(
+            search_project, session.cwd, query, regex=bool(msg.get("regex")), ignore_case=not msg.get("case"),
+            file_glob=glob, ripgrep=session.agent.settings.get("ripgrep"))
+    except ToolError as e:
+        raise ProtocolError(str(e)) from e
+    await conn.send({"type": "fs.results", "query": query, "items": items, "truncated": truncated})

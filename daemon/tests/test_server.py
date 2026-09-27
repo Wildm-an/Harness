@@ -62,6 +62,26 @@ class Client:
         self.send({"type": "session.new", "cwd": str(project), "model": model})
         return self.until("session.ready")[0]
 
+    def until_status(self, name: str, state: str, timeout: float = 20) -> tuple[dict, list[dict]]:
+        """Wait for a server.status message of one server in one state."""
+        seen = []
+        deadline = time.time() + timeout
+        while True:
+            msg = self.recv(max(deadline - time.time(), 0.01))
+            seen.append(msg)
+            if msg["type"] == "server.status" and msg["name"] == name and msg["state"] == state:
+                return msg, seen
+
+    def collect_logs(self, name: str, until, timeout: float = 10) -> dict[str, str]:
+        """Collect the server.log text of one server until ``until(all text)`` is true."""
+        logs = {"stdout": "", "stderr": ""}
+        deadline = time.time() + timeout
+        while not until(logs["stdout"] + logs["stderr"]):
+            msg = self.recv(max(deadline - time.time(), 0.01))
+            if msg["type"] == "server.log" and msg["name"] == name:
+                logs[msg["stream"]] += msg["text"] + "\n"
+        return logs
+
     def close(self) -> None:
         self._conn.__exit__(None, None, None)
 

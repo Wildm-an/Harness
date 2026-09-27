@@ -1,13 +1,52 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { Cpu, Globe, KeyRound, LoaderCircle, Monitor, Plus, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Code2,
+  Cpu,
+  Globe as GlobeIcon,
+  Server,
+  FileDiff,
+  Globe,
+  KeyRound,
+  LoaderCircle,
+  MessageSquare,
+  Monitor,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { chatReducer, emptyChat, type PermissionItem } from "./chat/state";
 import { DaemonConnection, type ConnectionStatus } from "./daemon/connection";
-import type { CommandItem, Decision, DirListing, HostInfo, SessionSummary, SkillDetail } from "./daemon/protocol";
+import type {
+  CommandItem,
+  Decision,
+  DirListing,
+  HostInfo,
+  ProjectItem,
+  ProviderFields,
+  ProviderItem,
+  SessionSummary,
+  SkillDetail,
+} from "./daemon/protocol";
+import { ProvidersScreen, type ProviderSave, type ProviderTest } from "./components/ProvidersScreen";
+import { deleteProviderKey, loadProviderKey, renameProviderKey, saveProviderKey } from "./lib/providerKeys";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { FolderPicker } from "./components/FolderPicker";
 import { DiffReview } from "./components/DiffReview";
 import { RulesPanel, type Rules } from "./components/RulesPanel";
-import { SplitLayout } from "./components/SplitLayout";
+import { Workspace, type PaneSpec } from "./layout/Workspace";
+import { closePane, defaultLayout, findGroupOf, openPane, parseLayout, type LayoutNode, type PaneId } from "./layout/model";
+import { EditorPane } from "./editor/EditorPane";
+import { useEditor } from "./editor/useEditor";
+import { BrowserPane } from "./browser/BrowserPane";
+import { ServerMenu } from "./servers/ServerMenu";
+import { ServersPane } from "./servers/ServersPane";
+import { useServers } from "./servers/useServers";
+import type { AgentFrame, ServerItem } from "./daemon/protocol";
+import { parseUnifiedDiff } from "./lib/diff";
+import { OpenPathContext } from "./lib/openPath";
+import { normalizePath } from "./editor/paths";
+import { loadPref, savePref } from "./lib/prefs";
 import { MessageList } from "./components/MessageList";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { SessionStart } from "./components/SessionStart";
@@ -25,9 +64,11 @@ import {
   setLastConnectionId,
   type Connection,
 } from "./lib/connections";
-import { isTauri, pickFolder } from "./lib/tauri";
+import { browserView, forwardCloseAll, forwardOpen, isTauri, pickFolder } from "./lib/tauri";
 
-type Screen = "starting" | "connections" | "start" | "chat";
+type Screen = "starting" | "connections" | "start" | "chat" | "providers";
+
+const PROVIDER_REPLY_TIMEOUT = 15_000;
 
 // The remote folder picker. ``resolve`` returns the selected folder to the session start screen.
 interface Picker {
@@ -39,19 +80,34 @@ interface Picker {
 
 const CONNECTION_ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
 
+// Project files that open in the Browser pane.
+const BROWSER_FILE_RE = /\.(html?|pdf|png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|ogg|mp3|wav)$/i;
+
+function layoutKey(connectionId: string, cwd: string): string {
+  return `layout.${connectionId}:${cwd}`;
+}
+
+/** The saved layout of a project, or the default layout. */
+function loadLayout(connectionId: string, cwd: string): LayoutNode {
+  try {
+    return parseLayout(JSON.parse(loadPref(layoutKey(connectionId, cwd), "null"))) ?? defaultLayout();
+  } catch {
+    return defaultLayout();
+  }
+}
+
 function ConnectionIcon({ connection }: { connection: Connection | null }) {
   const Icon = CONNECTION_ICONS[connection?.kind ?? "local"];
   return <Icon size={13} aria-hidden />;
 }
 
-// The content of the side pane: a diff of one chat item, or the permission rules.
-type Side = { kind: "diff"; id: string } | { kind: "rules" } | { kind: "skills" } | null;
 
 interface ActiveSession {
   id: string;
   cwd: string;
   model: string;
   title: string | null;
+  project: string | null; // The name of the saved project.
 }
 
 function errorText(e: unknown): string {
@@ -82,7 +138,10 @@ function ContextMeter({ tokens, length }: { tokens: number; length: number }) {
 }
 
 export default function App() {
-  const conn = useMemo(() => new DaemonConnection(), []);
+  // A ref, not useMemo: React Fast Refresh runs useMemo again, and a second connection object would be closed.
+  const connRef = useRef<DaemonConnection | null>(null);
+  connRef.current ??= new DaemonConnection();
+  const conn = connRef.current;
   const [screen, setScreen] = useState<Screen>("starting");
   const [status, setStatus] = useState<ConnectionStatus>("closed");
   const [busy, setBusy] = useState(false);
@@ -96,10 +155,19 @@ export default function App() {
   const currentRef = useRef<Connection | null>(null);
   currentRef.current = current;
   const [startError, setStartError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  // The stored sessions of one folder (cwd), or of all folders (cwd null).
+  const [sessions, setSessions] = useState<{ cwd: string | null; items: SessionSummary[] }>({ cwd: null, items: [] });
   const [session, setSession] = useState<ActiveSession | null>(null);
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
-  const [side, setSide] = useState<Side>(null);
+  const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
+  const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
+  const [promptInsert, setPromptInsert] = useState<{ text: string; key: number } | null>(null);
+  const [browserRequest, setBrowserRequest] = useState<{ url: string; key: number } | null>(null);
+  const [previewServer, setPreviewServer] = useState<string | null>(null); // /preview waits for this server.
+  const [filesToken, setFilesToken] = useState<string | null>(null);
+  const [agentFrame, setAgentFrame] = useState<(AgentFrame & { key: number }) | null>(null); // The agent browser page.
+  const [autoVerify, setAutoVerify] = useState(false);
+  const targetRef = useRef<{ host: string; port: number; token: string } | null>(null);
   const [commands, setCommands] = useState<CommandItem[] | null>(null); // The / menu.
   const [skillItems, setSkillItems] = useState<CommandItem[] | null>(null); // The Skills panel.
   const [skillDetail, setSkillDetail] = useState<SkillDetail | null | "loading">(null);
@@ -110,6 +178,57 @@ export default function App() {
   const rulesSaving = useRef(false);
   const sessionRef = useRef<ActiveSession | null>(null);
   sessionRef.current = session;
+  // The Providers screen.
+  const [providers, setProviders] = useState<{ items: ProviderItem[]; path: string } | null>(null);
+  const [providerTest, setProviderTest] = useState<ProviderTest | null>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const [modelOptions, setModelOptions] = useState<string[]>([]); // provider/model, for the start screen.
+  const providerWait = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null);
+  const providerTestRef = useRef<string | null>(null);
+  const returnScreen = useRef<Screen>("start"); // The screen before the Providers screen.
+  // The saved projects of the daemon (the start screen).
+  const [projects, setProjects] = useState<ProjectItem[] | null>(null);
+  const projectWait = useRef<{ resolve: (id: string) => void; reject: (e: Error) => void } | null>(null);
+
+  /** Opens the Providers screen. Uses only refs and state setters: the message handler calls it too. */
+  const showProviders = useCallback(() => {
+    setScreen((s) => {
+      if (s !== "providers") returnScreen.current = s === "chat" || s === "start" ? s : "start";
+      return "providers";
+    });
+    setProviderError(null);
+    setProviderTest(null);
+    try {
+      conn.send({ type: "providers.list" });
+    } catch {
+      // Not connected. The screen shows the last list.
+    }
+  }, [conn]);
+
+  /** Sends the keys from the keychain that the daemon does not have. */
+  const syncProviderKeys = useCallback(
+    async (items: ProviderItem[]) => {
+      const connectionId = currentRef.current?.id;
+      const missing = items.filter((i) => i.key.source === "client" && !i.key.set);
+      if (!connectionId || missing.length === 0) return;
+      const keys: Record<string, string> = {};
+      for (const item of missing) {
+        try {
+          const key = await loadProviderKey(connectionId, item.name);
+          if (key) keys[item.name] = key;
+        } catch {
+          // The keychain is not available. The screen shows "Key not sent".
+        }
+      }
+      if (Object.keys(keys).length === 0) return;
+      try {
+        conn.send({ type: "providers.keys", keys });
+      } catch {
+        // Not connected. The next connection sends the keys.
+      }
+    },
+    [conn],
+  );
 
   // Route daemon messages.
   useEffect(() => {
@@ -117,10 +236,12 @@ export default function App() {
       switch (msg.type) {
         case "session.ready":
           if (sessionRef.current?.id !== msg.session_id) {
-            setSide(null);
+            setReviewId(null);
             setRules(null);
+            setAgentFrame(null);
+            setLayout(loadLayout(currentRef.current?.id ?? "local", msg.cwd));
           }
-          setSession({ id: msg.session_id, cwd: msg.cwd, model: msg.model, title: msg.title });
+          setSession({ id: msg.session_id, cwd: msg.cwd, model: msg.model, title: msg.title, project: msg.project?.name ?? null });
           dispatch({
             type: "load",
             history: msg.history,
@@ -129,13 +250,43 @@ export default function App() {
             context: { tokens: msg.context_tokens, length: msg.context_length },
           });
           setInstructions(msg.instructions);
+          setFilesToken(msg.files_token);
+          setAutoVerify(msg.auto_verify);
           setScreen("chat");
           setBusy(false);
           setStartError(null);
           return;
         case "sessions":
-          setSessions(msg.items);
+          setSessions({ cwd: msg.cwd ?? null, items: msg.items });
           return;
+        case "projects":
+          setProjects(msg.items);
+          if (msg.saved) projectWait.current?.resolve(msg.saved);
+          projectWait.current = null;
+          return;
+        case "settings":
+          setAutoVerify(msg.auto_verify);
+          return;
+        case "providers":
+          setProviders({ items: msg.items, path: msg.path });
+          setProviderError(null);
+          providerWait.current?.resolve();
+          providerWait.current = null;
+          void syncProviderKeys(msg.items);
+          return;
+        case "providers.test": {
+          const { type: _type, ...result } = msg;
+          setProviderTest({ ...result, busy: false });
+          return;
+        }
+        case "models":
+          setModelOptions(msg.items.map((i) => `${i.provider}/${i.model}`));
+          return;
+        case "preview.frame": {
+          const { type: _type, ...frame } = msg;
+          setAgentFrame((f) => ({ ...frame, key: (f?.key ?? 0) + 1 }));
+          return;
+        }
         case "permissions":
           setRules({ path: msg.path, allow: msg.allow, deny: msg.deny });
           setRulesBusy(false);
@@ -157,7 +308,10 @@ export default function App() {
         }
         case "permission.request":
           // Show each change for approval in the diff review pane.
-          if (msg.diff) setSide({ kind: "diff", id: msg.request_id });
+          if (msg.diff) {
+            setReviewId(msg.request_id);
+            setLayout((l) => openPane(l, "diff"));
+          }
           break;
         case "error":
           if ((msg.ref === "session.new" || msg.ref === "session.resume") && !sessionRef.current) {
@@ -170,6 +324,26 @@ export default function App() {
             rulesSaving.current = false;
           }
           if (msg.ref === "skills.get") setSkillDetail(null);
+          if (msg.ref === "projects.save" || msg.ref === "projects.delete") {
+            if (projectWait.current) {
+              projectWait.current.reject(new Error(msg.message));
+              projectWait.current = null;
+              return;
+            }
+            setStartError(msg.message);
+            return;
+          }
+          if (msg.ref?.startsWith("providers.") || msg.ref === "models.list") {
+            if (msg.ref === "providers.test" && providerTestRef.current) {
+              setProviderTest({ ref: providerTestRef.current, name: "", ok: false, ms: 0, error: msg.message, busy: false });
+            } else if (providerWait.current) {
+              providerWait.current.reject(new Error(msg.message));
+              providerWait.current = null;
+            } else if (msg.ref !== "models.list") {
+              setProviderError(msg.message);
+            }
+            return;
+          }
           if (msg.ref === "fs.dirs") {
             setPicker((p) => (p ? { ...p, error: msg.message } : p));
             return;
@@ -179,10 +353,24 @@ export default function App() {
           if (msg.name === "model" && msg.model) {
             setSession((s) => (s ? { ...s, model: msg.model! } : s));
           }
+          if (msg.action === "open_panel" && msg.panel === "servers") {
+            setLayout((l) => openPane(l, "servers"));
+            if (msg.text) break; // Show the text in the chat too.
+            return;
+          }
+          if (msg.action === "preview" && msg.server) {
+            setPreviewServer(msg.server);
+            setLayout((l) => openPane(l, "browser"));
+            return;
+          }
+          if (msg.action === "open_panel" && msg.panel === "providers") {
+            showProviders();
+            return;
+          }
           if (msg.action === "open_panel" && msg.panel === "skills") {
             setSkillItems(msg.items ?? []);
             setSkillDetail(null);
-            setSide({ kind: "skills" });
+            setLayout((l) => openPane(l, "skills"));
             return;
           }
           break;
@@ -199,15 +387,17 @@ export default function App() {
       offMessage();
       offStatus();
     };
-  }, [conn]);
+  }, [conn, showProviders, syncProviderKeys]);
 
   const afterConnect = useCallback(() => {
+    // The daemon lists the providers. The reply makes the app send the keys from the keychain.
+    conn.send({ type: "providers.list" });
+    conn.send({ type: "projects.list" });
     const current = sessionRef.current;
     if (current) {
       conn.send({ type: "session.resume", session_id: current.id });
     } else {
       setScreen("start");
-      conn.send({ type: "session.list" });
     }
   }, [conn]);
 
@@ -237,7 +427,7 @@ export default function App() {
     conn.close();
     setSession(null);
     dispatch({ type: "clear" });
-    setSide(null);
+    setReviewId(null);
     setCommands(null);
     setHello(null);
     setCurrent(null);
@@ -254,6 +444,7 @@ export default function App() {
         setCurrent(c);
         const target = await resolveTarget(c);
         const { host } = await conn.connect(target.host, target.port, target.token);
+        targetRef.current = target;
         setHello(host);
         setLastConnectionId(c.id);
         afterConnect();
@@ -349,8 +540,105 @@ export default function App() {
     setSession(null);
     dispatch({ type: "clear" });
     setScreen("start");
-    if (conn.status === "open") conn.send({ type: "session.list" });
+    if (conn.status === "open") conn.send({ type: "projects.list" });
   };
+
+  /** Adds or changes a project. Resolves with its id when the daemon saved it. */
+  const saveProject = (project: { id?: string; name: string; path: string; create?: boolean }) =>
+    new Promise<string>((resolve, reject) => {
+      projectWait.current?.reject(new Error("Replaced by a newer save."));
+      projectWait.current = { resolve, reject };
+      try {
+        conn.send({ type: "projects.save", ...project });
+      } catch (e) {
+        projectWait.current = null;
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+
+  const deleteProject = (id: string) => {
+    try {
+      conn.send({ type: "projects.delete", id });
+    } catch (e) {
+      setStartError(errorText(e));
+    }
+  };
+
+  const listSessions = (cwd: string) => {
+    try {
+      conn.send({ type: "session.list", cwd });
+    } catch {
+      // Not connected. The list stays empty.
+    }
+  };
+
+  /** Waits for the daemon reply to a provider change: a "providers" message, or an error. */
+  const waitProviders = () =>
+    new Promise<void>((resolve, reject) => {
+      providerWait.current?.resolve();
+      const timer = window.setTimeout(() => {
+        providerWait.current = null;
+        reject(new Error("The daemon did not answer."));
+      }, PROVIDER_REPLY_TIMEOUT);
+      providerWait.current = {
+        resolve: () => (window.clearTimeout(timer), resolve()),
+        reject: (e) => (window.clearTimeout(timer), reject(e)),
+      };
+    });
+
+  const saveProvider = async ({ fields, key, apiKeyEnv, newKey }: ProviderSave) => {
+    const connectionId = currentRef.current?.id ?? "local";
+    const previous = fields.previous_name;
+    const done = waitProviders();
+    conn.send({ type: "providers.save", ...fields, key, api_key_env: apiKeyEnv });
+    await done;
+    // The daemon saved the provider. Now change the keychain.
+    if (previous && previous !== fields.name) {
+      await (newKey ? deleteProviderKey(connectionId, previous) : renameProviderKey(connectionId, previous, fields.name)).catch(() => undefined);
+    }
+    if (newKey) {
+      await saveProviderKey(connectionId, fields.name, newKey);
+      conn.send({ type: "providers.keys", keys: { [fields.name]: newKey } });
+    } else if (key === "env" || key === "none") {
+      await deleteProviderKey(connectionId, fields.name).catch(() => undefined);
+    }
+  };
+
+  const deleteProvider = async (name: string) => {
+    const done = waitProviders();
+    conn.send({ type: "providers.delete", name });
+    await done;
+    await deleteProviderKey(currentRef.current?.id ?? "local", name).catch(() => undefined);
+  };
+
+  const testProvider = (fields: ProviderFields, newKey: string | null, ref: string) => {
+    providerTestRef.current = ref;
+    setProviderTest({ ref, busy: true });
+    if (!sendSafely({ type: "providers.test", ...fields, ref, ...(newKey ? { api_key: newKey } : {}) })) {
+      setProviderTest({ ref, name: fields.name, ok: false, ms: 0, error: "The daemon is not connected.", busy: false });
+    }
+  };
+
+  /** A model from a connection test: the model of the session, or the model of the start screen. */
+  const selectProviderModel = (spec: string) => {
+    if (sessionRef.current) {
+      sendSafely({ type: "command", name: "model", args: spec });
+      setScreen("chat");
+    } else {
+      savePref(`model.${currentRef.current?.id ?? "local"}`, spec);
+      setScreen("start");
+    }
+  };
+
+  // The start screen suggests the models of the providers that are on.
+  useEffect(() => {
+    if (screen !== "start" || status !== "open") return;
+    try {
+      conn.send({ type: "models.list" });
+    } catch {
+      // The field then has no suggestions.
+    }
+  }, [screen, status, conn]);
 
   const submit = (s: Submission): boolean => {
     try {
@@ -390,7 +678,7 @@ export default function App() {
   };
 
   const openRules = () => {
-    setSide({ kind: "rules" });
+    setLayout((l) => openPane(l, "rules"));
     setRules(null);
     setRulesBusy(true);
     try {
@@ -417,10 +705,11 @@ export default function App() {
   );
 
   const toggleReview = useCallback((id: string) => {
-    setSide((current) => (current?.kind === "diff" && current.id === id ? null : { kind: "diff", id }));
+    setReviewId(id);
+    setLayout((l) => openPane(l, "diff"));
   }, []);
 
-  const closeSide = useCallback(() => setSide(null), []);
+  const hidePane = useCallback((pane: PaneId) => setLayout((l) => closePane(l, pane)), []);
 
   const sendSafely = useCallback(
     (msg: Parameters<DaemonConnection["send"]>[0]) => {
@@ -442,7 +731,7 @@ export default function App() {
   const openSkills = () => {
     setSkillItems(null);
     setSkillDetail(null);
-    setSide({ kind: "skills" });
+    setLayout((l) => openPane(l, "skills"));
     sendSafely({ type: "command", name: "skills", args: "" });
   };
 
@@ -456,30 +745,277 @@ export default function App() {
 
   const backToSkills = useCallback(() => setSkillDetail(null), []);
 
+  // Save the layout for each project (SPEC.md section 8.4).
+  useEffect(() => {
+    if (session) savePref(layoutKey(currentRef.current?.id ?? "local", session.cwd), JSON.stringify(layout));
+  }, [layout, session]);
+
+  const editor = useEditor(conn, session?.id ?? null, session?.cwd ?? "");
+  const servers = useServers(conn, session?.id ?? null);
+
+  const showInBrowser = useCallback((url: string) => {
+    setBrowserRequest((r) => ({ url, key: (r?.key ?? 0) + 1 }));
+    setLayout((l) => openPane(l, "browser"));
+  }, []);
+
+  const browserError = useCallback((message: string) => dispatch({ type: "notice", level: "error", text: message }), []);
+
+  /** A server URL for the Browser pane. A server on a remote daemon goes through a local forward port. */
+  const openServer = useCallback(
+    async (server: ServerItem) => {
+      if (!server.url) return;
+      const connection = currentRef.current;
+      const target = targetRef.current;
+      const remote = connection?.kind === "ssh" || (connection?.kind === "direct" && !/^(127\.0\.0\.1|localhost|\[::1\])$/.test(target?.host ?? ""));
+      if (!remote) return showInBrowser(server.url);
+      if (!isTauri() || !target || !sessionRef.current) {
+        return browserError("A server on a remote daemon opens only in the desktop app, which forwards its port.");
+      }
+      try {
+        const port = await forwardOpen({
+          daemonHost: target.host,
+          daemonPort: target.port,
+          token: target.token,
+          sessionId: sessionRef.current.id,
+          server: server.name,
+        });
+        const u = new URL(server.url);
+        showInBrowser(`http://127.0.0.1:${port}${u.pathname}${u.search}`);
+      } catch (e) {
+        browserError(errorText(e));
+      }
+    },
+    [showInBrowser, browserError],
+  );
+
+  /** Open the page of the agent browser in the Browser pane. A server page goes through openServer (remote forward). */
+  const openAgentPage = useCallback(
+    (url: string) => {
+      let port = "";
+      try {
+        const u = new URL(url);
+        port = u.port || (u.protocol === "https:" ? "443" : "80");
+      } catch {
+        return browserError(`Not a valid address: ${url}`);
+      }
+      const server = servers.items.find((s) => s.state === "running" && s.port !== null && String(s.port) === port);
+      if (server) void openServer({ ...server, url });
+      else showInBrowser(url);
+    },
+    [servers.items, openServer, showInBrowser, browserError],
+  );
+
+  const changeAutoVerify = useCallback((enabled: boolean) => sendSafely({ type: "settings.set", auto_verify: enabled }), [sendSafely]);
+
+  // /preview: open the default server when it runs.
+  useEffect(() => {
+    if (!previewServer) return;
+    const server = servers.items.find((s) => s.name === previewServer);
+    if (server?.state === "running") {
+      setPreviewServer(null);
+      void openServer(server);
+    } else if (server?.state === "crashed" || (server?.state === "stopped" && server.error)) {
+      setPreviewServer(null);
+    }
+  }, [previewServer, servers.items, openServer]);
+
+  // "Keep cookies and storage when a server restarts" is off: clear them at each server start.
+  const serverStates = useRef<Record<string, string>>({});
+  useEffect(() => {
+    for (const s of servers.items) {
+      const before = serverStates.current[s.name];
+      if (s.state === "starting" && before && before !== "starting" && isTauri() && loadPref("browserKeepData", "true") === "false") {
+        void browserView.clearData().catch(() => undefined);
+      }
+      serverStates.current[s.name] = s.state;
+    }
+  }, [servers.items]);
+
+  // Close the port forwards of the old session.
+  useEffect(() => {
+    if (isTauri()) void forwardCloseAll().catch(() => undefined);
+  }, [session?.id]);
+
+  const openPath = useCallback(
+    (path: string, line?: number) => {
+      // HTML, PDF, images, and video open in the Browser pane (SPEC.md section 8.6). Other files open in the editor.
+      const target = targetRef.current;
+      if (BROWSER_FILE_RE.test(path) && target && filesToken) {
+        const rel = normalizePath(path, sessionRef.current?.cwd ?? "");
+        showInBrowser(`http://${target.host}:${target.port}/files/${filesToken}/${rel.split("/").map(encodeURIComponent).join("/")}`);
+        return;
+      }
+      editor.openFile(path, line);
+      setLayout((l) => openPane(l, "editor"));
+    },
+    [editor.openFile, filesToken, showInBrowser],
+  );
+
+  const editLaunchConfig = useCallback(() => {
+    editor.openFile(".harness/launch.json");
+    setLayout((l) => openPane(l, "editor"));
+  }, [editor.openFile]);
+
+  const addReference = useCallback((text: string) => {
+    setPromptInsert((p) => ({ text, key: (p?.key ?? 0) + 1 }));
+    setLayout((l) => openPane(l, "chat"));
+  }, []);
+
+  // The lines that the agent changed in the current turn: the added lines of each diff since the last prompt.
+  const agentLines = useMemo(() => {
+    const map = new Map<string, number[]>();
+    const lastUser = chat.items.map((i) => i.kind).lastIndexOf("user");
+    for (const item of chat.items.slice(lastUser + 1)) {
+      if (item.kind !== "tool" || !item.diff) continue;
+      const parsed = parseUnifiedDiff(item.diff);
+      const lines = parsed.hunks.flatMap((h) => h.lines.filter((l) => l.kind === "add").map((l) => l.newNo!));
+      map.set(parsed.path, [...(map.get(parsed.path) ?? []), ...lines]);
+    }
+    return map;
+  }, [chat.items]);
+
   // The chat item that the diff review pane shows.
-  const reviewItem = side?.kind === "diff" ? chat.items.find((i) => i.id === side.id) : undefined;
+  const reviewItem = reviewId ? chat.items.find((i) => i.id === reviewId) : undefined;
   const reviewDiff = reviewItem && (reviewItem.kind === "tool" || reviewItem.kind === "permission") ? reviewItem.diff : null;
+  const paneVisible = (pane: PaneId) => findGroupOf(layout, pane)?.active === pane;
 
-  let sidePane: React.ReactNode = null;
-  if (side?.kind === "rules") {
-    sidePane = <RulesPanel rules={rules} busy={rulesBusy} savedAt={rulesSavedAt} onSave={saveRules} onClose={closeSide} />;
-  } else if (side?.kind === "skills") {
-    sidePane = (
-      <SkillsPanel items={skillItems} detail={skillDetail} onOpen={openSkill} onBack={backToSkills} onClose={closeSide} />
-    );
-  } else if (reviewItem && reviewDiff) {
-    sidePane = (
-      <DiffReview
-        key={reviewItem.id}
-        diff={reviewDiff}
-        permission={reviewItem.kind === "permission" ? (reviewItem as PermissionItem) : null}
+  const folder = session?.project ?? session?.cwd.split(/[\\/]/).filter(Boolean).pop();
+
+  const chatPane = (
+    <div className="chat">
+      {status === "closed" && (
+        <div className="banner" role="alert">
+          <span>The connection to the daemon closed.</span>
+          <button type="button" className="btn" onClick={reconnect} disabled={busy}>
+            <RefreshCw size={14} aria-hidden />
+            Reconnect
+          </button>
+        </div>
+      )}
+      <MessageList
+        items={chat.items}
+        reviewId={paneVisible("diff") ? reviewId : null}
         onDecide={decide}
-        onClose={closeSide}
+        onReview={toggleReview}
+        emptyHint={
+          <>
+            <p>
+              Ask the agent about <span className="mono">{folder}</span>.
+            </p>
+            <p className="help">
+              Type <code>/help</code> for the commands. Press <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line.
+            </p>
+            {instructions && (
+              <p className="help">
+                The agent follows the project instructions in <code>{instructions}</code>.
+              </p>
+            )}
+          </>
+        }
       />
-    );
-  }
+      <div className="composer">
+        <div className="column">
+          <PromptBox
+            running={chat.running}
+            disabled={status !== "open"}
+            onSubmit={submit}
+            onInterrupt={interrupt}
+            commands={commands}
+            onRequestCommands={requestCommands}
+            insert={promptInsert}
+          />
+          <div className="statusline">
+            {chat.running ? (
+              <span className="working">
+                <LoaderCircle size={13} className="spin" aria-hidden />
+                Working. Press <kbd>Esc</kbd> to interrupt.
+              </span>
+            ) : (
+              <span />
+            )}
+            {chat.context && <ContextMeter tokens={chat.context.tokens} length={chat.context.length} />}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
-  const folder = session?.cwd.split(/[\\/]/).filter(Boolean).pop();
+  const dirtyCount = editor.files.filter((f) => f.dirty).length;
+  const panes: Record<PaneId, PaneSpec> = {
+    chat: { title: "Chat", icon: MessageSquare, closable: false, render: () => chatPane },
+    editor: {
+      title: "Editor",
+      icon: Code2,
+      closable: true,
+      badge: dirtyCount ? <span className="tab-badge" title={`${dirtyCount} unsaved`}>{dirtyCount}</span> : undefined,
+      render: () => <EditorPane api={editor} sessionKey={session?.id ?? ""} agentLines={agentLines} onReference={addReference} />,
+    },
+    diff: {
+      title: "Diff",
+      icon: FileDiff,
+      closable: true,
+      render: () =>
+        reviewItem && reviewDiff ? (
+          <DiffReview
+            key={reviewItem.id}
+            diff={reviewDiff}
+            permission={reviewItem.kind === "permission" ? (reviewItem as PermissionItem) : null}
+            onDecide={decide}
+            onClose={() => hidePane("diff")}
+          />
+        ) : (
+          <p className="pane-empty">No change to review. The Diff pane shows each change that the agent asks to make.</p>
+        ),
+    },
+    rules: {
+      title: "Rules",
+      icon: ShieldCheck,
+      closable: true,
+      render: () => (
+        <RulesPanel rules={rules} busy={rulesBusy} savedAt={rulesSavedAt} onSave={saveRules} onClose={() => hidePane("rules")} />
+      ),
+    },
+    skills: {
+      title: "Skills",
+      icon: Sparkles,
+      closable: true,
+      render: () => (
+        <SkillsPanel items={skillItems} detail={skillDetail} onOpen={openSkill} onBack={backToSkills} onClose={() => hidePane("skills")} />
+      ),
+    },
+    browser: {
+      title: "Browser",
+      icon: GlobeIcon,
+      closable: true,
+      render: () => (
+        <BrowserPane
+          request={browserRequest}
+          servers={servers.items}
+          agentFrame={agentFrame}
+          onOpenServer={(s) => void openServer(s)}
+          onOpenAgentPage={openAgentPage}
+          onError={browserError}
+        />
+      ),
+    },
+    servers: {
+      title: "Servers",
+      icon: Server,
+      closable: true,
+      badge: servers.items.some((s) => s.state === "crashed") ? (
+        <span className="tab-badge" title="A server crashed">!</span>
+      ) : undefined,
+      render: () => (
+        <ServersPane
+          api={servers}
+          autoVerify={autoVerify}
+          onAutoVerify={changeAutoVerify}
+          onOpenInBrowser={(s) => void openServer(s)}
+          onEditConfig={editLaunchConfig}
+        />
+      ),
+    },
+  };
 
   return (
     <div className="app">
@@ -498,10 +1034,27 @@ export default function App() {
         </div>
         <div className="titlebar-right">
           {session && (
-            <span className="chip mono" title="Model. Change it with /model provider/model.">
+            <button
+              type="button"
+              className={`chip chip-button mono${screen === "providers" ? " active" : ""}`}
+              onClick={showProviders}
+              title="Model. Change it with /model provider/model. Click to open the providers."
+            >
               <Cpu size={13} aria-hidden />
               {session.model}
-            </span>
+            </button>
+          )}
+          {!session && status === "open" && (
+            <button
+              type="button"
+              className={`btn btn-ghost${screen === "providers" ? " active" : ""}`}
+              onClick={showProviders}
+              aria-label="Providers"
+              aria-pressed={screen === "providers"}
+            >
+              <Cpu size={15} aria-hidden />
+              <span className="btn-label">Providers</span>
+            </button>
           )}
           <button
             type="button"
@@ -520,31 +1073,52 @@ export default function App() {
             </span>
           </button>
           {screen === "chat" && (
+            <ServerMenu
+              api={servers}
+              onOpenInBrowser={(s) => void openServer(s)}
+              onOpenPane={() => setLayout((l) => openPane(l, "servers"))}
+            />
+          )}
+          {screen === "chat" && (
             <button
               type="button"
-              className={`btn btn-ghost${side?.kind === "skills" ? " active" : ""}`}
-              onClick={side?.kind === "skills" ? closeSide : openSkills}
-              aria-pressed={side?.kind === "skills"}
+              aria-label="Editor"
+              className={`btn btn-ghost${paneVisible("editor") ? " active" : ""}`}
+              onClick={() => setLayout((l) => (paneVisible("editor") ? closePane(l, "editor") : openPane(l, "editor")))}
+              aria-pressed={paneVisible("editor")}
+            >
+              <Code2 size={15} aria-hidden />
+              <span className="btn-label">Editor</span>
+            </button>
+          )}
+          {screen === "chat" && (
+            <button
+              type="button"
+              aria-label="Skills"
+              className={`btn btn-ghost${paneVisible("skills") ? " active" : ""}`}
+              onClick={paneVisible("skills") ? () => hidePane("skills") : openSkills}
+              aria-pressed={paneVisible("skills")}
             >
               <Sparkles size={15} aria-hidden />
-              Skills
+              <span className="btn-label">Skills</span>
             </button>
           )}
           {screen === "chat" && (
             <button
               type="button"
-              className={`btn btn-ghost${side?.kind === "rules" ? " active" : ""}`}
-              onClick={side?.kind === "rules" ? closeSide : openRules}
-              aria-pressed={side?.kind === "rules"}
+              aria-label="Rules"
+              className={`btn btn-ghost${paneVisible("rules") ? " active" : ""}`}
+              onClick={paneVisible("rules") ? () => hidePane("rules") : openRules}
+              aria-pressed={paneVisible("rules")}
             >
               <ShieldCheck size={15} aria-hidden />
-              Rules
+              <span className="btn-label">Rules</span>
             </button>
           )}
           {screen === "chat" && (
-            <button type="button" className="btn btn-ghost" onClick={newSession}>
+            <button type="button" className="btn btn-ghost" onClick={newSession} aria-label="New session">
               <Plus size={15} aria-hidden />
-              New session
+              <span className="btn-label">New session</span>
             </button>
           )}
         </div>
@@ -576,6 +1150,7 @@ export default function App() {
         {screen === "start" && (
           <SessionStart
             key={current?.id ?? "none"}
+            projects={projects}
             sessions={sessions}
             busy={busy}
             error={startError}
@@ -583,6 +1158,27 @@ export default function App() {
             onResume={resumeSession}
             prefScope={current?.id ?? "local"}
             onBrowse={browseFolder}
+            models={modelOptions}
+            onManageProviders={showProviders}
+            onSaveProject={saveProject}
+            onDeleteProject={deleteProject}
+            onListSessions={listSessions}
+          />
+        )}
+        {screen === "providers" && (
+          <ProvidersScreen
+            items={providers?.items ?? null}
+            path={providers?.path ?? ""}
+            host={hello?.hostname ?? null}
+            error={providerError}
+            test={providerTest}
+            hasSession={session !== null}
+            onSave={saveProvider}
+            onDelete={deleteProvider}
+            onEnable={(name, enabled) => sendSafely({ type: "providers.enable", name, enabled })}
+            onTest={testProvider}
+            onUse={selectProviderModel}
+            onReturn={() => setScreen(session ? "chat" : "start")}
           />
         )}
         {picker && (
@@ -597,66 +1193,9 @@ export default function App() {
           />
         )}
         {screen === "chat" && session && (
-          <SplitLayout
-            side={sidePane}
-            main={
-              <div className="chat">
-                {status === "closed" && (
-                  <div className="banner" role="alert">
-                    <span>The connection to the daemon closed.</span>
-                    <button type="button" className="btn" onClick={reconnect} disabled={busy}>
-                      <RefreshCw size={14} aria-hidden />
-                      Reconnect
-                    </button>
-                  </div>
-                )}
-                <MessageList
-                  items={chat.items}
-                  reviewId={side?.kind === "diff" ? side.id : null}
-                  onDecide={decide}
-                  onReview={toggleReview}
-                  emptyHint={
-                    <>
-                      <p>
-                        Ask the agent about <span className="mono">{folder}</span>.
-                      </p>
-                      <p className="help">
-                        Type <code>/help</code> for the commands. Press <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line.
-                      </p>
-                      {instructions && (
-                        <p className="help">
-                          The agent follows the project instructions in <code>{instructions}</code>.
-                        </p>
-                      )}
-                    </>
-                  }
-                />
-                <div className="composer">
-                  <div className="column">
-                    <PromptBox
-                      running={chat.running}
-                      disabled={status !== "open"}
-                      onSubmit={submit}
-                      onInterrupt={interrupt}
-                      commands={commands}
-                      onRequestCommands={requestCommands}
-                    />
-                    <div className="statusline">
-                      {chat.running ? (
-                        <span className="working">
-                          <LoaderCircle size={13} className="spin" aria-hidden />
-                          Working. Press <kbd>Esc</kbd> to interrupt.
-                        </span>
-                      ) : (
-                        <span />
-                      )}
-                      {chat.context && <ContextMeter tokens={chat.context.tokens} length={chat.context.length} />}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            }
-          />
+          <OpenPathContext.Provider value={openPath}>
+            <Workspace layout={layout} onChange={setLayout} panes={panes} />
+          </OpenPathContext.Provider>
         )}
       </main>
     </div>

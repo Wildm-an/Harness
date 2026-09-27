@@ -28,7 +28,17 @@ from .permissions import Approver, PermissionGate
 from .prompt import build_system_prompt, load_project_instructions
 from .providers import DEFAULT_CONTEXT_LENGTH, ModelClient, ModelError
 from .skills import Skill, render_skill
-from .tools import SkillTool, Tool, ToolContext, ToolError, ToolResult, default_tools, detect_shell, truncate
+from .tools import (
+    SkillTool,
+    Tool,
+    ToolContext,
+    ToolError,
+    ToolResult,
+    default_tools,
+    detect_shell,
+    preview_tools,
+    truncate,
+)
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 # Called after a compaction with the number of removed history messages and the new summary.
@@ -39,7 +49,10 @@ DENIED = "The user denied this tool call."
 SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 
 # Fields of stored messages that only the client uses. The model does not get them.
-CLIENT_ONLY_FIELDS = ("is_error", "diff", "display")
+# The model gets the "image" of a tool result in a separate message. See Agent.messages.
+CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image")
+
+IMAGE_MESSAGE = "The image from the {tool} tool call:"
 
 # Events of a subagent that the client does not get. The subagent report replaces its text.
 SUBAGENT_HIDDEN_EVENTS = {"token", "turn.end", "context.compacted", "command.result"}
@@ -67,9 +80,11 @@ class Agent:
         skills: dict[str, Skill] | None = None,
         session_allow: list[str] | None = None,
         read_roots: tuple[Path, ...] | None = None,
+        image_input: bool = False,
     ):
         self.cwd = Path(cwd).resolve()
         self.client = client
+        self.image_input = image_input  # The model accepts images, for example screenshots.
         self.emit = emit
         self.settings = settings if settings is not None else load_settings(self.cwd)
         self.skills: dict[str, Skill] = dict(skills or {})
@@ -96,10 +111,33 @@ class Agent:
             self.ctx, self.client.label, self.instructions, self.summary, list(self.skills.values()))
         self._known_tokens = None
 
-    def set_client(self, client: ModelClient, context_length: int | None = None) -> None:
+    def set_client(self, client: ModelClient, context_length: int | None = None,
+                   image_input: bool | None = None) -> None:
         self.client = client
         if context_length:
             self.context_length = context_length
+        if image_input is not None:
+            self.image_input = image_input
+            self._sync_preview_tools()
+        self._rebuild_prompt()
+
+    def enable_preview(self, host: Any) -> None:
+        """Add the preview tools. ``host`` is the preview host of the session (preview.py)."""
+        self.ctx.preview = host
+        self._sync_preview_tools()
+        self._rebuild_prompt()
+
+    def _sync_preview_tools(self) -> None:
+        for name in [n for n in self.tools if n.startswith("preview_")]:
+            del self.tools[name]
+        if self.ctx.preview is not None:
+            # preview_screenshot is only for a model with image input.
+            self.tools.update({t.name: t for t in preview_tools(self.image_input)})
+
+    def reload_settings(self, settings: dict[str, Any]) -> None:
+        """Use changed settings, for example "auto_verify" from the client."""
+        self.settings.clear()
+        self.settings.update(settings)
         self._rebuild_prompt()
 
     def clear(self) -> None:
@@ -116,13 +154,43 @@ class Agent:
         return estimate_tokens(self.messages()) + estimate_tokens(self.tool_schemas())
 
     def messages(self) -> list[dict[str, Any]]:
-        """The messages for the model. Fields for the client only are removed."""
-        history = [
-            {k: v for k, v in m.items() if k not in CLIENT_ONLY_FIELDS}
-            if any(k in m for k in CLIENT_ONLY_FIELDS) else m
-            for m in self.history
-        ]
+        """The messages for the model. Fields for the client only are removed.
+
+        The newest image of a tool result in the current turn goes to the model in a user
+        message after the tool results. Tool messages cannot hold images for most servers.
+        Older images stay in the history for the client only, to save context.
+        """
+        image_at = self._current_image() if self.image_input else None
+        history: list[dict[str, Any]] = []
+        for i, m in enumerate(self.history):
+            history.append({k: v for k, v in m.items() if k not in CLIENT_ONLY_FIELDS}
+                           if any(k in m for k in CLIENT_ONLY_FIELDS) else m)
+            last_result = i + 1 == len(self.history) or self.history[i + 1].get("role") != "tool"
+            if image_at is not None and i >= image_at and last_result:
+                image = self.history[image_at]
+                history.append({"role": "user", "content": [
+                    {"type": "text", "text": IMAGE_MESSAGE.format(tool=self._tool_name(image["tool_call_id"]))},
+                    {"type": "image_url", "image_url": {"url": image["image"]}},
+                ]})
+                image_at = None
         return [{"role": "system", "content": self.system_prompt}, *history]
+
+    def _current_image(self) -> int | None:
+        """The index of the newest tool message with an image, if no user message comes after it."""
+        for i in range(len(self.history) - 1, -1, -1):
+            m = self.history[i]
+            if m.get("role") == "user":
+                return None
+            if m.get("role") == "tool" and m.get("image"):
+                return i
+        return None
+
+    def _tool_name(self, call_id: str) -> str:
+        for m in reversed(self.history):
+            for call in m.get("tool_calls") or []:
+                if call["id"] == call_id:
+                    return call["function"]["name"]
+        return "tool"
 
     def _used_call_ids(self) -> set[str]:
         return {c["id"] for m in self.history for c in m.get("tool_calls") or []}
@@ -212,7 +280,7 @@ class Agent:
                     in_flight = call["id"]
                     result = await self._run_tool_call(call)
                     in_flight = None
-                    self._add_tool_result(call["id"], result.output, result.is_error, result.diff)
+                    self._add_tool_result(call["id"], result.output, result.is_error, result.diff, result.image)
                     open_calls.pop(0)
                     if result is _DENIED_RESULT:
                         stop = "denied"
@@ -266,7 +334,10 @@ class Agent:
             cwd=self.cwd, client=self.client, emit=forward, approver=self.gate.approver,
             settings=self.settings, context_length=self.context_length,
             session_allow=list(skill.allowed_tools), read_roots=self.ctx.read_roots,
+            image_input=self.image_input,
         )
+        if self.ctx.preview is not None:
+            sub.enable_preview(self.ctx.preview)
         prompt = f"{render_skill(skill, args, self.cwd)}\n\n{FORK_REPORT_REQUEST}"
         stop = await sub.run_turn(prompt)
         if stop == "interrupted":
@@ -357,10 +428,13 @@ class Agent:
             stop = "interrupted"
         await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
 
-    def _add_tool_result(self, call_id: str, output: str, is_error: bool, diff: str | None = None) -> None:
+    def _add_tool_result(self, call_id: str, output: str, is_error: bool, diff: str | None = None,
+                         image: str | None = None) -> None:
         message = {"role": "tool", "tool_call_id": call_id, "content": output, "is_error": is_error}
         if diff:
             message["diff"] = diff
+        if image:
+            message["image"] = image
         self.history.append(message)
 
     def _close_open_calls(self, open_calls: list[dict[str, str]], output: str) -> None:
@@ -379,6 +453,8 @@ class Agent:
         event = {"type": "tool.result", "id": call_id, "output": result.output, "is_error": result.is_error}
         if result.diff:
             event["diff"] = result.diff
+        if result.image:
+            event["image"] = result.image
         await self.emit(event)
         for path in result.changed_paths:
             await self.emit({"type": "fs.changed", "path": relpath(self.cwd, path), "hash": file_hash(path), "by": "agent"})

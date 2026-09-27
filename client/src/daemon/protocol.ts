@@ -22,7 +22,59 @@ export interface HistoryToolCall {
 export type HistoryMessage =
   | { role: "user"; content: string; display?: string } // display: the text that the user typed, for example "/review src".
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string };
+  // image: a data URL, for example a screenshot of preview_screenshot.
+  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string };
+
+/** A small screenshot of the agent browser page after an agent action (SPEC.md section 8.7). */
+export interface AgentFrame {
+  url: string;
+  title: string;
+  action: string; // For example "navigate" or "click e5".
+  image: string; // A JPEG data URL.
+}
+
+/** A model endpoint of ~/.harness/providers.json on the daemon computer (the Providers screen). */
+export type ProviderKind = "auto" | "ollama" | "openai";
+
+export interface ProviderItem {
+  name: string;
+  base_url: string;
+  kind: ProviderKind;
+  kind_resolved: "ollama" | "openai";
+  enabled: boolean;
+  context_length: number | null;
+  ssh: string | null;
+  models: string[]; // The models with settings in providers.json.
+  // Where the API key comes from. "client": the keychain of this app. "file": plain text in providers.json.
+  key: { source: "client" | "env" | "file" | "none"; set: boolean; env?: string };
+}
+
+/** "keep" leaves the key setting as it is. "client" means that the client sends the key with providers.keys. */
+export type KeyMode = "keep" | "client" | "env" | "none";
+
+export interface ProviderFields {
+  name: string;
+  base_url: string;
+  kind: ProviderKind;
+  context_length?: number | null;
+  ssh?: string | null;
+  previous_name?: string; // The saved name of the provider that the form changes.
+}
+
+export interface ProviderTestResult {
+  ref: string;
+  name: string;
+  ok: boolean;
+  ms: number;
+  models?: string[];
+  truncated?: boolean;
+  error?: string;
+}
+
+/** Project settings that the client can change. */
+export interface ClientSettings {
+  auto_verify: boolean;
+}
 
 /** A / menu item: a built-in command or a skill. */
 export interface CommandItem {
@@ -60,6 +112,33 @@ export interface DirListing {
   is_project: boolean;
 }
 
+export type ServerState = "stopped" | "starting" | "running" | "crashed";
+
+export interface ServerConfigJson {
+  name: string;
+  command: string;
+  cwd?: string;
+  port?: number;
+  ready_pattern?: string;
+  health_url?: string;
+  env?: Record<string, string>;
+  default?: boolean;
+}
+
+export interface ServerItem {
+  name: string;
+  state: ServerState;
+  port: number | null;
+  url: string | null;
+  error?: string;
+  command: string;
+  cwd: string;
+  default: boolean;
+  ready_pattern?: string | null;
+  health_url?: string | null;
+  last_lines?: { stream: "stdout" | "stderr"; text: string }[];
+}
+
 export interface SessionSummary {
   id: string;
   cwd: string;
@@ -70,11 +149,25 @@ export interface SessionSummary {
   updated_at: number;
 }
 
+/** A saved project: a folder on the daemon computer. The agent keeps its files in this folder. */
+export interface ProjectItem {
+  id: string;
+  name: string;
+  path: string;
+  exists: boolean; // The folder exists now.
+  sessions: number;
+  created_at: number;
+  last_used: number;
+}
+
 export type ClientMessage =
   | { type: "auth"; token: string }
   | { type: "session.new"; cwd: string; model: string; provider?: string }
   | { type: "session.resume"; session_id: string }
   | { type: "session.list"; cwd?: string }
+  | { type: "projects.list" }
+  | { type: "projects.save"; id?: string; name: string; path: string; create?: boolean }
+  | { type: "projects.delete"; id: string }
   | { type: "prompt"; text: string }
   | { type: "command"; name: string; args: string }
   | { type: "permission.reply"; request_id: string; decision: Decision }
@@ -82,12 +175,61 @@ export type ClientMessage =
   | { type: "skills.list" }
   | { type: "skills.get"; name: string }
   | { type: "fs.dirs"; path?: string; hidden?: boolean }
+  | { type: "fs.list"; path: string }
+  | { type: "fs.read"; path: string }
+  | { type: "fs.write"; path: string; content: string; base_hash: string | null }
+  | { type: "fs.unwatch"; path: string }
+  | { type: "fs.search"; query: string; regex?: boolean; case?: boolean; glob?: string }
+  | { type: "server.list" }
+  | { type: "server.save"; servers: ServerConfigJson[] }
+  | { type: "server.start"; name: string }
+  | { type: "server.stop"; name?: string; all?: boolean }
+  | { type: "server.restart"; name: string }
+  | { type: "server.logs"; name: string }
   | { type: "permissions.get" }
-  | { type: "permissions.set"; allow: string[]; deny: string[] };
+  | { type: "permissions.set"; allow: string[]; deny: string[] }
+  | { type: "providers.list" }
+  | ({ type: "providers.save"; key: KeyMode; api_key_env?: string } & ProviderFields)
+  | { type: "providers.delete"; name: string }
+  | { type: "providers.enable"; name: string; enabled: boolean }
+  | { type: "providers.keys"; keys: Record<string, string | null> }
+  | ({ type: "providers.test"; ref: string; api_key?: string } & ProviderFields)
+  | { type: "models.list" }
+  | { type: "settings.get" }
+  | ({ type: "settings.set" } & Partial<ClientSettings>);
 
 export type DaemonMessage =
   | { type: "auth.ok"; version: string; host: HostInfo }
   | ({ type: "fs.dirs" } & DirListing)
+  | {
+      type: "servers";
+      items: ServerItem[];
+      path: string;
+      config: "exists" | "missing" | "invalid";
+      error?: string;
+      proposal?: ServerConfigJson[];
+    }
+  | {
+      type: "server.status";
+      name: string;
+      state: ServerState;
+      port: number | null;
+      url: string | null;
+      error?: string;
+      last_lines?: { stream: "stdout" | "stderr"; text: string }[];
+    }
+  | { type: "server.log"; name: string; stream: "stdout" | "stderr"; text: string }
+  | { type: "server.logs"; name: string; lines: { stream: "stdout" | "stderr"; text: string }[] }
+  | { type: "fs.tree"; path: string; items: { name: string; path: string; type: "file" | "dir" }[] }
+  | { type: "fs.content"; path: string; content: string; hash: string }
+  | { type: "fs.saved"; path: string; hash: string }
+  | { type: "fs.conflict"; path: string; disk_hash: string | null }
+  | {
+      type: "fs.results";
+      query: string;
+      items: { path: string; line: number; text: string }[];
+      truncated: boolean;
+    }
   | {
       type: "session.ready";
       session_id: string;
@@ -100,7 +242,16 @@ export type DaemonMessage =
       context_length: number;
       context_tokens: number;
       instructions: string | null; // HARNESS.md or CLAUDE.md, if the project has one.
+      files_token: string | null; // Project files for the Browser pane: /files/<token>/<path>.
+      project: { id: string; name: string } | null; // The saved project of the session folder.
+      auto_verify: boolean; // The agent checks the app after each UI change.
+      image_input: boolean; // The model accepts images: the agent has preview_screenshot.
     }
+  | ({ type: "settings" } & ClientSettings)
+  | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
+  | ({ type: "providers.test" } & ProviderTestResult)
+  | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[] }
+  | ({ type: "preview.frame" } & AgentFrame)
   | {
       type: "context.compacted";
       reason: "auto" | "manual";
@@ -110,11 +261,12 @@ export type DaemonMessage =
       context_tokens: number;
       context_length: number;
     }
-  | { type: "sessions"; items: SessionSummary[] }
+  | { type: "sessions"; items: SessionSummary[]; cwd?: string | null }
+  | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
   | { type: "token"; text: string }
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
-  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; agent?: string }
+  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string }
   | {
       type: "permission.request";
       request_id: string;
@@ -133,7 +285,10 @@ export type DaemonMessage =
       model?: string;
       warnings?: string[];
       context_length?: number;
+      image_input?: boolean; // After /model: the new model accepts images.
       items?: CommandItem[];
+      server?: string; // /preview: the default server.
+      url?: string | null;
       action?: string;
       panel?: string;
     }

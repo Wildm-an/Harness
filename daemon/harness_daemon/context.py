@@ -16,6 +16,7 @@ COMPACT_AT = 0.8
 KEEP_TURNS = 4
 CHARS_PER_TOKEN = 3.5  # A careful estimate: code has more tokens for each character than prose.
 TOOL_OUTPUT_IN_TRANSCRIPT = 1500
+IMAGE_TOKENS = 1000  # An estimate for one screenshot. The real count depends on the model.
 TRIMMED = "[The output was removed to save context. Run the tool again if you need it.]"
 
 SUMMARY_PROMPT = """\
@@ -32,8 +33,21 @@ Include:
 Do not add information that is not in the conversation. Keep the summary under 600 words."""
 
 
+def _message_chars(m: dict[str, Any]) -> float:
+    """The size of a message. An image counts as IMAGE_TOKENS, not as the length of its data URL."""
+    extra = 0.0
+    if "image" in m:  # A stored screenshot. Only the newest one goes to the model.
+        m = {k: v for k, v in m.items() if k != "image"}
+    content = m.get("content")
+    if isinstance(content, list):
+        parts = [p for p in content if not (isinstance(p, dict) and p.get("type") == "image_url")]
+        extra = (len(content) - len(parts)) * IMAGE_TOKENS * CHARS_PER_TOKEN
+        m = {**m, "content": parts}
+    return len(json.dumps(m, ensure_ascii=False)) + extra
+
+
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    chars = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
+    chars = sum(_message_chars(m) for m in messages)
     return int(chars / CHARS_PER_TOKEN) + 1
 
 
@@ -98,5 +112,6 @@ def trim_tool_outputs(history: list[dict[str, Any]], keep_from: int) -> int:
         if m.get("role") == "tool" and m.get("content") != TRIMMED and len(m.get("content") or "") > len(TRIMMED):
             m["content"] = TRIMMED
             m.pop("diff", None)
+            m.pop("image", None)
             count += 1
     return count

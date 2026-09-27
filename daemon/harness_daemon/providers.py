@@ -14,25 +14,38 @@ Optional provider fields:
 - ``context_length``: the context size of the models on this provider.
 - ``models``: settings for each model, for example
   ``{"qwen2.5-coder:7b": {"context_length": 32768}}``.
+- ``ssh``: reach the model through an SSH tunnel, for example ``"drew@gpu-box"``. The
+  ``base_url`` is then the address as the SSH host sees it. See tunnels.py.
+- ``key_store``: ``"client"`` means that the API key is in the keychain of the desktop
+  client. The client sends the key after it connects. The daemon keeps it in memory only.
+- ``enabled``: ``false`` turns the provider off. The daemon does not use it.
+
+The order for the API key: ``api_key``, then the ``api_key_env`` variable, then the client key.
 """
 
 from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
+
+import asyncio
 
 import httpx
 import openai
 from openai import AsyncOpenAI
 
 from .config import ConfigError, harness_home, read_json
+from .tunnels import TUNNELS, SshTarget, TunnelError, parse_ssh
 
 DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
     "local-ollama": {"base_url": "http://localhost:11434/v1", "api_key": "ollama"},
 }
+
+# The API keys that the client sent for providers with "key_store": "client". Memory only.
+CLIENT_KEYS: dict[str, str] = {}
 
 
 class ModelError(Exception):
@@ -47,6 +60,8 @@ class Provider:
     kind: str = "openai"
     context_length: int | None = None
     models: dict[str, dict[str, Any]] = field(default_factory=dict, hash=False, compare=False)
+    ssh: SshTarget | None = None
+    key_missing: str | None = None  # Why the configured API key is not available, if it is not.
 
     @property
     def root_url(self) -> str:
@@ -58,8 +73,14 @@ def _provider_from_entry(name: str, entry: Any) -> Provider:
     if not isinstance(entry, dict) or not isinstance(entry.get("base_url"), str):
         raise ConfigError(f"Provider '{name}' must have a 'base_url' string.")
     api_key = entry.get("api_key")
+    missing = None
     if not api_key and entry.get("api_key_env"):
         api_key = os.environ.get(entry["api_key_env"])
+        if not api_key:
+            missing = f"The environment variable {entry['api_key_env']} of the daemon is not set."
+    if not api_key and entry.get("key_store") == "client":
+        api_key = CLIENT_KEYS.get(name)
+        missing = None if api_key else "The desktop client did not send the key from its keychain."
     kind = entry.get("kind")
     if kind is None:
         kind = "ollama" if urlparse(entry["base_url"]).port == 11434 else "openai"
@@ -70,39 +91,85 @@ def _provider_from_entry(name: str, entry: Any) -> Provider:
         kind=kind,
         context_length=entry.get("context_length"),
         models=entry.get("models") if isinstance(entry.get("models"), dict) else {},
+        ssh=_ssh(name, entry.get("ssh")),
+        key_missing=missing,
     )
 
 
-def load_providers() -> dict[str, Provider]:
+def is_enabled(entry: Any) -> bool:
+    return not (isinstance(entry, dict) and entry.get("enabled") is False)
+
+
+def _ssh(name: str, value: Any) -> SshTarget | None:
+    try:
+        return parse_ssh(value)
+    except ValueError as e:
+        raise ConfigError(f"Provider '{name}': {e}") from e
+
+
+async def endpoint(provider: Provider) -> Provider:
+    """The provider with the address that the daemon can reach now.
+
+    For a provider with ``ssh``, this opens the tunnel (or uses the open tunnel) and
+    returns the local address of the tunnel. Raises TunnelError if the tunnel fails.
+    """
+    if provider.ssh is None:
+        return provider
+    local = await TUNNELS.local_url(provider.base_url, provider.ssh)
+    return replace(provider, base_url=local.rstrip("/"), ssh=None)
+
+
+def read_provider_entries() -> tuple[dict[str, Any], bool]:
+    """The raw entries of providers.json, and True if the file exists. No file: the default provider."""
     data = read_json(harness_home() / "providers.json", None)
     if data is None:
-        data = DEFAULT_PROVIDERS
+        return {name: dict(entry) for name, entry in DEFAULT_PROVIDERS.items()}, False
     if not isinstance(data, dict) or not data:
         raise ConfigError("providers.json must be an object with one or more providers.")
-    return {name: _provider_from_entry(name, entry) for name, entry in data.items()}
+    return data, True
+
+
+def load_providers(include_disabled: bool = False) -> dict[str, Provider]:
+    """The providers. A provider with "enabled": false is not in the result, unless ``include_disabled``."""
+    data, _ = read_provider_entries()
+    return {name: _provider_from_entry(name, entry) for name, entry in data.items()
+            if include_disabled or is_enabled(entry)}
+
+
+OFF_MESSAGE = "The provider {name} is off. Turn it on in the Providers screen."
 
 
 def resolve_model(spec: str | None, provider_name: str | None = None) -> tuple[Provider, str]:
     """Find the provider and the model name for a model string.
 
     The model string is ``<provider>/<model>`` or ``<model>``. A bare model
-    uses ``provider_name`` or the first provider in ``providers.json``.
+    uses ``provider_name`` or the first provider in ``providers.json`` that is on.
     """
+    every = load_providers(include_disabled=True)
     providers = load_providers()
     if not spec:
         raise ConfigError("No model is set. Give a model, or set 'default_model' in settings.json.")
     if provider_name:
-        if provider_name not in providers:
+        if provider_name not in every:
             raise ConfigError(f"Unknown provider: {provider_name}")
+        if provider_name not in providers:
+            raise ConfigError(OFF_MESSAGE.format(name=provider_name))
         return providers[provider_name], spec
     head, sep, rest = spec.partition("/")
-    if sep and head in providers and rest:
+    if sep and rest and head in every:
+        if head not in providers:
+            raise ConfigError(OFF_MESSAGE.format(name=head))
         return providers[head], rest
+    if not providers:
+        raise ConfigError("All providers are off. Turn one on in the Providers screen.")
     return next(iter(providers.values())), spec
 
 
-async def check_tool_support(provider: Provider, model: str) -> bool | None:
-    """Return True or False for Ollama models. Return None if unknown."""
+async def model_capabilities(provider: Provider, model: str) -> list[str] | None:
+    """The capabilities of an Ollama model, for example ["completion", "tools", "vision"].
+
+    Return None for other providers, or if the endpoint does not tell.
+    """
     if provider.kind != "ollama":
         return None
     try:
@@ -116,9 +183,25 @@ async def check_tool_support(provider: Provider, model: str) -> bool | None:
         caps = r.json().get("capabilities")
     except ValueError:
         return None
-    if not isinstance(caps, list):
-        return None
-    return "tools" in caps
+    return [str(c) for c in caps] if isinstance(caps, list) else None
+
+
+async def check_tool_support(provider: Provider, model: str) -> bool | None:
+    """Return True or False for Ollama models. Return None if unknown."""
+    caps = await model_capabilities(provider, model)
+    return None if caps is None else "tools" in caps
+
+
+def image_input(provider: Provider, model: str, settings: dict[str, Any], caps: list[str] | None) -> bool:
+    """True if the model accepts images, for example the screenshots of preview_screenshot.
+
+    The order: ``image_input`` in the settings, ``image_input`` of the model in providers.json,
+    then the Ollama capability "vision". The default is False: most local models have no image input.
+    """
+    for value in (settings.get("image_input"), (provider.models.get(model) or {}).get("image_input")):
+        if isinstance(value, bool):
+            return value
+    return caps is not None and "vision" in caps
 
 
 DEFAULT_CONTEXT_LENGTH = 8192
@@ -227,26 +310,40 @@ class ModelClient:
     def __init__(self, provider: Provider, model: str):
         self.provider = provider
         self.model = model
-        self._client = AsyncOpenAI(
-            base_url=provider.base_url,
-            api_key=provider.api_key,
-            max_retries=1,
-            timeout=httpx.Timeout(600, connect=10),
-        )
+        self._base_url: str | None = None
+        self._client: AsyncOpenAI | None = None
         self._send_stream_options = True
+
+    async def _openai(self) -> AsyncOpenAI:
+        """The API client for the current address. A new tunnel can have a new local port."""
+        try:
+            current = await endpoint(self.provider)
+        except TunnelError as e:
+            raise ModelError(str(e)) from e
+        if self._client is None or current.base_url != self._base_url:
+            self._base_url = current.base_url
+            self._client = AsyncOpenAI(
+                base_url=current.base_url,
+                api_key=current.api_key,
+                max_retries=1,
+                timeout=httpx.Timeout(600, connect=10),
+            )
+        return self._client
 
     @property
     def label(self) -> str:
         return f"{self.provider.name}/{self.model}"
 
-    async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText) -> ModelResponse:
+    async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
+                     _retry_tunnel: bool = True) -> ModelResponse:
+        client = await self._openai()
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
         if tools:
             kwargs["tools"] = tools
         if self._send_stream_options:
             kwargs["stream_options"] = {"include_usage": True}
         try:
-            stream = await self._client.chat.completions.create(**kwargs)
+            stream = await client.chat.completions.create(**kwargs)
         except openai.BadRequestError as e:
             # Some servers reject stream_options. Try once more without it.
             if self._send_stream_options and "stream_options" in str(e):
@@ -254,7 +351,12 @@ class ModelClient:
                 return await self.stream(messages, tools, on_text)
             raise ModelError(f"The model endpoint rejected the request: {e}") from e
         except openai.APIConnectionError as e:
-            raise ModelError(f"Cannot connect to the model endpoint at {self.provider.base_url}.") from e
+            if self.provider.ssh is not None and _retry_tunnel:
+                # The tunnel can stop between two requests. The next call opens a new one.
+                await asyncio.sleep(0.5)
+                return await self.stream(messages, tools, on_text, _retry_tunnel=False)
+            where = f"{self.provider.base_url} through SSH {self.provider.ssh.label}" if self.provider.ssh else self.provider.base_url
+            raise ModelError(f"Cannot connect to the model endpoint at {where}.") from e
         except openai.APIStatusError as e:
             raise ModelError(f"The model endpoint returned HTTP {e.status_code}: {e.message}") from e
 

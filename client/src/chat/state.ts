@@ -15,6 +15,7 @@ export type ChatItem =
       output?: string;
       status: ToolStatus;
       diff?: string; // The change that the tool made to a file.
+      image?: string; // A data URL, for example a screenshot of preview_screenshot.
       agent?: string; // The forked skill that runs this tool in a subagent.
     }
   | {
@@ -126,7 +127,7 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
       const index = lastRunningTool(items, msg.tool_call_id);
       if (index >= 0) {
         const status: ToolStatus = msg.is_error ? "error" : "done";
-        items[index] = { ...(items[index] as ToolItem), output: msg.content, status, diff: msg.diff };
+        items[index] = { ...(items[index] as ToolItem), output: msg.content, status, diff: msg.diff, image: msg.image };
       }
     }
   }
@@ -160,6 +161,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         output: msg.output,
         status: msg.is_error ? "error" : "done",
         diff: msg.diff,
+        image: msg.image,
       };
       return { ...state, items };
     }
@@ -203,7 +205,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       const notices: ChatItem[] = [];
       if (msg.text) notices.push({ kind: "notice", id: nextId("notice"), level: "info", text: msg.text });
       for (const w of msg.warnings ?? []) notices.push({ kind: "notice", id: nextId("notice"), level: "warning", text: w });
-      if (msg.action === "open_panel") {
+      if (msg.action === "open_panel" && msg.panel === "cookbook") {
         notices.push({ kind: "notice", id: nextId("notice"), level: "info", text: `The ${msg.panel} panel is not in this build yet.` });
       }
       const items = msg.name === "clear" ? notices : [...state.items, ...notices];

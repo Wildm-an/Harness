@@ -1,8 +1,13 @@
+mod browser;
+mod forward;
 mod secrets;
 mod sidecar;
 mod tunnel;
 
+use browser::Bounds;
+use forward::{ForwardSpec, Forwards};
 use sidecar::{DaemonInfo, Sidecar};
+use tauri::AppHandle;
 use tunnel::{TunnelSpec, Tunnels};
 use tauri::{Manager, RunEvent, State};
 
@@ -56,12 +61,59 @@ fn secret_delete(key: String) -> Result<(), String> {
     secrets::delete(&key)
 }
 
+/// Listens on a local port for a server on a remote daemon. Returns the port.
+#[tauri::command]
+async fn forward_open(state: State<'_, Forwards>, spec: ForwardSpec) -> Result<u16, String> {
+    state.inner().clone().open(spec).await
+}
+
+#[tauri::command]
+fn forward_close_all(state: State<'_, Forwards>) {
+    state.close_all();
+}
+
+#[tauri::command]
+fn browser_open(app: AppHandle, url: String, bounds: Bounds) -> Result<(), String> {
+    browser::open(&app, &url, bounds)
+}
+
+#[tauri::command]
+fn browser_bounds(app: AppHandle, bounds: Bounds) -> Result<(), String> {
+    browser::set_bounds(&app, bounds)
+}
+
+#[tauri::command]
+fn browser_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    browser::set_visible(&app, visible)
+}
+
+#[tauri::command]
+fn browser_navigate(app: AppHandle, url: String) -> Result<(), String> {
+    browser::navigate(&app, &url)
+}
+
+#[tauri::command]
+fn browser_history(app: AppHandle, action: String) -> Result<(), String> {
+    browser::history(&app, &action)
+}
+
+#[tauri::command]
+fn browser_devtools(app: AppHandle) -> Result<(), String> {
+    browser::devtools(&app)
+}
+
+#[tauri::command]
+fn browser_clear_data(app: AppHandle) -> Result<(), String> {
+    browser::clear_data(&app)
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Sidecar::default())
         .manage(Tunnels::default())
+        .manage(Forwards::default())
         .setup(|app| {
             // Start the daemon early, so that it is ready when the UI asks for it.
             let sidecar = app.state::<Sidecar>().inner().clone();
@@ -79,7 +131,16 @@ pub fn run() {
             tunnel_close,
             secret_get,
             secret_set,
-            secret_delete
+            secret_delete,
+            forward_open,
+            forward_close_all,
+            browser_open,
+            browser_bounds,
+            browser_visible,
+            browser_navigate,
+            browser_history,
+            browser_devtools,
+            browser_clear_data
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");
@@ -87,6 +148,7 @@ pub fn run() {
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
             handle.state::<Tunnels>().close_all();
+            handle.state::<Forwards>().close_all();
             handle.state::<Sidecar>().stop();
         }
     });

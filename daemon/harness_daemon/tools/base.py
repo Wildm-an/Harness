@@ -21,6 +21,8 @@ class ToolContext:
     shell: ShellInfo
     # Folders outside the project that the read-only tools can read: the skill folders.
     read_roots: tuple[Path, ...] = ()
+    # The preview host of the session (preview.py): servers and the agent browser. None outside a session.
+    preview: Any = None
 
     def resolve(self, path: Any, read_only: bool = False) -> Path:
         try:
@@ -36,6 +38,7 @@ class ToolResult:
     is_error: bool = False
     changed_paths: list[Path] = field(default_factory=list)
     diff: str | None = None  # A unified diff of a file change, for the client.
+    image: str | None = None  # A data URL of an image for the model, for example a screenshot.
 
 
 @dataclass
@@ -44,11 +47,17 @@ class Approval:
 
     ``key`` is the value that permission rules match: a command or a path.
     ``rule`` is the rule that ``allow_always`` adds to the project settings.
+    ``tool`` is the tool name that the rules use, if it is not the name of the tool. For
+    example, ``preview_start`` uses the ``server(<command>)`` rules of the Servers pane.
+    ``input`` replaces the tool arguments in the request to the user, if the arguments do
+    not show what the tool does. For example, ``preview_start`` shows the server command.
     """
 
     key: str
     rule: str
     diff: str | None = None
+    tool: str | None = None
+    input: dict[str, Any] | None = None
 
 
 class Tool:

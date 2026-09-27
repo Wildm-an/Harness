@@ -27,6 +27,21 @@ Rules:
 - If the user denies a tool call, stop. Ask the user what to do.
 - When the task is complete, stop. Give a short summary of the changes."""
 
+PREVIEW_PROMPT = """\
+# Preview
+
+The preview tools start the servers of .harness/launch.json and operate a headless browser. \
+Use them to check changes to a web app:
+1. preview_start starts the server. Do not start servers with bash.
+2. preview_navigate opens a page.
+3. preview_snapshot reads the page. preview_click and preview_fill use its element references.
+4. preview_console shows the browser errors. preview_logs shows the server output."""
+
+AUTO_VERIFY_PROMPT = """
+
+The user set "Auto-verify". After each change to the user interface, check the app with the \
+preview tools before you stop. Fix the errors that you find. Tell the user the result of the check."""
+
 # Instruction files, in order of priority. The first file that exists is used.
 INSTRUCTION_FILES = ("HARNESS.md", "CLAUDE.md")
 MAX_INSTRUCTION_CHARS = 40_000
@@ -75,6 +90,8 @@ def build_system_prompt(
             f"# Project instructions\n\nThe user wrote these instructions in {instructions.name}. "
             f"Follow them.{note}\n\n{instructions.text}"
         )
+    if ctx.preview is not None:
+        parts.append(PREVIEW_PROMPT + (AUTO_VERIFY_PROMPT if ctx.settings.get("auto_verify") else ""))
     listed = [s for s in skills or [] if s.model_invocable][:MAX_SKILLS_IN_PROMPT]
     if listed:
         lines = []

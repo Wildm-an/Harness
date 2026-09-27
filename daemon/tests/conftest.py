@@ -25,6 +25,7 @@ def fake_model(fake_model_server):
     fake_model_server.requests.clear()
     fake_model_server.capabilities = ["completion", "tools"]
     fake_model_server.num_ctx = 32768
+    fake_model_server.required_key = None
     yield fake_model_server
     assert not fake_model_server.replies, "Some scripted replies were not used."
 

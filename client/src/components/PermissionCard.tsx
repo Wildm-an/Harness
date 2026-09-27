@@ -14,6 +14,7 @@ const DECIDED: Record<Decision, string> = {
 
 function title(item: PermissionItem): string {
   if (item.tool === "bash") return "Run this command?";
+  if (item.tool === "server") return "Start this server?";
   const path = toolSummary(item.tool, item.input);
   if (item.tool === "write" && item.diff && parseUnifiedDiff(item.diff).isNewFile) return `Create ${path}?`;
   if (item.tool === "write") return `Replace ${path}?`;
