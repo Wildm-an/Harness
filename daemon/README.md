@@ -110,6 +110,7 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 |---|---|
 | `harness_daemon/agent.py` | The agent loop. |
 | `harness_daemon/providers.py` | Providers, the tool support check, and the streaming model client. |
+| `harness_daemon/cookbook/` | The Cookbook: `hosts.py` (hosts, SSH, the host script runner), `hostscript.py` (runs on the host), `gguf.py` (the GGUF header), `fit.py` (the fit calculator), `hub.py` (the Hugging Face browser), `service.py` (downloads and serve control). |
 | `harness_daemon/provider_config.py` | Changes to `providers.json` from the Providers screen, the client keys, and the connection test. |
 | `harness_daemon/tools/` | The `read`, `glob`, `grep`, `edit`, `write`, `bash`, `skill`, and `preview_*` tools. |
 | `harness_daemon/browser.py` | The agent browser: a headless Chromium through Playwright, in its own thread. The page snapshot script. |
@@ -155,6 +156,18 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 | `auto_verify` | `false` | The agent checks the app with the preview tools after each change to the user interface. The Servers pane of the client changes this value in the project settings. |
 | `image_input` | auto | `true` or `false` overrides the image input check of the model. See "Agent preview tools". |
 | `allow`, `deny` | `[]` | Permission rules. See `harness_daemon/permissions.py`. |
+
+## Cookbook
+
+The Cookbook finds, downloads, and serves local models (SPEC.md section 7). The client opens it with the chef hat in the title bar, or with `/cookbook`.
+
+- **Hosts.** "local" is the daemon computer. Remote hosts are in `~/.harness/hosts.json`: `{"gpu-box": {"ssh": "drew@gpu-box", "python": "python3", "llama_server": "~/llama.cpp/build/bin/llama-server"}}`. The daemon runs `harness_daemon/cookbook/hostscript.py` on the host with `python -` (through `ssh` for a remote host). A remote host needs Python 3, and `huggingface_hub` for downloads.
+- **SSH key.** The Cookbook makes `~/.harness/ssh/id_ed25519`. Add its public key to `~/.ssh/authorized_keys` on each remote host.
+- **Hardware.** `nvidia-smi`, then `rocm-smi`. The system RAM and the CPU core count come from the operating system.
+- **Fit.** The daemon reads the layer count, the KV head count, and the head size from the GGUF header with HTTP range requests (or from `config.json` for safetensors). Total = (weights + KV cache) × 1.1, where KV cache = 2 × layers × kv_heads × head_dim × context × 2 bytes. The list badges are estimates from the parameter count (Q4_K_M, 16K context).
+- **Downloads.** `huggingface_hub` downloads into the Hugging Face cache of the host (`~/.cache/huggingface/hub`). The parts of a split GGUF file are one download. A pause stops the download. "Continue" starts it again from the `.incomplete` file. Xet downloads are off, so that a download can continue.
+- **Serve.** The daemon starts `llama-server` with `-c` (context) and `-ngl` (GPU layers) from the fit calculator, in `tmux` when the host has it (else as a detached process). The server continues after the daemon stops. When `/health` answers, the daemon adds the provider `<host>-llama-<port>` to `providers.json` (with an SSH tunnel for a remote host). A stop removes the provider.
+- **Hugging Face token.** The client keeps it in the keychain and sends it after it connects. The daemon keeps it in memory only.
 
 ## Agent preview tools
 

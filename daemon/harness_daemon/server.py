@@ -28,6 +28,10 @@ from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve
 from .permissions import DECISIONS, PermissionRules
 from .preview import PreviewHost
 from . import provider_config
+from .cookbook import hosts as cookbook_hosts
+from .cookbook.hosts import HostError
+from .cookbook.hub import HubError
+from .cookbook.service import COOKBOOK, CookbookError
 from .providers import (
     DEFAULT_CONTEXT_LENGTH,
     ModelClient,
@@ -72,11 +76,7 @@ BUILTIN_COMMANDS: dict[str, str] = {
 BUILTIN_HINTS = {"model": "<provider>/<model>"}
 
 # Message types of later build phases.
-NOT_AVAILABLE = {
-    "hf.search": "the Cookbook",
-    "hf.model": "the Cookbook",
-    "hf.download": "the Cookbook",
-}
+NOT_AVAILABLE: dict[str, str] = {}
 
 # Project files for the Browser pane: a random token for each session -> the project folder.
 FILE_ROOTS: dict[str, Path] = {}
@@ -106,6 +106,7 @@ def stop_all_servers() -> None:
         manager.kill_all_now()
     for host in list(PREVIEWS):
         host.close_now()
+    COOKBOOK.stop_all()  # The downloads can continue after the next start. Served models keep running.
 
 
 def create_app(token: str, storage: Storage | None = None) -> FastAPI:
@@ -336,6 +337,7 @@ class Connection:
 
     async def run(self) -> None:
         self._watcher = asyncio.create_task(self.watch_files())
+        COOKBOOK.listen(self.send)  # Download and serve events of the Cookbook.
         try:
             while True:
                 try:
@@ -359,13 +361,14 @@ class Connection:
                     continue
                 try:
                     await fn(self, msg)
-                except (ProtocolError, ConfigError, PathError) as e:
+                except (ProtocolError, ConfigError, PathError, HostError, HubError, CookbookError) as e:
                     await self.error(str(e), ref=kind)
                 except Exception as e:  # noqa: BLE001 - report the error and keep the connection.
                     log.exception("Handler %s failed", kind)
                     await self.error(f"Internal error: {type(e).__name__}: {e}", ref=kind)
         finally:
             self._open = False
+            COOKBOOK.unlisten(self.send)
             if self._watcher:
                 self._watcher.cancel()
             await self._stop_turn()
@@ -664,6 +667,181 @@ async def on_projects_save(conn: Connection, msg: dict[str, Any]) -> None:
     except ValueError as e:
         raise ProtocolError(str(e)) from None
     await _send_projects(conn, saved)
+
+
+# -- the Cookbook (SPEC.md section 7) ----------------------------------------------------------------
+
+
+COOKBOOK_ERRORS = (ProtocolError, ConfigError, HostError, HubError, CookbookError)
+
+
+def _background(conn: Connection, kind: str, work: Callable[[], Awaitable[dict[str, Any] | None]]) -> None:
+    """Run slow Cookbook work (SSH, Hugging Face) as a task. The connection stays free for other messages."""
+    async def run() -> None:
+        try:
+            reply = await work()
+            if reply is not None:
+                await conn.send(reply)
+        except COOKBOOK_ERRORS as e:
+            await conn.error(str(e), ref=kind)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Cookbook task %s failed", kind)
+            await conn.error(f"Internal error: {type(e).__name__}: {e}", ref=kind)
+
+    asyncio.create_task(run())
+
+
+def _str_list(msg: dict[str, Any], key: str) -> list[str]:
+    value = msg.get(key)
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ProtocolError(f"'{key}' must be a list of file names.")
+    return value
+
+
+async def _send_hosts(conn: Connection) -> None:
+    hosts = cookbook_hosts.load_hosts()
+    await conn.send({"type": "cookbook.hosts", "items": [h.to_json() for h in hosts.values()],
+                     "public_key": cookbook_hosts.public_key(), "key_path": str(cookbook_hosts.key_path())})
+
+
+@handler("cookbook.hosts")
+async def on_cookbook_hosts(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_hosts(conn)
+
+
+@handler("cookbook.host.save")
+async def on_cookbook_host_save(conn: Connection, msg: dict[str, Any]) -> None:
+    """Add or change a host: {"name", "ssh", "python"?, "llama_server"?, "previous"?}."""
+    previous = msg.get("previous") if isinstance(msg.get("previous"), str) else None
+    cookbook_hosts.save_host(_text_arg(msg, "name").strip(), msg.get("ssh"), msg.get("python"),
+                             msg.get("llama_server"), previous)
+    COOKBOOK.hardware.pop(_text_arg(msg, "name").strip(), None)
+    await _send_hosts(conn)
+
+
+@handler("cookbook.host.delete")
+async def on_cookbook_host_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    cookbook_hosts.delete_host(_text_arg(msg, "name"))
+    await _send_hosts(conn)
+
+
+@handler("cookbook.ssh_key")
+async def on_cookbook_ssh_key(conn: Connection, msg: dict[str, Any]) -> None:
+    """Make the SSH key of the harness in ~/.harness/ssh/, if it does not exist."""
+    await asyncio.to_thread(cookbook_hosts.public_key, True)
+    await _send_hosts(conn)
+
+
+@handler("cookbook.hardware")
+async def on_cookbook_hardware(conn: Connection, msg: dict[str, Any]) -> None:
+    host = msg.get("host")
+
+    async def work() -> dict[str, Any]:
+        info = await COOKBOOK.get_hardware(host, bool(msg.get("refresh")))
+        return {"type": "hardware", "host": host or cookbook_hosts.LOCAL, "info": info}
+
+    _background(conn, "cookbook.hardware", work)
+
+
+@handler("hf.token")
+async def on_hf_token(conn: Connection, msg: dict[str, Any]) -> None:
+    """The Hugging Face token from the keychain of the client. The daemon keeps it in memory only."""
+    token = msg.get("token")
+    if token is not None and not isinstance(token, str):
+        raise ProtocolError("'token' must be a string or null.")
+    COOKBOOK.hub.set_token(token.strip() if token else None)
+    await conn.send({"type": "hf.token", "set": COOKBOOK.hub.token is not None})
+
+
+@handler("hf.search")
+async def on_hf_search(conn: Connection, msg: dict[str, Any]) -> None:
+    _background(conn, "hf.search", lambda: COOKBOOK.search(msg))
+
+
+@handler("hf.model")
+async def on_hf_model(conn: Connection, msg: dict[str, Any]) -> None:
+    repo_id = _text_arg(msg, "repo_id")
+    _background(conn, "hf.model", lambda: COOKBOOK.detail(repo_id, msg.get("host")))
+
+
+@handler("hf.download")
+async def on_hf_download(conn: Connection, msg: dict[str, Any]) -> None:
+    repo_id = _text_arg(msg, "repo_id")
+    files = _str_list(msg, "files")
+
+    async def work() -> None:
+        await COOKBOOK.start_download(msg.get("host"), repo_id, files)
+
+    _background(conn, "hf.download", work)
+
+
+@handler("downloads.list")
+async def on_downloads_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await conn.send({"type": "downloads", "items": COOKBOOK.download_items()})
+
+
+@handler("download.pause")
+async def on_download_pause(conn: Connection, msg: dict[str, Any]) -> None:
+    await COOKBOOK.pause(_text_arg(msg, "id"))
+
+
+@handler("download.resume")
+async def on_download_resume(conn: Connection, msg: dict[str, Any]) -> None:
+    await COOKBOOK.resume(_text_arg(msg, "id"))
+
+
+@handler("download.cancel")
+async def on_download_cancel(conn: Connection, msg: dict[str, Any]) -> None:
+    download_id = _text_arg(msg, "id")
+    _background(conn, "download.cancel", lambda: _none(COOKBOOK.cancel(download_id)))
+
+
+async def _none(coro: Awaitable[Any]) -> None:
+    await coro
+    return None
+
+
+@handler("models.installed")
+async def on_models_installed(conn: Connection, msg: dict[str, Any]) -> None:
+    _background(conn, "models.installed", lambda: COOKBOOK.installed(msg.get("host")))
+
+
+@handler("models.delete")
+async def on_models_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    repo_id = _text_arg(msg, "repo_id")
+    files = _str_list(msg, "files")
+
+    async def work() -> dict[str, Any]:
+        await COOKBOOK.delete(msg.get("host"), repo_id, files)
+        return await COOKBOOK.installed(msg.get("host"))
+
+    _background(conn, "models.delete", work)
+
+
+@handler("serve.list")
+async def on_serve_list(conn: Connection, msg: dict[str, Any]) -> None:
+    _background(conn, "serve.list", lambda: COOKBOOK.serves(msg.get("host")))
+
+
+@handler("serve.start")
+async def on_serve_start(conn: Connection, msg: dict[str, Any]) -> None:
+    """Start llama-server for a downloaded GGUF file: {"host", "repo_id", "file", "context"?, "port"?}."""
+    async def work() -> None:
+        await COOKBOOK.serve_start(msg)
+
+    _background(conn, "serve.start", work)
+
+
+@handler("serve.stop")
+async def on_serve_stop(conn: Connection, msg: dict[str, Any]) -> None:
+    name = _text_arg(msg, "name")
+    _background(conn, "serve.stop", lambda: _none(COOKBOOK.serve_stop(msg.get("host"), name)))
+
+
+@handler("serve.output")
+async def on_serve_output(conn: Connection, msg: dict[str, Any]) -> None:
+    name = _text_arg(msg, "name")
+    _background(conn, "serve.output", lambda: COOKBOOK.serve_output(msg.get("host"), name))
 
 
 @handler("projects.delete")

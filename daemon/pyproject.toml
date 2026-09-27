@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.27",
     "pyyaml>=6",
     "playwright>=1.45",  # The agent browser. It also needs: python -m playwright install chromium
+    "huggingface_hub>=0.25",  # The Cookbook model browser and downloads.
 ]
 
 [project.optional-dependencies]
@@ -24,7 +25,7 @@ dev = ["pytest>=8"]
 harness-daemon = "harness_daemon.__main__:main"
 
 [tool.setuptools]
-packages = ["harness_daemon", "harness_daemon.tools"]
+packages = ["harness_daemon", "harness_daemon.tools", "harness_daemon.cookbook"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -205,9 +205,6 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       const notices: ChatItem[] = [];
       if (msg.text) notices.push({ kind: "notice", id: nextId("notice"), level: "info", text: msg.text });
       for (const w of msg.warnings ?? []) notices.push({ kind: "notice", id: nextId("notice"), level: "warning", text: w });
-      if (msg.action === "open_panel" && msg.panel === "cookbook") {
-        notices.push({ kind: "notice", id: nextId("notice"), level: "info", text: `The ${msg.panel} panel is not in this build yet.` });
-      }
       const items = msg.name === "clear" ? notices : [...state.items, ...notices];
       const context =
         msg.name === "clear" && state.context ? { ...state.context, tokens: 0 }

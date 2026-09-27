@@ -36,6 +36,11 @@ export async function deleteProviderKey(connectionId: string, provider: string):
   }
 }
 
+/** The Hugging Face token of a daemon connection (the Cookbook). It uses the same storage as the provider keys. */
+export const loadHfToken = (connectionId: string) => loadProviderKey(connectionId, "__huggingface__");
+export const saveHfToken = (connectionId: string, token: string) => saveProviderKey(connectionId, "__huggingface__", token);
+export const deleteHfToken = (connectionId: string) => deleteProviderKey(connectionId, "__huggingface__");
+
 /** Moves a key to a new provider name. */
 export async function renameProviderKey(connectionId: string, from: string, to: string): Promise<void> {
   const key = await loadProviderKey(connectionId, from);

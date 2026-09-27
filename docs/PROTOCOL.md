@@ -63,6 +63,23 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `providers.keys` | `keys` | API keys from the keychain of the client: `{"<provider>": "<key>"}`. `null` removes a key. The daemon keeps the keys in memory only. |
 | `providers.test` | the `providers.save` fields, `ref`, `api_key` (optional) | Tests the form values: `GET <base_url>/models`. `api_key` is a key that is not saved yet. With no `api_key`, the daemon uses the saved key. |
 | `models.list` | — | Asks for the models of each provider that is on. |
+| `cookbook.hosts` | — | Asks for the Cookbook hosts and the public SSH key. |
+| `cookbook.host.save` | `name`, `ssh`, `python`, `llama_server`, `previous` (optional) | Adds or changes a host in `~/.harness/hosts.json`. For `local`, only `llama_server`. |
+| `cookbook.host.delete` | `name` | Deletes a remote host. |
+| `cookbook.ssh_key` | — | Makes the SSH key in `~/.harness/ssh/`, if it does not exist. |
+| `cookbook.hardware` | `host`, `refresh` (optional) | Asks for the hardware of a host. The daemon keeps the result for 5 minutes. |
+| `hf.token` | `token` | The Hugging Face token from the keychain of the client, or `null`. Memory only. |
+| `hf.search` | `query`, `filters`, `sort`, `page`, `host` | `filters` has `library` (`gguf` or `safetensors`), `task`, `params` (`3B`, `7B`, `14B`, `32B`, `70B`, or null), and `fit_only`. `sort` is `downloads`, `likes`, `trending`, or `updated`. 25 results on each page. |
+| `hf.model` | `repo_id`, `host` | Asks for the model details and the fit result of each file on the host. |
+| `hf.download` | `repo_id`, `files`, `host` | Starts a download. Give all parts of a split GGUF file. |
+| `downloads.list` | — | Asks for the downloads of the daemon. |
+| `download.pause`, `download.resume`, `download.cancel` | `id` | Controls a download. A cancel removes the unfinished files. |
+| `models.installed` | `host` | Asks for the models in the Hugging Face cache of the host. |
+| `models.delete` | `host`, `repo_id`, `files` | Deletes model files. |
+| `serve.list` | `host` | Asks for the models that llama-server serves on the host. |
+| `serve.start` | `host`, `repo_id`, `file`, `context` (optional), `port` (optional) | Starts llama-server for a downloaded GGUF file. With no context, the daemon uses the largest context that fits in VRAM (4K to 32K), or 8K with CPU offload. |
+| `serve.stop` | `host`, `name` | Stops a served model and removes its provider. |
+| `serve.output` | `host`, `name` | Asks for the last lines of the llama-server log. |
 | `settings.get` | — | Asks for the project settings that the client can change. |
 | `settings.set` | `auto_verify` | Changes project settings in `.harness/settings.json`. The other keys of the file stay the same. The next model call uses the new value. |
 
@@ -99,6 +116,17 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `server.logs` | `name`, `lines` | Reply to `server.logs`. Each line has `stream` and `text`. |
 | `permissions` | `path`, `allow`, `deny` | Reply to `permissions.get` and `permissions.set`. `path` is the settings file, relative to the project. |
 | `settings` | `auto_verify` | Reply to `settings.get` and `settings.set`. |
+| `cookbook.hosts` | `items`, `public_key`, `key_path` | Reply to the `cookbook.host*` and `cookbook.ssh_key` messages. Each item has `name`, `ssh`, `remote`, `python`, `llama_server`, and `label`. `public_key` is null if there is no key. |
+| `hardware` | `host`, `info` | `info` has `hostname`, `platform`, `gpus` (`name`, `vendor`, `vram_total`, `vram_used`), `ram_total`, `cpu_cores`, `python`, `huggingface_hub`, `llama_server`, `tmux`, and `hf_cache`. Sizes are in bytes. |
+| `hf.token` | `set` | Reply to `hf.token`. |
+| `hf.results` | `items`, `page`, `has_more`, `query`, `hardware` | Search results. Each item has `repo_id`, `author`, `name`, `params`, `license`, `downloads`, `likes`, `last_modified`, `gated`, `library`, `architecture`, `context_length`, and `fit` (`fits`, `offload`, `no`, or null: an estimate). |
+| `hf.detail` | `repo_id`, `url`, `item`, `card`, `gated`, `access`, `shape`, `shape_error`, `files`, `recommended`, `host`, `hardware` | Model details. Each file group has `name`, `label`, `files`, `size`, `quant`, `format`, `parts`, and `fit` (`result`, `context`, `weights`, `kv_cache`, `total`, `estimate`, `max_context_vram`, `gpu_layers`). `recommended` is the largest group that fits in VRAM with a 16K context. |
+| `downloads` | `items` | Reply to `downloads.list`: `download.progress` items. |
+| `download.progress` | `id`, `host`, `repo_id`, `files`, `state`, `bytes_done`, `bytes_total`, `file`, `error`, `started` | Sent to all connections. `state` is `queued`, `running`, `paused`, `done`, `error`, or `cancelled`. |
+| `installed` | `host`, `repos`, `cache` | Each repo has `repo_id`, `files` (`name`, `size`, `path`), and `size`. |
+| `serves` | `host`, `items` | Each item has `name`, `port`, `model_path`, `alias`, `context`, `gpu_layers`, `state` (`starting`, `running`, or `crashed`), and `provider`. |
+| `serve.status` | `host`, `name`, `state`, `port`, `provider`, `model`, `error` | Sent to all connections. With `state: "running"`, `model` is `<provider>/<alias>` for `/model`. |
+| `serve.output` | `host`, `name`, `text` | Reply to `serve.output`. |
 | `providers` | `items`, `path`, `exists` | Reply to the `providers.*` messages, except `providers.test`. Each item has `name`, `base_url`, `kind`, `kind_resolved`, `enabled`, `context_length`, `ssh`, `models`, and `key`. `key` has `source` (`client`, `env`, `file`, or `none`), `set` (the daemon has the key now), and `env`. The daemon never sends a key. If `exists` is false, the file does not exist and the list has the default provider. |
 | `providers.test` | `ref`, `name`, `ok`, `ms`, `models`, `truncated`, `error` | Reply to `providers.test`. `ref` is the value from the request. |
 | `models` | `items`, `errors` | Reply to `models.list`. Each item has `provider` and `model`. Each error has `provider` and `message`. |

@@ -230,8 +230,10 @@ def test_errors_for_bad_messages(daemon, project, fake_model):
     c.until("auth.ok")
     c.send({"type": "prompt", "text": "hi"})
     assert "No session" in c.until("error")[0]["message"]
-    c.send({"type": "hf.search", "query": "qwen"})
-    assert "not in this build" in c.until("error")[0]["message"]
+    c.send({"type": "hf.search", "query": "qwen", "sort": "size"})
+    assert "The sort must be one of" in c.until("error")[0]["message"]
+    c.send({"type": "no.such.type"})
+    assert "Unknown message type" in c.until("error")[0]["message"]
     c.send({"type": "session.new", "cwd": "relative/path", "model": "fake/m"})
     assert "absolute" in c.until("error")[0]["message"]
     c.ws.send("not json")

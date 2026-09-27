@@ -160,6 +160,129 @@ export interface ProjectItem {
   last_used: number;
 }
 
+// -- the Cookbook (SPEC.md section 7) --
+
+export interface CookbookHost {
+  name: string;
+  ssh: string | null;
+  remote: boolean;
+  python: string;
+  llama_server: string | null;
+  label: string;
+}
+
+export interface HardwareInfo {
+  hostname: string;
+  platform: string;
+  gpus: { name: string; vendor: string; vram_total: number; vram_used: number }[];
+  ram_total: number;
+  cpu_cores: number;
+  python: string;
+  huggingface_hub: string | null;
+  llama_server: string | null;
+  tmux: boolean;
+  hf_cache: string;
+}
+
+export type FitResult = "fits" | "offload" | "no";
+
+export interface HfItem {
+  repo_id: string;
+  author: string;
+  name: string;
+  params: number | null;
+  license: string | null;
+  downloads: number;
+  likes: number;
+  last_modified: string | null;
+  gated: boolean;
+  library: string | null;
+  architecture: string | null;
+  context_length: number | null;
+  fit?: FitResult | null; // An estimate from the parameter count.
+}
+
+export interface FitDetail {
+  result: FitResult;
+  context: number;
+  weights: number;
+  kv_cache: number;
+  total: number;
+  estimate: boolean;
+  max_context_vram: number;
+  gpu_layers?: number;
+}
+
+export interface HfFileGroup {
+  name: string; // The first file.
+  label: string;
+  files: string[];
+  size: number;
+  quant: string | null;
+  format: "gguf" | "safetensors";
+  parts: number;
+  fit: FitDetail | null;
+}
+
+export interface HfDetail {
+  repo_id: string;
+  url: string;
+  item: HfItem;
+  card: string;
+  gated: boolean;
+  access: boolean;
+  shape: { architecture: string; layers: number; heads: number; kv_heads: number; embedding: number; head_dim: number; context_length: number | null } | null;
+  shape_error: string | null;
+  files: HfFileGroup[];
+  recommended: string | null;
+  host: string;
+  hardware: boolean;
+}
+
+export type DownloadState = "queued" | "running" | "paused" | "done" | "error" | "cancelled";
+
+export interface DownloadItem {
+  id: string;
+  host: string;
+  repo_id: string;
+  files: string[];
+  state: DownloadState;
+  bytes_done: number;
+  bytes_total: number;
+  file: string | null;
+  error: string | null;
+  started: number;
+}
+
+export interface InstalledRepo {
+  repo_id: string;
+  files: { name: string; size: number; path: string }[];
+  size: number;
+}
+
+export type ServeState = "starting" | "running" | "crashed" | "stopped";
+
+export interface ServeItem {
+  name: string;
+  port: number;
+  model_path: string;
+  alias: string;
+  context: number;
+  gpu_layers: number;
+  repo_id?: string;
+  file?: string;
+  state: ServeState;
+  provider: string;
+  started: number;
+}
+
+export interface HfSearchFilters {
+  library: "gguf" | "safetensors";
+  task: string | null;
+  params: string | null;
+  fit_only: boolean;
+}
+
 export type ClientMessage =
   | { type: "auth"; token: string }
   | { type: "session.new"; cwd: string; model: string; provider?: string }
@@ -195,6 +318,23 @@ export type ClientMessage =
   | { type: "providers.keys"; keys: Record<string, string | null> }
   | ({ type: "providers.test"; ref: string; api_key?: string } & ProviderFields)
   | { type: "models.list" }
+  | { type: "cookbook.hosts" }
+  | { type: "cookbook.host.save"; name: string; ssh?: string | null; python?: string | null; llama_server?: string | null; previous?: string }
+  | { type: "cookbook.host.delete"; name: string }
+  | { type: "cookbook.ssh_key" }
+  | { type: "cookbook.hardware"; host: string; refresh?: boolean }
+  | { type: "hf.token"; token: string | null }
+  | { type: "hf.search"; query: string; filters: HfSearchFilters; sort: string; page: number; host: string }
+  | { type: "hf.model"; repo_id: string; host: string }
+  | { type: "hf.download"; repo_id: string; files: string[]; host: string }
+  | { type: "downloads.list" }
+  | { type: "download.pause" | "download.resume" | "download.cancel"; id: string }
+  | { type: "models.installed"; host: string }
+  | { type: "models.delete"; host: string; repo_id: string; files: string[] }
+  | { type: "serve.list"; host: string }
+  | { type: "serve.start"; host: string; repo_id: string; file: string; context?: number; port?: number }
+  | { type: "serve.stop"; host: string; name: string }
+  | { type: "serve.output"; host: string; name: string }
   | { type: "settings.get" }
   | ({ type: "settings.set" } & Partial<ClientSettings>);
 
@@ -251,6 +391,28 @@ export type DaemonMessage =
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
   | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[] }
+  | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }
+  | { type: "hardware"; host: string; info: HardwareInfo }
+  | { type: "hf.token"; set: boolean }
+  | { type: "hf.results"; items: HfItem[]; page: number; has_more: boolean; query: string; hardware: boolean }
+  | ({ type: "hf.detail" } & HfDetail)
+  | { type: "downloads"; items: DownloadItem[] }
+  | ({ type: "download.progress" } & DownloadItem)
+  | { type: "installed"; host: string; repos: InstalledRepo[]; cache: string }
+  | { type: "serves"; host: string; items: ServeItem[] }
+  | {
+      type: "serve.status";
+      host: string;
+      name: string;
+      state: ServeState;
+      port?: number;
+      context?: number;
+      provider?: string;
+      model?: string; // provider/alias, when the state is "running".
+      error?: string;
+      fit?: FitResult;
+    }
+  | { type: "serve.output"; host: string; name: string; text: string }
   | ({ type: "preview.frame" } & AgentFrame)
   | {
       type: "context.compacted";

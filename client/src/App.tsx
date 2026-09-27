@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
+  ChefHat,
   Code2,
   Cpu,
   Globe as GlobeIcon,
@@ -29,7 +30,17 @@ import type {
   SkillDetail,
 } from "./daemon/protocol";
 import { ProvidersScreen, type ProviderSave, type ProviderTest } from "./components/ProvidersScreen";
-import { deleteProviderKey, loadProviderKey, renameProviderKey, saveProviderKey } from "./lib/providerKeys";
+import {
+  deleteHfToken,
+  deleteProviderKey,
+  loadHfToken,
+  loadProviderKey,
+  renameProviderKey,
+  saveHfToken,
+  saveProviderKey,
+} from "./lib/providerKeys";
+import { CookbookScreen } from "./cookbook/CookbookScreen";
+import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { FolderPicker } from "./components/FolderPicker";
 import { DiffReview } from "./components/DiffReview";
@@ -66,7 +77,7 @@ import {
 } from "./lib/connections";
 import { browserView, forwardCloseAll, forwardOpen, isTauri, pickFolder } from "./lib/tauri";
 
-type Screen = "starting" | "connections" | "start" | "chat" | "providers";
+type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook";
 
 const PROVIDER_REPLY_TIMEOUT = 15_000;
 
@@ -204,6 +215,16 @@ export default function App() {
       // Not connected. The screen shows the last list.
     }
   }, [conn]);
+
+  const [hfTokenSaved, setHfTokenSaved] = useState(false);
+
+  /** Opens the Cookbook screen (SPEC.md section 7). */
+  const showCookbook = useCallback(() => {
+    setScreen((s) => {
+      if (s !== "cookbook") returnScreen.current = s === "chat" || s === "start" ? s : "start";
+      return "cookbook";
+    });
+  }, []);
 
   /** Sends the keys from the keychain that the daemon does not have. */
   const syncProviderKeys = useCallback(
@@ -367,6 +388,10 @@ export default function App() {
             showProviders();
             return;
           }
+          if (msg.action === "open_panel" && msg.panel === "cookbook") {
+            showCookbook();
+            return;
+          }
           if (msg.action === "open_panel" && msg.panel === "skills") {
             setSkillItems(msg.items ?? []);
             setSkillDetail(null);
@@ -387,12 +412,22 @@ export default function App() {
       offMessage();
       offStatus();
     };
-  }, [conn, showProviders, syncProviderKeys]);
+  }, [conn, showProviders, showCookbook, syncProviderKeys]);
 
   const afterConnect = useCallback(() => {
     // The daemon lists the providers. The reply makes the app send the keys from the keychain.
     conn.send({ type: "providers.list" });
     conn.send({ type: "projects.list" });
+    // The Hugging Face token of the Cookbook, from the keychain.
+    const connectionId = currentRef.current?.id;
+    if (connectionId) {
+      void loadHfToken(connectionId)
+        .then((token) => {
+          setHfTokenSaved(!!token);
+          if (token) conn.send({ type: "hf.token", token });
+        })
+        .catch(() => setHfTokenSaved(false));
+    }
     const current = sessionRef.current;
     if (current) {
       conn.send({ type: "session.resume", session_id: current.id });
@@ -627,6 +662,25 @@ export default function App() {
     } else {
       savePref(`model.${currentRef.current?.id ?? "local"}`, spec);
       setScreen("start");
+    }
+  };
+
+  const cookbook = useCookbook(conn, screen === "cookbook" && status === "open");
+
+  /** Saves or removes the Hugging Face token: the keychain of this computer, and the memory of the daemon. */
+  const saveHfTokenValue = async (token: string | null) => {
+    const connectionId = currentRef.current?.id ?? "local";
+    try {
+      if (token) await saveHfToken(connectionId, token);
+      else await deleteHfToken(connectionId);
+    } catch (e) {
+      dispatch({ type: "notice", level: "error", text: `The keychain failed: ${errorText(e)}` });
+    }
+    setHfTokenSaved(!!token);
+    try {
+      conn.send({ type: "hf.token", token });
+    } catch {
+      // The next connection sends the token.
     }
   };
 
@@ -1044,6 +1098,19 @@ export default function App() {
               {session.model}
             </button>
           )}
+          {status === "open" && screen !== "connections" && (
+            <button
+              type="button"
+              className={`btn btn-ghost${screen === "cookbook" ? " active" : ""}`}
+              onClick={() => (screen === "cookbook" ? setScreen(session ? "chat" : "start") : showCookbook())}
+              aria-label="Cookbook"
+              aria-pressed={screen === "cookbook"}
+              title="Cookbook: find, download, and serve local models"
+            >
+              <ChefHat size={15} aria-hidden />
+              <span className="btn-label">Cookbook</span>
+            </button>
+          )}
           {!session && status === "open" && (
             <button
               type="button"
@@ -1163,6 +1230,16 @@ export default function App() {
             onSaveProject={saveProject}
             onDeleteProject={deleteProject}
             onListSessions={listSessions}
+          />
+        )}
+        {screen === "cookbook" && (
+          <CookbookScreen
+            api={cookbook}
+            hasSession={session !== null}
+            tokenSaved={hfTokenSaved}
+            onSaveToken={(token) => void saveHfTokenValue(token)}
+            onUseModel={selectProviderModel}
+            onReturn={() => setScreen(session ? "chat" : "start")}
           />
         )}
         {screen === "providers" && (
