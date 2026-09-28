@@ -73,11 +73,11 @@ def load_or_create_token(path: Path, replace: bool = False) -> tuple[str, bool]:
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
+    frozen.repair_environment()
     if argv[:1] == [frozen.PYTHON_STDIN_FLAG]:
         # The frozen daemon runs the Cookbook host script this way (cookbook/hosts.py).
         frozen.run_python_stdin()
         return
-    frozen.repair_environment()
     parser = argparse.ArgumentParser(prog="harness-daemon")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address. Default 127.0.0.1.")
     parser.add_argument("--port", type=int, default=0, help="Port. 0 selects a random free port.")

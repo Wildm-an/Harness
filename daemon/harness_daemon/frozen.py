@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 PYTHON_STDIN_FLAG = "--python-stdin"
+REPAIRED_ENV = "HARNESS_ENV_REPAIRED"  # The child processes of a repaired daemon do not repeat the repair.
 PATH_MARKER = "__HARNESS_PATH__"
 SHELL_TIMEOUT = 5
 
@@ -51,8 +52,9 @@ def install_browser() -> int:
 
 def repair_environment() -> None:
     """Repair the environment of a frozen daemon. Call this one time, at the start."""
-    if not is_frozen():
+    if not is_frozen() or os.environ.get(REPAIRED_ENV):
         return
+    os.environ[REPAIRED_ENV] = "1"
     # The PyInstaller bootloader changes LD_LIBRARY_PATH for the daemon. The child processes
     # (bash, servers, llama-server) must get the original value.
     for name in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
@@ -61,10 +63,26 @@ def repair_environment() -> None:
             os.environ[name] = original
         elif name in os.environ and sys.platform != "win32":
             del os.environ[name]
+    # A frozen Playwright looks for Chromium in the bundle (PLAYWRIGHT_BROWSERS_PATH=0). The bundle
+    # has no Chromium, and a onefile bundle is a new temporary folder at each start. Use the cache
+    # of the user, the same folder as "python -m playwright install".
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", playwright_cache())
     if sys.platform in ("darwin", "linux"):
         path = login_shell_path()
         if path:
             os.environ["PATH"] = path
+
+
+def playwright_cache() -> str:
+    """The default browser folder of Playwright on this operating system."""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+    elif sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Caches")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
+    return os.path.join(base, "ms-playwright")
 
 
 def login_shell_path() -> str | None:

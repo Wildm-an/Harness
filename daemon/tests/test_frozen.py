@@ -21,6 +21,7 @@ SIDECAR = Path(__file__).resolve().parent.parent / "build" / "sidecar" / "dist" 
 @pytest.fixture
 def as_frozen(monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv(frozen.REPAIRED_ENV, raising=False)
     monkeypatch.setattr(sys, "executable", "/app/harness-daemon")
 
 
@@ -60,11 +61,24 @@ def test_repair_environment_restores_the_library_path(as_frozen, monkeypatch):
     monkeypatch.setenv("DYLD_LIBRARY_PATH", "/tmp/_MEI123")
     monkeypatch.delenv("DYLD_LIBRARY_PATH_ORIG", raising=False)
     monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", "/home/me/.cache")
     frozen.repair_environment()
+    assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == os.path.join("/home/me/.cache", "ms-playwright")
     assert os.environ["LD_LIBRARY_PATH"] == "/opt/lib"
     assert "LD_LIBRARY_PATH_ORIG" not in os.environ
     assert "DYLD_LIBRARY_PATH" not in os.environ
     assert os.environ["PATH"] == "/home/me/.local/bin:/usr/bin"
+    # A child process of the daemon does not repeat the repair.
+    monkeypatch.setattr(frozen, "login_shell_path", lambda: pytest.fail("the repair ran two times"))
+    frozen.repair_environment()
+
+
+def test_a_browsers_path_of_the_user_stays(as_frozen, monkeypatch):
+    monkeypatch.setattr(frozen, "login_shell_path", lambda: None)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/browsers")
+    frozen.repair_environment()
+    assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == "/opt/browsers"
 
 
 def test_repair_environment_does_nothing_in_the_dev_layout(monkeypatch):
