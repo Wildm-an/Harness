@@ -149,3 +149,21 @@ def test_compact_with_too_little_history(daemon, project, fake_model):  # noqa: 
     assert "not enough history" in result["text"]
     assert c.until("turn.end")[0]["stop_reason"] == "end"
     c.close()
+
+
+def test_context_breakdown(daemon, project, harness_home, fake_model):  # noqa: F811
+    (project / "HARNESS.md").write_text("Use tabs. " * 200)
+    c = Client(daemon)
+    c.new_session(project)
+    fake_model.script({"text": "Done."})
+    c.send({"type": "prompt", "text": "Say hello " * 50})
+    c.until("turn.end")
+    c.send({"type": "context.get"})
+    usage = c.until("context.usage")[0]
+    parts = {p["kind"]: p["tokens"] for p in usage["parts"]}
+    assert list(parts) == ["system", "instructions", "skills", "summary", "tools", "mcp_tools", "messages"]
+    assert parts["instructions"] > 0 and parts["tools"] > 0 and parts["messages"] > 0
+    assert parts["instructions"] > parts["skills"]  # The project instructions are long.
+    assert parts["summary"] == 0 and parts["mcp_tools"] == 0
+    assert sum(parts.values()) == usage["tokens"] and usage["length"] == 32768 and usage["compact_at"] == 0.8
+    c.close()

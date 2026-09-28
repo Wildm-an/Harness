@@ -22,10 +22,10 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .config import load_settings
-from .context import COMPACT_AT, KEEP_TURNS, estimate_tokens, split_turns, summarize, trim_tool_outputs
+from .context import CHARS_PER_TOKEN, COMPACT_AT, KEEP_TURNS, estimate_tokens, split_turns, summarize, trim_tool_outputs
 from .files import file_hash, relpath
 from .permissions import Approver, PermissionGate
-from .prompt import build_system_prompt, load_project_instructions
+from .prompt import build_system_prompt, load_project_instructions, system_prompt_parts
 from .providers import DEFAULT_CONTEXT_LENGTH, ModelClient, ModelError
 from .skills import Skill, render_skill
 from .tools import (
@@ -97,7 +97,8 @@ class Agent:
         if any(s.model_invocable for s in self.skills.values()):
             tool_list.append(SkillTool(self.skills, self._activate_skill, self.run_fork))
         self.tools = {t.name: t for t in tool_list}
-        self.gate = PermissionGate(self.cwd, approver, session_allow)
+        self.gate = PermissionGate(self.cwd, approver, session_allow,
+                                   mode=lambda: self.settings.get("permission_mode") or "default")
         self.history: list[dict[str, Any]] = list(history or [])
         self.instructions = load_project_instructions(self.cwd)
         self.summary = summary
@@ -111,6 +112,8 @@ class Agent:
     def _rebuild_prompt(self) -> None:
         self.system_prompt = build_system_prompt(
             self.ctx, self.client.label, self.instructions, self.summary, list(self.skills.values()))
+        if self.settings.get("permission_mode") == "plan":
+            self.system_prompt += PLAN_MODE_NOTE
         self._known_tokens = None
 
     def set_client(self, client: ModelClient, context_length: int | None = None,
@@ -165,6 +168,42 @@ class Agent:
             known, length = self._known_tokens
             return known + estimate_tokens(self.history[length:])
         return estimate_tokens(self.messages()) + estimate_tokens(self.tool_schemas())
+
+    def context_breakdown(self) -> dict[str, Any]:
+        """The parts of the next request, in tokens, for the context view of the client.
+
+        The parts are estimates, scaled so that their sum is context_tokens(). The endpoint
+        count of the last request is exact, when the endpoint gives it.
+        """
+        def text_tokens(text: str) -> int:
+            return int(len(text) / CHARS_PER_TOKEN) + 1
+
+        sizes = {"system": 0, "instructions": 0, "skills": 0, "summary": 0}
+        for kind, text in system_prompt_parts(self.ctx, self.client.label, self.instructions, self.summary,
+                                              list(self.skills.values())):
+            sizes[kind] += text_tokens(text)
+        if self.settings.get("permission_mode") == "plan":
+            sizes["system"] += text_tokens(PLAN_MODE_NOTE)
+        schemas = self.tool_schemas()
+        mcp = [s for name, s in zip(self.tools, schemas) if name.startswith("mcp__")]
+        builtin = [s for name, s in zip(self.tools, schemas) if not name.startswith("mcp__")]
+        sizes["tools"] = estimate_tokens(builtin) if builtin else 0
+        sizes["mcp_tools"] = estimate_tokens(mcp) if mcp else 0
+        sizes["messages"] = estimate_tokens(self.messages()[1:])
+        # The endpoint count is exact, and the parts are estimates. Scale the parts to the total.
+        total = self.context_tokens()
+        estimate = sum(sizes.values())
+        if estimate > 0 and total > 0:
+            sizes = {kind: round(tokens * total / estimate) for kind, tokens in sizes.items()}
+            sizes["messages"] = max(0, sizes["messages"] + total - sum(sizes.values()))  # The rounding.
+        total = sum(sizes.values())
+        return {
+            "tokens": total,
+            "length": self.context_length,
+            "compact_at": COMPACT_AT,
+            "source": self.context_source,
+            "parts": [{"kind": kind, "tokens": tokens} for kind, tokens in sizes.items()],
+        }
 
     def messages(self) -> list[dict[str, Any]]:
         """The messages for the model. Fields for the client only are removed.
@@ -483,7 +522,10 @@ class Agent:
         try:
             tool.validate(args)
             approval = await tool.prepare(args, self.ctx)
-            if not await self.gate.check(tool, args, approval):
+            allowed = await self.gate.check(tool, args, approval)
+            if isinstance(allowed, str):  # The permission mode blocked the action. The turn continues.
+                return ToolResult(allowed, is_error=True)
+            if not allowed:
                 return _DENIED_RESULT
             return await tool.run(args, self.ctx)
         except ToolError as e:
@@ -493,6 +535,11 @@ class Agent:
 
 
 _DENIED_RESULT = ToolResult(DENIED, is_error=True)
+
+PLAN_MODE_NOTE = """
+
+Plan mode is on. Do not change files. Read and search the project, then give the user a plan:
+the steps, and the files that each step changes. Then stop. The user changes the mode to start the work."""
 
 
 def _parse_arguments(raw: str) -> tuple[dict[str, Any] | None, str | None]:

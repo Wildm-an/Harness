@@ -136,7 +136,7 @@ def load_providers(include_disabled: bool = False) -> dict[str, Provider]:
             if include_disabled or is_enabled(entry)}
 
 
-OFF_MESSAGE = "The provider {name} is off. Turn it on in the Providers screen."
+OFF_MESSAGE = "The provider {name} is off. Turn it on in the Connections screen."
 
 
 def resolve_model(spec: str | None, provider_name: str | None = None) -> tuple[Provider, str]:
@@ -161,7 +161,7 @@ def resolve_model(spec: str | None, provider_name: str | None = None) -> tuple[P
             raise ConfigError(OFF_MESSAGE.format(name=head))
         return providers[head], rest
     if not providers:
-        raise ConfigError("All providers are off. Turn one on in the Providers screen.")
+        raise ConfigError("All providers are off. Turn one on in the Connections screen.")
     return next(iter(providers.values())), spec
 
 

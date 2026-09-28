@@ -19,7 +19,7 @@ describe("device bounds", () => {
   });
 
   it("centers a phone in the pane", () => {
-    expect(deviceBounds(area, "phone")).toEqual({ x: 405, y: 78, width: 390, height: 844 });
+    expect(deviceBounds(area, "phone")).toEqual({ x: 412.5, y: 94, width: 375, height: 812 });
   });
 
   it("shrinks a device that is larger than the pane", () => {

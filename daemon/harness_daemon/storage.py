@@ -80,7 +80,8 @@ class Storage:
     def list_projects(self) -> list[dict[str, Any]]:
         """The projects, the last used first, with the number of sessions in each folder."""
         rows = [dict(r) for r in self.db.execute(
-            "SELECT id, name, path, path_key, created_at, last_used FROM projects ORDER BY last_used DESC")]
+            # rowid: the newer row is first when two times are equal (the Windows clock has steps of about 15 ms).
+            "SELECT id, name, path, path_key, created_at, last_used FROM projects ORDER BY last_used DESC, rowid DESC")]
         counts: dict[str, int] = {}
         for cwd, count in self.db.execute("SELECT cwd, COUNT(*) FROM sessions GROUP BY cwd"):
             key = path_key(cwd)
@@ -150,7 +151,7 @@ class Storage:
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         sql = "SELECT id, cwd, provider, model, title, created_at, updated_at FROM sessions"
         params: tuple = ()
-        sql += " ORDER BY updated_at DESC"
+        sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
         if cwd:  # Compare as paths: case-insensitive on Windows.
             key = path_key(cwd)

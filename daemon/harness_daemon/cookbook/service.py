@@ -151,7 +151,7 @@ class Cookbook:
         detail = await self.hub.detail(repo_id)
         if detail["gated"] and not detail["access"]:
             raise CookbookError(f"No access to {repo_id}. Accept the license on {detail['url']}, and add a Hugging "
-                                "Face token in the Cookbook settings.")
+                                "Face token in the settings of the Local Models screen.")
         known: dict[str, int] = detail["_sizes"]
         missing = [name for name in files if name not in known]
         if missing:
@@ -298,7 +298,7 @@ class Cookbook:
         hw = Hardware.from_json(info) or Hardware(0, 0)
         if not info.get("llama_server"):
             raise CookbookError(f"llama-server is not on the host {host.name}. Install llama.cpp, or set the "
-                                "llama-server path of the host in the Cookbook.")
+                                "llama-server path of the host in the Local Models screen.")
         detail = await self.hub.detail(repo_id)
         shape: ModelShape | None = detail["_shape"]
         group = next((g for g in detail["groups"] if file in g["files"]), None)

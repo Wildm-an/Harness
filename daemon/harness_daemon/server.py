@@ -25,7 +25,7 @@ from . import __version__
 from .agent import Agent
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
-from .permissions import DECISIONS, PermissionRules
+from .permissions import DECISIONS, MODES, PermissionRules
 from .preview import PreviewHost
 from . import provider_config
 from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, project_config_path
@@ -46,9 +46,10 @@ from .providers import (
 )
 from .tools.base import ToolError
 from .tools.grep import search_project
+from .tools.search import find_paths
 from .tunnels import TUNNELS, TunnelError
 from .launch import load_launch, propose, save_launch
-from .references import expand_references
+from .references import expand_references, session_ids
 from .servers import ServerManager
 from .session import Session
 from .skills import Skill, discover_skills
@@ -68,8 +69,8 @@ BUILTIN_COMMANDS: dict[str, str] = {
     "compact": "Summarize the context.",
     "model": "Show the model, or change it: /model <provider>/<model>.",
     "skills": "Open the Skills panel: the skills and their sources.",
-    "cookbook": "Open the Cookbook panel.",
-    "providers": "Open the Providers screen: the model endpoints and their API keys.",
+    "local-models": "Open the Local Models screen: find, download, serve, and delete local models.",
+    "connections": "Open the Connections screen: the model endpoints and their API keys.",
     "mcp": "Open the MCP panel: the MCP servers of the project and their tools.",
     "servers": "Open the Servers pane.",
     "preview": "Start the default server and open it in the Browser pane.",
@@ -77,6 +78,10 @@ BUILTIN_COMMANDS: dict[str, str] = {
 }
 
 BUILTIN_HINTS = {"model": "<provider>/<model>"}
+# The old names of commands. They work, but the / menu does not show them.
+COMMAND_ALIASES = {"cookbook": "local-models", "providers": "connections"}
+# The client panel that a command opens. The panel names stay the same as in the protocol.
+PANEL_COMMANDS = {"local-models": "cookbook", "connections": "providers", "servers": "servers", "mcp": "mcp"}
 
 # Message types of later build phases.
 NOT_AVAILABLE: dict[str, str] = {}
@@ -92,7 +97,7 @@ MCPS: set[McpManager] = set()
 MCP_WAIT = 20  # Seconds that the first turn waits for the MCP servers.
 
 # Project settings that the client can change with "settings.set", and their types.
-CLIENT_SETTINGS: dict[str, type] = {"auto_verify": bool}
+CLIENT_SETTINGS: dict[str, type] = {"auto_verify": bool, "permission_mode": str}
 
 
 class ProtocolError(Exception):
@@ -526,7 +531,7 @@ class Connection:
         warnings = []
         if provider.key_missing:
             warnings.append(f"The provider {provider.name} has no API key. {provider.key_missing} "
-                            "Open the Providers screen to enter the key.")
+                            "Open the Connections screen to enter the key.")
         if support is False:
             warnings.append(f"The model {model} does not support tool calls. "
                             "The agent cannot read files, edit files, or run commands.")
@@ -553,22 +558,32 @@ class Connection:
             "files_token": self.files_token,
             "project": _project_ref(self.storage, s.cwd),
             "auto_verify": bool(s.agent.settings.get("auto_verify")),
+            "permission_mode": _permission_mode(s.agent.settings),
             "image_input": s.agent.image_input,
         })
 
-    async def run_turn(self, text: str) -> None:
+    async def run_turn(self, text: str, display: str | None = None) -> None:
+        """Run a prompt. ``display`` is the text that the user sees, if it is not ``text``: the client
+        shows a session reference with its name, and sends it with its id."""
         session = self.require_session()
-        session.set_title_from(text)
-        # "@src/app.py:10-25" references from the editor: add the lines to the prompt.
-        expanded = await asyncio.to_thread(expand_references, text, session.cwd)
+        session.set_title_from(display or text)
+        # "@" references: add the files, lines, and sessions to the prompt. Load the referenced
+        # sessions here: the file reads run in a thread, and the database stays in this loop.
+        stored = {}
+        for sid in session_ids(text):
+            row = self.storage.get_session(sid)
+            if row is not None and sid != session.id:
+                stored[sid] = (row, self.storage.load_messages(sid))
+        expanded = await asyncio.to_thread(expand_references, text, session.cwd, stored.get)
         await self.wait_for_mcp()
         try:
-            await session.agent.run_turn(expanded, display=text if expanded != text else None)
+            shown = display or text
+            await session.agent.run_turn(expanded, display=shown if expanded != shown else None)
         finally:
             session.persist()
 
-    def start_turn(self, text: str) -> None:
-        self.turn = asyncio.create_task(self.guarded(self.run_turn(text)))
+    def start_turn(self, text: str, display: str | None = None) -> None:
+        self.turn = asyncio.create_task(self.guarded(self.run_turn(text, display)))
 
     async def guarded(self, work: Awaitable[None]) -> None:
         """Run a turn. An unexpected error ends the turn with an error, so the client does not wait forever."""
@@ -660,11 +675,17 @@ async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
     await conn.send_ready(warnings)
 
 
+MAX_SESSION_LIST = 500
+
+
 @handler("session.list")
 async def on_session_list(conn: Connection, msg: dict[str, Any]) -> None:
+    """The stored sessions, newest first. "limit" is 50 by default (at most 500)."""
     cwd = msg.get("cwd")
-    await conn.send({"type": "sessions", "items": conn.storage.list_sessions(cwd if isinstance(cwd, str) else None),
-                     "cwd": cwd if isinstance(cwd, str) else None})
+    limit = msg.get("limit")
+    limit = min(limit, MAX_SESSION_LIST) if isinstance(limit, int) and limit > 0 else 50
+    items = conn.storage.list_sessions(cwd if isinstance(cwd, str) else None, limit=limit)
+    await conn.send({"type": "sessions", "items": items, "cwd": cwd if isinstance(cwd, str) else None})
 
 
 # -- projects: saved project folders (the start screen) -----------------------------------
@@ -958,7 +979,8 @@ async def on_prompt(conn: Connection, msg: dict[str, Any]) -> None:
     text = _text_arg(msg, "text")
     if not text.strip():
         raise ProtocolError("The prompt is empty.")
-    conn.start_turn(text)
+    display = msg.get("display")
+    conn.start_turn(text, display.strip() if isinstance(display, str) and display.strip() else None)
 
 
 @handler("interrupt")
@@ -985,6 +1007,7 @@ async def on_permission_reply(conn: Connection, msg: dict[str, Any]) -> None:
 @handler("command")
 async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
     name = _text_arg(msg, "name").strip().lstrip("/")
+    name = COMMAND_ALIASES.get(name, name)
     args = msg.get("args") or ""
     if not isinstance(args, str):
         raise ProtocolError("'args' must be a string.")
@@ -1032,8 +1055,8 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
     elif name == "skills":
         items = [s.summary() for s in conn.skills().values()]
         await result(action="open_panel", panel="skills", items=items)
-    elif name in ("cookbook", "servers", "providers", "mcp"):
-        await result(action="open_panel", panel=name)
+    elif name in PANEL_COMMANDS:
+        await result(action="open_panel", panel=PANEL_COMMANDS[name])
     elif name == "preview":
         manager = conn.require_servers()
         manager.reload()
@@ -1167,7 +1190,22 @@ async def on_models_list(conn: Connection, msg: dict[str, Any]) -> None:
 
 
 async def _send_settings(conn: Connection, session: Session) -> None:
-    await conn.send({"type": "settings", **{k: session.agent.settings.get(k) for k in CLIENT_SETTINGS}})
+    values = {k: session.agent.settings.get(k) for k in CLIENT_SETTINGS}
+    values["permission_mode"] = _permission_mode(session.agent.settings)
+    await conn.send({"type": "settings", **values})
+
+
+@handler("context.get")
+async def on_context_get(conn: Connection, msg: dict[str, Any]) -> None:
+    """The context breakdown of the session: the size of each part of the next request."""
+    session = conn.require_session()
+    await conn.send({"type": "context.usage", **session.agent.context_breakdown()})
+
+
+def _permission_mode(settings: dict[str, Any]) -> str:
+    """The mode of the settings. An unknown mode, for example "auto" of an older version, is "default"."""
+    mode = settings.get("permission_mode")
+    return mode if mode in MODES else "default"
 
 
 @handler("settings.get")
@@ -1188,6 +1226,8 @@ async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"Unknown setting: {key}. The settings are: {', '.join(CLIENT_SETTINGS)}.")
         if not isinstance(value, kind):
             raise ProtocolError(f"'{key}' must be a {kind.__name__}.")
+        if key == "permission_mode" and value not in MODES:
+            raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
     path = project_settings_path(session.cwd)
     data = read_json(path, {})
     data.update(changes)
@@ -1457,6 +1497,18 @@ async def on_fs_write(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_fs_unwatch(conn: Connection, msg: dict[str, Any]) -> None:
     """The editor closed a file. Stop the change reports for it."""
     conn.watched.pop(_text_arg(msg, "path"), None)
+
+
+MAX_FOUND = 40
+
+
+@handler("fs.find")
+async def on_fs_find(conn: Connection, msg: dict[str, Any]) -> None:
+    """File and folder names for the "@" menu of the prompt box. An empty query gives the top of the project."""
+    session = conn.require_session()
+    query = msg.get("query") if isinstance(msg.get("query"), str) else ""
+    items = await asyncio.to_thread(find_paths, session.cwd, query, MAX_FOUND)
+    await conn.send({"type": "fs.found", "query": query, "items": items})
 
 
 @handler("fs.search")

@@ -80,8 +80,14 @@ export interface ModelContext {
 }
 
 /** Project settings that the client can change. */
+import type { ContextUsage } from "../lib/context";
+
+/** The permission mode of a project, as in Claude Code. See daemon/harness_daemon/permissions.py. */
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+
 export interface ClientSettings {
   auto_verify: boolean;
+  permission_mode: PermissionMode;
 }
 
 /** A / menu item: a built-in command or a skill. */
@@ -339,11 +345,13 @@ export type ClientMessage =
   | { type: "auth"; token: string }
   | { type: "session.new"; cwd: string; model: string; provider?: string }
   | { type: "session.resume"; session_id: string }
-  | { type: "session.list"; cwd?: string }
+  | { type: "session.list"; cwd?: string; limit?: number }
+  | { type: "fs.find"; query: string }
+  | { type: "context.get" }
   | { type: "projects.list" }
   | { type: "projects.save"; id?: string; name: string; path: string; create?: boolean }
   | { type: "projects.delete"; id: string }
-  | { type: "prompt"; text: string }
+  | { type: "prompt"; text: string; display?: string } // display: the text that the user sees.
   | { type: "command"; name: string; args: string }
   | { type: "permission.reply"; request_id: string; decision: Decision }
   | { type: "interrupt" }
@@ -442,6 +450,7 @@ export type DaemonMessage =
       files_token: string | null; // Project files for the Browser pane: /files/<token>/<path>.
       project: { id: string; name: string } | null; // The saved project of the session folder.
       auto_verify: boolean; // The agent checks the app after each UI change.
+      permission_mode?: PermissionMode;
       image_input: boolean; // The model accepts images: the agent has preview_screenshot.
     }
   | ({ type: "settings" } & ClientSettings)
@@ -483,6 +492,8 @@ export type DaemonMessage =
       context_length: number;
     }
   | { type: "sessions"; items: SessionSummary[]; cwd?: string | null }
+  | { type: "fs.found"; query: string; items: string[] } // Paths for the "@" menu. A folder ends with "/".
+  | ({ type: "context.usage" } & ContextUsage) // The context breakdown, the reply to context.get.
   | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
   | { type: "token"; text: string }
   // agent: the skill name when a forked skill runs the tool in a subagent.

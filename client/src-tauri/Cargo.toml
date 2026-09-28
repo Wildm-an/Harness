@@ -21,6 +21,7 @@ getrandom = "0.3"
 tokio = { version = "1", features = ["net", "io-util", "macros", "rt", "sync", "time"] }
 tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tauri-plugin-window-state = "2"
 
 # The keychain of each operating system, for the tokens of remote daemons.
 [target.'cfg(windows)'.dependencies]

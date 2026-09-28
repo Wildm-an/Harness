@@ -222,7 +222,7 @@ def provider_for_test(fields: dict[str, Any], api_key: str | None) -> Provider:
     return _provider_from_entry(previous if previous in entries else clean["name"], entry)
 
 
-async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT) -> dict[str, Any]:
+async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT, contexts: bool = True) -> dict[str, Any]:
     """Ask the endpoint for its models (GET <base_url>/models). Return ok, models, contexts, error, and ms.
 
     "contexts" maps a model to its context length and the source of the value. A model with no
@@ -263,8 +263,10 @@ async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT) -> dict
     every = sorted({str(m.get("id")) for m in raw if isinstance(m, dict) and m.get("id")})
     models = every[:MAX_MODELS]
     found = result(True, models=models, truncated=len(every) > MAX_MODELS)  # "ms" is the time of /models only.
-    contexts = await model_contexts(reachable, models, [m for m in raw if isinstance(m, dict)])
-    return {**found, "contexts": {m: info.to_json() for m, info in contexts.items()}}
+    if not contexts:  # The model list of the start screen does not wait for the context checks.
+        return found
+    lengths = await model_contexts(reachable, models, [m for m in raw if isinstance(m, dict)])
+    return {**found, "contexts": {m: info.to_json() for m, info in lengths.items()}}
 
 
 async def all_models() -> dict[str, Any]:
@@ -279,7 +281,7 @@ async def all_models() -> dict[str, Any]:
             providers.append(_provider_from_entry(name, entry))
         except ConfigError as e:
             errors.append({"provider": name, "message": str(e)})
-    results = await asyncio.gather(*(list_models(p, LIST_TIMEOUT) for p in providers))
+    results = await asyncio.gather(*(list_models(p, LIST_TIMEOUT, contexts=False) for p in providers))
     items = []
     for provider, found in zip(providers, results):
         if found["ok"]:

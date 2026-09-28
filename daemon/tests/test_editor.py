@@ -13,7 +13,7 @@ def test_expand_references(project):
     (project / "src").mkdir()
     (project / "src" / "app.py").write_bytes(b"one\ntwo\nthree\nfour\n")
     out = expand_references("Explain @src/app.py:2-3 and @src/app.py:4 please", project)
-    assert out.startswith("Explain @src/app.py:2-3 and @src/app.py:4 please\n\nThe user referenced these lines:")
+    assert out.startswith("Explain @src/app.py:2-3 and @src/app.py:4 please\n\nThe user referenced these items:")
     assert "src/app.py lines 2-3:\n```\n     2\ttwo\n     3\tthree\n```" in out
     assert "src/app.py lines 4-4:" in out
 

@@ -1,32 +1,46 @@
 import { describe, expect, it } from "vitest";
-import type { SessionSummary } from "../daemon/protocol";
-import { folderName, groupSessions } from "./Sidebar";
+import type { ProjectItem, SessionSummary } from "../daemon/protocol";
+import { folderName, groupByProject, pathKey, shortAge } from "./Sidebar";
 
-const NOW = new Date(2026, 8, 28, 15, 0, 0);
-const at = (days: number, hour = 12) => new Date(2026, 8, 28 - days, hour).getTime() / 1000;
-const session = (id: string, updated: number): SessionSummary => ({
-  id, cwd: "C:\\work\\app", provider: "demo", model: "scripted", title: id, created_at: updated, updated_at: updated,
+const session = (id: string, cwd: string, updated: number): SessionSummary => ({
+  id, cwd, provider: "demo", model: "scripted", title: id, created_at: updated, updated_at: updated,
 });
+const project = (id: string, name: string, path: string): ProjectItem =>
+  ({ id, name, path, exists: true, sessions: 0 }) as ProjectItem;
 
-describe("the sidebar session list", () => {
-  it("groups the sessions by day, newest first", () => {
-    const groups = groupSessions([session("old", at(30)), session("today-early", at(0, 1)), session("week", at(4)),
-      session("yesterday", at(1)), session("today-late", at(0, 14))], NOW);
-    expect(groups.map((g) => [g.label, g.items.map((i) => i.id)])).toEqual([
-      ["Today", ["today-late", "today-early"]],
-      ["Yesterday", ["yesterday"]],
-      ["Previous 7 days", ["week"]],
-      ["Older", ["old"]],
+describe("the sidebar projects", () => {
+  it("groups the sessions by folder, with the newest project first", () => {
+    const groups = groupByProject(
+      [session("a1", "C:\\work\\app", 100), session("b1", "C:\\work\\site", 300), session("a2", "c:/work/app/", 200)],
+      [project("p1", "My app", "C:\\work\\app")],
+    );
+    expect(groups.map((g) => [g.name, g.projectId, g.sessions.map((s) => s.id)])).toEqual([
+      ["site", null, ["b1"]], // A folder that is not a saved project uses the folder name.
+      ["My app", "p1", ["a2", "a1"]], // Windows paths match with no case and with either separator.
     ]);
   });
 
-  it("leaves out the empty groups", () => {
-    expect(groupSessions([session("a", at(0))], NOW).map((g) => g.label)).toEqual(["Today"]);
-    expect(groupSessions([], NOW)).toEqual([]);
+  it("keeps a saved project with no session, after the others", () => {
+    const groups = groupByProject([session("x", "/home/me/x", 5)], [project("p2", "Empty", "/home/me/empty"), project("p3", "A", "/home/me/a")]);
+    expect(groups.map((g) => g.name)).toEqual(["x", "A", "Empty"]);
+    expect(groups[2].sessions).toEqual([]);
+  });
+
+  it("compares POSIX paths with case", () => {
+    expect(pathKey("/home/Me/App/")).toBe("/home/Me/App");
+    expect(pathKey("C:\\Work\\App")).toBe("c:/work/app");
   });
 
   it("shows the last folder of a path", () => {
     expect(folderName("C:\\work\\app")).toBe("app");
     expect(folderName("/home/me/app/")).toBe("app");
+  });
+
+  it("shows a short age", () => {
+    const now = 1_000_000;
+    expect(shortAge(now - 10, now)).toBe("now");
+    expect(shortAge(now - 300, now)).toBe("5m");
+    expect(shortAge(now - 3 * 3600, now)).toBe("3h");
+    expect(shortAge(now - 2 * 86400, now)).toBe("2d");
   });
 });

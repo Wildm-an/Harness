@@ -76,37 +76,48 @@ def build_system_prompt(
     summary: str | None = None,
     skills: "list[Skill] | None" = None,
 ) -> str:
-    parts = [BASE_PROMPT, "\n".join([
+    return "\n\n".join(text for _kind, text in system_prompt_parts(ctx, model, instructions, summary, skills))
+
+
+def system_prompt_parts(
+    ctx: ToolContext,
+    model: str,
+    instructions: ProjectInstructions | None = None,
+    summary: str | None = None,
+    skills: "list[Skill] | None" = None,
+) -> list[tuple[str, str]]:
+    """The parts of the system prompt, with their kind: system, instructions, skills, or summary.
+
+    The context breakdown of the client shows the size of each kind.
+    """
+    parts: list[tuple[str, str]] = [("system", BASE_PROMPT), ("system", "\n".join([
         "Environment:",
         f"- Project folder: {ctx.cwd}",
         f"- Operating system: {platform.system()} {platform.release()}",
         f"- Shell for the bash tool: {ctx.shell.name}",
         f"- Date: {datetime.date.today().isoformat()}",
         f"- Model: {model}",
-    ])]
+    ]))]
     if instructions:
         note = " The file is long. Only the first part is shown." if instructions.truncated else ""
-        parts.append(
-            f"# Project instructions\n\nThe user wrote these instructions in {instructions.name}. "
-            f"Follow them.{note}\n\n{instructions.text}"
-        )
+        parts.append(("instructions",
+                      f"# Project instructions\n\nThe user wrote these instructions in {instructions.name}. "
+                      f"Follow them.{note}\n\n{instructions.text}"))
     if ctx.preview is not None:
-        parts.append(PREVIEW_PROMPT + (AUTO_VERIFY_PROMPT if ctx.settings.get("auto_verify") else ""))
+        parts.append(("system", PREVIEW_PROMPT + (AUTO_VERIFY_PROMPT if ctx.settings.get("auto_verify") else "")))
     listed = [s for s in skills or [] if s.model_invocable][:MAX_SKILLS_IN_PROMPT]
     if listed:
         lines = []
         for s in listed:
             text = s.description if len(s.description) <= MAX_SKILL_DESCRIPTION else s.description[:MAX_SKILL_DESCRIPTION] + "..."
             lines.append(f"- {s.name}: {text}")
-        parts.append(
-            "# Skills\n\nA skill holds instructions for one kind of task. When a task matches a skill "
-            "description, call the skill tool with the skill name before you start the task.\n\n"
-            + "\n".join(lines)
-        )
+        parts.append(("skills",
+                      "# Skills\n\nA skill holds instructions for one kind of task. When a task matches a skill "
+                      "description, call the skill tool with the skill name before you start the task.\n\n"
+                      + "\n".join(lines)))
     if summary:
-        parts.append(
-            "# Summary of the earlier conversation\n\n"
-            "The earlier messages were removed to save context. This summary replaces them.\n\n"
-            f"{summary}"
-        )
-    return "\n\n".join(parts)
+        parts.append(("summary",
+                      "# Summary of the earlier conversation\n\n"
+                      "The earlier messages were removed to save context. This summary replaces them.\n\n"
+                      f"{summary}"))
+    return parts

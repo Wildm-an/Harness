@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import {
   Asterisk,
   Code2,
-  Cpu,
   Folder,
   Globe as GlobeIcon,
   Server,
@@ -29,6 +28,7 @@ import type {
   ProjectItem,
   ProviderFields,
   ProviderItem,
+  PermissionMode,
   SessionSummary,
   SkillDetail,
 } from "./daemon/protocol";
@@ -62,11 +62,14 @@ import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
-import { contextSourceText, formatTokens } from "./lib/context";
+import type { ContextUsage } from "./lib/context";
+import { ContextRing } from "./components/ContextRing";
 import { MessageList } from "./components/MessageList";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { SessionStart } from "./components/SessionStart";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, pathKey } from "./components/Sidebar";
+import { ModelMenu, type ModelList } from "./components/ModelMenu";
+import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
 import { SkillsPanel } from "./components/SkillsPanel";
 import {
   LOCAL,
@@ -96,6 +99,9 @@ interface Picker {
 }
 
 const CONNECTION_ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
+
+// The sidebar asks for this many sessions of all projects.
+const SIDEBAR_SESSIONS = 300;
 
 // On a window this narrow, the sidebar covers the page (the same width as in styles.css).
 const NARROW_QUERY = "(max-width: 900px)";
@@ -157,26 +163,6 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-// The daemon summarizes the old turns at 80% of the context.
-const COMPACT_AT = 0.8;
-
-function ContextMeter({ tokens, length, source }: { tokens: number; length: number; source?: string }) {
-  const share = length > 0 ? Math.min(tokens / length, 1) : 0;
-  const level = share >= COMPACT_AT ? "high" : share >= 0.6 ? "mid" : "low";
-  const origin = contextSourceText(source);
-  return (
-    <span
-      className={`context-meter context-${level}`}
-      title={`About ${tokens} of ${length} tokens.${origin ? ` ${origin}` : ""} The agent summarizes old turns at ${COMPACT_AT * 100}%. Type /compact to summarize now.`}
-    >
-      <span className="meter" role="meter" aria-label="Context use" aria-valuemin={0} aria-valuemax={length} aria-valuenow={tokens}>
-        <span className="meter-fill" style={{ width: `${Math.round(share * 100)}%` }} />
-      </span>
-      Context {formatTokens(tokens)} / {formatTokens(length)}
-    </span>
-  );
-}
-
 export default function App() {
   // A ref, not useMemo: React Fast Refresh runs useMemo again, and a second connection object would be closed.
   const connRef = useRef<DaemonConnection | null>(null);
@@ -199,6 +185,12 @@ export default function App() {
   const [sessions, setSessions] = useState<{ cwd: string | null; items: SessionSummary[] }>({ cwd: null, items: [] });
   const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
   const firstPrompt = useRef<string | null>(null); // The task from the start screen, for the new session.
+  // The project that the start screen selects: from a "+" in the sidebar, or the last project at the start.
+  const [startProject, setStartProject] = useState<{ id: string; key: number } | null>(null);
+  const startPicked = useRef(false); // The start screen got the last project after this connection.
+  const [fileMatches, setFileMatches] = useState<{ query: string; items: string[] } | null>(null); // The "@" menu.
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null); // The context breakdown.
   const [sidebarOpen, setSidebarOpen] = useState(
     () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches,
   );
@@ -227,7 +219,7 @@ export default function App() {
   const [providers, setProviders] = useState<{ items: ProviderItem[]; path: string } | null>(null);
   const [providerTest, setProviderTest] = useState<ProviderTest | null>(null);
   const [providerError, setProviderError] = useState<string | null>(null);
-  const [modelOptions, setModelOptions] = useState<string[]>([]); // provider/model, for the start screen.
+  const [models, setModels] = useState<ModelList | null>(null); // The model menus: the models of the connections that are on.
   const providerWait = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null);
   const providerTestRef = useRef<string | null>(null);
   const returnScreen = useRef<Screen>("start"); // The screen before the Providers screen.
@@ -292,7 +284,7 @@ export default function App() {
   /** Asks for the sessions of all folders, for the sidebar. */
   const listRecent = useCallback(() => {
     try {
-      conn.send({ type: "session.list" });
+      conn.send({ type: "session.list", limit: SIDEBAR_SESSIONS });
     } catch {
       // Not connected. The next connection asks again.
     }
@@ -321,6 +313,7 @@ export default function App() {
           setInstructions(msg.instructions);
           setFilesToken(msg.files_token);
           setAutoVerify(msg.auto_verify);
+          setPermissionMode(msg.permission_mode ?? "default");
           setScreen("chat");
           setBusy(false);
           setStartError(null);
@@ -340,6 +333,14 @@ export default function App() {
         case "turn.end":
           listRecent(); // The first turn gives the session a title.
           break;
+        case "fs.found":
+          setFileMatches({ query: msg.query, items: msg.items });
+          return;
+        case "context.usage": {
+          const { type: _type, ...usage } = msg;
+          setContextUsage(usage);
+          return;
+        }
         case "projects":
           setProjects(msg.items);
           if (msg.saved) projectWait.current?.resolve(msg.saved);
@@ -347,6 +348,7 @@ export default function App() {
           return;
         case "settings":
           setAutoVerify(msg.auto_verify);
+          if (msg.permission_mode) setPermissionMode(msg.permission_mode);
           return;
         case "providers":
           setProviders({ items: msg.items, path: msg.path });
@@ -361,7 +363,7 @@ export default function App() {
           return;
         }
         case "models":
-          setModelOptions(msg.items.map((i) => `${i.provider}/${i.model}`));
+          setModels({ items: msg.items.map((i) => `${i.provider}/${i.model}`), errors: msg.errors });
           return;
         case "preview.frame": {
           const { type: _type, ...frame } = msg;
@@ -495,7 +497,8 @@ export default function App() {
     conn.send({ type: "providers.list" });
     conn.send({ type: "projects.list" });
     setRecent([]);
-    conn.send({ type: "session.list" });
+    startPicked.current = false;
+    conn.send({ type: "session.list", limit: SIDEBAR_SESSIONS });
     // The Hugging Face token of the Cookbook, from the keychain.
     const connectionId = currentRef.current?.id;
     if (connectionId) {
@@ -659,6 +662,31 @@ export default function App() {
     if (conn.status === "open") conn.send({ type: "projects.list" });
   };
 
+  // At the start, the start screen selects the project of the last prompt: the folder of the newest session.
+  useEffect(() => {
+    if (startPicked.current || screen !== "start" || session || !projects || recent.length === 0) return;
+    startPicked.current = true;
+    const last = projects.find((p) => pathKey(p.path) === pathKey(recent[0].cwd));
+    if (last) setStartProject((p) => ({ id: last.id, key: (p?.key ?? 0) + 1 }));
+  }, [recent, projects, screen, session]);
+
+  /** Asks the daemon for the models of the connections that are on. The last list stays until the reply. */
+  function requestModels() {
+    sendSafely({ type: "models.list" });
+  }
+
+  /** Opens the start screen with a project selected. A folder that is not a saved project becomes one. */
+  const newSessionIn = async (projectId: string | null, name: string, path: string) => {
+    try {
+      const id = projectId ?? (await saveProject({ name, path }));
+      setStartProject((p) => ({ id, key: (p?.key ?? 0) + 1 }));
+      newSession();
+    } catch (e) {
+      setStartError(errorText(e));
+      newSession();
+    }
+  };
+
   /** Adds or changes a project. Resolves with its id when the daemon saved it. */
   const saveProject = (project: { id?: string; name: string; path: string; create?: boolean }) =>
     new Promise<string>((resolve, reject) => {
@@ -765,21 +793,17 @@ export default function App() {
     }
   };
 
-  // The start screen suggests the models of the providers that are on.
+  // The start screen shows the models of the connections that are on.
   useEffect(() => {
     if (screen !== "start" || status !== "open") return;
-    try {
-      conn.send({ type: "models.list" });
-    } catch {
-      // The field then has no suggestions.
-    }
+    requestModels();
   }, [screen, status, conn]);
 
   const submit = (s: Submission): boolean => {
     try {
       if (s.kind === "prompt") {
-        conn.send({ type: "prompt", text: s.text });
-        dispatch({ type: "user", text: s.text, startsTurn: true });
+        conn.send({ type: "prompt", text: s.text, ...(s.display ? { display: s.display } : {}) });
+        dispatch({ type: "user", text: s.display ?? s.text, startsTurn: true });
       } else {
         conn.send({ type: "command", name: s.name, args: s.args });
         // /compact runs like a turn: the daemon ends it with turn.end.
@@ -952,6 +976,17 @@ export default function App() {
 
   const changeAutoVerify = useCallback((enabled: boolean) => sendSafely({ type: "settings.set", auto_verify: enabled }), [sendSafely]);
 
+  /** Changes the permission mode of the project. The daemon replies with "settings". */
+  const changeMode = (mode: PermissionMode) => {
+    if (!sendSafely({ type: "settings.set", permission_mode: mode })) return;
+    setPermissionMode(mode);
+    // The mode text under the prompt box shows the mode. Only the bypass mode also gets a warning.
+    if (mode === "bypassPermissions") {
+      const label = MODES.find((m) => m.mode === mode)?.label ?? mode;
+      dispatch({ type: "notice", level: "warning", text: `${label} is on. The agent runs each action with no question. Only the deny rules apply.` });
+    }
+  };
+
   // /preview: open the default server when it runs.
   useEffect(() => {
     if (!previewServer) return;
@@ -1055,6 +1090,14 @@ export default function App() {
 
   const folder = session?.project ?? session?.cwd.split(/[\\/]/).filter(Boolean).pop();
 
+  // The sessions of the "@" menu: not this session, and the sessions of this project first.
+  const mentionSessions = useMemo(() => {
+    if (!session) return [];
+    const here = pathKey(session.cwd);
+    const others = recent.filter((s) => s.id !== session.id);
+    return [...others.filter((s) => pathKey(s.cwd) === here), ...others.filter((s) => pathKey(s.cwd) !== here)];
+  }, [recent, session?.id, session?.cwd]);
+
   const chatPane = (
     <div className="chat">
       {status === "closed" && (
@@ -1106,21 +1149,39 @@ export default function App() {
             commands={commands}
             onRequestCommands={requestCommands}
             insert={promptInsert}
-            footer={
-              <>
-                {session && (
-                  <button
-                    type="button"
-                    className="prompt-chip mono"
-                    onClick={showProviders}
-                    title="The model. Change it with /model provider/model, or click to open the providers."
-                  >
-                    <Cpu size={13} aria-hidden />
-                    {session.model}
-                  </button>
+            sessions={mentionSessions}
+            fileMatches={fileMatches}
+            onFindFiles={(query) => sendSafely({ type: "fs.find", query })}
+            onCycleMode={() => changeMode(nextMode(permissionMode))}
+            below={
+              session && (
+                <>
+                <ModeMenu mode={permissionMode} onChange={changeMode} />
+                <div className="prompt-below-right">
+                <ModelMenu
+                  value={session.model}
+                  models={models}
+                  allowDefault={false}
+                  up
+                  alignRight
+                  onOpen={requestModels}
+                  onSelect={(spec) => submit({ kind: "command", name: "model", args: spec })}
+                  onManage={showProviders}
+                />
+                {chat.context && (
+                  <ContextRing
+                    tokens={chat.context.tokens}
+                    length={chat.context.length}
+                    source={chat.context.source}
+                    usage={contextUsage}
+                    running={chat.running}
+                    onOpen={() => sendSafely({ type: "context.get" })}
+                    onCompact={() => submit({ kind: "command", name: "compact", args: "" })}
+                  />
                 )}
-                {chat.context && <ContextMeter tokens={chat.context.tokens} length={chat.context.length} source={chat.context.source} />}
-              </>
+                </div>
+                </>
+              )
             }
           />
         </div>
@@ -1243,17 +1304,19 @@ export default function App() {
             activeId={screen === "chat" ? (session?.id ?? null) : null}
             screen={screen}
             status={status}
+            projects={projects ?? []}
             onNewSession={fromSidebar(newSession)}
+            onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
             onResume={(id) => fromSidebar(() => resumeSession(id))()}
-            onCookbook={fromSidebar(showCookbook)}
-            onProviders={fromSidebar(showProviders)}
+            onLocalModels={fromSidebar(showCookbook)}
+            onConnections={fromSidebar(showProviders)}
             onCollapse={() => showSidebar(false)}
             connection={
               <button
                 type="button"
                 className={`conn conn-${status}${screen === "connections" ? " active" : ""}`}
                 onClick={fromSidebar(openConnections)}
-                title={`${statusText}${hello ? ` to ${hello.hostname} (${hello.platform})` : ""}. Open the connections.`}
+                title={`${statusText}${hello ? ` to ${hello.hostname} (${hello.platform})` : ""}. Open the computers.`}
               >
                 <span className="conn-dot" aria-hidden />
                 <ConnectionIcon connection={current} />
@@ -1352,11 +1415,13 @@ export default function App() {
             onResume={resumeSession}
             prefScope={current?.id ?? "local"}
             onBrowse={browseFolder}
-            models={modelOptions}
+            models={models}
+            onRequestModels={requestModels}
             onManageProviders={showProviders}
             onSaveProject={saveProject}
             onDeleteProject={deleteProject}
             onListSessions={listSessions}
+            selectProject={startProject}
           />
         )}
         {screen === "cookbook" && (

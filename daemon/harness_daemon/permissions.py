@@ -16,6 +16,15 @@ Rule forms:
   for example all the tools of one MCP server.
 
 A deny rule has priority over an allow rule.
+
+Permission modes (the ``permission_mode`` setting, as in Claude Code):
+
+- ``default``: ask the user for each action that no rule allows.
+- ``acceptEdits``: file changes in the project (edit, write) run with no question.
+- ``plan``: file changes are blocked. The agent reads and makes a plan.
+- ``bypassPermissions``: every action runs with no question.
+
+The deny rules apply in all modes.
 """
 
 from __future__ import annotations
@@ -33,6 +42,11 @@ RULE_RE = re.compile(r"([A-Za-z0-9_\-]+\*?)(?:\((.*)\))?", re.S)
 SHELL_OPERATORS = re.compile(r"[;&|`\n<>]|\$\(")
 
 DECISIONS = ("allow_once", "allow_always", "deny")
+MODES = ("default", "acceptEdits", "plan", "bypassPermissions")
+EDIT_TOOLS = ("edit", "write")
+
+PLAN_BLOCK = ("Plan mode is on, so you cannot change files. Read and search the project, then give the user "
+              "a plan and stop. The user changes the mode to start the work.")
 
 # The approver gets a request and returns one of DECISIONS.
 Approver = Callable[[dict[str, Any]], Awaitable[str]]
@@ -104,24 +118,38 @@ class PermissionRules:
 
 
 class PermissionGate:
-    def __init__(self, cwd: Path, approver: Approver, session_allow: list[str] | None = None):
+    def __init__(self, cwd: Path, approver: Approver, session_allow: list[str] | None = None,
+                 mode: Callable[[], str] | None = None):
         self.rules = PermissionRules(cwd)
         self.approver = approver
+        self.mode = mode or (lambda: "default")
         # Rules for this gate only. A subagent gets the allowed-tools of its skill here.
         self.session_allow = list(session_allow or [])
         # Rules for the current turn: the allowed-tools of the skills that run in it.
         self.turn_allow: list[str] = []
 
-    async def check(self, tool: Tool, args: dict[str, Any], approval: Approval | None) -> bool:
+    async def check(self, tool: Tool, args: dict[str, Any], approval: Approval | None) -> bool | str:
+        """True: run the action. False: the user denied it, and the turn stops.
+
+        A text: the mode blocked the action. The text goes to the agent, and the turn continues.
+        """
         if not tool.needs_approval or approval is None:
             return True
         name = approval.tool or tool.name
         if self.rules.denies(name, approval.key):
             return False
+        mode = self.mode()  # An unknown mode, for example a mode of an older version, is "default".
+        if mode == "bypassPermissions":
+            return True
         if self.rules.allows(name, approval.key):
             return True
         if any(rule_matches(r, name, approval.key) for r in (*self.session_allow, *self.turn_allow)):
             return True
+        if name in EDIT_TOOLS:
+            if mode == "plan":
+                return PLAN_BLOCK
+            if mode == "acceptEdits":
+                return True
         decision = await self.approver({
             "request_id": uuid.uuid4().hex,
             "tool": tool.name,

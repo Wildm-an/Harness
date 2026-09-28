@@ -13,13 +13,13 @@ python -m venv .venv
 
 ## Configure a model provider
 
-Use the **Providers** screen of the desktop client: the model chip in the title bar, the "Manage the providers" link on the start screen, or `/providers`. The screen adds, changes, tests, and turns off providers. It writes `~/.harness/providers.json` on the daemon computer.
+Use the **Connections** screen of the desktop client: Connections in the sidebar, the model chip below the prompt, the "Manage the connections" link on the start screen, or `/connections` (the old name `/providers` also works). The screen adds, changes, tests, and turns off providers. It writes `~/.harness/providers.json` on the daemon computer.
 
 API keys:
 
-- A key that you enter on the Providers screen stays in the keychain of the client computer. The entry gets `"key_store": "client"`. The client sends the key after it connects, and the daemon keeps it in memory only. The key is never in the file.
+- A key that you enter on the Connections screen stays in the keychain of the client computer. The entry gets `"key_store": "client"`. The client sends the key after it connects, and the daemon keeps it in memory only. The key is never in the file.
 - `api_key_env` reads the key from an environment variable of the daemon.
-- `api_key` in the file is plain text. The Providers screen shows a warning for it.
+- `api_key` in the file is plain text. The Connections screen shows a warning for it.
 - The order: `api_key`, then `api_key_env`, then the client key.
 
 `"enabled": false` turns a provider off. A model name with no provider uses the first provider that is on.
@@ -49,7 +49,7 @@ The daemon finds the context length of a model in this order:
    - The model list `/models`: `max_model_len` (vLLM), `context_length` (OpenRouter), `context_window`, or `meta.n_ctx`.
 4. The default: 8192 tokens, with a warning.
 
-The client shows the source of the value in the tooltip of the context meter. The connection test on the Providers screen shows the context length of each model (Ollama: the first 40 models).
+The client shows the source of the value in the tooltip of the context meter. The connection test on the Connections screen shows the context length of each model (Ollama: the first 40 models).
 
 ### A model on another computer, through SSH
 
@@ -104,7 +104,7 @@ The packaged daemon has no `python` command:
 
 ## Remote daemon
 
-The same daemon runs on a remote computer. The desktop client connects to it from the Connections screen.
+The same daemon runs on a remote computer. The desktop client connects to it from the Computers screen (the computer button at the bottom of the sidebar).
 
 1. Install the daemon on the remote computer (see "Set up").
 2. Start it with a fixed port:
@@ -183,8 +183,8 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 | `context_length` | none | The context length for all models. See the order above. |
 | `ripgrep` | `rg` on the PATH | The ripgrep binary for `glob` and `grep`. Without ripgrep, the tools use a Python search that does not apply `.gitignore`. |
 | `auto_verify` | `false` | The agent checks the app with the preview tools after each change to the user interface. The Servers pane of the client changes this value in the project settings. |
-| `image_input` | auto | `true` or `false` overrides the image input check of the model. See "Agent preview tools". |
-| `allow`, `deny` | `[]` | Permission rules. See `harness_daemon/permissions.py`. |
+| `permission_mode` | `default` | `default` (ask), `acceptEdits` (file changes in the project run), `plan` (no file changes: the agent makes a plan), or `bypassPermissions` (every action runs). The deny rules apply in all modes. The client changes this value with the mode menu or Shift+Tab. |
+
 
 ## MCP servers
 
@@ -210,7 +210,7 @@ The agent uses the tools of MCP servers (SPEC.md section 5.7). The servers come 
 
 ## Cookbook
 
-The Cookbook finds, downloads, and serves local models (SPEC.md section 7). The client opens it with the chef hat in the title bar, or with `/cookbook`.
+The Cookbook finds, downloads, serves, and deletes local models (SPEC.md section 7). The client calls it **Local Models**, and opens it from the sidebar or with `/local-models` (the old name `/cookbook` also works).
 
 - **Hosts.** "local" is the daemon computer. Remote hosts are in `~/.harness/hosts.json`: `{"gpu-box": {"ssh": "drew@gpu-box", "python": "python3", "llama_server": "~/llama.cpp/build/bin/llama-server"}}`. The daemon runs `harness_daemon/cookbook/hostscript.py` on the host with `python -` (through `ssh` for a remote host). A remote host needs Python 3, and `huggingface_hub` for downloads.
 - **SSH key.** The Cookbook makes `~/.harness/ssh/id_ed25519`. Add its public key to `~/.ssh/authorized_keys` on each remote host.

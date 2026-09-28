@@ -38,12 +38,14 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 | `session.new` | `cwd`, `model`, `provider` (optional) | `model` is `<provider>/<model>` or `<model>`. A bare model uses `provider`, or the first provider in `providers.json`. If `model` is empty, the daemon uses `default_model` from the settings. |
 
-| `session.list` | `cwd` (optional) | Asks for the stored sessions, newest first. With `cwd`, only the sessions of that folder (case-insensitive on Windows). |
+| `session.list` | `cwd` (optional), `limit` (optional) | Asks for the stored sessions, newest first. With `cwd`, only the sessions of that folder (case-insensitive on Windows). `limit` is 50 by default, and at most 500. |
 | `projects.list` | — | Asks for the saved projects, the last used first. This needs no session. |
 | `projects.save` | `path`, `name` (optional), `id` (optional), `create` (optional) | Adds a project, or changes the project `id`. `path` must be absolute. With `create`, the daemon makes a missing folder. Two projects cannot use the same folder. |
 | `projects.delete` | `id` | Removes a project from the list. The folder, its files, and its sessions stay. |
 
 | `fs.dirs` | `path` (optional), `hidden` (optional) | Asks for the folders in a folder of the daemon host. The default is the home folder. This needs no session: the client uses it to select a project folder on a remote daemon. |
+| `context.get` | none | Asks for the context breakdown of the session. The reply is `context.usage`. |
+| `fs.find` | `query` | File and folder names for the "@" menu of the prompt box. The reply is `fs.found`. |
 | `fs.search` | `query`, `regex` (optional), `case` (optional), `glob` (optional) | Searches the project for the editor. Without `regex`, `query` is plain text. Without `case`, the search ignores case. |
 | `fs.unwatch` | `path` | The editor closed a file. The daemon stops the change reports for it. |
 | `server.list` | — | Asks for the servers of `.harness/launch.json`. |
@@ -84,7 +86,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `serve.stop` | `host`, `name` | Stops a served model and removes its provider. |
 | `serve.output` | `host`, `name` | Asks for the last lines of the llama-server log. |
 | `settings.get` | — | Asks for the project settings that the client can change. |
-| `settings.set` | `auto_verify` | Changes project settings in `.harness/settings.json`. The other keys of the file stay the same. The next model call uses the new value. |
+| `settings.set` | `auto_verify`, `permission_mode` | Changes project settings in `.harness/settings.json`. `permission_mode` is `default`, `acceptEdits`, `plan`, or `bypassPermissions`. The other keys of the file stay the same. The next model call uses the new value. |
 
 
 
@@ -102,6 +104,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `session.ready` | `session_id`, `cwd`, `model`, `title`, `warnings`, `history`, `summary`, `context_length`, `context_source`, `context_tokens`, `instructions` | Reply to `session.new` and `session.resume`. `context_source` tells where the context length came from: `settings`, `providers.json`, `default`, or an endpoint (for example `llama-server` or `Ollama num_ctx`). `summary` replaces the messages before `history` (null if there is no summary). `instructions` is `HARNESS.md`, `CLAUDE.md`, or null. `history` holds the messages of the current context, in OpenAI chat format. A `tool` message also has `is_error`, and `diff` for a file change. The daemon does not send these fields to the model. |
 
 | `projects` | `items`, `saved` | Reply to the `projects.*` messages. Each item has `id`, `name`, `path`, `exists`, `sessions` (the number of stored sessions in the folder), `created_at`, and `last_used`. `saved` is the id after `projects.save`. `session.new` adds its folder as a project if it is not one. The first daemon start with projects adds the folders of the stored sessions. |
+| `context.usage` | `tokens`, `length`, `compact_at`, `source`, `parts` | The size of each part of the next request: `system`, `instructions`, `skills`, `summary`, `tools`, `mcp_tools`, and `messages`. The parts are estimates, scaled so that their sum is `tokens` (the endpoint count of the last request, when the endpoint gives it). |
+| `fs.found` | `query`, `items` | Reply to `fs.find`: at most 40 project paths, best match first. A folder ends with `/`. |
 | `sessions` | `items`, `cwd` | Reply to `session.list`. `cwd` is the value from the request, or null. Each item has `id`, `cwd`, `provider`, `model`, `title`, `created_at`, and `updated_at`. |
 
 | `command.result` | `name`, and `text`, `items`, `model`, `warnings`, `action`, or `panel` | Reply to a built-in command. `action: "open_panel"` tells the client to open `panel`. |
@@ -118,7 +122,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `server.log` | `name`, `stream`, `text` | `text` can hold several lines. The daemon sends the new lines about 10 times a second. |
 | `server.logs` | `name`, `lines` | Reply to `server.logs`. Each line has `stream` and `text`. |
 | `permissions` | `path`, `allow`, `deny` | Reply to `permissions.get` and `permissions.set`. `path` is the settings file, relative to the project. |
-| `settings` | `auto_verify` | Reply to `settings.get` and `settings.set`. |
+| `settings` | `auto_verify`, `permission_mode` | Reply to `settings.get` and `settings.set`. |
 | `mcp` | `items`, `problems`, `paths` | The MCP servers of the session. The daemon sends it when a server state or a tool list changes, and as the reply to `mcp.list`. Each item has `name`, `scope` (`user` or `project`), `transport`, `target` (the command or the URL), `state` (`starting`, `connected`, `failed`, `disabled`, or `stopped`), `error`, `server_name`, `tools` (`name`, `agent_name`, `description`), and `log` (the last output lines of a failed server). `problems` holds the configuration errors and warnings. |
 | `mcp.init` | `path`, `created` | Reply to `mcp.init`. `path` is relative to the project. |
 | `cookbook.hosts` | `items`, `public_key`, `key_path` | Reply to the `cookbook.host*` and `cookbook.ssh_key` messages. Each item has `name`, `ssh`, `remote`, `python`, `llama_server`, and `label`. `public_key` is null if there is no key. |
@@ -208,7 +212,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 - The daemon runs one turn at a time for each connection. A `prompt` during a turn gets an `error`.
 - A `command` with a skill name starts the skill as a turn. Built-in commands have priority over skills with the same name. A skill with `user-invocable: false` gets an `error`.
 - The daemon watches each file that the client read with `fs.read`, until `fs.unwatch`. If the file changes and the change is not from the agent tools or from `fs.write`, the daemon sends `fs.changed`. `by` is `agent` during a turn (probably a `bash` command), and `external` at other times.
-- A prompt can have line references such as `@src/app.py:10-25` or `@src/app.py:10`. The daemon adds the text of those lines to the prompt for the model, and it stores the original prompt as `display`.
+- A prompt can have references: lines (`@src/app.py:10-25`), a file (`@src/app.py`), a folder (`@src/`), or a session (`@session:<id>`). The daemon adds the referenced text to the prompt for the model, and it stores the original prompt as `display`. A `prompt` can have `display`: the text that the user sees, for example with the name of a session in place of its id.
 - A stored user message can have `display`: the text that the user typed, for example `/review src`. `content` holds the skill text for the model.
 - `/compact` runs like a turn: `interrupt` stops it, and it ends with `turn.end`. If there is too little history, a `command.result` comes before `turn.end`.
 

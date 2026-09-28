@@ -468,7 +468,7 @@ def cmd_serve_start():
     if not binary:
         raise RuntimeError(
             "llama-server is not on this host. Install llama.cpp, or set the llama-server path of the host "
-            "in the Cookbook.")
+            "in the Local Models screen.")
     if port_open(ARGS["port"]):
         raise RuntimeError(f"Port {ARGS['port']} is in use on this host.")
     os.makedirs(SERVE_DIR, exist_ok=True)

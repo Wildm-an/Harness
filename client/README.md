@@ -58,7 +58,7 @@ After an install, the agent browser needs Chromium. Run the installed sidecar wi
 
 ## Connections
 
-The Connections screen (the connection chip in the title bar) lists "This computer" and the remote daemons.
+The Computers screen (the computer button at the bottom of the sidebar) lists "This computer" and the remote daemons.
 
 - **Direct:** the client connects to `ws://<host>:<port>/ws`, for example over Tailscale.
 - **SSH tunnel:** the app starts `ssh -N -L 127.0.0.1:<free port>:127.0.0.1:<daemon port>` with `BatchMode=yes` (key login only) and `StrictHostKeyChecking=accept-new`. The app stops the tunnel when it disconnects or quits.
@@ -100,7 +100,7 @@ For a model with no GPU, use the scripted demo model:
 python ../daemon/scripts/demo_model.py --port 11500
 ```
 
-Then add a provider on the Providers screen with the URL `http://127.0.0.1:11500/v1` and "No key", and use the model `<name>/scripted`. You can also add `"demo": { "base_url": "http://127.0.0.1:11500/v1", "api_key": "demo" }` to `~/.harness/providers.json`.
+Then add a provider on the Connections screen with the URL `http://127.0.0.1:11500/v1` and "No key", and use the model `<name>/scripted`. You can also add `"demo": { "base_url": "http://127.0.0.1:11500/v1", "api_key": "demo" }` to `~/.harness/providers.json`.
 
 ## Test
 
@@ -136,7 +136,14 @@ npm run build
 
 The layout follows the Claude Code desktop app (the Code tab):
 
-- A sidebar with "New session", the Cookbook, the Providers, the sessions by day, and the connection. On a window under 900 px, the sidebar covers the page.
+- A sidebar with "New session", Local Models (the Cookbook), Connections (the model providers), the projects, and the computer. Each project folder opens and closes, and shows its sessions, newest first (8, then "Show more"). The "+" of a project starts a new session in it. A folder of a session that is not a saved project becomes one. On a window under 900 px, the sidebar covers the page.
+- When the app opens, the start screen selects the project of the last prompt. The window opens at the position and size of its last close (`tauri-plugin-window-state`).
+- The context ring is to the right of the model. A click shows the breakdown of the next request, as the `/context` view of Claude Code: the system prompt, the project instructions, the skills, the summary, the built-in and MCP tools, the messages, the free space, and the compaction buffer. "Compact now" runs `/compact`.
+- A permission request never takes the keyboard focus from a text field. When it gets the focus, the keys 1, 2, 3, and Esc answer it. Enter and Space do not.
+- The model menus show the models of all connections that are on. You select a model, and cannot type one. In a session, the model is text under the prompt box, on the right. A selection sends `/model`.
+- The permission mode is text under the prompt box, on the left: Ask permissions, Accept edits, Plan mode, or Bypass permissions. Shift+Tab in the prompt box goes through the first three. See `permission_mode` in [../daemon/README.md](../daemon/README.md).
+- The viewport menu of the Browser pane: Responsive (the full pane), Mobile (375 × 812), or Tablet (768 × 1024).
+- Type `@` in the prompt box for the files and folders of the project, and the other sessions (this project first). A session shows as its name, for example `@"Login page"`. The client sends its id. The daemon adds the text of each reference to the prompt: a file, the entries of a folder, lines (`@path:10-25`), or the messages of a session (`@session:<id>`).
 - The start screen is a prompt box. Type the first task, select the project and the model in the chips below the text, and press Enter. The session starts, and the task goes to the agent. An empty box starts the session with no task.
 - A top bar with the session title, the project folder, the Servers menu, and icon buttons for the panes.
 - A plain transcript: the user messages are bubbles, and each tool call is one row with a status dot and the Claude Code tool name (Read, Update, Bash). Click a row to see its input and output.

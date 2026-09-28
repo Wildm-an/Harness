@@ -10,6 +10,7 @@ use sidecar::{DaemonInfo, Sidecar};
 use tauri::AppHandle;
 use tunnel::{TunnelSpec, Tunnels};
 use tauri::{Manager, RunEvent, State};
+use tauri_plugin_window_state::StateFlags;
 
 /// Returns the address and token of the local daemon. Starts the daemon if it does not run.
 #[tauri::command]
@@ -111,6 +112,13 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // The main window opens at the position and size of its last close. The plugin saves them
+        // in the app data folder, and it does not restore a position that no monitor shows.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+                .build(),
+        )
         .manage(Sidecar::default())
         .manage(Tunnels::default())
         .manage(Forwards::default())

@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, FileText, Folder, LoaderCircle, MessageSquare, Square } from "lucide-react";
 import type { CommandItem } from "../daemon/protocol";
+import {
+  filterSessions,
+  insertMention,
+  mentionAt,
+  mentionToken,
+  resolveSessionRefs,
+  sessionLabel,
+  type MentionItem,
+  type MentionSession,
+} from "./mentions";
 
-export type Submission = { kind: "prompt"; text: string } | { kind: "command"; name: string; args: string };
+// "display" is the text that the user sees, if it is not "text": the names of sessions in place of their ids.
+export type Submission = { kind: "prompt"; text: string; display?: string } | { kind: "command"; name: string; args: string };
 
 /** Splits "/name args" into a command. Other text is a prompt. */
 export function parseSubmission(raw: string): Submission | null {
@@ -44,9 +55,19 @@ export function PromptBox({
   onInterrupt,
   insert,
   footer,
+  below,
+  sessions = [],
+  fileMatches = null,
+  onFindFiles,
+  onCycleMode,
 }: {
+  onCycleMode?: () => void; // Shift+Tab: the next permission mode.
+  sessions?: MentionSession[]; // Other sessions for the "@" menu, newest first.
+  fileMatches?: { query: string; items: string[] } | null; // The last fs.found reply.
+  onFindFiles?: (query: string) => void; // Asks the daemon for the files that match an "@" query.
   insert?: { text: string; key: number } | null; // Text to add, for example "@src/app.py:10-25" from the editor.
-  footer?: React.ReactNode; // The left part of the tool row below the text: the model and the context use.
+  footer?: React.ReactNode; // The left part of the tool row below the text: the context use.
+  below?: React.ReactNode; // A row under the box, on the right: the model menu.
   running: boolean;
   disabled: boolean;
   commands: CommandItem[] | null; // null: not loaded yet.
@@ -59,6 +80,12 @@ export function PromptBox({
   const [dismissed, setDismissed] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
   const list = useRef<HTMLUListElement>(null);
+  const [caret, setCaret] = useState(0);
+  const [mentionActive, setMentionActive] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState<number | null>(null); // The start of a closed "@" token.
+  const pendingCaret = useRef<number | null>(null);
+  const mentionList = useRef<HTMLUListElement>(null);
+  const sessionRefs = useRef(new Map<string, string>()); // The session names in the prompt, and their ids.
 
   const token = COMMAND_TOKEN.exec(text);
   const menuOpen = token !== null && !dismissed && !disabled;
@@ -73,6 +100,34 @@ export function PromptBox({
   }, [menuOpen]);
 
   useEffect(() => setActive(0), [token?.[1]]);
+
+  // The "@" menu: the files of the project and the other sessions. The "/" menu has priority.
+  const found = !menuOpen && !disabled ? mentionAt(text, caret) : null;
+  const mention = found && found.start !== mentionDismissed ? found : null;
+  const filesReady = mention !== null && fileMatches?.query === mention.query;
+  const mentionItems: MentionItem[] = mention
+    ? [
+        ...(filesReady ? fileMatches.items.map((path): MentionItem => ({ kind: "file", path })) : []),
+        ...filterSessions(sessions, mention.query).map((session): MentionItem => ({ kind: "session", session })),
+      ]
+    : [];
+
+  useEffect(() => {
+    if (mention && onFindFiles) onFindFiles(mention.query);
+    setMentionActive(0);
+  }, [mention?.query, mention !== null]);
+
+  useEffect(() => {
+    mentionList.current?.querySelector<HTMLElement>(`[data-index="${mentionActive}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [mentionActive]);
+
+  // Put the caret after a reference that the menu added.
+  useEffect(() => {
+    if (pendingCaret.current === null || !area.current) return;
+    area.current.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    setCaret(pendingCaret.current);
+    pendingCaret.current = null;
+  }, [text]);
 
   useEffect(() => {
     list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
@@ -99,19 +154,41 @@ export function PromptBox({
 
   useEffect(() => {
     if (!insert) return;
-    setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}${insert.text} `);
+    const next = `${text}${text && !/\s$/.test(text) ? " " : ""}${insert.text} `;
+    pendingCaret.current = next.length;
+    change(next);
     area.current?.focus();
   }, [insert]);
 
-  const change = (value: string) => {
+  const change = (value: string, at?: number) => {
     setText(value);
+    setCaret(at ?? value.length);
     if (!value.startsWith("/")) setDismissed(false);
+    if (mentionDismissed !== null && value[mentionDismissed] !== "@") setMentionDismissed(null);
+  };
+
+  /** Replace the "@query" with the reference of the item. */
+  const chooseMention = (item: MentionItem) => {
+    if (!mention) return;
+    if (item.kind === "session") sessionRefs.current.set(sessionLabel(item.session), item.session.id);
+    const next = insertMention(text, caret, mention.start, mentionToken(item));
+    pendingCaret.current = next.caret;
+    change(next.text, next.caret);
+    area.current?.focus();
   };
 
   const submit = () => {
-    const s = parseSubmission(text);
-    if (!s || running || disabled) return;
-    if (onSubmit(s)) change("");
+    const parsed = parseSubmission(text);
+    if (!parsed || running || disabled) return;
+    let s = parsed;
+    if (s.kind === "prompt") {
+      const resolved = resolveSessionRefs(s.text, sessionRefs.current);
+      if (resolved !== s.text) s = { kind: "prompt", text: resolved, display: s.text };
+    }
+    if (onSubmit(s)) {
+      change("");
+      sessionRefs.current.clear();
+    }
   };
 
   /** Put the command in the box. A command with no arguments runs at once if ``run`` is set. */
@@ -125,6 +202,24 @@ export function PromptBox({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mention && mentionItems.length > 0) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const step = e.key === "ArrowDown" ? 1 : -1;
+        setMentionActive((i) => (i + step + mentionItems.length) % mentionItems.length);
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing)) {
+        e.preventDefault();
+        chooseMention(mentionItems[Math.min(mentionActive, mentionItems.length - 1)]);
+        return;
+      }
+    }
+    if (mention && e.key === "Escape") {
+      e.preventDefault();
+      setMentionDismissed(mention.start);
+      return;
+    }
     if (menuOpen && matches.length > 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -137,6 +232,11 @@ export function PromptBox({
         choose(matches[Math.min(active, matches.length - 1)], e.key === "Enter");
         return;
       }
+    }
+    if (e.key === "Tab" && e.shiftKey && onCycleMode) {
+      e.preventDefault();
+      onCycleMode();
+      return;
     }
     if (menuOpen && e.key === "Escape") {
       e.preventDefault();
@@ -153,7 +253,9 @@ export function PromptBox({
   };
 
   const canSend = !running && !disabled && text.trim().length > 0;
-  const activeId = menuOpen && matches.length > 0 ? `slash-opt-${active}` : undefined;
+  const mentionOpen = mention !== null && mentionItems.length > 0;
+  const activeId = menuOpen && matches.length > 0 ? `slash-opt-${active}` : mentionOpen ? `mention-opt-${mentionActive}` : undefined;
+  const firstSession = mentionItems.findIndex((i) => i.kind === "session");
 
   return (
     <div className="prompt-wrap">
@@ -201,8 +303,63 @@ export function PromptBox({
           </div>
         </div>
       )}
+      {mention && (
+        <div className="slash-menu mention-menu">
+          {mentionItems.length === 0 ? (
+            <p className="slash-empty">
+              {filesReady ? (
+                `No file, folder, or session matches @${mention.query}.`
+              ) : (
+                <>
+                  <LoaderCircle size={13} className="spin" aria-hidden /> Looking for files.
+                </>
+              )}
+            </p>
+          ) : (
+            <ul id="mention-menu" role="listbox" aria-label="Files and sessions" ref={mentionList}>
+              {mentionItems.map((item, i) => (
+                <li
+                  key={item.kind === "file" ? `f-${item.path}` : `s-${item.session.id}`}
+                  id={`mention-opt-${i}`}
+                  data-index={i}
+                  role="option"
+                  aria-selected={i === mentionActive}
+                  className={`${i === mentionActive ? "active" : ""}${i === firstSession && i > 0 ? " mention-first-session" : ""}`}
+                  onMouseDown={(e) => e.preventDefault()} // Keep the focus in the text box.
+                  onMouseEnter={() => setMentionActive(i)}
+                  onClick={() => chooseMention(item)}
+                >
+                  {item.kind === "file" ? (
+                    <>
+                      {item.path.endsWith("/") ? <Folder size={14} aria-hidden /> : <FileText size={14} aria-hidden />}
+                      <span className="slash-name mono">{item.path}</span>
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquare size={14} aria-hidden />
+                      <span className="mention-title">{item.session.title ?? "Untitled session"}</span>
+                      <span className="slash-source">session</span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="slash-foot">
+            <span>
+              <kbd>↑</kbd> <kbd>↓</kbd> select
+            </span>
+            <span>
+              <kbd>Enter</kbd> add
+            </span>
+            <span>
+              <kbd>Esc</kbd> close
+            </span>
+          </div>
+        </div>
+      )}
       <span className="sr-only" aria-live="polite">
-        {menuOpen && commands ? `${matches.length} commands match.` : ""}
+        {menuOpen && commands ? `${matches.length} commands match.` : mentionOpen ? `${mentionItems.length} files and sessions match.` : ""}
       </span>
       <div className="prompt-box">
         <label htmlFor="prompt-input" className="sr-only">
@@ -214,14 +371,15 @@ export function PromptBox({
           rows={1}
           value={text}
           disabled={disabled}
-          placeholder={running ? "The agent is working. Press Esc to interrupt." : "Ask the agent. Type / for commands."}
-          onChange={(e) => change(e.target.value)}
+          placeholder={running ? "The agent is working. Press Esc to interrupt." : "Ask the agent. Type / for commands, @ for files."}
+          onChange={(e) => change(e.target.value, e.target.selectionStart)}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
           spellCheck={false}
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={menuOpen && matches.length > 0}
-          aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : undefined}
+          aria-expanded={(menuOpen && matches.length > 0) || mentionOpen}
+          aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : mentionOpen ? "mention-menu" : undefined}
           aria-activedescendant={activeId}
         />
         <div className="prompt-tools">
@@ -244,6 +402,7 @@ export function PromptBox({
           )}
         </div>
       </div>
+      {below && <div className="prompt-below">{below}</div>}
     </div>
   );
 }

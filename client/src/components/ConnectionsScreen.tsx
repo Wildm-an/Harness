@@ -307,7 +307,7 @@ export function ConnectionsScreen({
     <div className="start-screen">
       <section className="panel connections" aria-labelledby="connections-title">
         <div className="panel-head">
-          <h1 id="connections-title">Connections</h1>
+          <h1 id="connections-title">Computers</h1>
           {canReturn && (
             <button type="button" className="btn btn-ghost" onClick={onReturn}>
               {hasSession ? "Back to the session" : "Back"}

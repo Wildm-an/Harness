@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  Check,
   Bug,
   ChevronDown,
   EllipsisVertical,
@@ -21,10 +22,11 @@ import { browserView, isTauri, type Bounds } from "../lib/tauri";
 
 type Device = "desktop" | "tablet" | "phone";
 
+// The sizes of the Claude Code preview. "Responsive" uses the full pane. The menu uses this order.
 const DEVICES: Record<Device, { label: string; icon: typeof Monitor; size?: { width: number; height: number } }> = {
-  desktop: { label: "Desktop", icon: Monitor },
-  tablet: { label: "Tablet (820 × 1180)", icon: Tablet, size: { width: 820, height: 1180 } },
-  phone: { label: "Phone (390 × 844)", icon: Smartphone, size: { width: 390, height: 844 } },
+  desktop: { label: "Responsive", icon: Monitor },
+  phone: { label: "Mobile", icon: Smartphone, size: { width: 375, height: 812 } },
+  tablet: { label: "Tablet", icon: Tablet, size: { width: 768, height: 1024 } },
 };
 
 /** Adds "http://" to an address with no scheme. Keeps "about:blank". */
@@ -262,23 +264,26 @@ export function BrowserPane({
             )
           }
         </Menu>
-        <Menu label={`Device size: ${DEVICES[device].label}`} icon={<DeviceIcon size={15} aria-hidden />}>
+        <Menu label={`Viewport: ${DEVICES[device].label}`} icon={<DeviceIcon size={15} aria-hidden />}>
           {(close) =>
             (Object.keys(DEVICES) as Device[]).map((d) => {
-              const Icon = DEVICES[d].icon;
+              const size = DEVICES[d].size;
               return (
                 <button
                   key={d}
                   type="button"
                   role="menuitemradio"
                   aria-checked={device === d}
+                  className="device-item"
                   onClick={() => {
                     setDevice(d);
                     savePref("browserDevice", d);
                     close();
                   }}
                 >
-                  <Icon size={14} aria-hidden /> {DEVICES[d].label}
+                  <span className="device-name">{DEVICES[d].label}</span>
+                  {size && <span className="device-size mono">{`${size.width} × ${size.height}`}</span>}
+                  <span className="menu-check">{device === d && <Check size={14} aria-hidden />}</span>
                 </button>
               );
             })

@@ -39,9 +39,14 @@ export const PermissionCard = memo(function PermissionCard({
   const decided = item.decision !== undefined || item.expired === true;
   const options = useRef<HTMLDivElement>(null);
 
-  // A new request gets the keyboard focus, so that 1, 2, 3, or Esc answers it at once.
+  // A new request gets the keyboard focus, so that 1, 2, 3, or Esc answers it at once. The focus goes to
+  // the list, not to a button: Enter and Space do not answer. The request never takes the focus from a
+  // text field, so that a key that the user types for the prompt never answers it.
   useEffect(() => {
-    if (!decided) options.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    if (decided) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (active?.closest("input, textarea, select, [contenteditable='true']")) return;
+    options.current?.focus({ preventScroll: true });
   }, [decided]);
 
   const decide = (decision: Decision) => {
@@ -107,6 +112,7 @@ export const PermissionCard = memo(function PermissionCard({
             className="permission-options"
             role="group"
             aria-labelledby={`perm-q-${item.id}`}
+            tabIndex={-1}
             ref={options}
             onKeyDown={onKeyDown}
           >

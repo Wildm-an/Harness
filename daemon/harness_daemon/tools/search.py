@@ -104,3 +104,50 @@ def glob_match(rel_path: str, pattern: str) -> bool:
     if "/" not in pattern:
         return glob_regex(pattern).match(rel_path.rsplit("/", 1)[-1]) is not None
     return glob_regex(pattern.lstrip("/")).match(rel_path) is not None
+
+
+# The "@" menu of the prompt box looks at this many paths, at most.
+MAX_FIND_SCAN = 20_000
+
+
+def _subsequence(query: str, text: str) -> bool:
+    it = iter(text)
+    return all(c in it for c in query)
+
+
+def find_paths(root: Path, query: str, limit: int = 40) -> list[str]:
+    """Project paths for the "@" menu: files, and folders with a "/" at the end. Best match first.
+
+    The order: the name starts with the query, the name has the query, the path has the query,
+    then the letters of the query in order (for example "sapp" for "src/app.py"). No case.
+    """
+    q = query.strip().lower().replace("\\", "/")
+    found: list[tuple[int, int, str]] = []
+    scanned = 0
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        rel_folder = os.path.relpath(folder, root).replace("\\", "/")
+        prefix = "" if rel_folder == "." else rel_folder + "/"
+        for name, is_dir in [(d, True) for d in dirs] + [(f, False) for f in sorted(files)]:
+            scanned += 1
+            if scanned > MAX_FIND_SCAN:
+                break
+            path = prefix + name + ("/" if is_dir else "")
+            lower_name, lower_path = name.lower(), path.lower()
+            if not q:
+                rank = 0
+            elif lower_name.startswith(q):
+                rank = 0
+            elif q in lower_name:
+                rank = 1
+            elif q in lower_path:
+                rank = 2
+            elif _subsequence(q, lower_path):
+                rank = 3
+            else:
+                continue
+            found.append((rank, path.count("/") - (1 if is_dir else 0), path))
+        if scanned > MAX_FIND_SCAN:
+            break
+    found.sort(key=lambda f: (f[0], f[1], len(f[2]), f[2]))
+    return [path for _rank, _depth, path in found[:limit]]

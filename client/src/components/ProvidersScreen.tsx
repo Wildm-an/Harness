@@ -545,7 +545,7 @@ export function ProvidersScreen({
     <div className="start-screen">
       <section className="panel connections providers" aria-labelledby="providers-title">
         <div className="panel-head">
-          <h1 id="providers-title">Providers</h1>
+          <h1 id="providers-title">Connections</h1>
           <button type="button" className="btn btn-ghost" onClick={onReturn}>
             {hasSession ? "Back to the session" : "Back"}
           </button>

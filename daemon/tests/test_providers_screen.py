@@ -168,6 +168,9 @@ def test_providers_through_the_protocol(daemon, harness_home, project, fake_mode
 
     c.send({"type": "providers.enable", "name": "fake", "enabled": False})
     assert c.until("providers")[0]["items"][0]["enabled"] is False
+    c.send({"type": "command", "name": "connections", "args": ""})
+    assert c.until("command.result")[0]["panel"] == "providers"
+    # The old name still works.
     c.send({"type": "command", "name": "providers", "args": ""})
     assert c.until("command.result")[0]["panel"] == "providers"
     c.close()

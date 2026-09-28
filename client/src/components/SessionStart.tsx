@@ -4,7 +4,6 @@ import {
   Check,
   ChevronDown,
   Clock,
-  Cpu,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -16,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
+import { ModelMenu, type ModelList } from "./ModelMenu";
 import { loadPref, savePref } from "../lib/prefs";
 
 function relativeTime(seconds: number): string {
@@ -266,10 +266,12 @@ export function SessionStart({
   prefScope,
   onBrowse,
   models,
+  onRequestModels,
   onManageProviders,
   onSaveProject,
   onDeleteProject,
   onListSessions,
+  selectProject,
 }: {
   projects: ProjectItem[] | null; // null: loading.
   sessions: { cwd: string | null; items: SessionSummary[] };
@@ -279,11 +281,13 @@ export function SessionStart({
   onResume: (id: string) => void;
   prefScope: string; // The project and the model are remembered for each connection.
   onBrowse: (current: string) => Promise<string | null>; // The native dialog, or the remote folder picker.
-  models: string[]; // provider/model suggestions from the providers that are on.
+  models: ModelList | null; // The models of the connections that are on. null: loading.
+  onRequestModels: () => void;
   onManageProviders: () => void;
   onSaveProject: (draft: ProjectDraft) => Promise<string>;
   onDeleteProject: (id: string) => void;
   onListSessions: (cwd: string) => void;
+  selectProject?: { id: string; key: number } | null; // A project to select now: a new key selects it again.
 }) {
   const [selectedId, setSelectedId] = useState(() => loadPref(`project.${prefScope}`, ""));
   const [form, setForm] = useState<{ draft: ProjectDraft; key: number } | null>(null);
@@ -318,6 +322,10 @@ export function SessionStart({
     setSelectedId(id);
     savePref(`project.${prefScope}`, id);
   };
+
+  useEffect(() => {
+    if (selectProject) select(selectProject.id);
+  }, [selectProject?.key]);
 
   const openForm = (draft: ProjectDraft) => setForm((f) => ({ draft, key: (f?.key ?? 0) + 1 }));
 
@@ -381,24 +389,14 @@ export function SessionStart({
                 onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
                 onDelete={onDeleteProject}
               />
-              <label className="prompt-chip model-field" title="The model: provider/model. Leave it empty to use default_model.">
-                <Cpu size={13} aria-hidden />
-                <span className="sr-only">Model</span>
-                <input
-                  className="mono"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="Default model"
-                  size={Math.min(Math.max(model.length, 13), 36)}
-                  spellCheck={false}
-                  list="model-options"
-                />
-              </label>
-              <datalist id="model-options">
-                {models.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
+              <ModelMenu
+                value={model}
+                models={models}
+                allowDefault
+                onOpen={onRequestModels}
+                onSelect={setModel}
+                onManage={onManageProviders}
+              />
             </div>
             <button
               type="submit"
@@ -412,20 +410,13 @@ export function SessionStart({
           </div>
         </form>
 
-        <p className="start-help">
-          {selected && !selected.exists ? (
+        {selected && !selected.exists && (
+          <p className="start-help">
             <span className="project-missing">
               <TriangleAlert size={12} aria-hidden /> The folder of {selected.name} does not exist. Edit the project or select another.
             </span>
-          ) : (
-            <>
-              <kbd>Enter</kbd> starts the session. <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line.{" "}
-            </>
-          )}{" "}
-          <button type="button" className="link-btn" onClick={onManageProviders}>
-            Manage the providers
-          </button>
-        </p>
+          </p>
+        )}
 
         {error && (
           <p className="form-error" role="alert">

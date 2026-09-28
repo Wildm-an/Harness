@@ -31,6 +31,9 @@
   --warning-soft: rgba(232, 180, 84, 0.1);
   --info: #8fb4ea;
   --focus: #8fb4ea;
+  --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
+  --violet: #c3a6f0;
+  --teal: #6fc8c0;
   --backdrop: rgba(15, 14, 13, 0.6);
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
@@ -87,6 +90,9 @@
     --warning-soft: rgba(154, 91, 0, 0.08);
     --info: #2463a8;
     --focus: #2463a8;
+    --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
+    --violet: #7a4fc0;
+    --teal: #1f7f78;
     --backdrop: rgba(31, 30, 29, 0.35);
     --shadow: 0 12px 32px rgba(31, 30, 29, 0.12);
     --shadow-lg: 0 24px 64px rgba(31, 30, 29, 0.18);
@@ -417,10 +423,6 @@ textarea:focus-visible {
   padding: 4px 8px 12px;
 }
 
-.side-group + .side-group {
-  margin-top: 12px;
-}
-
 .side-label {
   margin: 0;
   padding: 6px 10px 4px;
@@ -429,60 +431,166 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
-.side-group ul {
+/* The project tree: a row for each project folder, and its sessions under it. */
+.side-projects,
+.side-project-sessions {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.side-session {
+.side-project + .side-project {
+  margin-top: 2px;
+}
+
+.side-project-head {
+  position: relative;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 10px;
+  align-items: center;
+  border-radius: var(--radius);
+  transition: background var(--duration) var(--ease-out);
+}
+
+.side-project-head:hover {
+  background: var(--hover);
+}
+
+.side-project-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 4px 0 6px;
   border: none;
   border-radius: var(--radius);
   background: transparent;
   color: var(--text);
-  font: inherit;
+  font: 500 13.5px var(--font-sans);
   text-align: left;
   cursor: pointer;
-  transition: background var(--duration) var(--ease-out);
 }
 
-.side-session > svg {
+.side-project-toggle > svg {
   flex: none;
-  margin-top: 3px;
   color: var(--text-muted);
 }
 
-.side-session-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+.side-chevron {
+  transition: transform var(--duration) var(--ease-out);
 }
 
-.side-session-title,
-.side-session-folder {
+.side-project.open .side-chevron {
+  transform: rotate(90deg);
+}
+
+.side-project-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.side-session-title {
-  font-size: 13.5px;
+/* The "+" of a project shows on hover and on keyboard focus. A touch screen always shows it. */
+.side-project-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: 3px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease-out), background var(--duration) var(--ease-out);
 }
 
-.side-session-folder {
+.side-project-head:hover .side-project-new,
+.side-project-new:focus-visible {
+  opacity: 1;
+}
+
+.side-project-new:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.side-project-new:disabled {
+  cursor: not-allowed;
+}
+
+@media (hover: none) {
+  .side-project-new {
+    opacity: 1;
+  }
+}
+
+.side-project-sessions {
+  margin: 2px 0 6px;
+}
+
+.side-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px 0 36px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: 13.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease-out);
+}
+
+.side-session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-session-age {
+  flex: none;
   color: var(--text-muted);
   font-size: 11.5px;
+}
+
+.side-more {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 10px 0 36px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  font: 12.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-more:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .side-empty {
   margin: 8px 10px;
   color: var(--text-muted);
   font-size: 12.5px;
+}
+
+.side-project-sessions .side-empty {
+  margin: 4px 10px 6px 36px;
 }
 
 .side-foot {
@@ -762,27 +870,287 @@ textarea:focus-visible {
   text-overflow: ellipsis;
 }
 
-.model-field {
-  cursor: text;
+/* The model menu: all models of the connections, by connection. The user cannot type a model. */
+.model-menu {
+  position: relative;
+  min-width: 0;
 }
 
-.model-field input {
-  width: auto;
-  min-width: 0;
+.model-dropdown {
+  left: 0;
+  right: auto;
+  display: flex;
+  flex-direction: column;
+  width: min(400px, calc(100vw - 32px));
+}
+
+.model-dropdown.up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.model-dropdown.right {
+  left: auto;
+  right: 0;
+}
+
+/* The row under the prompt box of a session: the permission mode on the left, the model on the right. */
+.prompt-below {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 4px 0;
+}
+
+.mode-dropdown {
+  width: min(380px, calc(100vw - 32px));
+}
+
+.menu .mode-item {
+  align-items: flex-start;
   min-height: 0;
+  padding: 8px 10px;
+}
+
+.mode-item > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mode-label {
+  font-weight: 500;
+}
+
+.mode-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+/* The context ring, to the right of the model, and its breakdown panel. */
+.prompt-below-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.context-ring-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.context-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
   padding: 0;
   border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text);
+  cursor: pointer;
+}
+
+.context-ring svg circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.ring-track {
+  stroke: var(--border-strong);
+}
+
+.ring-fill {
+  stroke: var(--text-muted);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 300ms var(--ease-out);
+}
+
+.context-ring:hover .ring-fill,
+.context-ring.active .ring-fill {
+  stroke: var(--text);
+}
+
+.context-mid .ring-fill {
+  stroke: var(--warning) !important;
+}
+
+.context-high .ring-fill {
+  stroke: var(--danger) !important;
+}
+
+.menu.context-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: 0;
+  width: min(340px, calc(100vw - 32px));
+  padding: 12px;
+}
+
+.context-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.context-title {
+  font-weight: 600;
+}
+
+.context-total {
+  color: var(--text-muted);
   font-size: 12px;
 }
 
-.model-field input:focus-visible {
-  box-shadow: none;
+.context-bar {
+  display: flex;
+  height: 8px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
 }
 
-.model-field:focus-within {
-  border-color: var(--focus);
+.context-bar > span {
+  min-width: 2px;
+}
+
+.context-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+.context-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.context-label {
+  flex: 1;
+}
+
+.context-tokens {
+  color: var(--text);
+}
+
+.context-share {
+  width: 38px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.context-note {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.menu .context-compact {
+  justify-content: flex-start;
+}
+
+/* The colors of the context parts. The free space is empty, and the buffer has stripes. */
+.ctx-system { background: var(--text-muted); }
+.ctx-instructions { background: var(--success); }
+.ctx-skills { background: var(--warning); }
+.ctx-summary { background: var(--violet); }
+.ctx-tools { background: var(--info); }
+.ctx-mcp_tools { background: var(--teal); }
+.ctx-messages { background: var(--accent); }
+.ctx-free { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); }
+.ctx-buffer { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); }
+.context-bar > .ctx-free { box-shadow: none; }
+
+/* The mode color: bypass is a warning, plan is blue, accept edits is green. */
+.prompt-below .prompt-chip.mode-bypassPermissions,
+.mode-item.mode-bypassPermissions > svg {
+  color: var(--warning);
+}
+
+.prompt-below .prompt-chip.mode-plan > svg,
+.mode-item.mode-plan > svg {
+  color: var(--info);
+}
+
+.prompt-below .prompt-chip.mode-acceptEdits > svg,
+.mode-item.mode-acceptEdits > svg {
+  color: var(--success);
+}
+
+/* The model of a session is text, not a pill. The text is brighter on hover and when the menu is open. */
+.prompt-below .prompt-chip {
+  min-height: 24px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+.prompt-below .prompt-chip:hover,
+.prompt-below .prompt-chip.active {
+  background: transparent;
+  color: var(--text);
+}
+
+.model-menu-list {
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+}
+
+.menu-heading {
+  padding: 8px 10px 2px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.model-menu-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.menu-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-menu-error {
+  color: var(--warning);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-menu {
@@ -3128,6 +3496,24 @@ select {
   gap: 1px;
 }
 
+/* The viewport menu of the Browser pane: the name, the size on the right, and the check mark. */
+.browser-menu .device-item {
+  min-width: 220px;
+}
+
+.device-name {
+  flex: 1;
+}
+
+.device-size {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.device-item .menu-check {
+  margin-left: 10px;
+}
+
 .browser-menu .menu {
   min-width: 250px;
 }
@@ -3339,6 +3725,7 @@ select {
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--surface-2);
+  color: var(--code-inline);
 }
 
 .markdown pre {
@@ -3573,6 +3960,12 @@ select {
   font-size: 13px;
 }
 
+.permission-options:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
 .permission-options {
   display: flex;
   flex-direction: column;
@@ -3704,43 +4097,6 @@ select {
   color: var(--text-muted);
 }
 
-/* context meter */
-
-.context-meter {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.meter {
-  position: relative;
-  width: 64px;
-  height: 5px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--surface-2);
-}
-
-.meter-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: inherit;
-  background: var(--accent);
-  transition: width 300ms var(--ease-out);
-}
-
-.context-mid .meter-fill {
-  background: var(--warning);
-}
-
-.context-high .meter-fill {
-  background: var(--danger);
-}
-
-.context-high {
-  color: var(--danger);
-}
-
 /* / menu */
 
 .prompt-wrap {
@@ -3782,6 +4138,36 @@ select {
 .slash-menu li.active {
   background: var(--surface-2);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* The "@" menu: one line for each file, folder, or session, with the icon first. */
+.mention-menu li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mention-menu li > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.mention-menu .slash-name,
+.mention-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-menu .slash-source {
+  flex: none;
+}
+
+.mention-menu li.mention-first-session {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
 }
 
 .slash-name {

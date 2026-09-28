@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Check,
-  ChefHat,
+  Boxes,
   Copy,
   Cpu,
   Download,
@@ -965,7 +965,7 @@ export function CookbookScreen({
       <section className="panel cookbook" aria-labelledby="cookbook-title">
         <div className="panel-head">
           <h1 id="cookbook-title">
-            <ChefHat size={20} aria-hidden /> Cookbook
+            <Boxes size={20} aria-hidden /> Local Models
           </h1>
           <label className="cb-host-select">
             Host
