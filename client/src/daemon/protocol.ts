@@ -290,6 +290,28 @@ export interface InstalledRepo {
   size: number;
 }
 
+/** The models of the Ollama server on the host. running: false if the server did not answer. */
+export interface OllamaInstalled {
+  url: string;
+  running: boolean;
+  installed: boolean; // The ollama command is on the host.
+  models: { name: string; size: number; modified: string | null; parameters: string | null; quantization: string | null }[];
+  error?: string;
+}
+
+/** The models in the LM Studio models folder of the host. folder: null if LM Studio has no folder there. */
+export interface LmStudioInstalled {
+  folder: string | null;
+  models: { id: string; path: string; files: { name: string; size: number }[]; size: number }[];
+}
+
+export interface InstalledModels {
+  repos: InstalledRepo[];
+  cache: string;
+  ollama?: OllamaInstalled; // An older daemon does not send these.
+  lmstudio?: LmStudioInstalled;
+}
+
 export type ServeState = "starting" | "running" | "crashed" | "stopped";
 
 export interface ServeItem {
@@ -363,7 +385,8 @@ export type ClientMessage =
   | { type: "downloads.list" }
   | { type: "download.pause" | "download.resume" | "download.cancel"; id: string }
   | { type: "models.installed"; host: string }
-  | { type: "models.delete"; host: string; repo_id: string; files: string[] }
+  | { type: "models.delete"; host: string; source?: "hf"; repo_id: string; files: string[] }
+  | { type: "models.delete"; host: string; source: "ollama" | "lmstudio"; name: string }
   | { type: "serve.list"; host: string }
   | { type: "serve.start"; host: string; repo_id: string; file: string; context?: number; port?: number }
   | { type: "serve.stop"; host: string; name: string }
@@ -434,7 +457,7 @@ export type DaemonMessage =
   | ({ type: "hf.detail" } & HfDetail)
   | { type: "downloads"; items: DownloadItem[] }
   | ({ type: "download.progress" } & DownloadItem)
-  | { type: "installed"; host: string; repos: InstalledRepo[]; cache: string }
+  | ({ type: "installed"; host: string } & InstalledModels)
   | { type: "serves"; host: string; items: ServeItem[] }
   | {
       type: "serve.status";

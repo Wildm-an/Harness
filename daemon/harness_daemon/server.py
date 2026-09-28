@@ -895,11 +895,21 @@ async def on_models_installed(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("models.delete")
 async def on_models_delete(conn: Connection, msg: dict[str, Any]) -> None:
-    repo_id = _text_arg(msg, "repo_id")
-    files = _str_list(msg, "files")
+    """Delete model files. "source" is "hf" (the Cookbook downloads, the default), "ollama", or "lmstudio"."""
+    source = msg.get("source") or "hf"
+    if source == "hf":
+        repo_id = _text_arg(msg, "repo_id")
+        files = _str_list(msg, "files")
+    elif source in ("ollama", "lmstudio"):
+        name = _text_arg(msg, "name")
+    else:
+        raise ProtocolError("'source' must be hf, ollama, or lmstudio.")
 
     async def work() -> dict[str, Any]:
-        await COOKBOOK.delete(msg.get("host"), repo_id, files)
+        if source == "hf":
+            await COOKBOOK.delete(msg.get("host"), repo_id, files)
+        else:
+            await COOKBOOK.delete_other(msg.get("host"), source, name)
         return await COOKBOOK.installed(msg.get("host"))
 
     _background(conn, "models.delete", work)

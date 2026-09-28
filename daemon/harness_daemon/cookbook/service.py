@@ -262,6 +262,16 @@ class Cookbook:
                 raise CookbookError("A download of this model runs now. Pause or cancel it first.")
         await run_script(host, "delete", {"repo_id": repo_id, "files": files})
 
+    async def delete_other(self, host_name: str | None, source: str, name: str) -> None:
+        """Delete a model of Ollama ("ollama rm") or of LM Studio (its folder) on the host."""
+        host = get_host(host_name)
+        if source == "ollama":
+            await run_script(host, "delete-ollama", {"name": name})
+        elif source == "lmstudio":
+            await run_script(host, "delete-lmstudio", {"id": name})
+        else:
+            raise CookbookError(f"Unknown model source: {source}.")
+
     # -- serve control ----------------------------------------------------------------------------------
 
     async def serves(self, host_name: str | None) -> dict[str, Any]:

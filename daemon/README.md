@@ -219,6 +219,10 @@ The Cookbook finds, downloads, and serves local models (SPEC.md section 7). The 
 - **Downloads.** `huggingface_hub` downloads into the Hugging Face cache of the host (`~/.cache/huggingface/hub`). The parts of a split GGUF file are one download. A pause stops the download. "Continue" starts it again from the `.incomplete` file. Xet downloads are off, so that a download can continue.
 - **Serve.** The daemon starts `llama-server` with `-c` (context) and `-ngl` (GPU layers) from the fit calculator, in `tmux` when the host has it (else as a detached process). The server continues after the daemon stops. When `/health` answers, the daemon adds the provider `<host>-llama-<port>` to `providers.json` (with an SSH tunnel for a remote host). A stop removes the provider.
 - **Hugging Face token.** The client keeps it in the keychain and sends it after it connects. The daemon keeps it in memory only.
+- **Installed models.** The Installed tab lists three sources on the host, and each model has a Delete button:
+  - The Cookbook downloads in the Hugging Face cache. A delete removes the files, and a blob that no other file uses.
+  - Ollama, through its API on the host (`OLLAMA_HOST`, default `127.0.0.1:11434`). A delete is `DELETE /api/delete`, as `ollama rm` does. The Ollama server must run.
+  - LM Studio: the `downloadsFolder` of its `settings.json`, else `~/.lmstudio/models` or `~/.cache/lm-studio/models`. A delete removes the `<publisher>/<model>` folder, and only a folder inside the models folder. Eject a loaded model in LM Studio first.
 
 ## Agent preview tools
 

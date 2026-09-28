@@ -226,11 +226,11 @@ def cmd_cleanup():
 
 
 def cmd_installed():
-    """The model files in the Hugging Face cache, for each repository."""
+    """The model files in the Hugging Face cache, for each repository, and the models of Ollama and LM Studio."""
     root = hf_cache_dir()
     repos = []
     if not os.path.isdir(root):
-        return {"repos": repos, "cache": root}
+        return {"repos": repos, "cache": root, "ollama": ollama_models(), "lmstudio": lmstudio_models()}
     for folder in sorted(os.listdir(root)):
         if not folder.startswith("models--"):
             continue
@@ -251,7 +251,7 @@ def cmd_installed():
         if files:
             items = sorted(files.values(), key=lambda f: f["name"])
             repos.append({"repo_id": repo_id, "files": items, "size": sum(f["size"] for f in items)})
-    return {"repos": repos, "cache": root}
+    return {"repos": repos, "cache": root, "ollama": ollama_models(), "lmstudio": lmstudio_models()}
 
 
 def cmd_delete():
@@ -284,6 +284,145 @@ def _blob_used(snapshots, blob):
             if os.path.islink(path) and os.path.realpath(path) == blob:
                 return True
     return False
+
+
+# -- models of other tools: Ollama and LM Studio ------------------------------------------------------
+
+OLLAMA_TIMEOUT = 5
+
+
+def ollama_url():
+    """The Ollama API on this host. OLLAMA_HOST can be "host", "host:port", or a URL."""
+    value = (os.environ.get("OLLAMA_HOST") or "127.0.0.1:11434").strip().rstrip("/")
+    if "://" not in value:
+        value = "http://" + value
+    scheme, rest = value.split("://", 1)
+    host, _, port = rest.partition(":")
+    if host in ("", "0.0.0.0", "::", "[::]"):  # A listen address. Connect to this computer.
+        host = "127.0.0.1"
+    return "%s://%s:%s" % (scheme, host, port or "11434")
+
+
+def ollama_request(method, path, body=None):
+    import urllib.request
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(ollama_url() + path, data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=OLLAMA_TIMEOUT) as response:
+        text = response.read().decode("utf-8", "replace")
+    return json.loads(text) if text.strip() else {}
+
+
+def ollama_models():
+    """The models of the Ollama server on this host. "running" is false if the server does not answer."""
+    url = ollama_url()
+    try:
+        tags = ollama_request("GET", "/api/tags")
+    except Exception as e:  # noqa: BLE001 - no server, or not Ollama.
+        return {"url": url, "running": False, "installed": shutil.which("ollama") is not None,
+                "models": [], "error": str(e)}
+    models = []
+    for m in tags.get("models") or []:
+        details = m.get("details") or {}
+        models.append({"name": m.get("name") or m.get("model"), "size": m.get("size") or 0,
+                       "modified": m.get("modified_at"), "parameters": details.get("parameter_size"),
+                       "quantization": details.get("quantization_level")})
+    models.sort(key=lambda m: m["name"] or "")
+    return {"url": url, "running": True, "installed": True, "models": models}
+
+
+def cmd_delete_ollama():
+    """Delete an Ollama model, as "ollama rm" does."""
+    import urllib.error
+    name = ARGS["name"]
+    try:
+        ollama_request("DELETE", "/api/delete", {"model": name, "name": name})
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise RuntimeError("Ollama has no model %s." % name)
+        raise RuntimeError("Ollama did not delete %s: HTTP %s." % (name, e.code))
+    except OSError as e:
+        raise RuntimeError("Ollama does not answer at %s: %s" % (ollama_url(), e))
+    return {"deleted": name}
+
+
+def lmstudio_folder():
+    """The models folder of LM Studio on this host, or None.
+
+    LM Studio keeps the folder in its settings ("downloadsFolder"). The defaults are
+    ~/.lmstudio/models (version 0.3 and later) and ~/.cache/lm-studio/models (earlier versions).
+    """
+    home = os.path.expanduser("~")
+    candidates = []
+    lmstudio_home = os.path.join(home, ".lmstudio")
+    pointer = os.path.join(home, ".lmstudio-home-pointer")
+    try:
+        with open(pointer, encoding="utf-8") as f:
+            lmstudio_home = f.read().strip() or lmstudio_home
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(lmstudio_home, "settings.json"), encoding="utf-8") as f:
+            folder = json.load(f).get("downloadsFolder")
+        if isinstance(folder, str) and folder:
+            candidates.append(os.path.expanduser(folder))
+    except (OSError, ValueError, AttributeError):
+        pass
+    candidates += [os.path.join(lmstudio_home, "models"), os.path.join(home, ".cache", "lm-studio", "models")]
+    return next((c for c in candidates if os.path.isdir(c)), None)
+
+
+def lmstudio_models():
+    """The models of LM Studio: one entry for each <publisher>/<model> folder with model files."""
+    root = lmstudio_folder()
+    models = []
+    if root is None:
+        return {"folder": None, "models": models}
+    for publisher in sorted(os.listdir(root)):
+        pub_dir = os.path.join(root, publisher)
+        if not os.path.isdir(pub_dir) or publisher.startswith("."):
+            continue
+        for name in sorted(os.listdir(pub_dir)):
+            model_dir = os.path.join(pub_dir, name)
+            if not os.path.isdir(model_dir):
+                continue
+            files = []
+            for dirpath, _dirs, names in os.walk(model_dir):
+                for n in names:
+                    if n.endswith(MODEL_SUFFIXES):
+                        path = os.path.join(dirpath, n)
+                        try:
+                            files.append({"name": os.path.relpath(path, model_dir).replace("\\", "/"),
+                                          "size": os.path.getsize(path)})
+                        except OSError:
+                            continue
+            if files:
+                files.sort(key=lambda f: f["name"])
+                models.append({"id": publisher + "/" + name, "path": model_dir, "files": files,
+                               "size": sum(f["size"] for f in files)})
+    return {"folder": root, "models": models}
+
+
+def cmd_delete_lmstudio():
+    """Delete the folder of one LM Studio model. The folder must be inside the LM Studio models folder."""
+    root = lmstudio_folder()
+    if root is None:
+        raise RuntimeError("The LM Studio models folder was not found on this host.")
+    parts = ARGS["id"].replace("\\", "/").split("/")
+    if len(parts) != 2 or any(p in ("", ".", "..") for p in parts):
+        raise RuntimeError("The LM Studio model id must be <publisher>/<model>.")
+    real_root = os.path.realpath(root)
+    target = os.path.realpath(os.path.join(root, *parts))
+    if os.path.dirname(os.path.dirname(target)) != real_root or not os.path.isdir(target):
+        raise RuntimeError("LM Studio has no model %s." % ARGS["id"])
+    try:
+        shutil.rmtree(target)
+    except OSError as e:
+        raise RuntimeError("Cannot delete %s. If LM Studio has the model loaded, eject it first. (%s)" % (ARGS["id"], e))
+    publisher = os.path.dirname(target)
+    if not os.listdir(publisher):
+        os.rmdir(publisher)
+    return {"deleted": ARGS["id"]}
 
 
 def cmd_resolve():
@@ -421,7 +560,8 @@ def cmd_serve_log():
 
 COMMANDS = {
     "hardware": cmd_hardware, "download": cmd_download, "cleanup": cmd_cleanup, "installed": cmd_installed,
-    "delete": cmd_delete, "resolve": cmd_resolve, "serve-start": cmd_serve_start, "serve-status": cmd_serve_status,
+    "delete": cmd_delete, "delete-ollama": cmd_delete_ollama, "delete-lmstudio": cmd_delete_lmstudio,
+    "resolve": cmd_resolve, "serve-start": cmd_serve_start, "serve-status": cmd_serve_status,
     "serve-stop": cmd_serve_stop, "serve-log": cmd_serve_log,
 }
 

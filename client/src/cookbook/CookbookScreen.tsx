@@ -498,6 +498,34 @@ function ServeForm({ file, onStart, onCancel }: { file: string; onStart: (contex
   );
 }
 
+/** A Delete button with a second click to confirm. "id" is unique in the tab: one confirmation at a time. */
+function DeleteButton({ id, confirm, setConfirm, size, what, onDelete }: {
+  id: string;
+  confirm: string | null;
+  setConfirm: (id: string | null) => void;
+  size: number;
+  what: string; // For the screen reader: "the file tiny.gguf", "the Ollama model llama3.2:3b".
+  onDelete: () => void;
+}) {
+  if (confirm !== id) {
+    return (
+      <button type="button" className="btn btn-small btn-ghost" onClick={() => setConfirm(id)} aria-label={`Delete ${what}`}>
+        <Trash2 size={12} aria-hidden /> Delete
+      </button>
+    );
+  }
+  return (
+    <>
+      <button type="button" className="btn btn-small btn-danger" onClick={() => { setConfirm(null); onDelete(); }} aria-label={`Confirm: delete ${what}`}>
+        <Trash2 size={12} aria-hidden /> Delete {formatBytes(size)}
+      </button>
+      <button type="button" className="icon-btn ghost" onClick={() => setConfirm(null)} aria-label={`Keep ${what}`} title="Keep">
+        <X size={14} aria-hidden />
+      </button>
+    </>
+  );
+}
+
 function InstalledTab({ api, serveTarget, setServeTarget }: {
   api: CookbookApi;
   serveTarget: { repo: string; file: string } | null;
@@ -508,10 +536,12 @@ function InstalledTab({ api, serveTarget, setServeTarget }: {
     if (!api.installed) api.loadInstalled();
   }, [api.host]);
   const data = api.installed;
+  const ollama = data && data !== "loading" ? data.ollama : undefined;
+  const lmstudio = data && data !== "loading" ? data.lmstudio : undefined;
   return (
     <div>
       <div className="cb-tab-head">
-        <span className="help">{data && data !== "loading" ? <>The models in <span className="mono">{data.cache}</span> on the host {api.host}.</> : null}</span>
+        <span className="help">The models on the host {api.host}.</span>
         <button type="button" className="icon-btn ghost" onClick={api.loadInstalled} aria-label="Read the installed models again" title="Refresh">
           <RefreshCw size={14} aria-hidden />
         </button>
@@ -522,63 +552,140 @@ function InstalledTab({ api, serveTarget, setServeTarget }: {
         <p className="pane-empty">
           <LoaderCircle size={16} className="spin" aria-hidden /> Reading the models.
         </p>
-      ) : data.repos.length === 0 ? (
-        <p className="pane-empty">No models are downloaded on this host.</p>
       ) : (
-        <ul className="cb-list">
-          {data.repos.map((repo) => (
-            <li key={repo.repo_id} className="cb-repo">
-              <div className="cb-repo-head">
-                <HardDrive size={15} aria-hidden />
-                <span className="cb-name">{repo.repo_id}</span>
-                <span className="help">{formatBytes(repo.size)}</span>
-              </div>
-              <ul className="cb-files-list">
-                {groupInstalled(repo.files).map((g) => {
-                  const key = `${repo.repo_id}/${g.name}`;
-                  return (
-                    <li key={g.name}>
-                      <div className="cb-file-row">
-                        <span className="mono cb-file">{g.label}</span>
-                        <span className="help">{formatBytes(g.size)}</span>
-                        <span className="spacer" />
-                        {g.name.endsWith(".gguf") && (
-                          <button type="button" className="btn btn-small" onClick={() => setServeTarget({ repo: repo.repo_id, file: g.name })}>
-                            <Play size={12} aria-hidden /> Serve
-                          </button>
-                        )}
-                        {confirm === key ? (
-                          <>
-                            <button type="button" className="btn btn-small btn-danger" onClick={() => { setConfirm(null); api.deleteModel(repo.repo_id, g.files); }}>
-                              <Trash2 size={12} aria-hidden /> Delete {formatBytes(g.size)}
-                            </button>
-                            <button type="button" className="icon-btn ghost" onClick={() => setConfirm(null)} aria-label="Keep the file" title="Keep">
-                              <X size={14} aria-hidden />
-                            </button>
-                          </>
-                        ) : (
-                          <button type="button" className="btn btn-small btn-ghost" onClick={() => setConfirm(key)}>
-                            <Trash2 size={12} aria-hidden /> Delete
-                          </button>
-                        )}
-                      </div>
-                      {serveTarget?.repo === repo.repo_id && serveTarget.file === g.name && (
-                        <ServeForm
-                          file={g.name}
-                          onCancel={() => setServeTarget(null)}
-                          onStart={(context, port) => {
-                            api.serve(repo.repo_id, g.name, context, port);
-                            setServeTarget(null);
-                          }}
-                        />
-                      )}
-                    </li>
-                  );
-                })}
+        <>
+          <section className="cb-source" aria-labelledby="src-hf">
+            <h3 id="src-hf" className="cb-source-title">
+              Cookbook downloads <span className="help mono">{data.cache}</span>
+            </h3>
+            {data.repos.length === 0 ? (
+              <p className="help">No models are downloaded with the Cookbook on this host.</p>
+            ) : (
+              <ul className="cb-list">
+                {data.repos.map((repo) => (
+                  <li key={repo.repo_id} className="cb-repo">
+                    <div className="cb-repo-head">
+                      <HardDrive size={15} aria-hidden />
+                      <span className="cb-name">{repo.repo_id}</span>
+                      <span className="help">{formatBytes(repo.size)}</span>
+                    </div>
+                    <ul className="cb-files-list">
+                      {groupInstalled(repo.files).map((g) => (
+                        <li key={g.name}>
+                          <div className="cb-file-row">
+                            <span className="mono cb-file">{g.label}</span>
+                            <span className="help">{formatBytes(g.size)}</span>
+                            <span className="spacer" />
+                            {g.name.endsWith(".gguf") && (
+                              <button type="button" className="btn btn-small" onClick={() => setServeTarget({ repo: repo.repo_id, file: g.name })}>
+                                <Play size={12} aria-hidden /> Serve
+                              </button>
+                            )}
+                            <DeleteButton
+                              id={`hf:${repo.repo_id}/${g.name}`}
+                              confirm={confirm}
+                              setConfirm={setConfirm}
+                              size={g.size}
+                              what={`the file ${g.label}`}
+                              onDelete={() => api.deleteModel(repo.repo_id, g.files)}
+                            />
+                          </div>
+                          {serveTarget?.repo === repo.repo_id && serveTarget.file === g.name && (
+                            <ServeForm
+                              file={g.name}
+                              onCancel={() => setServeTarget(null)}
+                              onStart={(context, port) => {
+                                api.serve(repo.repo_id, g.name, context, port);
+                                setServeTarget(null);
+                              }}
+                            />
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
               </ul>
-            </li>
-          ))}
-        </ul>
+            )}
+          </section>
+
+          {ollama && (
+            <section className="cb-source" aria-labelledby="src-ollama">
+              <h3 id="src-ollama" className="cb-source-title">
+                Ollama <span className="help mono">{ollama.url}</span>
+              </h3>
+              {!ollama.running ? (
+                <p className="help">
+                  {ollama.installed
+                    ? "Ollama is installed, but its server does not answer. Start Ollama to see its models."
+                    : "Ollama is not installed on this host, or its server does not run."}
+                </p>
+              ) : ollama.models.length === 0 ? (
+                <p className="help">Ollama has no models on this host.</p>
+              ) : (
+                <ul className="cb-files-list">
+                  {ollama.models.map((m) => (
+                    <li key={m.name}>
+                      <div className="cb-file-row">
+                        <span className="mono cb-file">{m.name}</span>
+                        <span className="help">{[m.parameters, m.quantization, formatBytes(m.size)].filter(Boolean).join(" · ")}</span>
+                        <span className="spacer" />
+                        <DeleteButton
+                          id={`ollama:${m.name}`}
+                          confirm={confirm}
+                          setConfirm={setConfirm}
+                          size={m.size}
+                          what={`the Ollama model ${m.name}`}
+                          onDelete={() => api.deleteOther("ollama", m.name)}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
+          {lmstudio && (
+            <section className="cb-source" aria-labelledby="src-lmstudio">
+              <h3 id="src-lmstudio" className="cb-source-title">
+                LM Studio {lmstudio.folder && <span className="help mono">{lmstudio.folder}</span>}
+              </h3>
+              {!lmstudio.folder ? (
+                <p className="help">LM Studio has no models folder on this host.</p>
+              ) : lmstudio.models.length === 0 ? (
+                <p className="help">LM Studio has no models on this host.</p>
+              ) : (
+                <>
+                  <ul className="cb-files-list">
+                    {lmstudio.models.map((m) => (
+                      <li key={m.id}>
+                        <div className="cb-file-row">
+                          <span className="mono cb-file" title={m.files.map((f) => f.name).join("\n")}>
+                            {m.id}
+                          </span>
+                          <span className="help">
+                            {m.files.length === 1 ? "1 file" : `${m.files.length} files`} · {formatBytes(m.size)}
+                          </span>
+                          <span className="spacer" />
+                          <DeleteButton
+                            id={`lmstudio:${m.id}`}
+                            confirm={confirm}
+                            setConfirm={setConfirm}
+                            size={m.size}
+                            what={`the LM Studio model ${m.id}`}
+                            onDelete={() => api.deleteOther("lmstudio", m.id)}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="help">Delete removes the model folder. If LM Studio has the model loaded, eject it first.</p>
+                </>
+              )}
+            </section>
+          )}
+        </>
       )}
     </div>
   );

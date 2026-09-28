@@ -77,8 +77,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `hf.download` | `repo_id`, `files`, `host` | Starts a download. Give all parts of a split GGUF file. |
 | `downloads.list` | — | Asks for the downloads of the daemon. |
 | `download.pause`, `download.resume`, `download.cancel` | `id` | Controls a download. A cancel removes the unfinished files. |
-| `models.installed` | `host` | Asks for the models in the Hugging Face cache of the host. |
-| `models.delete` | `host`, `repo_id`, `files` | Deletes model files. |
+| `models.installed` | `host` | Asks for the models on the host: the Hugging Face cache, Ollama, and LM Studio. |
+| `models.delete` | `host`, `source`, `repo_id`, `files`, `name` | Deletes models. `source` is `hf` (the default: `repo_id` and `files`), `ollama` (`name`: the model, as `ollama rm` does), or `lmstudio` (`name`: `<publisher>/<model>`, the daemon deletes its folder). The reply is `installed`. |
 | `serve.list` | `host` | Asks for the models that llama-server serves on the host. |
 | `serve.start` | `host`, `repo_id`, `file`, `context` (optional), `port` (optional) | Starts llama-server for a downloaded GGUF file. With no context, the daemon uses the largest context that fits in VRAM (4K to 32K), or 8K with CPU offload. |
 | `serve.stop` | `host`, `name` | Stops a served model and removes its provider. |
@@ -128,7 +128,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `hf.detail` | `repo_id`, `url`, `item`, `card`, `gated`, `access`, `shape`, `shape_error`, `files`, `recommended`, `host`, `hardware` | Model details. Each file group has `name`, `label`, `files`, `size`, `quant`, `format`, `parts`, and `fit` (`result`, `context`, `weights`, `kv_cache`, `total`, `estimate`, `max_context_vram`, `gpu_layers`). `recommended` is the largest group that fits in VRAM with a 16K context. |
 | `downloads` | `items` | Reply to `downloads.list`: `download.progress` items. |
 | `download.progress` | `id`, `host`, `repo_id`, `files`, `state`, `bytes_done`, `bytes_total`, `file`, `error`, `started` | Sent to all connections. `state` is `queued`, `running`, `paused`, `done`, `error`, or `cancelled`. |
-| `installed` | `host`, `repos`, `cache` | Each repo has `repo_id`, `files` (`name`, `size`, `path`), and `size`. |
+| `installed` | `host`, `repos`, `cache`, `ollama`, `lmstudio` | Each repo has `repo_id`, `files` (`name`, `size`, `path`), and `size`. `ollama` has `url`, `running`, `installed`, and `models` (`name`, `size`, `modified`, `parameters`, `quantization`). `lmstudio` has `folder` (null if there is none) and `models` (`id`, `path`, `files`, `size`). |
 | `serves` | `host`, `items` | Each item has `name`, `port`, `model_path`, `alias`, `context`, `gpu_layers`, `state` (`starting`, `running`, or `crashed`), and `provider`. |
 | `serve.status` | `host`, `name`, `state`, `port`, `provider`, `model`, `error` | Sent to all connections. With `state: "running"`, `model` is `<provider>/<alias>` for `/model`. |
 | `serve.output` | `host`, `name`, `text` | Reply to `serve.output`. |

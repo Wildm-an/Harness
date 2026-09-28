@@ -12,7 +12,7 @@ import type {
   HfDetail,
   HfItem,
   HfSearchFilters,
-  InstalledRepo,
+  InstalledModels,
   ServeItem,
 } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
@@ -50,7 +50,7 @@ export function useCookbook(conn: DaemonConnection, active: boolean) {
   });
   const [detail, setDetail] = useState<HfDetail | "loading" | null>(null);
   const [downloads, setDownloads] = useState<Record<string, DownloadItem>>({});
-  const [installed, setInstalled] = useState<Record<string, { repos: InstalledRepo[]; cache: string } | "loading">>({});
+  const [installed, setInstalled] = useState<Record<string, InstalledModels | "loading">>({});
   const [serves, setServes] = useState<Record<string, ServeItem[]>>({});
   const [output, setOutput] = useState<{ host: string; name: string; text: string } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -117,7 +117,7 @@ export function useCookbook(conn: DaemonConnection, active: boolean) {
             return;
           }
           case "installed":
-            setInstalled((i) => ({ ...i, [msg.host]: { repos: msg.repos, cache: msg.cache } }));
+            setInstalled((i) => ({ ...i, [msg.host]: { repos: msg.repos, cache: msg.cache, ollama: msg.ollama, lmstudio: msg.lmstudio } }));
             return;
           case "serves":
             setServes((s) => ({ ...s, [msg.host]: msg.items }));
@@ -219,6 +219,8 @@ export function useCookbook(conn: DaemonConnection, active: boolean) {
       send({ type: "models.installed", host });
     },
     deleteModel: (repoId: string, files: string[]) => send({ type: "models.delete", host, repo_id: repoId, files }),
+    /** Delete an Ollama model ("ollama rm") or the folder of an LM Studio model. */
+    deleteOther: (source: "ollama" | "lmstudio", name: string) => send({ type: "models.delete", host, source, name }),
     serves: serves[host] ?? [],
     loadServes: () => send({ type: "serve.list", host }),
     serve: (repoId: string, file: string, context?: number, port?: number) => {

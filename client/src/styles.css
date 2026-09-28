@@ -1758,6 +1758,29 @@ select {
   font-size: 12px;
 }
 
+/* The Installed tab: one section for each model source. */
+.cb-source + .cb-source {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.cb-source-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cb-source-title .help {
+  margin: 0;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- providers ---------- */
 
 .chip-button {
