@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { toolSummary } from "./ToolCard";
+import { toolLabel, toolSummary } from "./ToolCard";
 import { chatReducer, emptyChat, historyToItems } from "../chat/state";
+
+describe("the tool names in the chat", () => {
+  it("uses the Claude Code names", () => {
+    expect(toolLabel("read")).toBe("Read");
+    expect(toolLabel("edit")).toBe("Update");
+    expect(toolLabel("bash")).toBe("Bash");
+    expect(toolLabel("grep")).toBe("Search");
+    expect(toolLabel("preview_click")).toBe("Preview click");
+    expect(toolLabel("mcp__github__create_issue")).toBe("github: create_issue");
+    expect(toolLabel("custom")).toBe("custom");
+  });
+});
 
 describe("the preview tools in the chat", () => {
   it("summarizes the input of each preview tool", () => {

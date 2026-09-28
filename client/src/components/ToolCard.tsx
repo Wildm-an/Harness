@@ -1,51 +1,28 @@
 import { memo, useState } from "react";
-import {
-  Camera,
-  Check,
-  ChevronRight,
-  FileDiff,
-  FilePlus,
-  FileText,
-  FolderSearch,
-  Globe,
-  ListTree,
-  LoaderCircle,
-  MousePointerClick,
-  Pencil,
-  Play,
-  Plug,
-  ScrollText,
-  Search,
-  Sparkles,
-  Square,
-  SquareTerminal,
-  Terminal,
-  TextCursorInput,
-  Wrench,
-  X,
-} from "lucide-react";
+import { ChevronRight, FileDiff, FileText } from "lucide-react";
 import type { ToolItem } from "../chat/state";
 import { DiffStats } from "./DiffStats";
 import { useOpenPath } from "../lib/openPath";
 
-const ICONS: Record<string, typeof Terminal> = {
-  read: FileText,
-  edit: Pencil,
-  write: FilePlus,
-  glob: FolderSearch,
-  grep: Search,
-  bash: Terminal,
-  skill: Sparkles,
-  preview_start: Play,
-  preview_stop: Square,
-  preview_logs: ScrollText,
-  preview_navigate: Globe,
-  preview_snapshot: ListTree,
-  preview_click: MousePointerClick,
-  preview_fill: TextCursorInput,
-  preview_console: SquareTerminal,
-  preview_screenshot: Camera,
+// The names that Claude Code shows for its tools.
+const LABELS: Record<string, string> = {
+  read: "Read",
+  edit: "Update",
+  write: "Write",
+  glob: "Glob",
+  grep: "Search",
+  bash: "Bash",
+  skill: "Skill",
 };
+
+/** The display name of a tool: "Read", "Preview click", or "github: create_issue" for an MCP tool. */
+export function toolLabel(name: string): string {
+  if (LABELS[name]) return LABELS[name];
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (mcp) return `${mcp[1]}: ${mcp[2]}`;
+  if (name.startsWith("preview_")) return `Preview ${name.slice("preview_".length)}`;
+  return name;
+}
 
 /** A one-line summary of the tool input: the path or the command. */
 export function toolSummary(name: string, input: unknown): string {
@@ -94,7 +71,6 @@ export const ToolCard = memo(function ToolCard({
   const filePath = input && typeof input === "object" && typeof input.path === "string" && item.name !== "glob" && item.name !== "grep"
     ? input.path
     : null;
-  const Icon = ICONS[item.name] ?? (item.name.startsWith("mcp__") ? Plug : Wrench);
   const summary = toolSummary(item.name, item.input);
   const statusLabel = item.status === "running" ? "Running" : item.status === "error" ? "Failed" : "Done";
 
@@ -107,9 +83,8 @@ export const ToolCard = memo(function ToolCard({
         onClick={() => setOpen((v) => !v)}
         title={open ? "Hide details" : "Show details"}
       >
-        <ChevronRight className="tool-chevron" size={14} aria-hidden />
-        <Icon size={15} aria-hidden className="tool-icon" />
-        <span className="tool-name">{item.name}</span>
+        <span className="tool-dot" role="img" aria-label={statusLabel} title={statusLabel} />
+        <span className="tool-name">{toolLabel(item.name)}</span>
         {item.agent && (
           <span className="tool-agent" title={`The skill ${item.agent} runs this tool in a separate context`}>
             /{item.agent}
@@ -117,11 +92,7 @@ export const ToolCard = memo(function ToolCard({
         )}
         <span className="tool-summary">{summary}</span>
         {item.diff && <DiffStats diff={item.diff} />}
-        <span className="tool-status" aria-label={statusLabel} title={statusLabel}>
-          {item.status === "running" && <LoaderCircle size={15} className="spin" aria-hidden />}
-          {item.status === "done" && <Check size={15} aria-hidden />}
-          {item.status === "error" && <X size={15} aria-hidden />}
-        </span>
+        <ChevronRight className="tool-chevron" size={14} aria-hidden />
       </button>
       {open && (
         <div className="tool-body">

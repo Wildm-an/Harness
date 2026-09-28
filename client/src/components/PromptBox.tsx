@@ -43,8 +43,10 @@ export function PromptBox({
   onSubmit,
   onInterrupt,
   insert,
+  footer,
 }: {
   insert?: { text: string; key: number } | null; // Text to add, for example "@src/app.py:10-25" from the editor.
+  footer?: React.ReactNode; // The left part of the tool row below the text: the model and the context use.
   running: boolean;
   disabled: boolean;
   commands: CommandItem[] | null; // null: not loaded yet.
@@ -212,7 +214,7 @@ export function PromptBox({
           rows={1}
           value={text}
           disabled={disabled}
-          placeholder={running ? "The agent is working. Press Esc to interrupt." : "Ask the agent. Type / for commands and skills."}
+          placeholder={running ? "The agent is working. Press Esc to interrupt." : "Ask the agent. Type / for commands."}
           onChange={(e) => change(e.target.value)}
           onKeyDown={onKeyDown}
           spellCheck={false}
@@ -222,22 +224,25 @@ export function PromptBox({
           aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : undefined}
           aria-activedescendant={activeId}
         />
-        {running ? (
-          <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
-            <Square size={14} fill="currentColor" aria-hidden />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="icon-btn send"
-            onClick={submit}
-            disabled={!canSend}
-            aria-label="Send (Enter)"
-            title="Send (Enter)"
-          >
-            <ArrowUp size={16} aria-hidden />
-          </button>
-        )}
+        <div className="prompt-tools">
+          <div className="prompt-tools-left">{footer}</div>
+          {running ? (
+            <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
+              <Square size={14} fill="currentColor" aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="icon-btn send"
+              onClick={submit}
+              disabled={!canSend}
+              aria-label="Send (Enter)"
+              title="Send (Enter)"
+            >
+              <ArrowUp size={16} aria-hidden />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

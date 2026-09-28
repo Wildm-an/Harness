@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  ChefHat,
+  Asterisk,
   Code2,
   Cpu,
+  Folder,
   Globe as GlobeIcon,
   Server,
   FileDiff,
@@ -11,8 +12,8 @@ import {
   LoaderCircle,
   MessageSquare,
   Monitor,
+  PanelLeftOpen,
   Plug,
-  Plus,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -64,6 +65,7 @@ import { loadPref, savePref } from "./lib/prefs";
 import { MessageList } from "./components/MessageList";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { SessionStart } from "./components/SessionStart";
+import { Sidebar } from "./components/Sidebar";
 import { SkillsPanel } from "./components/SkillsPanel";
 import {
   LOCAL,
@@ -94,6 +96,9 @@ interface Picker {
 
 const CONNECTION_ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
 
+// On a window this narrow, the sidebar covers the page (the same width as in styles.css).
+const NARROW_QUERY = "(max-width: 900px)";
+
 // Project files that open in the Browser pane.
 const BROWSER_FILE_RE = /\.(html?|pdf|png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|ogg|mp3|wav)$/i;
 
@@ -108,6 +113,29 @@ function loadLayout(connectionId: string, cwd: string): LayoutNode {
   } catch {
     return defaultLayout();
   }
+}
+
+/** An icon button in the top bar that shows or hides a pane. */
+function PaneToggle({ icon: Icon, label, active, alert, onClick }: {
+  icon: typeof Code2;
+  label: string;
+  active: boolean;
+  alert?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`icon-btn ghost pane-toggle${active ? " active" : ""}`}
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+    >
+      <Icon size={16} aria-hidden />
+      {alert && <span className="toggle-alert" aria-hidden />}
+    </button>
+  );
 }
 
 function ConnectionIcon({ connection }: { connection: Connection | null }) {
@@ -171,6 +199,11 @@ export default function App() {
   const [startError, setStartError] = useState<string | null>(null);
   // The stored sessions of one folder (cwd), or of all folders (cwd null).
   const [sessions, setSessions] = useState<{ cwd: string | null; items: SessionSummary[] }>({ cwd: null, items: [] });
+  const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
+  const firstPrompt = useRef<string | null>(null); // The task from the start screen, for the new session.
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches,
+  );
   const [session, setSession] = useState<ActiveSession | null>(null);
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
@@ -258,6 +291,15 @@ export default function App() {
     [conn],
   );
 
+  /** Asks for the sessions of all folders, for the sidebar. */
+  const listRecent = useCallback(() => {
+    try {
+      conn.send({ type: "session.list" });
+    } catch {
+      // Not connected. The next connection asks again.
+    }
+  }, [conn]);
+
   // Route daemon messages.
   useEffect(() => {
     const offMessage = conn.onMessage((msg) => {
@@ -284,10 +326,22 @@ export default function App() {
           setScreen("chat");
           setBusy(false);
           setStartError(null);
+          listRecent();
+          if (firstPrompt.current) {
+            const text = firstPrompt.current;
+            firstPrompt.current = null;
+            conn.send({ type: "prompt", text });
+            dispatch({ type: "user", text, startsTurn: true });
+          }
           return;
         case "sessions":
-          setSessions({ cwd: msg.cwd ?? null, items: msg.items });
+          // A list with no folder is the sidebar list. The start screen asks for the list of one folder.
+          if (msg.cwd) setSessions({ cwd: msg.cwd, items: msg.items });
+          else setRecent(msg.items);
           return;
+        case "turn.end":
+          listRecent(); // The first turn gives the session a title.
+          break;
         case "projects":
           setProjects(msg.items);
           if (msg.saved) projectWait.current?.resolve(msg.saved);
@@ -353,6 +407,7 @@ export default function App() {
           break;
         case "error":
           if ((msg.ref === "session.new" || msg.ref === "session.resume") && !sessionRef.current) {
+            firstPrompt.current = null; // The start screen keeps the text, so the user can try again.
             setStartError(msg.message);
             setBusy(false);
             return;
@@ -435,12 +490,14 @@ export default function App() {
       offMessage();
       offStatus();
     };
-  }, [conn, showProviders, showCookbook, syncProviderKeys]);
+  }, [conn, showProviders, showCookbook, syncProviderKeys, listRecent]);
 
   const afterConnect = useCallback(() => {
     // The daemon lists the providers. The reply makes the app send the keys from the keychain.
     conn.send({ type: "providers.list" });
     conn.send({ type: "projects.list" });
+    setRecent([]);
+    conn.send({ type: "session.list" });
     // The Hugging Face token of the Cookbook, from the keychain.
     const connectionId = currentRef.current?.id;
     if (connectionId) {
@@ -582,13 +639,16 @@ export default function App() {
     }
   };
 
-  const startSession = (cwd: string, model: string) => {
+  /** Starts a session. The first task from the start screen goes to the agent when the session is ready. */
+  const startSession = (cwd: string, model: string, prompt: string) => {
     setBusy(true);
     setStartError(null);
+    firstPrompt.current = prompt || null;
     conn.send({ type: "session.new", cwd, model });
   };
 
   const resumeSession = (id: string) => {
+    firstPrompt.current = null;
     setBusy(true);
     setStartError(null);
     conn.send({ type: "session.resume", session_id: id });
@@ -1031,6 +1091,15 @@ export default function App() {
       />
       <div className="composer">
         <div className="column">
+          {chat.running && (
+            <div className="working" role="status">
+              <Asterisk size={15} className="working-glyph" aria-hidden />
+              Working
+              <span className="working-hint">
+                <kbd>Esc</kbd> to interrupt
+              </span>
+            </div>
+          )}
           <PromptBox
             running={chat.running}
             disabled={status !== "open"}
@@ -1039,18 +1108,23 @@ export default function App() {
             commands={commands}
             onRequestCommands={requestCommands}
             insert={promptInsert}
+            footer={
+              <>
+                {session && (
+                  <button
+                    type="button"
+                    className="prompt-chip mono"
+                    onClick={showProviders}
+                    title="The model. Change it with /model provider/model, or click to open the providers."
+                  >
+                    <Cpu size={13} aria-hidden />
+                    {session.model}
+                  </button>
+                )}
+                {chat.context && <ContextMeter tokens={chat.context.tokens} length={chat.context.length} />}
+              </>
+            }
           />
-          <div className="statusline">
-            {chat.running ? (
-              <span className="working">
-                <LoaderCircle size={13} className="spin" aria-hidden />
-                Working. Press <kbd>Esc</kbd> to interrupt.
-              </span>
-            ) : (
-              <span />
-            )}
-            {chat.context && <ContextMeter tokens={chat.context.tokens} length={chat.context.length} />}
-          </div>
         </div>
       </div>
     </div>
@@ -1150,143 +1224,101 @@ export default function App() {
     },
   };
 
+  const narrow = () => window.matchMedia(NARROW_QUERY).matches;
+  const showSidebar = (open: boolean) => {
+    setSidebarOpen(open);
+    if (!narrow()) savePref("sidebar.open", open ? "1" : "0");
+  };
+  /** On a narrow window the sidebar covers the page. Close it after a choice. */
+  const fromSidebar = (action: () => void) => () => {
+    action();
+    if (narrow()) setSidebarOpen(false);
+  };
+  const statusText = status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected";
+
   return (
-    <div className="app">
-      <header className="titlebar">
-        <div className="brand">
-          <img src="/app-icon.svg" alt="" width={18} height={18} />
-          <span>Harness</span>
-        </div>
-        <div className="titlebar-center" title={session?.cwd}>
-          {session && (
-            <>
-              <span className="mono project">{folder}</span>
-              {session.title && <span className="session-title">{session.title}</span>}
-            </>
-          )}
-        </div>
-        <div className="titlebar-right">
-          {session && (
-            <button
-              type="button"
-              className={`chip chip-button mono${screen === "providers" ? " active" : ""}`}
-              onClick={showProviders}
-              title="Model. Change it with /model provider/model. Click to open the providers."
-            >
-              <Cpu size={13} aria-hidden />
-              {session.model}
+    <div className={`app${sidebarOpen ? " sidebar-open" : ""}`}>
+      {sidebarOpen && (
+        <>
+          <Sidebar
+            sessions={recent}
+            activeId={screen === "chat" ? (session?.id ?? null) : null}
+            screen={screen}
+            status={status}
+            onNewSession={fromSidebar(newSession)}
+            onResume={(id) => fromSidebar(() => resumeSession(id))()}
+            onCookbook={fromSidebar(showCookbook)}
+            onProviders={fromSidebar(showProviders)}
+            onCollapse={() => showSidebar(false)}
+            connection={
+              <button
+                type="button"
+                className={`conn conn-${status}${screen === "connections" ? " active" : ""}`}
+                onClick={fromSidebar(openConnections)}
+                title={`${statusText}${hello ? ` to ${hello.hostname} (${hello.platform})` : ""}. Open the connections.`}
+              >
+                <span className="conn-dot" aria-hidden />
+                <ConnectionIcon connection={current} />
+                <span className="conn-text">
+                  <span className="conn-name">{current?.name ?? "No connection"}</span>
+                  <span className="conn-host">{hello ? `${statusText} · ${hello.hostname}` : statusText}</span>
+                </span>
+              </button>
+            }
+          />
+          <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden />
+        </>
+      )}
+      <div className="shell">
+        <header className="topbar">
+          {!sidebarOpen && (
+            <button type="button" className="icon-btn ghost" onClick={() => showSidebar(true)} aria-label="Open the sidebar" title="Open the sidebar">
+              <PanelLeftOpen size={16} aria-hidden />
             </button>
           )}
-          {status === "open" && screen !== "connections" && (
-            <button
-              type="button"
-              className={`btn btn-ghost${screen === "cookbook" ? " active" : ""}`}
-              onClick={() => (screen === "cookbook" ? setScreen(session ? "chat" : "start") : showCookbook())}
-              aria-label="Cookbook"
-              aria-pressed={screen === "cookbook"}
-              title="Cookbook: find, download, and serve local models"
-            >
-              <ChefHat size={15} aria-hidden />
-              <span className="btn-label">Cookbook</span>
-            </button>
-          )}
-          {!session && status === "open" && (
-            <button
-              type="button"
-              className={`btn btn-ghost${screen === "providers" ? " active" : ""}`}
-              onClick={showProviders}
-              aria-label="Providers"
-              aria-pressed={screen === "providers"}
-            >
-              <Cpu size={15} aria-hidden />
-              <span className="btn-label">Providers</span>
-            </button>
-          )}
-          <button
-            type="button"
-            className={`conn conn-${status}`}
-            onClick={openConnections}
-            title={`${status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected"}${
-              hello ? ` to ${hello.hostname} (${hello.platform})` : ""
-            }. Open the connections.`}
-          >
-            <span className="conn-dot" aria-hidden />
-            <ConnectionIcon connection={current} />
-            <span className="conn-name">{current?.name ?? "No connection"}</span>
-            {hello && current?.kind !== "local" && <span className="conn-host mono">{hello.hostname}</span>}
-            <span className="sr-only">
-              {status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected"}
-            </span>
-          </button>
+          <div className="topbar-title" title={session?.cwd}>
+            {screen === "chat" && session && (
+              <>
+                <span className="topbar-name">
+                  {/* The daemon gives the title after the first turn. The sidebar list has it. */}
+                  {session.title ?? recent.find((r) => r.id === session.id)?.title ?? "New session"}
+                </span>
+                <span className="chip mono">
+                  <Folder size={12} aria-hidden />
+                  {folder}
+                </span>
+              </>
+            )}
+          </div>
           {screen === "chat" && (
-            <ServerMenu
-              api={servers}
-              onOpenInBrowser={(s) => void openServer(s)}
-              onOpenPane={() => setLayout((l) => openPane(l, "servers"))}
-            />
+            <div className="topbar-actions">
+              <ServerMenu
+                api={servers}
+                onOpenInBrowser={(s) => void openServer(s)}
+                onOpenPane={() => setLayout((l) => openPane(l, "servers"))}
+              />
+              <PaneToggle
+                icon={Code2}
+                label="Editor"
+                active={paneVisible("editor")}
+                onClick={() => setLayout((l) => (paneVisible("editor") ? closePane(l, "editor") : openPane(l, "editor")))}
+              />
+              <PaneToggle icon={Sparkles} label="Skills" active={paneVisible("skills")} onClick={paneVisible("skills") ? () => hidePane("skills") : openSkills} />
+              <PaneToggle
+                icon={Plug}
+                label={
+                  mcpStatus
+                    ? `MCP: ${mcpStatus.items.filter((i) => i.state === "connected").length} of ${mcpStatus.items.length} servers connected`
+                    : "MCP servers"
+                }
+                active={paneVisible("mcp")}
+                alert={mcpStatus?.items.some((i) => i.state === "failed")}
+                onClick={paneVisible("mcp") ? () => hidePane("mcp") : openMcp}
+              />
+              <PaneToggle icon={ShieldCheck} label="Permission rules" active={paneVisible("rules")} onClick={paneVisible("rules") ? () => hidePane("rules") : openRules} />
+            </div>
           )}
-          {screen === "chat" && (
-            <button
-              type="button"
-              aria-label="Editor"
-              className={`btn btn-ghost${paneVisible("editor") ? " active" : ""}`}
-              onClick={() => setLayout((l) => (paneVisible("editor") ? closePane(l, "editor") : openPane(l, "editor")))}
-              aria-pressed={paneVisible("editor")}
-            >
-              <Code2 size={15} aria-hidden />
-              <span className="btn-label">Editor</span>
-            </button>
-          )}
-          {screen === "chat" && (
-            <button
-              type="button"
-              aria-label="Skills"
-              className={`btn btn-ghost${paneVisible("skills") ? " active" : ""}`}
-              onClick={paneVisible("skills") ? () => hidePane("skills") : openSkills}
-              aria-pressed={paneVisible("skills")}
-            >
-              <Sparkles size={15} aria-hidden />
-              <span className="btn-label">Skills</span>
-            </button>
-          )}
-          {screen === "chat" && (
-            <button
-              type="button"
-              aria-label="MCP servers"
-              className={`btn btn-ghost${paneVisible("mcp") ? " active" : ""}`}
-              onClick={paneVisible("mcp") ? () => hidePane("mcp") : openMcp}
-              aria-pressed={paneVisible("mcp")}
-              title={
-                mcpStatus
-                  ? `MCP: ${mcpStatus.items.filter((i) => i.state === "connected").length} of ${mcpStatus.items.length} servers connected`
-                  : "MCP servers"
-              }
-            >
-              <Plug size={15} aria-hidden />
-              <span className="btn-label">MCP</span>
-              {mcpStatus?.items.some((i) => i.state === "failed") && <span className="mcp-dot bad" aria-hidden />}
-            </button>
-          )}
-          {screen === "chat" && (
-            <button
-              type="button"
-              aria-label="Rules"
-              className={`btn btn-ghost${paneVisible("rules") ? " active" : ""}`}
-              onClick={paneVisible("rules") ? () => hidePane("rules") : openRules}
-              aria-pressed={paneVisible("rules")}
-            >
-              <ShieldCheck size={15} aria-hidden />
-              <span className="btn-label">Rules</span>
-            </button>
-          )}
-          {screen === "chat" && (
-            <button type="button" className="btn btn-ghost" onClick={newSession} aria-label="New session">
-              <Plus size={15} aria-hidden />
-              <span className="btn-label">New session</span>
-            </button>
-          )}
-        </div>
-      </header>
+        </header>
 
       <main className="main">
         {screen === "starting" && (
@@ -1372,6 +1404,7 @@ export default function App() {
           </OpenPathContext.Provider>
         )}
       </main>
+      </div>
     </div>
   );
 }

@@ -134,7 +134,11 @@ function GroupView({
   };
 
   return (
-    <section className="pane-group" aria-label={`${panes[group.active].title} pane group`}>
+    // The chat alone in a group needs no tab row, as in the Claude Code desktop app.
+    <section
+      className={`pane-group${group.tabs.length === 1 && group.tabs[0] === "chat" ? " chat-only" : ""}`}
+      aria-label={`${panes[group.active].title} pane group`}
+    >
       <div
         className="pane-tabs"
         role="tablist"

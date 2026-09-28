@@ -134,9 +134,15 @@ npm run build
 
 ## Design
 
-The design comes from the ui-ux-pro-max "Developer Tool / IDE" recommendation:
+The layout follows the Claude Code desktop app (the Code tab):
 
-- Colors: slate surfaces, a green action color, and 4.5:1 minimum text contrast in dark and light themes.
+- A sidebar with "New session", the Cookbook, the Providers, the sessions by day, and the connection. On a window under 900 px, the sidebar covers the page.
+- The start screen is a prompt box. Type the first task, select the project and the model in the chips below the text, and press Enter. The session starts, and the task goes to the agent. An empty box starts the session with no task.
+- A top bar with the session title, the project folder, the Servers menu, and icon buttons for the panes.
+- A plain transcript: the user messages are bubbles, and each tool call is one row with a status dot and the Claude Code tool name (Read, Update, Bash). Click a row to see its input and output.
+- A permission request has three numbered choices: 1 Yes, 2 Yes and do not ask again, and 3 No. The keys 1, 2, 3, and Esc select them.
+- A rounded prompt box with the model and the context use below the text.
+- Colors: warm neutral surfaces, a clay action color, green for the states that are good, and 4.5:1 minimum text contrast in dark and light themes.
 - Fonts: IBM Plex Sans for the UI and JetBrains Mono for code. The fonts are bundled, so the app operates offline.
 - Icons: Lucide SVG icons.
 - Visible focus rings, 150–200 ms transitions, and `prefers-reduced-motion` support.
