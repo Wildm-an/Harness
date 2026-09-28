@@ -34,6 +34,7 @@ export type ChatItem =
 export interface ContextUse {
   tokens: number;
   length: number;
+  source?: string; // Where the daemon found the context length.
 }
 
 export interface ChatState {
@@ -180,7 +181,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         ...state,
         running: false,
         usage: msg.usage,
-        context: { tokens: msg.usage.context_tokens, length: msg.usage.context_length },
+        context: { ...state.context, tokens: msg.usage.context_tokens, length: msg.usage.context_length },
         items: text ? [...items, { kind: "notice", id: nextId("notice"), level: "info", text }] : items,
       };
     }
@@ -196,7 +197,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       return {
         ...state,
         items: [...endStreaming(state.items), item],
-        context: { tokens: msg.context_tokens, length: msg.context_length },
+        context: { ...state.context, tokens: msg.context_tokens, length: msg.context_length },
       };
     }
     case "error":
@@ -208,7 +209,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       const items = msg.name === "clear" ? notices : [...state.items, ...notices];
       const context =
         msg.name === "clear" && state.context ? { ...state.context, tokens: 0 }
-        : msg.context_length && state.context ? { ...state.context, length: msg.context_length }
+        : msg.context_length && state.context ? { ...state.context, length: msg.context_length, source: msg.context_source }
         : state.context;
       return { ...state, items, context };
     }

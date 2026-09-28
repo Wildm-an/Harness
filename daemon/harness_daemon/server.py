@@ -35,6 +35,7 @@ from .cookbook.hub import HubError
 from .cookbook.service import COOKBOOK, CookbookError
 from .providers import (
     DEFAULT_CONTEXT_LENGTH,
+    ContextInfo,
     ModelClient,
     endpoint,
     image_input,
@@ -500,24 +501,25 @@ class Connection:
                          history: list[dict] | None = None, summary: str | None = None) -> tuple[Agent, list[str]]:
         settings = load_settings(cwd)
         provider, model_name = resolve_model(model or settings.get("default_model"), provider_name)
-        warnings, context_length, images = await self.model_checks(provider, model_name, settings)
+        warnings, context, images = await self.model_checks(provider, model_name, settings)
         agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=self.send,
                       approver=self.approve, settings=settings, history=history,
-                      summary=summary, context_length=context_length, skills=discover_skills(cwd),
-                      image_input=images)
+                      summary=summary, context_length=context.length, skills=discover_skills(cwd),
+                      image_input=images, context_source=context.source)
         return agent, warnings
 
     @staticmethod
-    async def model_checks(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], int, bool]:
+    async def model_checks(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], ContextInfo, bool]:
         """Check tool support, find the context length, and find if the model accepts images.
 
-        Return the warnings, the context length, and the image input flag.
+        Return the warnings, the context length with its source, and the image input flag.
         """
         try:
             reachable = await endpoint(provider)  # Opens the SSH tunnel of the provider, if it has one.
         except TunnelError as e:
-            configured = settings.get("context_length") or provider.context_length or DEFAULT_CONTEXT_LENGTH
-            return [str(e)], int(configured), image_input(provider, model, settings, None)
+            configured = settings.get("context_length") or provider.context_length
+            context = ContextInfo(int(configured), "settings") if configured else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default")
+            return [str(e)], context, image_input(provider, model, settings, None)
         caps, context = await asyncio.gather(
             model_capabilities(reachable, model), resolve_context_length(reachable, model, settings))
         support = None if caps is None else "tools" in caps
@@ -531,7 +533,7 @@ class Connection:
         if context.warning:
             warnings.append(context.warning)
         # "provider" (not "reachable"): the models of providers.json use the configured name.
-        return warnings, context.length, image_input(provider, model, settings, caps)
+        return warnings, context, image_input(provider, model, settings, caps)
 
     async def send_ready(self, warnings: list[str]) -> None:
         s = self.require_session()
@@ -545,6 +547,7 @@ class Connection:
             "history": s.agent.history,
             "summary": s.agent.summary,
             "context_length": s.agent.context_length,
+            "context_source": s.agent.context_source,
             "context_tokens": s.agent.context_tokens(),
             "instructions": s.agent.instructions.name if s.agent.instructions else None,
             "files_token": self.files_token,
@@ -1006,11 +1009,12 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
             return
         conn.require_idle()
         provider, model = resolve_model(args.strip())
-        warnings, context_length, images = await conn.model_checks(provider, model, session.agent.settings)
-        session.agent.set_client(ModelClient(provider, model), context_length, images)
+        warnings, context, images = await conn.model_checks(provider, model, session.agent.settings)
+        session.agent.set_client(ModelClient(provider, model), context.length, images, context.source)
         conn.storage.update_session(session.id, provider=provider.name, model=model)
         await result(text=f"The model is now {session.agent.client.label}.", model=session.agent.client.label,
-                     warnings=warnings, context_length=context_length, image_input=images)
+                     warnings=warnings, context_length=context.length, context_source=context.source,
+                     image_input=images)
     elif name == "compact":
         conn.require_session()
         conn.require_idle()

@@ -22,7 +22,8 @@ from urllib.parse import urlparse
 import httpx
 
 from .config import ConfigError, harness_home, write_json
-from .providers import CLIENT_KEYS, Provider, _provider_from_entry, endpoint, is_enabled, read_provider_entries
+from .providers import (CLIENT_KEYS, Provider, _provider_from_entry, endpoint, is_enabled, model_contexts,
+                        read_provider_entries)
 from .tunnels import TunnelError, parse_ssh
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,40}$")
@@ -222,7 +223,11 @@ def provider_for_test(fields: dict[str, Any], api_key: str | None) -> Provider:
 
 
 async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT) -> dict[str, Any]:
-    """Ask the endpoint for its models (GET <base_url>/models). Return ok, models, error, and ms."""
+    """Ask the endpoint for its models (GET <base_url>/models). Return ok, models, contexts, error, and ms.
+
+    "contexts" maps a model to its context length and the source of the value. A model with no
+    known context length is not in it.
+    """
     start = time.monotonic()
 
     def result(ok: bool, **fields: Any) -> dict[str, Any]:
@@ -255,8 +260,11 @@ async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT) -> dict
     raw = data.get("data") if isinstance(data, dict) else None
     if not isinstance(raw, list):
         return result(False, error=f"{url} did not return a model list. Check that the URL ends with /v1.")
-    models = sorted({str(m.get("id")) for m in raw if isinstance(m, dict) and m.get("id")})
-    return result(True, models=models[:MAX_MODELS], truncated=len(models) > MAX_MODELS)
+    every = sorted({str(m.get("id")) for m in raw if isinstance(m, dict) and m.get("id")})
+    models = every[:MAX_MODELS]
+    found = result(True, models=models, truncated=len(every) > MAX_MODELS)  # "ms" is the time of /models only.
+    contexts = await model_contexts(reachable, models, [m for m in raw if isinstance(m, dict)])
+    return {**found, "contexts": {m: info.to_json() for m, info in contexts.items()}}
 
 
 async def all_models() -> dict[str, Any]:

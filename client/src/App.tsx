@@ -62,6 +62,7 @@ import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
+import { contextSourceText, formatTokens } from "./lib/context";
 import { MessageList } from "./components/MessageList";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { SessionStart } from "./components/SessionStart";
@@ -156,20 +157,17 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function formatTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
-}
-
 // The daemon summarizes the old turns at 80% of the context.
 const COMPACT_AT = 0.8;
 
-function ContextMeter({ tokens, length }: { tokens: number; length: number }) {
+function ContextMeter({ tokens, length, source }: { tokens: number; length: number; source?: string }) {
   const share = length > 0 ? Math.min(tokens / length, 1) : 0;
   const level = share >= COMPACT_AT ? "high" : share >= 0.6 ? "mid" : "low";
+  const origin = contextSourceText(source);
   return (
     <span
       className={`context-meter context-${level}`}
-      title={`About ${tokens} of ${length} tokens. The agent summarizes old turns at ${COMPACT_AT * 100}%. Type /compact to summarize now.`}
+      title={`About ${tokens} of ${length} tokens.${origin ? ` ${origin}` : ""} The agent summarizes old turns at ${COMPACT_AT * 100}%. Type /compact to summarize now.`}
     >
       <span className="meter" role="meter" aria-label="Context use" aria-valuemin={0} aria-valuemax={length} aria-valuenow={tokens}>
         <span className="meter-fill" style={{ width: `${Math.round(share * 100)}%` }} />
@@ -318,7 +316,7 @@ export default function App() {
             history: msg.history,
             warnings: msg.warnings,
             summary: msg.summary,
-            context: { tokens: msg.context_tokens, length: msg.context_length },
+            context: { tokens: msg.context_tokens, length: msg.context_length, source: msg.context_source },
           });
           setInstructions(msg.instructions);
           setFilesToken(msg.files_token);
@@ -1121,7 +1119,7 @@ export default function App() {
                     {session.model}
                   </button>
                 )}
-                {chat.context && <ContextMeter tokens={chat.context.tokens} length={chat.context.length} />}
+                {chat.context && <ContextMeter tokens={chat.context.tokens} length={chat.context.length} source={chat.context.source} />}
               </>
             }
           />

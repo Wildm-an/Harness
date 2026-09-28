@@ -1930,6 +1930,26 @@ select {
   color: var(--accent);
 }
 
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.model-ctx.warn {
+  color: var(--warning);
+}
+
 .panel .form-title {
   margin: 0 0 16px;
   font-size: 15px;

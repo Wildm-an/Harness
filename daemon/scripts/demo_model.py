@@ -20,6 +20,7 @@ Behavior:
 - Another user message -> a read tool call on the first file in the prompt, or README.md.
 - A tool result -> a short Markdown summary.
 - A request with no tools (a context summary) -> a fixed summary.
+- GET /props -> a context length of 32768 tokens, as llama-server gives it.
 """
 
 from __future__ import annotations
@@ -136,6 +137,15 @@ async def stream(reply: dict):
 @app.get("/v1/models")
 async def models():
     return {"object": "list", "data": [{"id": "scripted", "object": "model"}]}
+
+
+# The context length, as llama-server gives it, so that the client shows an endpoint source.
+DEMO_CONTEXT = 32768
+
+
+@app.get("/props")
+async def props():
+    return {"default_generation_settings": {"n_ctx": DEMO_CONTEXT}}
 
 
 @app.post("/v1/chat/completions")

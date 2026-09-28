@@ -208,6 +208,9 @@ DEFAULT_CONTEXT_LENGTH = 8192
 # Ollama uses a small context unless the model or the server sets one. See OLLAMA_CONTEXT_LENGTH.
 OLLAMA_DEFAULT_CONTEXT = 4096
 PROBE_TIMEOUT = 3
+# The Providers screen checks the context of each model. An Ollama server needs one request for each model.
+MAX_CONTEXT_PROBES = 40
+PROBE_CONCURRENCY = 6
 
 
 @dataclass(frozen=True)
@@ -215,6 +218,12 @@ class ContextInfo:
     length: int
     source: str
     warning: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        body: dict[str, Any] = {"length": self.length, "source": self.source}
+        if self.warning:
+            body["warning"] = self.warning
+        return body
 
 
 def _positive_int(value: Any) -> int | None:
@@ -225,6 +234,13 @@ def _positive_int(value: Any) -> int | None:
     return n if n > 0 else None
 
 
+def _auth_headers(provider: Provider) -> dict[str, str]:
+    """Some servers need the API key for /models too, for example vLLM with --api-key."""
+    if provider.api_key and provider.api_key != "none":
+        return {"Authorization": f"Bearer {provider.api_key}"}
+    return {}
+
+
 async def _json(client: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> Any:
     try:
         r = await client.request(method, url, **kwargs)
@@ -233,15 +249,41 @@ async def _json(client: httpx.AsyncClient, method: str, url: str, **kwargs: Any)
         return None
 
 
-async def _probe_ollama(client: httpx.AsyncClient, provider: Provider, model: str) -> ContextInfo | None:
-    # A loaded model reports the context that the server really uses.
-    ps = await _json(client, "GET", f"{provider.root_url}/api/ps")
+def _entries(data: Any) -> list[dict[str, Any]]:
+    """The model entries of an OpenAI-style list: {"data": [...]}."""
+    raw = data.get("data") if isinstance(data, dict) else None
+    return [m for m in raw if isinstance(m, dict)] if isinstance(raw, list) else []
+
+
+def configured_context(provider: Provider, model: str) -> ContextInfo | None:
+    """The context length that providers.json sets for the model or for the provider."""
+    n = _positive_int((provider.models.get(model) or {}).get("context_length")) or _positive_int(provider.context_length)
+    return ContextInfo(n, "providers.json") if n else None
+
+
+# -- Ollama -------------------------------------------------------------------------
+
+async def _ollama_loaded(client: httpx.AsyncClient, provider: Provider) -> dict[str, int]:
+    """The context of each loaded model. It is the context that the server really uses."""
+    ps = await _json(client, "GET", f"{provider.root_url}/api/ps", headers=_auth_headers(provider))
+    loaded: dict[str, int] = {}
     for m in (ps or {}).get("models", []) if isinstance(ps, dict) else []:
-        if m.get("name") == model or m.get("model") == model:
-            n = _positive_int(m.get("context_length"))
-            if n:
-                return ContextInfo(n, "Ollama (loaded model)")
-    show = await _json(client, "POST", f"{provider.root_url}/api/show", json={"model": model})
+        n = _positive_int(m.get("context_length")) if isinstance(m, dict) else None
+        if n:
+            for key in (m.get("name"), m.get("model")):
+                if key:
+                    loaded[key] = n
+    return loaded
+
+
+async def _probe_ollama(client: httpx.AsyncClient, provider: Provider, model: str,
+                        loaded: dict[str, int] | None = None) -> ContextInfo | None:
+    if loaded is None:
+        loaded = await _ollama_loaded(client, provider)
+    if model in loaded:
+        return ContextInfo(loaded[model], "Ollama (loaded model)")
+    show = await _json(client, "POST", f"{provider.root_url}/api/show", json={"model": model},
+                       headers=_auth_headers(provider))
     if not isinstance(show, dict):
         return None
     for line in str(show.get("parameters") or "").splitlines():
@@ -257,21 +299,79 @@ async def _probe_ollama(client: httpx.AsyncClient, provider: Provider, model: st
     ))
 
 
-async def _probe_openai(client: httpx.AsyncClient, provider: Provider, model: str) -> ContextInfo | None:
-    props = await _json(client, "GET", f"{provider.root_url}/props")  # llama-server
+# -- OpenAI-compatible servers ------------------------------------------------------
+
+def context_from_entry(entry: dict[str, Any]) -> int | None:
+    """The context length in one entry of GET /models: vLLM, OpenRouter, llama-server, and others."""
+    meta = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
+    return _positive_int(entry.get("max_model_len") or entry.get("context_length") or entry.get("context_window")
+                         or meta.get("n_ctx") or meta.get("n_ctx_train"))
+
+
+@dataclass
+class OpenAIContextSources:
+    """The context information of an OpenAI-compatible server. One request to each source."""
+
+    llama_server: int | None = None  # GET /props: n_ctx.
+    lmstudio: dict[str, dict[str, Any]] = field(default_factory=dict)  # GET /api/v0/models: model id -> entry.
+    tgi: int | None = None  # GET /info of Text Generation Inference: max_total_tokens.
+    listing: dict[str, int] = field(default_factory=dict)  # GET /models: model id -> context.
+
+    def lookup(self, model: str) -> ContextInfo | None:
+        if self.llama_server:
+            return ContextInfo(self.llama_server, "llama-server")
+        entry = self.lmstudio.get(model)
+        if entry:
+            loaded = _positive_int(entry.get("loaded_context_length"))
+            if loaded:
+                return ContextInfo(loaded, "LM Studio (loaded model)")
+            maximum = _positive_int(entry.get("max_context_length"))
+            if maximum:
+                return ContextInfo(maximum, "LM Studio (model maximum)", (
+                    f"LM Studio loads {model} with the context length of its load settings, which can be "
+                    f"smaller than the maximum ({maximum} tokens) that the harness uses. Load the model in "
+                    "LM Studio with a large context, or set context_length in providers.json."
+                ))
+        if self.tgi:
+            return ContextInfo(self.tgi, "Text Generation Inference")
+        if model in self.listing:
+            return ContextInfo(self.listing[model], "model list")
+        return None
+
+
+async def openai_context_sources(client: httpx.AsyncClient, provider: Provider,
+                                 listing: list[dict[str, Any]] | None = None) -> OpenAIContextSources:
+    """Ask each source at the same time. A server answers only its own requests; the others fail."""
+    headers = _auth_headers(provider)
+
+    async def models() -> Any:
+        return {"data": listing} if listing is not None else await _json(
+            client, "GET", f"{provider.base_url}/models", headers=headers)
+
+    props, lmstudio, info, listed = await asyncio.gather(
+        _json(client, "GET", f"{provider.root_url}/props", headers=headers),
+        _json(client, "GET", f"{provider.root_url}/api/v0/models", headers=headers),
+        _json(client, "GET", f"{provider.root_url}/info", headers=headers),
+        models(),
+    )
+    sources = OpenAIContextSources()
     if isinstance(props, dict):
-        settings = props.get("default_generation_settings") or {}
-        n = _positive_int(settings.get("n_ctx") or props.get("n_ctx"))
-        if n:
-            return ContextInfo(n, "llama-server")
-    models = await _json(client, "GET", f"{provider.base_url}/models")  # vLLM and others
-    for m in (models or {}).get("data", []) if isinstance(models, dict) else []:
-        if m.get("id") == model:
-            meta = m.get("meta") or {}
-            n = _positive_int(m.get("max_model_len") or m.get("context_length") or meta.get("n_ctx"))
-            if n:
-                return ContextInfo(n, "model list")
-    return None
+        defaults = props.get("default_generation_settings")
+        sources.llama_server = _positive_int((defaults.get("n_ctx") if isinstance(defaults, dict) else None)
+                                             or props.get("n_ctx"))
+    sources.lmstudio = {str(m["id"]): m for m in _entries(lmstudio) if m.get("id")}
+    if isinstance(info, dict) and (info.get("model_id") or info.get("max_total_tokens")):
+        sources.tgi = _positive_int(info.get("max_total_tokens") or info.get("max_input_tokens")
+                                    or info.get("max_input_length"))
+    for m in _entries(listed):
+        n = context_from_entry(m)
+        if n and m.get("id"):
+            sources.listing[str(m["id"])] = n
+    return sources
+
+
+async def _probe_openai(client: httpx.AsyncClient, provider: Provider, model: str) -> ContextInfo | None:
+    return (await openai_context_sources(client, provider)).lookup(model)
 
 
 async def resolve_context_length(provider: Provider, model: str, settings: dict[str, Any]) -> ContextInfo:
@@ -279,9 +379,9 @@ async def resolve_context_length(provider: Provider, model: str, settings: dict[
     n = _positive_int(settings.get("context_length"))
     if n:
         return ContextInfo(n, "settings")
-    n = _positive_int((provider.models.get(model) or {}).get("context_length")) or _positive_int(provider.context_length)
-    if n:
-        return ContextInfo(n, "providers.json")
+    configured = configured_context(provider, model)
+    if configured:
+        return configured
     async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as client:
         probe = _probe_ollama if provider.kind == "ollama" else _probe_openai
         found = await probe(client, provider, model)
@@ -291,6 +391,44 @@ async def resolve_context_length(provider: Provider, model: str, settings: dict[
         f"The context length of {model} is unknown. The harness uses {DEFAULT_CONTEXT_LENGTH} tokens. "
         "Set context_length in providers.json for this model."
     ))
+
+
+async def model_contexts(provider: Provider, models: list[str],
+                         listing: list[dict[str, Any]] | None = None) -> dict[str, ContextInfo]:
+    """The context length of each model, for the Providers screen. A model with no answer is not in the result.
+
+    ``listing`` is the GET /models reply that the caller has, so that the server gets no second request.
+    Ollama needs one request for each model, so only the first MAX_CONTEXT_PROBES models get a check.
+    """
+    found: dict[str, ContextInfo] = {}
+    unknown = []
+    for model in models:
+        configured = configured_context(provider, model)
+        if configured:
+            found[model] = configured
+        else:
+            unknown.append(model)
+    if not unknown:
+        return found
+    async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as client:
+        if provider.kind == "ollama":
+            loaded = await _ollama_loaded(client, provider)
+            limit = asyncio.Semaphore(PROBE_CONCURRENCY)
+
+            async def one(model: str) -> None:
+                async with limit:
+                    info = await _probe_ollama(client, provider, model, loaded)
+                if info:
+                    found[model] = info
+
+            await asyncio.gather(*(one(m) for m in unknown[:MAX_CONTEXT_PROBES]))
+        else:
+            sources = await openai_context_sources(client, provider, listing)
+            for model in unknown:
+                info = sources.lookup(model)
+                if info:
+                    found[model] = info
+    return found
 
 
 @dataclass

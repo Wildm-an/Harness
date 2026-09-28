@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { keyLabel, keyModeFor } from "./ProvidersScreen";
+import { keyLabel, keyModeFor, modelTitle } from "./ProvidersScreen";
 
 describe("the API key of a provider form", () => {
   it("sends a typed key to the keychain", () => {
@@ -33,5 +33,21 @@ describe("the API key of a provider form", () => {
     expect(keyLabel({ source: "client", set: false }).warn).toBe(true);
     expect(keyLabel({ source: "file", set: true }).warn).toBe(true);
     expect(keyLabel({ source: "env", env: "K", set: false }).text).toBe("$K is not set on the daemon");
+  });
+});
+
+describe("the models of a connection test", () => {
+  it("shows the context length and its source", () => {
+    expect(modelTitle("p/m", { length: 32768, source: "llama-server" }, true)).toBe(
+      "Use p/m.\nContext: 32768 tokens. The context length comes from the endpoint (llama-server).",
+    );
+    expect(modelTitle("p/m", { length: 4096, source: "Ollama default", warning: "Set OLLAMA_CONTEXT_LENGTH." }, true)).toMatch(
+      /\nSet OLLAMA_CONTEXT_LENGTH\.$/,
+    );
+  });
+
+  it("tells when the endpoint gave no context length", () => {
+    expect(modelTitle("p/m", undefined, true)).toMatch(/did not give the context length/);
+    expect(modelTitle("p/m", undefined, false)).toBe("Use p/m.");
   });
 });

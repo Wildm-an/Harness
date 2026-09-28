@@ -122,7 +122,7 @@ def test_compact_command_and_resume(daemon, project, fake_model):  # noqa: F811
     fake_model.script({"text": "one"}, {"text": "two"}, {"text": "three"}, {"text": "Summary of one and two."})
     c = Client(daemon)
     ready = c.new_session(project)
-    assert ready["context_length"] == 32768 and ready["instructions"] == "HARNESS.md" and ready["summary"] is None
+    assert ready["context_length"] == 32768 and ready["context_source"] == "Ollama num_ctx" and ready["instructions"] == "HARNESS.md" and ready["summary"] is None
     for text in ("first", "second", "third"):
         c.send({"type": "prompt", "text": text})
         c.until("turn.end")

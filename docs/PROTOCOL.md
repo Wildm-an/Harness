@@ -99,7 +99,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `auth.ok` | `version`, `host` | The token is correct. `host` has `hostname`, `platform`, `user`, `home`, and `sep` of the daemon computer. |
 | `fs.dirs` | `path`, `parent`, `items`, `roots`, `is_project` | Reply to `fs.dirs`. `items` are folders only (`name`, `path`). `roots` are the drives on Windows, or `/`. `is_project` is true if the folder has `.git`, `HARNESS.md`, `CLAUDE.md`, `package.json`, or `pyproject.toml`. |
 
-| `session.ready` | `session_id`, `cwd`, `model`, `title`, `warnings`, `history`, `summary`, `context_length`, `context_tokens`, `instructions` | Reply to `session.new` and `session.resume`. `summary` replaces the messages before `history` (null if there is no summary). `instructions` is `HARNESS.md`, `CLAUDE.md`, or null. `history` holds the messages of the current context, in OpenAI chat format. A `tool` message also has `is_error`, and `diff` for a file change. The daemon does not send these fields to the model. |
+| `session.ready` | `session_id`, `cwd`, `model`, `title`, `warnings`, `history`, `summary`, `context_length`, `context_source`, `context_tokens`, `instructions` | Reply to `session.new` and `session.resume`. `context_source` tells where the context length came from: `settings`, `providers.json`, `default`, or an endpoint (for example `llama-server` or `Ollama num_ctx`). `summary` replaces the messages before `history` (null if there is no summary). `instructions` is `HARNESS.md`, `CLAUDE.md`, or null. `history` holds the messages of the current context, in OpenAI chat format. A `tool` message also has `is_error`, and `diff` for a file change. The daemon does not send these fields to the model. |
 
 | `projects` | `items`, `saved` | Reply to the `projects.*` messages. Each item has `id`, `name`, `path`, `exists`, `sessions` (the number of stored sessions in the folder), `created_at`, and `last_used`. `saved` is the id after `projects.save`. `session.new` adds its folder as a project if it is not one. The first daemon start with projects adds the folders of the stored sessions. |
 | `sessions` | `items`, `cwd` | Reply to `session.list`. `cwd` is the value from the request, or null. Each item has `id`, `cwd`, `provider`, `model`, `title`, `created_at`, and `updated_at`. |
@@ -133,7 +133,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `serve.status` | `host`, `name`, `state`, `port`, `provider`, `model`, `error` | Sent to all connections. With `state: "running"`, `model` is `<provider>/<alias>` for `/model`. |
 | `serve.output` | `host`, `name`, `text` | Reply to `serve.output`. |
 | `providers` | `items`, `path`, `exists` | Reply to the `providers.*` messages, except `providers.test`. Each item has `name`, `base_url`, `kind`, `kind_resolved`, `enabled`, `context_length`, `ssh`, `models`, and `key`. `key` has `source` (`client`, `env`, `file`, or `none`), `set` (the daemon has the key now), and `env`. The daemon never sends a key. If `exists` is false, the file does not exist and the list has the default provider. |
-| `providers.test` | `ref`, `name`, `ok`, `ms`, `models`, `truncated`, `error` | Reply to `providers.test`. `ref` is the value from the request. |
+| `providers.test` | `ref`, `name`, `ok`, `ms`, `models`, `truncated`, `contexts`, `error` | Reply to `providers.test`. `ref` is the value from the request. `ms` is the time of `GET /models`. `contexts` maps a model to `{length, source, warning?}`. A model with no known context length is not in it. |
 | `models` | `items`, `errors` | Reply to `models.list`. Each item has `provider` and `model`. Each error has `provider` and `message`. |
 | `preview.frame` | `url`, `title`, `action`, `image` | A small screenshot of the agent browser page after a `preview_navigate`, `preview_click`, or `preview_fill` call. `action` is, for example, `navigate` or `click e5`. `image` is a JPEG data URL. |
 
@@ -154,7 +154,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `turn.end` | `stop_reason` | `end`, `max_tool_calls`, `denied`, `interrupted`, or `error`. |
 
 | `turn.end` | `usage` | `prompt_tokens` and `completion_tokens` are sums for the turn. `last_prompt_tokens` is the prompt size of the last model call. `context_tokens` is the size of the next request (an estimate), and `context_length` is the limit. |
-| `command.result` | `context_length` | After `/model`, the context length of the new model. |
+| `command.result` | `context_length`, `context_source` | After `/model`, the context length of the new model and its source. |
 | `command.result` | `action: "preview"`, `server`, `url` | After `/preview`: the daemon starts the default server. The client opens it in the Browser pane when its state is `running`. |
 | `session.ready` | `files_token` | Project files for the Browser pane: `GET /files/<files_token>/<path>`. The token ends with the session. |
 | `session.ready` | `project` | The saved project of the session folder: `id` and `name`, or null. |

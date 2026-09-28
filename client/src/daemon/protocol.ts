@@ -68,7 +68,15 @@ export interface ProviderTestResult {
   ms: number;
   models?: string[];
   truncated?: boolean;
+  contexts?: Record<string, ModelContext>; // The models with a known context length.
   error?: string;
+}
+
+/** The context length of a model, and where the daemon found it (for example "llama-server"). */
+export interface ModelContext {
+  length: number;
+  source: string;
+  warning?: string;
 }
 
 /** Project settings that the client can change. */
@@ -405,6 +413,7 @@ export type DaemonMessage =
       history: HistoryMessage[];
       summary: string | null; // Replaces the messages before the history.
       context_length: number;
+      context_source?: string; // Where the context length came from, for example "Ollama num_ctx".
       context_tokens: number;
       instructions: string | null; // HARNESS.md or CLAUDE.md, if the project has one.
       files_token: string | null; // Project files for the Browser pane: /files/<token>/<path>.
@@ -474,6 +483,7 @@ export type DaemonMessage =
       model?: string;
       warnings?: string[];
       context_length?: number;
+      context_source?: string;
       image_input?: boolean; // After /model: the new model accepts images.
       items?: CommandItem[];
       server?: string; // /preview: the default server.

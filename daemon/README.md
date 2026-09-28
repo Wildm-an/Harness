@@ -41,8 +41,15 @@ The daemon finds the context length of a model in this order:
 
 1. `context_length` in the settings.
 2. `context_length` of the model or the provider in `providers.json`.
-3. The endpoint: Ollama `/api/ps` and `/api/show` (`num_ctx`), llama-server `/props`, or the model list (`max_model_len`).
+3. The endpoint. For a provider with `ssh`, the requests go through the tunnel. They include the API key, if the provider has one.
+   - Ollama: `/api/ps` (a loaded model), then `/api/show` (`num_ctx`).
+   - llama-server: `/props` (`n_ctx`).
+   - LM Studio: `/api/v0/models` (`loaded_context_length` of a loaded model, else `max_context_length` with a warning: LM Studio can load the model with a smaller context).
+   - Text Generation Inference: `/info` (`max_total_tokens`).
+   - The model list `/models`: `max_model_len` (vLLM), `context_length` (OpenRouter), `context_window`, or `meta.n_ctx`.
 4. The default: 8192 tokens, with a warning.
+
+The client shows the source of the value in the tooltip of the context meter. The connection test on the Providers screen shows the context length of each model (Ollama: the first 40 models).
 
 ### A model on another computer, through SSH
 

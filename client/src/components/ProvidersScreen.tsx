@@ -12,7 +12,8 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { KeyMode, ProviderFields, ProviderItem, ProviderKind, ProviderTestResult } from "../daemon/protocol";
+import type { KeyMode, ModelContext, ProviderFields, ProviderItem, ProviderKind, ProviderTestResult } from "../daemon/protocol";
+import { contextSourceText, formatTokens } from "../lib/context";
 import { isTauri } from "../lib/tauri";
 
 /** Common OpenAI-compatible endpoints. The user can change each value. */
@@ -83,6 +84,18 @@ function Switch({ checked, label, onChange }: { checked: boolean; label: string;
   );
 }
 
+/** The tooltip of a model in the test result: the model, and its context length with the source. */
+export function modelTitle(spec: string, context: ModelContext | undefined, checked: boolean): string {
+  const lines = [`Use ${spec}.`];
+  if (context) {
+    lines.push(`Context: ${context.length} tokens. ${contextSourceText(context.source)}`);
+    if (context.warning) lines.push(context.warning);
+  } else if (checked) {
+    lines.push("The endpoint did not give the context length. The harness uses a default. Set context_length in providers.json.");
+  }
+  return lines.join("\n");
+}
+
 function ModelList({ result, provider, onUse }: { result: ProviderTestResult; provider: string; onUse: (spec: string) => void }) {
   const [filter, setFilter] = useState("");
   const models = result.models ?? [];
@@ -98,15 +111,38 @@ function ModelList({ result, provider, onUse }: { result: ProviderTestResult; pr
         </>
       )}
       <ul aria-label="Models of the endpoint">
-        {shown.map((m) => (
-          <li key={m}>
-            <button type="button" className="model-chip mono" onClick={() => onUse(`${provider}/${m}`)} title={`Use ${provider}/${m}`}>
-              {m}
-            </button>
-          </li>
-        ))}
+        {shown.map((m) => {
+          const context = result.contexts?.[m];
+          const checked = result.contexts !== undefined; // An older daemon does not check the context.
+          return (
+            <li key={m}>
+              <button
+                type="button"
+                className="model-chip mono"
+                onClick={() => onUse(`${provider}/${m}`)}
+                title={modelTitle(`${provider}/${m}`, context, checked)}
+              >
+                {m}
+                {context ? (
+                  <span className={`model-ctx${context.warning ? " warn" : ""}`}>
+                    {context.warning && <TriangleAlert size={11} aria-hidden />}
+                    {formatTokens(context.length)}
+                  </span>
+                ) : (
+                  checked && <span className="model-ctx unknown">?</span>
+                )}
+              </button>
+            </li>
+          );
+        })}
       </ul>
       {models.length > shown.length && <p className="help">{models.length - shown.length} more. Type to filter.</p>}
+      {result.contexts !== undefined && (
+        <p className="help">
+          The number after each model is its context length in tokens. A <span className="mono">?</span> means that the
+          endpoint did not give it. Hover over a model to see where the number came from.
+        </p>
+      )}
       <p className="help">Click a model to select it. Save the provider first.</p>
     </div>
   );

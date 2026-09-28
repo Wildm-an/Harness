@@ -81,6 +81,7 @@ class Agent:
         session_allow: list[str] | None = None,
         read_roots: tuple[Path, ...] | None = None,
         image_input: bool = False,
+        context_source: str = "default",
     ):
         self.cwd = Path(cwd).resolve()
         self.client = client
@@ -101,6 +102,7 @@ class Agent:
         self.instructions = load_project_instructions(self.cwd)
         self.summary = summary
         self.context_length = context_length
+        self.context_source = context_source  # Where the context length came from, for the client.
         self.on_compact = on_compact
         # The prompt tokens that the endpoint reported, and the history length at that time.
         self._known_tokens: tuple[int, int] | None = None
@@ -112,10 +114,11 @@ class Agent:
         self._known_tokens = None
 
     def set_client(self, client: ModelClient, context_length: int | None = None,
-                   image_input: bool | None = None) -> None:
+                   image_input: bool | None = None, context_source: str | None = None) -> None:
         self.client = client
         if context_length:
             self.context_length = context_length
+            self.context_source = context_source or "default"
         if image_input is not None:
             self.image_input = image_input
             self._sync_preview_tools()

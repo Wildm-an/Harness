@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -21,8 +22,12 @@ SIDECAR = Path(__file__).resolve().parent.parent / "build" / "sidecar" / "dist" 
 @pytest.fixture
 def as_frozen(monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.delenv(frozen.REPAIRED_ENV, raising=False)
     monkeypatch.setattr(sys, "executable", "/app/harness-daemon")
+    # The repair adds variables. monkeypatch restores only the variables that it changed, so
+    # restore the full environment: a PLAYWRIGHT_BROWSERS_PATH that stays breaks the other tests.
+    with mock.patch.dict(os.environ):
+        os.environ.pop(frozen.REPAIRED_ENV, None)
+        yield
 
 
 def test_python_commands_in_the_dev_layout():
