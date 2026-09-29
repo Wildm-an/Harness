@@ -75,8 +75,10 @@ def build_system_prompt(
     instructions: ProjectInstructions | None = None,
     summary: str | None = None,
     skills: "list[Skill] | None" = None,
+    plugin_sections: list[str] | None = None,
 ) -> str:
-    return "\n\n".join(text for _kind, text in system_prompt_parts(ctx, model, instructions, summary, skills))
+    return "\n\n".join(text for _kind, text in system_prompt_parts(ctx, model, instructions, summary, skills,
+                                                                  plugin_sections))
 
 
 def system_prompt_parts(
@@ -85,8 +87,9 @@ def system_prompt_parts(
     instructions: ProjectInstructions | None = None,
     summary: str | None = None,
     skills: "list[Skill] | None" = None,
+    plugin_sections: list[str] | None = None,
 ) -> list[tuple[str, str]]:
-    """The parts of the system prompt, with their kind: system, instructions, skills, or summary.
+    """The parts of the system prompt, with their kind: system, instructions, skills, plugins, or summary.
 
     The context breakdown of the client shows the size of each kind.
     """
@@ -115,6 +118,8 @@ def system_prompt_parts(
                       "# Skills\n\nA skill holds instructions for one kind of task. When a task matches a skill "
                       "description, call the skill tool with the skill name before you start the task.\n\n"
                       + "\n".join(lines)))
+    for text in plugin_sections or []:
+        parts.append(("plugins", text))
     if summary:
         parts.append(("summary",
                       "# Summary of the earlier conversation\n\n"

@@ -1,6 +1,6 @@
 # Coding Harness
 
-A desktop app for agentic coding with local models. See [SPEC.md](SPEC.md) for the specification and [docs/PROTOCOL.md](docs/PROTOCOL.md) for the client–daemon protocol.
+A desktop app for agentic coding with local models. See [SPEC.md](SPEC.md) for the specification, [docs/PROTOCOL.md](docs/PROTOCOL.md) for the client–daemon protocol, and [docs/PLUGINS.md](docs/PLUGINS.md) to write a plugin.
 
 ## Layout
 
@@ -9,6 +9,7 @@ A desktop app for agentic coding with local models. See [SPEC.md](SPEC.md) for t
 | `daemon/` | The agent daemon (Python). See [daemon/README.md](daemon/README.md). |
 | `client/` | The desktop client (Tauri 2, React, TypeScript). See [client/README.md](client/README.md). |
 | `docs/` | Protocol and design notes. |
+| `examples/plugins/` | Example plugins. See [docs/PLUGINS.md](docs/PLUGINS.md). |
 
 ## Build phases
 

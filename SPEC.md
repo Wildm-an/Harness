@@ -167,6 +167,13 @@ Each provider is an entry in `~/.harness/providers.json`:
 - Add MCP tools to the tool list with the prefix `mcp__<server>__`.
 - MCP tools need approval by default.
 
+### 5.8 Plugins
+
+- A plugin is a Python module in a bundle folder in `~/.harness/plugins/`. The model is a port of the DeepSeek Harness plugin model.
+- A plugin registers tools, `/` commands, skills, system prompt sections, hooks, MCP servers, and model providers in code.
+- YAML patch files in layers turn each plugin on or off and give its config.
+- See [docs/PLUGINS.md](docs/PLUGINS.md).
+
 ## 6. Skills
 
 The skill format is the same as the Claude Code format. Existing Claude Code skills must load with no changes.
@@ -235,6 +242,7 @@ Built-in commands have priority over skills with the same name.
 | `/compact` | Summarizes the context. |
 | `/model` | Changes the model. |
 | `/skills` | Lists the skills and their sources. |
+| `/plugins` | Opens the Plugins screen. |
 | `/cookbook` | Opens the Cookbook panel. |
 | `/servers` | Opens the Servers pane. |
 | `/preview` | Starts the default server and opens it in the Browser pane. |
@@ -513,6 +521,7 @@ Rules:
 - The Browser pane runs in a separate webview. Pages in it cannot call Tauri commands.
 - The daemon forwards only the server ports from `launch.json`.
 - The editor can open only files inside the session folder.
+- Plugin code runs in the daemon process with the rights of the daemon. A project patch file can name only the modules of installed bundles.
 
 ## 10. Build phases
 

@@ -25,6 +25,7 @@ import type {
   DirListing,
   HostInfo,
   McpStatus,
+  PluginsStatus,
   ProjectItem,
   ProviderFields,
   ProviderItem,
@@ -44,6 +45,7 @@ import {
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
 import { McpPanel } from "./components/McpPanel";
+import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { FolderPicker } from "./components/FolderPicker";
@@ -86,7 +88,7 @@ import {
 } from "./lib/connections";
 import { browserView, forwardCloseAll, forwardOpen, isTauri, pickFolder } from "./lib/tauri";
 
-type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook";
+type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins";
 
 const PROVIDER_REPLY_TIMEOUT = 15_000;
 
@@ -256,6 +258,25 @@ export default function App() {
     });
   }, []);
 
+  // The Plugins screen (docs/PLUGINS.md).
+  const [plugins, setPlugins] = useState<PluginsStatus | null>(null);
+  const [pluginError, setPluginError] = useState<string | null>(null);
+  const [pluginBusy, setPluginBusy] = useState(false);
+
+  /** Opens the Plugins screen. Uses only refs and state setters: the message handler calls it too. */
+  const showPlugins = useCallback(() => {
+    setScreen((s) => {
+      if (s !== "plugins") returnScreen.current = s === "chat" || s === "start" ? s : "start";
+      return "plugins";
+    });
+    setPluginError(null);
+    try {
+      conn.send({ type: "plugins.list" });
+    } catch {
+      // Not connected. The screen shows the last list.
+    }
+  }, [conn]);
+
   /** Sends the keys from the keychain that the daemon does not have. */
   const syncProviderKeys = useCallback(
     async (items: ProviderItem[]) => {
@@ -389,6 +410,15 @@ export default function App() {
           setSkillDetail(detail);
           return;
         }
+        case "plugins": {
+          const { type: _type, ...status } = msg;
+          setPlugins(status);
+          setPluginBusy(false);
+          setPluginError(null);
+          // The plugins can add / commands and skills. The / menu needs the new list.
+          if (status.loaded) conn.send({ type: "skills.list" });
+          return;
+        }
         case "mcp": {
           const { type: _type, ...status } = msg;
           setMcpStatus(status);
@@ -418,6 +448,11 @@ export default function App() {
           }
           if (msg.ref === "skills.get") setSkillDetail(null);
           if (msg.ref === "mcp.restart" || msg.ref === "mcp") setMcpBusy(false);
+          if (msg.ref?.startsWith("plugins.")) {
+            setPluginBusy(false);
+            setPluginError(msg.message);
+            return;
+          }
           if (msg.ref === "projects.save" || msg.ref === "projects.delete") {
             if (projectWait.current) {
               projectWait.current.reject(new Error(msg.message));
@@ -465,6 +500,10 @@ export default function App() {
             showCookbook();
             return;
           }
+          if (msg.action === "open_panel" && msg.panel === "plugins") {
+            showPlugins();
+            return;
+          }
           if (msg.action === "open_panel" && msg.panel === "mcp") {
             setLayout((l) => openPane(l, "mcp"));
             conn.send({ type: "mcp.list" });
@@ -490,7 +529,7 @@ export default function App() {
       offMessage();
       offStatus();
     };
-  }, [conn, showProviders, showCookbook, syncProviderKeys, listRecent]);
+  }, [conn, showProviders, showCookbook, showPlugins, syncProviderKeys, listRecent]);
 
   const afterConnect = useCallback(() => {
     // The daemon lists the providers. The reply makes the app send the keys from the keychain.
@@ -1309,6 +1348,7 @@ export default function App() {
             onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
             onResume={(id) => fromSidebar(() => resumeSession(id))()}
             onLocalModels={fromSidebar(showCookbook)}
+            onPlugins={fromSidebar(showPlugins)}
             onConnections={fromSidebar(showProviders)}
             onCollapse={() => showSidebar(false)}
             connection={
@@ -1431,6 +1471,30 @@ export default function App() {
             tokenSaved={hfTokenSaved}
             onSaveToken={(token) => void saveHfTokenValue(token)}
             onUseModel={selectProviderModel}
+            onReturn={() => setScreen(session ? "chat" : "start")}
+          />
+        )}
+        {screen === "plugins" && (
+          <PluginsScreen
+            status={plugins}
+            error={pluginError}
+            busy={pluginBusy}
+            hasSession={session !== null}
+            onInstall={(source, replace) => {
+              setPluginError(null);
+              if (sendSafely({ type: "plugins.install", source, replace })) setPluginBusy(true);
+            }}
+            onRemove={(name) => {
+              setPluginError(null);
+              if (sendSafely({ type: "plugins.remove", name })) setPluginBusy(true);
+            }}
+            onSetBundle={(name, enabled) => sendSafely({ type: "plugins.set_bundle", name, enabled })}
+            onSetPlugin={(id, enabled) => sendSafely({ type: "plugins.set_plugin", id, enabled })}
+            onReload={() => {
+              setPluginError(null);
+              if (sendSafely({ type: "plugins.reload" })) setPluginBusy(true);
+            }}
+            onBrowse={(initial) => browseFolder(initial ?? hello?.home ?? "")}
             onReturn={() => setScreen(session ? "chat" : "start")}
           />
         )}

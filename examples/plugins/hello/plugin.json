@@ -1,0 +1,8 @@
+{
+  "name": "hello",
+  "version": "0.1.0",
+  "description": "An example plugin: a tool, a / command, a prompt section, a skill, and a hook.",
+  "icon": "icon.svg",
+  "engines": { "harness": ">=0.1.4" },
+  "harness": { "patch": "patch.yml" }
+}

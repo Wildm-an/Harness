@@ -47,6 +47,23 @@ DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
 # The API keys that the client sent for providers with "key_store": "client". Memory only.
 CLIENT_KEYS: dict[str, str] = {}
 
+# The providers that plugins registered: name -> the entries, newest last. A providers.json entry wins.
+PLUGIN_PROVIDERS: dict[str, list[dict[str, Any]]] = {}
+
+
+def register_plugin_provider(name: str, entry: dict[str, Any]) -> Callable[[], None]:
+    """Add a provider of a plugin. Return a function that removes it."""
+    item = dict(entry)
+    PLUGIN_PROVIDERS.setdefault(name, []).append(item)
+
+    def remove() -> None:
+        stack = PLUGIN_PROVIDERS.get(name, [])
+        if item in stack:
+            stack.remove(item)
+        if not stack:
+            PLUGIN_PROVIDERS.pop(name, None)
+    return remove
+
 
 class ModelError(Exception):
     pass
@@ -132,6 +149,9 @@ def read_provider_entries() -> tuple[dict[str, Any], bool]:
 def load_providers(include_disabled: bool = False) -> dict[str, Provider]:
     """The providers. A provider with "enabled": false is not in the result, unless ``include_disabled``."""
     data, _ = read_provider_entries()
+    for name, stack in PLUGIN_PROVIDERS.items():
+        if stack and name not in data:
+            data[name] = stack[-1]
     return {name: _provider_from_entry(name, entry) for name, entry in data.items()
             if include_disabled or is_enabled(entry)}
 

@@ -26,6 +26,9 @@ from .agent import Agent
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, MODES, PermissionRules
+from .plugins import Invocation, PluginHost, Prompt, run_command
+from .plugins.install import InstallError, install as install_plugin, remove as remove_plugin, set_bundle_enabled
+from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
 from . import provider_config
 from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, project_config_path
@@ -72,6 +75,7 @@ BUILTIN_COMMANDS: dict[str, str] = {
     "local-models": "Open the Local Models screen: find, download, serve, and delete local models.",
     "connections": "Open the Connections screen: the model endpoints and their API keys.",
     "mcp": "Open the MCP panel: the MCP servers of the project and their tools.",
+    "plugins": "Open the Plugins screen: install, turn on or off, and remove plugins.",
     "servers": "Open the Servers pane.",
     "preview": "Start the default server and open it in the Browser pane.",
     "help": "List the commands.",
@@ -81,7 +85,8 @@ BUILTIN_HINTS = {"model": "<provider>/<model>"}
 # The old names of commands. They work, but the / menu does not show them.
 COMMAND_ALIASES = {"cookbook": "local-models", "providers": "connections"}
 # The client panel that a command opens. The panel names stay the same as in the protocol.
-PANEL_COMMANDS = {"local-models": "cookbook", "connections": "providers", "servers": "servers", "mcp": "mcp"}
+PANEL_COMMANDS = {"local-models": "cookbook", "connections": "providers", "servers": "servers", "mcp": "mcp",
+                  "plugins": "plugins"}
 
 # Message types of later build phases.
 NOT_AVAILABLE: dict[str, str] = {}
@@ -306,6 +311,7 @@ class Connection:
         self.servers: ServerManager | None = None
         self.preview: PreviewHost | None = None
         self.mcp: McpManager | None = None
+        self.plugins: PluginHost | None = None  # The plugins of the session. make_agent loads them.
         self.files_token: str | None = None
         self._watcher: asyncio.Task | None = None
 
@@ -375,7 +381,7 @@ class Connection:
                     continue
                 try:
                     await fn(self, msg)
-                except (ProtocolError, ConfigError, PathError, HostError, HubError, CookbookError) as e:
+                except (ProtocolError, ConfigError, PathError, HostError, HubError, CookbookError, InstallError) as e:
                     await self.error(str(e), ref=kind)
                 except Exception as e:  # noqa: BLE001 - report the error and keep the connection.
                     log.exception("Handler %s failed", kind)
@@ -396,7 +402,10 @@ class Connection:
         return self.session
 
     async def _close_session(self) -> None:
-        """Stop the MCP servers, the agent browser, and the servers of the session, and end its file URLs."""
+        """Stop the MCP servers, the agent browser, the servers, and the plugins of the session, and end its file URLs."""
+        if self.plugins is not None:
+            host, self.plugins = self.plugins, None
+            await host.dispose()
         if self.mcp is not None:
             manager, self.mcp = self.mcp, None
             MCPS.discard(manager)
@@ -416,6 +425,7 @@ class Connection:
     async def open_session(self, session: Session) -> None:
         await self._close_session()
         self.session = session
+        self.plugins = session.agent.plugins
         self.watched.clear()
         self.servers = ServerManager(session.cwd, session.agent.ctx.shell, self.send)
         MANAGERS.add(self.servers)
@@ -425,7 +435,9 @@ class Connection:
         self.files_token = secrets.token_urlsafe(24)
         FILE_ROOTS[self.files_token] = session.cwd
         # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
-        self.mcp = McpManager(session.cwd, self.send, session.agent.set_mcp_tools)
+        host = self.plugins
+        self.mcp = McpManager(session.cwd, self.send, session.agent.set_mcp_tools,
+                              host.mcp_servers if host is not None else None)
         MCPS.add(self.mcp)
         asyncio.create_task(self._start_mcp(self.mcp))
 
@@ -505,12 +517,22 @@ class Connection:
     async def make_agent(self, cwd: Path, provider_name: str | None, model: str | None,
                          history: list[dict] | None = None, summary: str | None = None) -> tuple[Agent, list[str]]:
         settings = load_settings(cwd)
-        provider, model_name = resolve_model(model or settings.get("default_model"), provider_name)
-        warnings, context, images = await self.model_checks(provider, model_name, settings)
-        agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=self.send,
-                      approver=self.approve, settings=settings, history=history,
-                      summary=summary, context_length=context.length, skills=discover_skills(cwd),
-                      image_input=images, context_source=context.source)
+        # The plugins load first: a plugin can register the provider of the model.
+        plugins = PluginHost(cwd)
+        await plugins.load()
+        try:
+            provider, model_name = resolve_model(model or settings.get("default_model"), provider_name)
+            warnings, context, images = await self.model_checks(provider, model_name, settings)
+            agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=self.send,
+                          approver=self.approve, settings=settings, history=history,
+                          summary=summary, context_length=context.length,
+                          skills=discover_skills(cwd, plugins.skill_roots()),
+                          image_input=images, context_source=context.source, plugins=plugins)
+        except BaseException:
+            await plugins.dispose()
+            raise
+        warnings += [f"The plugin {s.row.id} did not load: {s.error}" for s in plugins.rows.values()
+                     if s.state == "failed"]
         return agent, warnings
 
     @staticmethod
@@ -603,7 +625,44 @@ class Connection:
 
     def skills(self) -> dict[str, Skill]:
         """The skills now on disk. The user can add a skill during a session."""
-        return discover_skills(self.session.cwd if self.session else None)
+        roots = self.plugins.skill_roots() if self.plugins is not None else None
+        return discover_skills(self.session.cwd if self.session else None, roots)
+
+    async def reload_plugins(self) -> None:
+        """Load the plugins of the session again, after an install or a change of the plugin files."""
+        session, host = self.session, self.plugins
+        if session is None or host is None:
+            return
+        self.require_idle()
+        old_mcp = host.mcp_servers()
+        await host.load()
+        session.agent.set_plugins(host)
+        session.agent.set_skills(self.skills())
+        if self.mcp is not None and host.mcp_servers() != old_mcp:
+            manager = self.mcp
+
+            async def restart() -> None:
+                await manager.restart()
+            _background(self, "mcp.restart", restart)
+
+    async def run_plugin_command(self, name: str, args: str) -> bool:
+        """Run the / command of a plugin. Return False if no plugin has the command."""
+        command = self.plugins.commands().get(name) if self.plugins is not None else None
+        if command is None:
+            return False
+        session = self.require_session()
+        try:
+            value = await run_command(command, Invocation(name, args, session.cwd, session.id))
+        except Exception as e:  # noqa: BLE001 - a plugin bug must not close the connection.
+            log.exception("The plugin command /%s failed", name)
+            raise ProtocolError(f"The plugin command /{name} failed: {type(e).__name__}: {e}") from None
+        if isinstance(value, Prompt):
+            self.require_idle()
+            self.start_turn(value.text, f"/{name} {args}".strip())
+            return True
+        text = "" if value is None else value if isinstance(value, str) else json.dumps(value, indent=2, default=str)
+        await self.send({"type": "command.result", "name": name, "text": text})
+        return True
 
     async def run_skill(self, skill: Skill, args: str) -> None:
         session = self.require_session()
@@ -775,6 +834,96 @@ async def on_mcp_init(conn: Connection, msg: dict[str, Any]) -> None:
     if created:
         write_json(path, MCP_TEMPLATE)
     await conn.send({"type": "mcp.init", "path": relpath(session.cwd, path), "created": created})
+
+
+# -- plugins (docs/PLUGINS.md) -----------------------------------------------------------------------
+
+
+async def _send_plugins(conn: Connection, **extra: Any) -> None:
+    """The Plugins screen. With a session: the loaded plugins. With no session: the rows only, with no plugin code."""
+    host = conn.plugins
+    if host is None:
+        host = PluginHost(None)
+        host.scan()
+    await conn.send({"type": "plugins", "loaded": conn.plugins is not None, **host.describe(), **extra})
+
+
+async def _plugins_changed(conn: Connection, **extra: Any) -> None:
+    await conn.reload_plugins()
+    await _send_plugins(conn, **extra)
+
+
+def _plugin_changes_allowed(conn: Connection) -> None:
+    # The plugins load again after a change. A running turn must not lose its tools.
+    if conn.session is not None:
+        conn.require_idle()
+
+
+@handler("plugins.list")
+async def on_plugins_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_plugins(conn)
+
+
+@handler("plugins.reload")
+async def on_plugins_reload(conn: Connection, msg: dict[str, Any]) -> None:
+    """Load the plugins of the session again, for example after a change to a plugin file."""
+    _plugin_changes_allowed(conn)
+    await _plugins_changed(conn)
+
+
+@handler("plugins.install")
+async def on_plugins_install(conn: Connection, msg: dict[str, Any]) -> None:
+    """Install a bundle: {"source": <folder or git URL>, "replace"?: bool}. A git clone can be slow."""
+    source = _text_arg(msg, "source")
+    replace = bool(msg.get("replace"))
+    _plugin_changes_allowed(conn)
+
+    async def run() -> None:
+        try:
+            item = await asyncio.to_thread(install_plugin, source, replace)
+            await _plugins_changed(conn, installed=item.name)
+        except (InstallError, ConfigError, ProtocolError) as e:
+            await conn.error(str(e), ref="plugins.install")
+        except Exception as e:  # noqa: BLE001
+            log.exception("The plugin install failed")
+            await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="plugins.install")
+
+    asyncio.create_task(run())
+
+
+@handler("plugins.remove")
+async def on_plugins_remove(conn: Connection, msg: dict[str, Any]) -> None:
+    name = _text_arg(msg, "name")
+    _plugin_changes_allowed(conn)
+    if conn.plugins is not None:
+        await conn.plugins.dispose()  # Stop the plugin code before its files go.
+    await asyncio.to_thread(remove_plugin, name)
+    await _plugins_changed(conn, removed=name)
+
+
+@handler("plugins.set_bundle")
+async def on_plugins_set_bundle(conn: Connection, msg: dict[str, Any]) -> None:
+    """Turn a bundle on or off: {"name", "enabled"}. The state is in ~/.harness/plugins.json."""
+    name = _text_arg(msg, "name")
+    if not isinstance(msg.get("enabled"), bool):
+        raise ProtocolError("'enabled' must be true or false.")
+    _plugin_changes_allowed(conn)
+    set_bundle_enabled(name, msg["enabled"])
+    await _plugins_changed(conn)
+
+
+@handler("plugins.set_plugin")
+async def on_plugins_set_plugin(conn: Connection, msg: dict[str, Any]) -> None:
+    """Turn one plugin row on or off: {"id", "enabled"}. The value goes to a patch layer (patch.py)."""
+    row_id = _text_arg(msg, "id")
+    if not isinstance(msg.get("enabled"), bool):
+        raise ProtocolError("'enabled' must be true or false.")
+    _plugin_changes_allowed(conn)
+    try:
+        set_row_disabled(row_id, not msg["enabled"], conn.session.cwd if conn.session else None)
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
+    await _plugins_changed(conn)
 
 
 # -- the Cookbook (SPEC.md section 7) ----------------------------------------------------------------
@@ -1012,7 +1161,9 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
     if not isinstance(args, str):
         raise ProtocolError("'args' must be a string.")
     if name not in BUILTIN_COMMANDS:
-        # Built-in commands have priority over skills with the same name.
+        # Built-in commands have priority over plugin commands. Plugin commands have priority over skills.
+        if await conn.run_plugin_command(name, args):
+            return
         skill = conn.skills().get(name)
         if skill is None:
             raise ProtocolError(f"Unknown command: /{name}")
@@ -1027,8 +1178,11 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
         await conn.send({"type": "command.result", "name": name, **fields})
 
     if name == "help":
-        lines = [f"/{n} - {d}" for n, d in BUILTIN_COMMANDS.items()]
-        await result(text="\n".join(lines), items=[{"name": n, "description": d} for n, d in BUILTIN_COMMANDS.items()])
+        commands = dict(BUILTIN_COMMANDS)
+        for c in (conn.plugins.commands().values() if conn.plugins is not None else []):
+            commands.setdefault(c.name, c.description)
+        lines = [f"/{n} - {d}" for n, d in commands.items()]
+        await result(text="\n".join(lines), items=[{"name": n, "description": d} for n, d in commands.items()])
     elif name == "clear":
         session = conn.require_session()
         conn.require_idle()
@@ -1241,8 +1395,13 @@ async def on_skills_list(conn: Connection, msg: dict[str, Any]) -> None:
     """The contents of the / menu: the built-in commands, then the user-invocable skills."""
     builtins = [{"name": n, "description": d, "argument-hint": BUILTIN_HINTS.get(n, ""), "source": "built-in",
                  "builtin": True} for n, d in BUILTIN_COMMANDS.items()]
-    skills = [s.summary() for s in conn.skills().values() if s.user_invocable and s.name not in BUILTIN_COMMANDS]
-    await conn.send({"type": "skills", "items": builtins + skills})
+    plugin_commands = conn.plugins.commands() if conn.plugins is not None else {}
+    commands = [{"name": c.name, "description": c.description, "argument-hint": c.argument_hint,
+                 "source": f"plugin ({c.plugin})", "builtin": False}
+                for c in plugin_commands.values() if c.name not in BUILTIN_COMMANDS]
+    skills = [s.summary() for s in conn.skills().values()
+              if s.user_invocable and s.name not in BUILTIN_COMMANDS and s.name not in plugin_commands]
+    await conn.send({"type": "skills", "items": builtins + commands + skills})
 
 
 @handler("skills.get")

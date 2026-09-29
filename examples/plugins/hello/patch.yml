@@ -1,0 +1,15 @@
+# The plugin rows of this bundle. Each row is one plugin with its own config.
+# The user can change a row in ~/.harness/plugins.patch.yml, and a project can change it in
+# <project>/.harness/plugins.patch.yml. See docs/PLUGINS.md.
+- insert:
+    - id: hello
+      name: hello              # The main file: plugin.py
+      config:
+        greeting: Hello
+    - id: hello-guard
+      name: hello/guard        # The file guard.py
+      disabled: true           # Off until the user turns it on.
+      config:
+        blocked:
+          - rm -rf /
+          - git push --force

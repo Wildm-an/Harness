@@ -36,6 +36,7 @@ const PART_LABELS: Record<string, string> = {
   system: "System prompt",
   instructions: "Project instructions",
   skills: "Skills",
+  plugins: "Plugins",
   summary: "Summary of earlier turns",
   tools: "Built-in tools",
   mcp_tools: "MCP tools",

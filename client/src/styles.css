@@ -1076,6 +1076,7 @@ textarea:focus-visible {
 .ctx-system { background: var(--text-muted); }
 .ctx-instructions { background: var(--success); }
 .ctx-skills { background: var(--warning); }
+.ctx-plugins { background: var(--success); }
 .ctx-summary { background: var(--violet); }
 .ctx-tools { background: var(--info); }
 .ctx-mcp_tools { background: var(--teal); }
@@ -1628,6 +1629,99 @@ textarea:focus-visible {
   height: 7px;
   border-radius: 50%;
   background: var(--danger);
+}
+
+/* ---------- the Plugins screen ---------- */
+
+.plugin-install {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.plugin-install input {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel.plugins .list-head {
+  margin-top: 12px;
+}
+
+.plugin-bundle.off .connection-name,
+.plugin-bundle.off .plugin-desc {
+  color: var(--text-muted);
+}
+
+.plugin-icon {
+  object-fit: contain;
+}
+
+.plugin-desc {
+  font-size: 13px;
+}
+
+.plugin-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.plugin-error > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.plugin-rows {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plugin-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.plugin-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plugin-row-text .help {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.plugin-row-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.plugin-state.active {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.plugin-state.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 /* ---------- the Cookbook ---------- */

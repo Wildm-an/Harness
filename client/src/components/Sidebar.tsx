@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Boxes, Cable, ChevronRight, Folder, FolderOpen, PanelLeftClose, Plus, type LucideIcon } from "lucide-react";
+import { Boxes, Cable, ChevronRight, Folder, FolderOpen, PanelLeftClose, Plus, Puzzle, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
@@ -173,6 +173,7 @@ export function Sidebar({
   onNewSessionIn,
   onResume,
   onLocalModels,
+  onPlugins,
   onConnections,
   onCollapse,
 }: {
@@ -186,6 +187,7 @@ export function Sidebar({
   onNewSessionIn: (group: ProjectGroup) => void;
   onResume: (id: string) => void;
   onLocalModels: () => void;
+  onPlugins: () => void;
   onConnections: () => void;
   onCollapse: () => void;
 }) {
@@ -213,6 +215,7 @@ export function Sidebar({
       <div className="side-actions">
         <NavButton icon={Plus} label="New session" active={screen === "start"} disabled={!open} onClick={onNewSession} />
         <NavButton icon={Boxes} label="Local Models" active={screen === "cookbook"} disabled={!open} onClick={onLocalModels} />
+        <NavButton icon={Puzzle} label="Plugins" active={screen === "plugins"} disabled={!open} onClick={onPlugins} />
         <NavButton icon={Cable} label="Connections" active={screen === "providers"} disabled={!open} onClick={onConnections} />
       </div>
 

@@ -36,8 +36,8 @@ class Skill:
     name: str
     description: str
     path: Path  # The SKILL.md file.
-    source: str  # "user" or "project"
-    origin: str  # ".harness" or ".claude"
+    source: str  # "user", "project", or "plugin"
+    origin: str  # ".harness" or ".claude", or the plugin name for a plugin skill
     disable_model_invocation: bool = False
     user_invocable: bool = True
     allowed_tools: tuple[str, ...] = ()
@@ -186,12 +186,14 @@ KNOWN_FIELDS = {
 # -- discovery ----------------------------------------------------------------------
 
 
-def skill_roots(cwd: Path | None) -> list[tuple[Path, str, str]]:
+def skill_roots(cwd: Path | None, plugin_roots: list[tuple[Path, str]] | None = None) -> list[tuple[Path, str, str]]:
     """The skill folders, from the lowest to the highest priority.
 
-    A project skill wins over a user skill. In the same scope, .harness wins over .claude.
+    A project skill wins over a user skill, and a user skill wins over a plugin skill.
+    In the same scope, .harness wins over .claude.
     """
-    roots = [
+    roots = [(path, "plugin", plugin) for path, plugin in plugin_roots or []]
+    roots += [
         (claude_home() / "skills", "user", ".claude"),
         (harness_home() / "skills", "user", ".harness"),
     ]
@@ -203,10 +205,11 @@ def skill_roots(cwd: Path | None) -> list[tuple[Path, str, str]]:
     return roots
 
 
-def discover_skills(cwd: Path | None) -> dict[str, Skill]:
+def discover_skills(cwd: Path | None, plugin_roots: list[tuple[Path, str]] | None = None) -> dict[str, Skill]:
+    """The skills of all folders. ``plugin_roots``: the skill folders of the plugins, with the plugin names."""
     skills: dict[str, Skill] = {}
     seen: set[Path] = set()
-    for root, source, origin in skill_roots(cwd):
+    for root, source, origin in skill_roots(cwd, plugin_roots):
         if not root.is_dir():
             continue
         try:

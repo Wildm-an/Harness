@@ -73,7 +73,7 @@ def project_config_path(project: Path) -> Path:
 @dataclass
 class ServerConfig:
     name: str
-    scope: str  # "user" or "project"
+    scope: str  # "plugin", "user", or "project"
     transport: str  # "stdio", "http", or "sse"
     command: str | None = None
     args: list[str] = field(default_factory=list)
@@ -164,10 +164,22 @@ def _servers_of(data: Any, path: Path) -> dict[str, Any]:
     return {k: v for k, v in data.items() if isinstance(v, dict)}
 
 
-def load_mcp_config(project: Path | None) -> tuple[dict[str, ServerConfig], list[str]]:
-    """The servers of the user file and the project file, and the problems (warnings and errors)."""
+def load_mcp_config(project: Path | None, plugin_servers: dict[str, Any] | None = None,
+                    ) -> tuple[dict[str, ServerConfig], list[str]]:
+    """The servers of the plugins, the user file, and the project file, and the problems (warnings and errors).
+
+    A user or project server replaces a plugin server with the same name.
+    """
     servers: dict[str, ServerConfig] = {}
     problems: list[str] = []
+    for name, raw in (plugin_servers or {}).items():
+        try:
+            config, warnings = _parse_server(name, raw, "plugin", Path(project) if project else None)
+        except ConfigError as e:
+            problems.append(f"Plugin MCP server: {e}")
+            continue
+        servers[name] = config
+        problems.extend(warnings)
     sources = [("user", user_config_path())]
     if project is not None:
         sources.append(("project", project_config_path(project)))
@@ -289,8 +301,10 @@ class ServerState:
 class McpManager:
     """The MCP servers of one session."""
 
-    def __init__(self, project: Path, emit: Emit, on_tools: Callable[[list[Tool]], None]):
+    def __init__(self, project: Path, emit: Emit, on_tools: Callable[[list[Tool]], None],
+                 plugin_servers: Callable[[], dict[str, Any]] | None = None):
         self.project = Path(project)
+        self.plugin_servers = plugin_servers or dict  # The MCP servers of the plugins, now.
         self.emit = emit
         self.on_tools = on_tools
         self.servers: dict[str, ServerState] = {}
@@ -306,7 +320,7 @@ class McpManager:
     async def start(self) -> None:
         """Read the configuration and connect to each server that is on."""
         self.main_loop = asyncio.get_running_loop()
-        configs, self.problems = load_mcp_config(self.project)
+        configs, self.problems = load_mcp_config(self.project, self.plugin_servers())
         self.servers = {name: ServerState(config) for name, config in configs.items()}
         wanted = [s for s in self.servers.values() if not s.config.disabled]
         for s in self.servers.values():
@@ -453,7 +467,7 @@ class McpManager:
             self.thread = LoopThread("mcp")
             await self.start()
             return
-        configs, self.problems = load_mcp_config(self.project)
+        configs, self.problems = load_mcp_config(self.project, self.plugin_servers())
         if name not in configs:
             raise ConfigError(f"Unknown MCP server: {name}")
         old = self.servers.get(name)

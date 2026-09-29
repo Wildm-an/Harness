@@ -27,7 +27,7 @@ package = ["pyinstaller>=6.10"]  # The sidecar for the installers: scripts/build
 harness-daemon = "harness_daemon.__main__:main"
 
 [tool.setuptools]
-packages = ["harness_daemon", "harness_daemon.tools", "harness_daemon.cookbook"]
+packages = ["harness_daemon", "harness_daemon.tools", "harness_daemon.cookbook", "harness_daemon.plugins"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

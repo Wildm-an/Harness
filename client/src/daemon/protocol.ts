@@ -180,7 +180,7 @@ export type McpState = "starting" | "connected" | "failed" | "disabled" | "stopp
 
 export interface McpServerItem {
   name: string;
-  scope: "user" | "project";
+  scope: "plugin" | "user" | "project";
   transport: "stdio" | "http" | "sse";
   target: string; // The command, or the URL.
   state: McpState;
@@ -194,6 +194,48 @@ export interface McpStatus {
   items: McpServerItem[];
   problems: string[];
   paths: { user: string; project: string };
+}
+
+// -- plugins (docs/PLUGINS.md) --
+
+/** A plugin row: one plugin module with its config. "idle": no session, so no plugin code ran. */
+export interface PluginRow {
+  id: string;
+  name: string; // <bundle> or <bundle>/<module>
+  bundle: string;
+  state: "pending" | "active" | "disabled" | "failed" | "idle";
+  error: string | null;
+  disabled: boolean;
+  config: unknown;
+  layer: string; // The layer that added the row: "bundle:<name>", "user", or "project".
+  overrides: string[]; // The layers that changed the row.
+  inject: string[];
+  provide: string[];
+  tools: string[];
+  commands: string[];
+}
+
+export interface PluginBundle {
+  name: string;
+  dir: string;
+  enabled: boolean;
+  source: string | null; // The folder or the git URL of the install.
+  problem: string | null; // Why the bundle cannot load.
+  version?: string;
+  description?: string;
+  icon?: string | null; // A data URL.
+  rows: PluginRow[];
+}
+
+export interface PluginsStatus {
+  loaded: boolean; // True: the plugins of the session are loaded.
+  bundles: PluginBundle[];
+  orphans: PluginRow[]; // Rows of bundles that are not installed.
+  warnings: string[];
+  paths: { plugins: string; user_patch: string; project_patch: string | null };
+  counts: Record<string, number>;
+  installed?: string;
+  removed?: string;
 }
 
 // -- the Cookbook (SPEC.md section 7) --
@@ -381,6 +423,12 @@ export type ClientMessage =
   | { type: "mcp.list" }
   | { type: "mcp.restart"; name?: string }
   | { type: "mcp.init" }
+  | { type: "plugins.list" }
+  | { type: "plugins.reload" }
+  | { type: "plugins.install"; source: string; replace?: boolean }
+  | { type: "plugins.remove"; name: string }
+  | { type: "plugins.set_bundle"; name: string; enabled: boolean }
+  | { type: "plugins.set_plugin"; id: string; enabled: boolean }
   | { type: "cookbook.hosts" }
   | { type: "cookbook.host.save"; name: string; ssh?: string | null; python?: string | null; llama_server?: string | null; previous?: string }
   | { type: "cookbook.host.delete"; name: string }
@@ -459,6 +507,7 @@ export type DaemonMessage =
   | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[] }
   | ({ type: "mcp" } & McpStatus)
   | { type: "mcp.init"; path: string; created: boolean }
+  | ({ type: "plugins" } & PluginsStatus)
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }
   | { type: "hardware"; host: string; info: HardwareInfo }
   | { type: "hf.token"; set: boolean }

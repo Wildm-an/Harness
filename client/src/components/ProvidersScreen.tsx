@@ -68,7 +68,7 @@ export function keyLabel(key: ProviderItem["key"]): { text: string; warn: boolea
   }
 }
 
-function Switch({ checked, label, onChange }: { checked: boolean; label: string; onChange: (next: boolean) => void }) {
+export function Switch({ checked, label, onChange }: { checked: boolean; label: string; onChange: (next: boolean) => void }) {
   return (
     <button
       type="button"

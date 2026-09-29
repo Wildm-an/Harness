@@ -161,9 +161,9 @@ def test_context_breakdown(daemon, project, harness_home, fake_model):  # noqa: 
     c.send({"type": "context.get"})
     usage = c.until("context.usage")[0]
     parts = {p["kind"]: p["tokens"] for p in usage["parts"]}
-    assert list(parts) == ["system", "instructions", "skills", "summary", "tools", "mcp_tools", "messages"]
+    assert list(parts) == ["system", "instructions", "skills", "plugins", "summary", "tools", "mcp_tools", "messages"]
     assert parts["instructions"] > 0 and parts["tools"] > 0 and parts["messages"] > 0
     assert parts["instructions"] > parts["skills"]  # The project instructions are long.
-    assert parts["summary"] == 0 and parts["mcp_tools"] == 0
+    assert parts["summary"] == 0 and parts["mcp_tools"] == 0 and parts["plugins"] == 0
     assert sum(parts.values()) == usage["tokens"] and usage["length"] == 32768 and usage["compact_at"] == 0.8
     c.close()

@@ -25,6 +25,7 @@ from .config import load_settings
 from .context import CHARS_PER_TOKEN, COMPACT_AT, KEEP_TURNS, estimate_tokens, split_turns, summarize, trim_tool_outputs
 from .files import file_hash, relpath
 from .permissions import Approver, PermissionGate
+from .plugins.host import Hooks, PluginHost, ToolCall, TurnEvent
 from .prompt import build_system_prompt, load_project_instructions, system_prompt_parts
 from .providers import DEFAULT_CONTEXT_LENGTH, ModelClient, ModelError
 from .skills import Skill, render_skill
@@ -82,6 +83,7 @@ class Agent:
         read_roots: tuple[Path, ...] | None = None,
         image_input: bool = False,
         context_source: str = "default",
+        plugins: PluginHost | None = None,
     ):
         self.cwd = Path(cwd).resolve()
         self.client = client
@@ -97,6 +99,10 @@ class Agent:
         if any(s.model_invocable for s in self.skills.values()):
             tool_list.append(SkillTool(self.skills, self._activate_skill, self.run_fork))
         self.tools = {t.name: t for t in tool_list}
+        self.plugins: PluginHost | None = None
+        self.hooks = Hooks()
+        self._plugin_tools: list[str] = []  # The names of the plugin tools in self.tools.
+        self._set_plugin_tools(plugins)
         self.gate = PermissionGate(self.cwd, approver, session_allow,
                                    mode=lambda: self.settings.get("permission_mode") or "default")
         self.history: list[dict[str, Any]] = list(history or [])
@@ -109,9 +115,13 @@ class Agent:
         self._known_tokens: tuple[int, int] | None = None
         self._rebuild_prompt()
 
+    def _plugin_sections(self) -> list[str]:
+        return self.plugins.prompt_sections() if self.plugins is not None else []
+
     def _rebuild_prompt(self) -> None:
         self.system_prompt = build_system_prompt(
-            self.ctx, self.client.label, self.instructions, self.summary, list(self.skills.values()))
+            self.ctx, self.client.label, self.instructions, self.summary, list(self.skills.values()),
+            self._plugin_sections())
         if self.settings.get("permission_mode") == "plan":
             self.system_prompt += PLAN_MODE_NOTE
         self._known_tokens = None
@@ -150,6 +160,32 @@ class Agent:
     def mcp_tools(self) -> list[Tool]:
         return [t for n, t in self.tools.items() if n.startswith("mcp__")]
 
+    def _set_plugin_tools(self, host: PluginHost | None) -> None:
+        for name in self._plugin_tools:
+            self.tools.pop(name, None)
+        self.plugins = host
+        self.hooks = host.hooks if host is not None else Hooks()
+        # A built-in tool, an MCP tool, or a preview tool wins over a plugin tool with the same name.
+        added = [t for t in (host.tools() if host is not None else []) if t.name not in self.tools]
+        self.tools.update({t.name: t for t in added})
+        self._plugin_tools = [t.name for t in added]
+        self._known_tokens = None  # The tool schemas are part of the request size.
+
+    def set_plugins(self, host: PluginHost | None) -> None:
+        """Use the plugins of a host that loaded again: their tools, prompt sections, and hooks."""
+        self._set_plugin_tools(host)
+        self._rebuild_prompt()
+
+    def set_skills(self, skills: dict[str, Skill]) -> None:
+        """Replace the skills, for example after a change of the plugins."""
+        self.skills = dict(skills)
+        self.ctx.read_roots = tuple(s.dir for s in self.skills.values())
+        self.tools.pop(SkillTool.name, None)
+        if any(s.model_invocable for s in self.skills.values()):
+            tool = SkillTool(self.skills, self._activate_skill, self.run_fork)
+            self.tools[tool.name] = tool
+        self._rebuild_prompt()
+
     def reload_settings(self, settings: dict[str, Any]) -> None:
         """Use changed settings, for example "auto_verify" from the client."""
         self.settings.clear()
@@ -178,17 +214,20 @@ class Agent:
         def text_tokens(text: str) -> int:
             return int(len(text) / CHARS_PER_TOKEN) + 1
 
-        sizes = {"system": 0, "instructions": 0, "skills": 0, "summary": 0}
+        sizes = {"system": 0, "instructions": 0, "skills": 0, "plugins": 0, "summary": 0}
         for kind, text in system_prompt_parts(self.ctx, self.client.label, self.instructions, self.summary,
-                                              list(self.skills.values())):
+                                              list(self.skills.values()), self._plugin_sections()):
             sizes[kind] += text_tokens(text)
         if self.settings.get("permission_mode") == "plan":
             sizes["system"] += text_tokens(PLAN_MODE_NOTE)
         schemas = self.tool_schemas()
         mcp = [s for name, s in zip(self.tools, schemas) if name.startswith("mcp__")]
-        builtin = [s for name, s in zip(self.tools, schemas) if not name.startswith("mcp__")]
+        plugin = [s for name, s in zip(self.tools, schemas) if name in self._plugin_tools]
+        builtin = [s for name, s in zip(self.tools, schemas)
+                   if not name.startswith("mcp__") and name not in self._plugin_tools]
         sizes["tools"] = estimate_tokens(builtin) if builtin else 0
         sizes["mcp_tools"] = estimate_tokens(mcp) if mcp else 0
+        sizes["plugins"] += estimate_tokens(plugin) if plugin else 0
         sizes["messages"] = estimate_tokens(self.messages()[1:])
         # The endpoint count is exact, and the parts are estimates. Scale the parts to the total.
         total = self.context_tokens()
@@ -274,6 +313,7 @@ class Agent:
 
         Stop reasons: ``end``, ``max_tool_calls``, ``denied``, ``interrupted``, ``error``.
         """
+        text = (await self.hooks.emit("turn.start", TurnEvent(text, self.cwd))).text
         message: dict[str, Any] = {"role": "user", "content": text}
         if display is not None:
             message["display"] = display
@@ -354,6 +394,7 @@ class Agent:
             await self.emit({"type": "error", "message": str(e)})
             stop = "error"
 
+        await self.hooks.emit("turn.end", TurnEvent(text, self.cwd, stop))
         await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
         return stop
 
@@ -386,7 +427,7 @@ class Agent:
             cwd=self.cwd, client=self.client, emit=forward, approver=self.gate.approver,
             settings=self.settings, context_length=self.context_length,
             session_allow=list(skill.allowed_tools), read_roots=self.ctx.read_roots,
-            image_input=self.image_input,
+            image_input=self.image_input, plugins=self.plugins,
         )
         if self.ctx.preview is not None:
             sub.enable_preview(self.ctx.preview)
@@ -519,6 +560,10 @@ class Agent:
             return ToolResult(f"Unknown tool: {name}. The tools are: {', '.join(self.tools)}.", is_error=True)
         if args is None:
             return ToolResult(f"The tool arguments are not valid JSON: {parse_error}", is_error=True)
+        call = await self.hooks.emit("tool.before", ToolCall(name, args, self.cwd))
+        if call.blocked:
+            return ToolResult(f"A plugin blocked this tool call: {call.blocked}", is_error=True)
+        args = call.args
         try:
             tool.validate(args)
             approval = await tool.prepare(args, self.ctx)
@@ -527,11 +572,13 @@ class Agent:
                 return ToolResult(allowed, is_error=True)
             if not allowed:
                 return _DENIED_RESULT
-            return await tool.run(args, self.ctx)
+            call.result = await tool.run(args, self.ctx)
         except ToolError as e:
-            return ToolResult(str(e), is_error=True)
+            call.result = ToolResult(str(e), is_error=True)
         except OSError as e:
-            return ToolResult(f"{type(e).__name__}: {e}", is_error=True)
+            call.result = ToolResult(f"{type(e).__name__}: {e}", is_error=True)
+        call = await self.hooks.emit("tool.after", call)
+        return call.result if isinstance(call.result, ToolResult) else ToolResult(str(call.result))
 
 
 _DENIED_RESULT = ToolResult(DENIED, is_error=True)
