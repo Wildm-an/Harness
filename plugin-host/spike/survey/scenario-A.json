@@ -1,0 +1,180 @@
+{
+ "dshmarket": [
+  "partial",
+  [
+   "phase 5",
+   "shell"
+  ]
+ ],
+ "dsh-univer-office": [
+  "gate",
+  [
+   "fails the peer gate"
+  ]
+ ],
+ "@iasiv5/dsh-obmc-web": [
+  "blocked",
+  [
+   "inject: webRuntime, webServer"
+  ]
+ ],
+ "dsh-mcp-connector": [
+  "blocked",
+  [
+   "inject: loader, storageDomain, workspaceRegistry"
+  ]
+ ],
+ "@aiwayds/dsh-tui-pi": [
+  "partial",
+  [
+   "phase 4",
+   "subagent/start"
+  ]
+ ],
+ "dsh-data-cleaning-agent": [
+  "partial",
+  [
+   "phase 1",
+   "jobs",
+   "storageDomain",
+   "UI slots: conversation.input.dock, conversation.input.overlay, conversation.session.header.actions"
+  ]
+ ],
+ "@alpacachen/dsh-automation": [
+  "gate",
+  [
+   "fails the peer gate"
+  ]
+ ],
+ "dsh-better-workspace": [
+  "partial",
+  [
+   "phase 1",
+   "UI slots: conversation.hero.workspace, conversation.hero.workspace.directoryFlow, sidebar.session.row.leading"
+  ]
+ ],
+ "dsh-mattpocock-skills-deck": [
+  "blocked",
+  [
+   "inject: connection, sessionQuery"
+  ]
+ ],
+ "dsh-win32": [
+  "gate",
+  [
+   "fails the peer gate"
+  ]
+ ],
+ "@anysearch/anysearch-dsh": [
+  "gate",
+  [
+   "fails the peer gate"
+  ]
+ ],
+ "@agent_forge/forge-dsh": [
+  "partial",
+  [
+   "phase 1",
+   "agent/session-start"
+  ]
+ ],
+ "ds-harness-remote": [
+  "full",
+  [
+   "phase 5"
+  ]
+ ],
+ "dsh-plugin-guide": [
+  "full",
+  [
+   "phase 1"
+  ]
+ ],
+ "dsh-lsp-actions": [
+  "blocked",
+  [
+   "inject: fs, subprocess"
+  ]
+ ],
+ "dsh-smooth-stream": [
+  "partial",
+  [
+   "phase 1",
+   "UI slots: conversation.chat.node, conversation.session.header.utilities"
+  ]
+ ],
+ "dsh-client-liang-intensity-skin": [
+  "blocked",
+  [
+   "inject: webServer"
+  ]
+ ],
+ "@aiwayds/dsh-subagent-registry": [
+  "blocked",
+  [
+   "inject: subagents"
+  ]
+ ],
+ "@aiwayds/dsh-model-sync": [
+  "full",
+  [
+   "phase 4"
+  ]
+ ],
+ "dsh-click": [
+  "blocked",
+  [
+   "inject: subprocess"
+  ]
+ ],
+ "dsh-defend": [
+  "full",
+  [
+   "phase 1"
+  ]
+ ],
+ "dsh-damage-pulse": [
+  "gate",
+  [
+   "fails the peer gate"
+  ]
+ ],
+ "dsh-m": [
+  "partial",
+  [
+   "phase 1",
+   "UI slots: tool.call.toolview"
+  ]
+ ],
+ "dsh-tauri": [
+  "full",
+  [
+   "phase 5"
+  ]
+ ],
+ "dsh-sessions-manager": [
+  "blocked",
+  [
+   "inject: sessionPersistence, sessionQuery, storageDomain, webServer, workspaceRegistry"
+  ]
+ ],
+ "@aiwayds/dsh-dcp": [
+  "partial",
+  [
+   "phase 4",
+   "compaction"
+  ]
+ ],
+ "dsh-data-quality": [
+  "blocked",
+  [
+   "inject: storageDomain"
+  ]
+ ],
+ "@aiwayds/dsh-feishu": [
+  "full",
+  [
+   "phase 2"
+  ]
+ ]
+}
