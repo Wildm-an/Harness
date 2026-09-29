@@ -205,8 +205,6 @@ export function Sidebar({
   return (
     <nav className="sidebar" aria-label="Projects and tools">
       <div className="side-head">
-        <img src="/app-icon.svg" alt="" width={18} height={18} />
-        <span className="side-brand">Harness</span>
         <button type="button" className="icon-btn ghost" onClick={onCollapse} aria-label="Close the sidebar" title="Close the sidebar">
           <PanelLeftClose size={16} aria-hidden />
         </button>
