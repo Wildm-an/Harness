@@ -57,7 +57,7 @@ from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
 from .session import Session
-from .skills import Skill, discover_skills
+from .skills import Skill, discover_skills, inline_skill_text
 from .storage import Storage
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
@@ -765,9 +765,22 @@ class Connection:
         expanded = await asyncio.to_thread(expand_references, text, session.cwd, stored.get)
         await live.wait_for_mcp()
         await self.refresh_dsh(live)
+        # "/name" skills in the typed text (not in the referenced files): add their instructions.
+        # Read the skills after refresh_dsh, so that the skills of a DeepSeek plugin are current.
+        allow: tuple[str, ...] = ()
+        if "/" in text:
+            def skill_block() -> tuple[str, tuple[str, ...]]:
+                # The same skills as the / menu: a built-in or plugin command hides a skill.
+                hidden = set(BUILTIN_COMMANDS) | set(live.plugins.commands() if live.plugins is not None else ())
+                skills = {n: s for n, s in self.skills(live).items() if n not in hidden}
+                return inline_skill_text(text, skills, session.cwd)
+
+            block, allow = await asyncio.to_thread(skill_block)
+            if block:
+                expanded = f"{expanded}\n\n{block}"
         try:
             shown = display or text
-            stop = await session.agent.run_turn(expanded, display=shown if expanded != shown else None)
+            stop = await session.agent.run_turn(expanded, display=shown if expanded != shown else None, allow=allow)
         finally:
             session.persist()
         if stop == "end":

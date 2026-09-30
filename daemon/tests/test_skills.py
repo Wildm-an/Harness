@@ -11,7 +11,7 @@ import pytest
 from harness_daemon.agent import Agent
 from harness_daemon.config import load_settings
 from harness_daemon.providers import ModelClient, resolve_model
-from harness_daemon.skills import discover_skills, load_skill, split_arguments, substitute
+from harness_daemon.skills import discover_skills, inline_skill_text, inline_skills, load_skill, split_arguments, substitute
 
 from test_server import Client, daemon  # noqa: F401 - the daemon fixture
 
@@ -225,6 +225,37 @@ def test_slash_menu_and_skill_commands(daemon, project, project_skills, fake_mod
     c.send({"type": "session.resume", "session_id": ready["session_id"]})
     history = c.until("session.ready")[0]["history"]
     assert history[0]["display"] == "/greet Grace"
+    c.close()
+
+
+def test_skills_in_the_middle_of_a_prompt(project, project_skills):
+    skills = discover_skills(project)
+    names = lambda text: [s.name for s in inline_skills(text, skills)]  # noqa: E731
+    assert names("Please /greet Ada, then /research the parser.") == ["greet", "research"]
+    assert names("Run /greet. Then /greet again") == ["greet"]  # No duplicates.
+    # Not a skill: a path, a part of a word, an unknown name, a skill that is only for the model.
+    assert names("Read /usr/greet and a/greet and /greeting and /hidden") == []
+
+    text, allow = inline_skill_text("Please /greet Ada and /research the parser", skills, project)
+    assert text.startswith("The user started these skills in the message: /greet, /research.")
+    assert "The instructions of the skill /greet:" in text and "Say hello to ." in text
+    assert 'Call the skill tool with the name "research".' in text and "Find" not in text
+    assert allow == ("Bash(echo hi)",)
+    assert inline_skill_text("No skill here", skills, project) == ("", ())
+
+
+def test_prompt_with_a_skill_in_the_middle(daemon, project, project_skills, fake_model):  # noqa: F811
+    c = Client(daemon)
+    ready = c.new_session(project)
+    fake_model.script({"text": "Hello, Ada."})
+    c.send({"type": "prompt", "text": "Please /greet Ada, and /help me."})
+    c.until("turn.end")
+    sent = fake_model.requests[-1]["messages"][-1]["content"]
+    assert sent.startswith("Please /greet Ada, and /help me.\n\nThe user started these skills in the message: /greet.")
+    assert "A skill that a built-in command hides" not in sent  # The built-in /help hides the skill.
+    c.send({"type": "session.resume", "session_id": ready["session_id"]})
+    history = c.until("session.ready")[0]["history"]
+    assert history[0]["display"] == "Please /greet Ada, and /help me."
     c.close()
 
 

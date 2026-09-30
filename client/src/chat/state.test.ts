@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { chatReducer, emptyChat, historyToItems, type ChatState } from "./state";
 import type { DaemonMessage } from "../daemon/protocol";
-import { filterCommands, parseSubmission } from "../components/PromptBox";
+import { filterCommands, insertCommand, isSkill, parseSubmission, slashAt } from "../components/PromptBox";
 
 const run = (...msgs: DaemonMessage[]): ChatState =>
   msgs.reduce((s, msg) => chatReducer(s, { type: "daemon", msg }), chatReducer(emptyChat, { type: "user", text: "hi", startsTurn: true }));
@@ -172,6 +172,26 @@ describe("skills", () => {
     expect(filterCommands(items, "comp").map((i) => i.name)).toEqual(["compact", "recompile", "review"]);
     expect(filterCommands(items, "commit").map((i) => i.name)).toEqual(["commit"]);
     expect(filterCommands(items, "").map((i) => i.name)).toEqual(["recompile", "commit", "compact", "review"]);
+  });
+
+  it("finds the / token at the caret, at the start or after a space", () => {
+    expect(slashAt("/rev", 4)).toEqual({ start: 0, query: "rev" });
+    expect(slashAt("fix it with /gr", 15)).toEqual({ start: 12, query: "gr" });
+    expect(slashAt("fix it with / now", 13)).toEqual({ start: 12, query: "" });
+    expect(slashAt("see a/b", 7)).toBeNull();
+    expect(slashAt("read /usr/lib", 13)).toBeNull();
+    expect(slashAt("/greet Ada", 10)).toBeNull();
+  });
+
+  it("puts a skill in the middle of a prompt, and keeps the text after it", () => {
+    expect(insertCommand("fix it with /gr now", 15, 12, "greet")).toEqual({ text: "fix it with /greet now", caret: 18 });
+    expect(insertCommand("fix it with /", 13, 12, "greet")).toEqual({ text: "fix it with /greet ", caret: 19 });
+  });
+
+  it("shows only skills in the middle of a prompt", () => {
+    expect(isSkill({ ...item("greet"), path: "/p/greet/SKILL.md" })).toBe(true);
+    expect(isSkill(item("compact", "", true))).toBe(false);
+    expect(isSkill({ ...item("deploy"), source: "plugin (ops)" })).toBe(false); // A plugin command has no path.
   });
 
   it("shows the typed command, not the skill text, for a stored skill message", () => {

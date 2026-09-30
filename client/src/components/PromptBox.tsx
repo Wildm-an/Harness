@@ -42,8 +42,25 @@ export function filterCommands(items: CommandItem[], query: string): CommandItem
     .map((r) => r.item);
 }
 
-// The menu is open while the user types the command name: "/" and no space yet.
-const COMMAND_TOKEN = /^\/([^\s]*)$/;
+/** The "/" token at the caret: its start and the text after "/". null if the caret is not in one.
+ * At the start of the prompt, the token is a command. After a space, it names a skill in the prompt. */
+export function slashAt(text: string, caret: number): { start: number; query: string } | null {
+  const m = /(^|\s)\/([^\s/]*)$/.exec(text.slice(0, caret));
+  return m ? { start: caret - m[2].length - 1, query: m[2] } : null;
+}
+
+/** A skill, not a built-in command or a plugin command. Only a skill can go in the middle of a prompt. */
+export function isSkill(item: CommandItem): boolean {
+  return !item.builtin && item.path !== undefined;
+}
+
+/** Replace the "/query" at ``start`` with "/name ". Return the new text and the new caret. */
+export function insertCommand(text: string, caret: number, start: number, name: string): { text: string; caret: number } {
+  const after = text.slice(caret);
+  const insert = `/${name}${after.startsWith(" ") ? "" : " "}`;
+  return { text: text.slice(0, start) + insert + after, caret: start + insert.length };
+}
+
 const MAX_HEIGHT_PX = 280;
 
 export function PromptBox({
@@ -79,7 +96,7 @@ export function PromptBox({
 }) {
   const [text, setText] = useState("");
   const [active, setActive] = useState(0);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState<number | null>(null); // The start of a closed "/" token.
   const area = useRef<HTMLTextAreaElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const [caret, setCaret] = useState(0);
@@ -89,11 +106,14 @@ export function PromptBox({
   const mentionList = useRef<HTMLUListElement>(null);
   const sessionRefs = useRef(new Map<string, string>()); // The session names in the prompt, and their ids.
 
-  const token = COMMAND_TOKEN.exec(text);
-  const menuOpen = token !== null && !dismissed && !disabled;
+  // The "/" menu. At the start of the prompt: the commands and the skills. After a space: the skills only.
+  const slash = !disabled ? slashAt(text, caret) : null;
+  const token = slash && slash.start !== dismissed ? slash : null;
+  const menuOpen = token !== null;
+  const inline = token !== null && token.start > 0;
   const matches = useMemo(
-    () => (menuOpen && commands ? filterCommands(commands, token[1]) : []),
-    [menuOpen, commands, token?.[1]],
+    () => (menuOpen && commands ? filterCommands(inline ? commands.filter(isSkill) : commands, token.query) : []),
+    [menuOpen, inline, commands, token?.query],
   );
 
   // Refresh the list each time the menu opens: the user can add a skill at any time.
@@ -101,7 +121,7 @@ export function PromptBox({
     if (menuOpen) onRequestCommands();
   }, [menuOpen]);
 
-  useEffect(() => setActive(0), [token?.[1]]);
+  useEffect(() => setActive(0), [token?.query, token?.start]);
 
   // The "@" menu: the files of the project and the other sessions. The "/" menu has priority.
   const found = !menuOpen && !disabled ? mentionAt(text, caret) : null;
@@ -166,7 +186,7 @@ export function PromptBox({
     if (value && suggestion) onDismissSuggestion?.();
     setText(value);
     setCaret(at ?? value.length);
-    if (!value.startsWith("/")) setDismissed(false);
+    if (dismissed !== null && value[dismissed] !== "/") setDismissed(null);
     if (mentionDismissed !== null && value[mentionDismissed] !== "@") setMentionDismissed(null);
   };
 
@@ -194,13 +214,17 @@ export function PromptBox({
     }
   };
 
-  /** Put the command in the box. A command with no arguments runs at once if ``run`` is set. */
+  /** Put the command in the box. A command with no arguments runs at once if ``run`` is set and the
+   * command is the only text. A skill in the middle of a prompt goes to the agent with the prompt. */
   const choose = (item: CommandItem, run: boolean) => {
-    if (run && !item["argument-hint"]) {
+    if (!token) return;
+    if (run && !inline && !item["argument-hint"] && !text.slice(caret).trim()) {
       if (onSubmit({ kind: "command", name: item.name, args: "" })) change("");
       return;
     }
-    change(`/${item.name} `);
+    const next = insertCommand(text, caret, token.start, item.name);
+    pendingCaret.current = next.caret;
+    change(next.text, next.caret);
     area.current?.focus();
   };
 
@@ -257,7 +281,7 @@ export function PromptBox({
     }
     if (menuOpen && e.key === "Escape") {
       e.preventDefault();
-      setDismissed(true);
+      setDismissed(token.start);
       return;
     }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -281,9 +305,9 @@ export function PromptBox({
           {commands === null ? (
             <p className="slash-empty">Loading the commands.</p>
           ) : matches.length === 0 ? (
-            <p className="slash-empty">No command or skill matches /{token[1]}.</p>
+            <p className="slash-empty">{inline ? `No skill matches /${token.query}.` : `No command or skill matches /${token.query}.`}</p>
           ) : (
-            <ul id="slash-menu" role="listbox" aria-label="Commands and skills" ref={list}>
+            <ul id="slash-menu" role="listbox" aria-label={inline ? "Skills" : "Commands and skills"} ref={list}>
               {matches.map((item, i) => (
                 <li
                   key={`${item.builtin ? "b" : "s"}-${item.name}`}
@@ -312,7 +336,7 @@ export function PromptBox({
               <kbd>Tab</kbd> complete
             </span>
             <span>
-              <kbd>Enter</kbd> run
+              <kbd>Enter</kbd> {inline ? "add" : "run"}
             </span>
             <span>
               <kbd>Esc</kbd> close
@@ -376,7 +400,7 @@ export function PromptBox({
         </div>
       )}
       <span className="sr-only" aria-live="polite">
-        {menuOpen && commands ? `${matches.length} commands match.` : mentionOpen ? `${mentionItems.length} files and sessions match.` : ""}
+        {menuOpen && commands ? `${matches.length} ${inline ? "skills" : "commands"} match.` : mentionOpen ? `${mentionItems.length} files and sessions match.` : ""}
       </span>
       <div className="prompt-box">
         <label htmlFor="prompt-input" className="sr-only">
@@ -393,7 +417,7 @@ export function PromptBox({
               ? "Type a message to queue it. Esc interrupts the agent."
               : suggestion
                 ? suggestion
-                : "Ask the agent. Type / for commands, @ for files."
+                : "Ask the agent. Type / for commands and skills, @ for files."
           }
           onChange={(e) => change(e.target.value, e.target.selectionStart)}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}

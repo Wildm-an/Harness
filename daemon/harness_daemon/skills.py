@@ -299,3 +299,42 @@ def render_skill(skill: Skill, args: str, project_dir: Path) -> str:
         "Read the reference files in this folder only when the instructions tell you to.\n\n"
         f"{body}"
     )
+
+
+# -- skills in a prompt -----------------------------------------------------------------
+
+# A "/name" token in the text of a prompt: after a space or at the start, and before a space,
+# punctuation, or the end. "/usr/bin" and "a/b" are not tokens.
+INLINE_SKILL_RE = re.compile(r"(?<!\S)/([A-Za-z0-9][A-Za-z0-9_.:-]*?)(?=[\s,;!?)\]}\"']|\.(?:\s|$)|$)")
+
+
+def inline_skills(text: str, skills: dict[str, Skill]) -> list[Skill]:
+    """The user-invocable skills that ``text`` names with "/name", in their order. No duplicates."""
+    found: list[Skill] = []
+    for m in INLINE_SKILL_RE.finditer(text):
+        skill = skills.get(m.group(1))
+        if skill is not None and skill.user_invocable and skill not in found:
+            found.append(skill)
+    return found
+
+
+def inline_skill_text(text: str, skills: dict[str, Skill], project_dir: Path) -> tuple[str, tuple[str, ...]]:
+    """The instructions of the "/name" skills in ``text``, to add at the end of the prompt.
+
+    Return the text ("" if there is no skill) and the allowed-tools of the skills, for this turn.
+    A skill with "context: fork" runs in a subagent: the text tells the model to call the skill tool.
+    """
+    found = inline_skills(text, skills)
+    if not found:
+        return "", ()
+    names = ", ".join(f"/{s.name}" for s in found)
+    blocks = [f"The user started these skills in the message: {names}. Follow the skill instructions."]
+    allow: list[str] = []
+    for skill in found:
+        allow.extend(r for r in skill.allowed_tools if r not in allow)
+        if skill.context == "fork" and skill.model_invocable:
+            blocks.append(f"The skill /{skill.name} runs in a separate context. "
+                          f'Call the skill tool with the name "{skill.name}".')
+        else:
+            blocks.append(f"The instructions of the skill /{skill.name}:\n\n{render_skill(skill, '', project_dir)}")
+    return "\n\n".join(blocks), tuple(allow)
