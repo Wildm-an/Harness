@@ -139,9 +139,47 @@ When you turn a row on or off in the Plugins screen, Harness writes `disabled` t
 - Remove deletes the bundle folder, its state, and the user-layer overrides of its rows.
 - After a change, the plugins of the open session load again. A changed plugin file has an effect when you select "Load the plugins again", or in the next session.
 
+## DeepSeek Harness plugins
+
+Harness also runs plugins made for DeepSeek Harness, without changes. These plugins are npm bundles: a `package.json` with `dsh.bundle.patch`, and JavaScript modules for the Cordis framework. The plan and its phases are in [plugin-host/spike/REPORT.md](../plugin-host/spike/REPORT.md).
+
+### How it works
+
+- A Node process, the **plugin host** ([plugin-host/](../plugin-host)), loads the bundles. It uses the Node of the Playwright driver, so users do not install Node.
+- The host loads the real DeepSeek service packages: `tools`, `commands`, `systemPrompt`, `skills`, and `llm`. Thus a plugin gets the same API and behavior as in DeepSeek Harness 0.2.0-rc.2.
+- The daemon talks to the host with JSON-RPC on stdin and stdout. One host serves all sessions. Each session is one agent in the host.
+- In a session, the tools, `/` commands, skills, and prompt sections of the DeepSeek plugins are next to the Harness plugins. The daemon reads them again before each turn.
+- The host starts when a session opens and a DeepSeek bundle is installed. Its log is `~/.harness/logs/plugin-host.log`.
+
+### Install
+
+1. Open the Plugins screen, and select **DeepSeek**.
+2. Type an npm name (for example `dsh-plugin-guide`), a git address, a URL of a `.tgz` file, or a local folder.
+3. Select **Install**.
+
+The host installs the bundle with pnpm 11 into `~/.harness/dsh/`, with the DeepSeek profile settings. If the npm registry cannot be reached, it tries `https://registry.npmmirror.com/`.
+
+- **Version gate:** a bundle that declares `@deepseek-ai/dsh*` peers for another DeepSeek Harness version does not install, the same as in DeepSeek Harness.
+- **Build scripts:** pnpm does not run the build scripts of a package. If a package needs them, the Plugins screen lists them. Select **Allow the scripts and install** to run them. The approval is in `~/.harness/dsh/pnpm-workspace.yaml`.
+- **Turn off:** the bundle switch changes the bundle list in `~/.harness/dsh/package.json`. The row switch writes `disabled` into `~/.harness/dsh/cordis.patch.yml`.
+
+### Rules
+
+- A DeepSeek tool needs your approval for each call, as an MCP tool does. The rule is the tool name, for example `greet`.
+- A Harness tool wins over a DeepSeek tool with the same name. A Harness plugin command wins over a DeepSeek command.
+- A skill in a folder wins over a DeepSeek skill with the same name.
+
+### Limits of this version (phase 1)
+
+- The host has the core services only. A plugin that needs another service (for example `webServer`, `fs`, or `agents`) waits, and the Plugins screen names the missing services. Later phases add more services.
+- The agent events (`agent/pre-step`, `agent/turn-stopping`, and others) and the tool events for Harness tools do not reach DeepSeek plugins yet. The tool events for DeepSeek tools work.
+- LLM adapters of DeepSeek plugins do not show as providers yet.
+- The UI half of a bundle does not load.
+- A remote daemon that runs from source needs `npm install` in `plugin-host/`.
+
 ## Security
 
-Plugin code runs in the daemon process. It has the same rights as the daemon. It is not in a sandbox. Install only plugins that you trust.
+Plugin code runs in the daemon process or in the plugin host process. It has the same rights as the daemon. It is not in a sandbox. Install only plugins that you trust.
 
 ## Limits
 

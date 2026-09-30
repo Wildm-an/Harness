@@ -52,10 +52,23 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: client/package-lock.json
+          cache-dependency-path: |
+            client/package-lock.json
+            plugin-host/package-lock.json
 
       - name: Install the daemon
         run: python -m pip install -e "./daemon[package,dev]"
+
+      - name: Install the plugin host packages
+        working-directory: plugin-host
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Test the plugin host
+        working-directory: plugin-host
+        shell: bash
+        run: |
+          NODE=$(python -c "from playwright._impl._driver import compute_driver_executable as c; print(c()[0])")
+          "$NODE" --test "test/*.test.mjs"
 
       - name: Test the daemon
         working-directory: daemon

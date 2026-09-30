@@ -1635,13 +1635,14 @@ textarea:focus-visible {
 
 .plugin-install {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin: 0 0 12px;
 }
 
 .plugin-install input {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
 }
 
@@ -1671,9 +1672,45 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.plugin-error > svg {
+.plugin-error > svg,
+.plugin-warn > svg {
   flex: none;
   margin-top: 2px;
+}
+
+.plugin-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--warning);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.plugin-install .segmented {
+  flex: none;
+}
+
+.plugin-builds > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plugin-builds p,
+.plugin-builds ul {
+  margin: 0;
+}
+
+.plugin-builds ul {
+  padding-left: 18px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.plugin-builds .form-actions {
+  justify-content: flex-end;
 }
 
 .plugin-rows {

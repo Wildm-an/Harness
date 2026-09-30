@@ -235,7 +235,48 @@ export interface PluginsStatus {
   paths: { plugins: string; user_patch: string; project_patch: string | null };
   counts: Record<string, number>;
   installed?: string;
+  installed_kind?: PluginKind;
   removed?: string;
+  deepseek?: DshStatus;
+}
+
+/** "harness": a Python plugin. "deepseek": a DeepSeek Harness plugin in the Node plugin host. */
+export type PluginKind = "harness" | "deepseek";
+
+/** A row of a DeepSeek bundle. "pending": the plugin waits for services that Harness does not have. */
+export interface DshRow {
+  id: string;
+  name: string;
+  disabled: boolean;
+  state: "active" | "disabled" | "pending" | "failed" | "disposed";
+  error: string | null;
+}
+
+export interface DshBundle {
+  name: string;
+  version?: string | null;
+  description?: string;
+  dir: string;
+  enabled: boolean;
+  problem: string | null;
+  client?: boolean; // The bundle has a UI half. Harness does not load it yet.
+  icon?: string | null;
+  rows: DshRow[];
+}
+
+/** The DeepSeek part of the Plugins screen. */
+export interface DshStatus {
+  available: boolean;
+  reason?: string; // Why DeepSeek plugins cannot run on the daemon computer.
+  running?: boolean;
+  error?: string;
+  runtime?: string; // The DeepSeek Harness version of the plugin host.
+  node?: string;
+  home?: string;
+  user_patch?: string; // The user layer: row overrides.
+  bundles: DshBundle[];
+  orphans: DshRow[];
+  warnings: string[];
 }
 
 // -- the Cookbook (SPEC.md section 7) --
@@ -425,10 +466,10 @@ export type ClientMessage =
   | { type: "mcp.init" }
   | { type: "plugins.list" }
   | { type: "plugins.reload" }
-  | { type: "plugins.install"; source: string; replace?: boolean }
-  | { type: "plugins.remove"; name: string }
-  | { type: "plugins.set_bundle"; name: string; enabled: boolean }
-  | { type: "plugins.set_plugin"; id: string; enabled: boolean }
+  | { type: "plugins.install"; source: string; replace?: boolean; kind?: PluginKind; approved_builds?: string[] }
+  | { type: "plugins.remove"; name: string; kind?: PluginKind }
+  | { type: "plugins.set_bundle"; name: string; enabled: boolean; kind?: PluginKind }
+  | { type: "plugins.set_plugin"; id: string; enabled: boolean; kind?: PluginKind }
   | { type: "cookbook.hosts" }
   | { type: "cookbook.host.save"; name: string; ssh?: string | null; python?: string | null; llama_server?: string | null; previous?: string }
   | { type: "cookbook.host.delete"; name: string }
@@ -576,4 +617,4 @@ export type DaemonMessage =
     }
   | { type: "skills"; items: CommandItem[] }
   | ({ type: "skill" } & SkillDetail)
-  | { type: "error"; message: string; ref?: string };
+  | { type: "error"; message: string; ref?: string; data?: { pending_builds?: string[]; source?: string } };

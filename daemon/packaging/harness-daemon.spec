@@ -8,6 +8,7 @@ import os
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 DAEMON = os.path.dirname(SPECPATH)  # SPECPATH is the folder of this file.
+PLUGIN_HOST = os.path.join(os.path.dirname(DAEMON), "plugin-host")
 
 hiddenimports = [
     # The daemon: the tools and the Cookbook modules. hostscript.py is also a data file,
@@ -25,6 +26,11 @@ datas = [
     # The Playwright driver: node and the Playwright package. Chromium is not in the
     # bundle. harness-daemon --install-browser installs it.
     *collect_data_files("playwright", include_py_files=False),
+    # The Node plugin host for DeepSeek Harness plugins (plugins/dsh.py). It runs on the Node of
+    # the Playwright driver. build_sidecar.py installs its packages first.
+    (os.path.join(PLUGIN_HOST, "package.json"), "plugin-host"),
+    (os.path.join(PLUGIN_HOST, "src"), "plugin-host/src"),
+    (os.path.join(PLUGIN_HOST, "node_modules"), "plugin-host/node_modules"),
 ]
 
 a = Analysis(

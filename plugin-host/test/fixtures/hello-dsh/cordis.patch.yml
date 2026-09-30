@@ -1,0 +1,8 @@
+- insert:
+    - id: hello
+      name: hello-dsh
+      config:
+        greeting: Hi
+    - id: hello-guard
+      name: hello-dsh/guard
+      disabled: true

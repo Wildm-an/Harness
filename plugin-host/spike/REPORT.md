@@ -133,3 +133,24 @@ Per-plugin results: `survey/scenario-A.json` and `survey/scenario-B.json`. Raw d
 
 - **Community plugin code did not run.** The survey is static, because third-party code runs with the rights of the user. A dynamic test needs your approval and an isolated computer or a Windows Sandbox.
 - The survey used 30 plugins of about 6,350 on npm.
+
+## Phase 1 exit test: real community plugins
+
+Date: 2026-09-29. The plugin host of phase 1 installed each plugin from npm and loaded it in a new host process. The host ran with a temporary folder as its home, AppData, pnpm store, and npm cache. The folder was deleted after the test.
+
+The test used the 8 surveyed plugins whose host half needs only the phase 1 services. It left out `ds-harness-remote`, because its purpose is remote access to the computer.
+
+| Plugin | Version | State | What it registered |
+|---|---|---|---|
+| `dsh-plugin-guide` | 0.3.19 | Active | 1 skill |
+| `dsh-defend` | 0.3.16 | Active | Tool `defend_report`, command `/defend` |
+| `@agent_forge/forge-dsh` | 1.73.2 | Active | Command `/forge-status` |
+| `dsh-m` | 0.5.0 | Active | 8 `dshm_*` tools, prompt text |
+| `dsh-better-workspace` | 0.27.0 | Active | Nothing on the host (UI plugin) |
+| `dsh-smooth-stream` | 0.6.1 | Active | Nothing on the host (UI plugin) |
+| `dsh-data-cleaning-agent` | 0.9.17 | Active | 3 tools, 2 skills |
+| `dsh-tauri` | 0.6.7 | Active | Nothing on the host (UI plugin) |
+
+Smoke calls: `/defend`, `/forge-status`, `defend_report`, and `data_profile` returned results, and the 3 skills loaded with their text. The log had no errors or warnings. The test did not call the `dshm_*` tools, because they install and upgrade plugins.
+
+Result: 8 of 8 start, and all smoke calls pass. Their events (for example the `tools/pre-execute` checks of `dsh-defend` and `forge-dsh`) reach DeepSeek tools only, until phase 2 adds the Harness tools.

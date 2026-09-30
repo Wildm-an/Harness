@@ -92,7 +92,7 @@ class Agent:
         self.settings = settings if settings is not None else load_settings(self.cwd)
         self.skills: dict[str, Skill] = dict(skills or {})
         if read_roots is None:
-            read_roots = tuple(s.dir for s in self.skills.values())
+            read_roots = tuple(s.dir for s in self.skills.values() if s.has_files)
         self.ctx = ToolContext(cwd=self.cwd, settings=self.settings, shell=detect_shell(self.settings.get("shell")),
                                read_roots=read_roots)
         tool_list = list(tools if tools is not None else default_tools())
@@ -179,7 +179,7 @@ class Agent:
     def set_skills(self, skills: dict[str, Skill]) -> None:
         """Replace the skills, for example after a change of the plugins."""
         self.skills = dict(skills)
-        self.ctx.read_roots = tuple(s.dir for s in self.skills.values())
+        self.ctx.read_roots = tuple(s.dir for s in self.skills.values() if s.has_files)
         self.tools.pop(SkillTool.name, None)
         if any(s.model_invocable for s in self.skills.values()):
             tool = SkillTool(self.skills, self._activate_skill, self.run_fork)

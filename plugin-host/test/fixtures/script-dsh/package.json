@@ -1,0 +1,8 @@
+{
+  "name": "script-dsh",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": { "postinstall": "node -e \"require('fs').writeFileSync('ran.txt','x')\"" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { FolderOpen, LoaderCircle, Puzzle, RefreshCw, RotateCw, Trash2, TriangleAlert, X } from "lucide-react";
-import type { PluginBundle, PluginRow, PluginsStatus } from "../daemon/protocol";
+import { FolderOpen, LoaderCircle, Puzzle, RefreshCw, RotateCw, ShieldAlert, Trash2, TriangleAlert, X } from "lucide-react";
+import type { DshBundle, DshRow, PluginBundle, PluginKind, PluginRow, PluginsStatus } from "../daemon/protocol";
 import { Switch } from "./ProvidersScreen";
 
 const STATE_TEXT: Record<PluginRow["state"], string> = {
@@ -11,6 +11,12 @@ const STATE_TEXT: Record<PluginRow["state"], string> = {
   pending: "Waiting",
 };
 
+/** An install that waits for approval of build scripts. */
+export interface PendingBuilds {
+  source: string;
+  keys: string[];
+}
+
 /** True if the text is a git source, the same test as the daemon (plugins/install.py). */
 export function isGitSource(source: string): boolean {
   const s = source.trim();
@@ -20,6 +26,41 @@ export function isGitSource(source: string): boolean {
 /** The row title: the id, and the module when it is not the same. */
 export function rowLabel(row: PluginRow): string {
   return row.id === row.name ? row.id : `${row.id} (${row.name})`;
+}
+
+/** A row of a DeepSeek bundle in the shape of a Harness row, for the shared list. */
+export function dshRow(row: DshRow, bundle: string): PluginRow {
+  return {
+    id: row.id,
+    name: row.name,
+    bundle,
+    state: row.state === "disposed" ? "disabled" : row.state,
+    error: row.error,
+    disabled: row.disabled,
+    config: null,
+    layer: "",
+    overrides: [],
+    inject: [],
+    provide: [],
+    tools: [],
+    commands: [],
+  };
+}
+
+/** A DeepSeek bundle in the shape of a Harness bundle, for the shared list. */
+export function dshBundle(bundle: DshBundle): PluginBundle {
+  const problems = [bundle.problem, bundle.client ? "The bundle has a UI half. Harness does not load plugin UI yet." : null];
+  return {
+    name: bundle.name,
+    dir: bundle.dir,
+    enabled: bundle.enabled,
+    source: null,
+    problem: problems.filter(Boolean).join(" ") || null,
+    version: bundle.version ?? undefined,
+    description: bundle.description,
+    icon: bundle.icon ?? null,
+    rows: bundle.rows.map((r) => dshRow(r, bundle.name)),
+  };
 }
 
 function RowItem({ row, bundleOn, onSet }: { row: PluginRow; bundleOn: boolean; onSet: (id: string, enabled: boolean) => void }) {
@@ -39,7 +80,7 @@ function RowItem({ row, bundleOn, onSet }: { row: PluginRow; bundleOn: boolean; 
         {parts.length > 0 && <span className="help">{parts.join(" · ")}</span>}
         {from && <span className="help">{from}</span>}
         {row.error && (
-          <span className="plugin-error" role="alert">
+          <span className={row.state === "pending" ? "plugin-warn" : "plugin-error"} role="alert">
             <TriangleAlert size={12} aria-hidden /> {row.error}
           </span>
         )}
@@ -132,10 +173,16 @@ function BundleItem({
   );
 }
 
+const PLACEHOLDER: Record<PluginKind, string> = {
+  harness: "A folder, or a git URL (https://…, github:user/repo#tag)",
+  deepseek: "An npm name (dsh-plugin-guide), a git URL, a folder, or a .tgz file",
+};
+
 export function PluginsScreen({
   status,
   error,
   busy,
+  pendingBuilds,
   hasSession,
   onInstall,
   onRemove,
@@ -143,25 +190,30 @@ export function PluginsScreen({
   onSetPlugin,
   onReload,
   onBrowse,
+  onDismissBuilds,
   onReturn,
 }: {
   status: PluginsStatus | null;
   error: string | null;
   busy: boolean;
+  pendingBuilds: PendingBuilds | null;
   hasSession: boolean;
-  onInstall: (source: string, replace: boolean) => void;
-  onRemove: (name: string) => void;
-  onSetBundle: (name: string, enabled: boolean) => void;
-  onSetPlugin: (id: string, enabled: boolean) => void;
+  onInstall: (source: string, replace: boolean, kind: PluginKind, approvedBuilds?: string[]) => void;
+  onRemove: (name: string, kind: PluginKind) => void;
+  onSetBundle: (name: string, enabled: boolean, kind: PluginKind) => void;
+  onSetPlugin: (id: string, enabled: boolean, kind: PluginKind) => void;
   onReload: () => void;
   onBrowse: (initial?: string) => Promise<string | null>;
+  onDismissBuilds: () => void;
   onReturn: () => void;
 }) {
   const [source, setSource] = useState("");
+  const [kind, setKind] = useState<PluginKind>("harness");
+  const deepseek = status?.deepseek;
 
   const install = (e: React.FormEvent) => {
     e.preventDefault();
-    if (source.trim()) onInstall(source.trim(), false);
+    if (source.trim()) onInstall(source.trim(), false, kind);
   };
   const browse = async () => {
     const picked = await onBrowse(source.trim() && !isGitSource(source) ? source.trim() : undefined);
@@ -178,21 +230,29 @@ export function PluginsScreen({
           </button>
         </div>
         <p className="help providers-intro">
-          Plugins add tools, / commands, skills, prompt text, hooks, MCP servers, and model providers. They are in{" "}
-          <code>{status?.paths.plugins ?? "~/.harness/plugins"}</code>. Plugin code runs in the daemon with your rights.
-          Install only plugins that you trust.
+          Plugins add tools, / commands, skills, prompt text, hooks, MCP servers, and model providers. Harness plugins are in{" "}
+          <code>{status?.paths.plugins ?? "~/.harness/plugins"}</code>. DeepSeek Harness plugins are in{" "}
+          <code>{deepseek?.home ?? "~/.harness/dsh"}</code>. Plugin code runs in the daemon with your rights. Install only
+          plugins that you trust.
         </p>
 
         <form className="plugin-install" onSubmit={install}>
+          <div className="segmented" role="radiogroup" aria-label="Plugin kind">
+            {(["harness", "deepseek"] as const).map((k) => (
+              <button key={k} type="button" role="radio" aria-checked={kind === k} onClick={() => setKind(k)} disabled={busy}>
+                {k === "harness" ? "Harness" : "DeepSeek"}
+              </button>
+            ))}
+          </div>
           <label htmlFor="plugin-source" className="sr-only">
-            A plugin folder or a git URL
+            {kind === "harness" ? "A plugin folder or a git URL" : "An npm name, a git URL, a folder, or a .tgz file"}
           </label>
           <input
             id="plugin-source"
             className="mono"
             value={source}
             onChange={(e) => setSource(e.target.value)}
-            placeholder="A folder, or a git URL (https://…, github:user/repo#tag)"
+            placeholder={PLACEHOLDER[kind]}
             spellCheck={false}
             disabled={busy}
           />
@@ -205,7 +265,36 @@ export function PluginsScreen({
           </button>
         </form>
 
-        {error && (
+        {pendingBuilds && (
+          <div className="notice-bar warn plugin-builds" role="alert">
+            <ShieldAlert size={14} aria-hidden />
+            <div>
+              <p>
+                The install needs to run the build scripts of these packages. The scripts run on the daemon computer with your
+                rights.
+              </p>
+              <ul className="mono">
+                {pendingBuilds.keys.map((k) => (
+                  <li key={k}>{k}</li>
+                ))}
+              </ul>
+              <div className="form-actions">
+                <button type="button" className="btn btn-ghost btn-small" onClick={onDismissBuilds} disabled={busy}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-small"
+                  onClick={() => onInstall(pendingBuilds.source, false, "deepseek", pendingBuilds.keys)}
+                  disabled={busy}
+                >
+                  Allow the scripts and install
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {error && !pendingBuilds && (
           <p className="form-error" role="alert">
             {error}
           </p>
@@ -220,7 +309,7 @@ export function PluginsScreen({
         ))}
 
         <div className="list-head">
-          <span>Installed plugins</span>
+          <span>Harness plugins</span>
           {status?.loaded && (
             <button type="button" className="icon-btn ghost" onClick={onReload} disabled={busy} aria-label="Load the plugins again" title="Load the plugins again, after a change to a plugin file">
               <RefreshCw size={16} aria-hidden />
@@ -232,7 +321,7 @@ export function PluginsScreen({
             <LoaderCircle size={16} className="spin" aria-hidden /> Loading the plugins.
           </p>
         ) : status.bundles.length === 0 ? (
-          <p className="help">No plugins yet. Install a plugin folder or a git repository with a plugin.json file.</p>
+          <p className="help">No Harness plugins yet. Install a plugin folder or a git repository with a plugin.json file.</p>
         ) : (
           <ul className="connection-list plugin-list">
             {status.bundles.map((b) => (
@@ -240,10 +329,10 @@ export function PluginsScreen({
                 key={b.name + b.dir}
                 bundle={b}
                 busy={busy}
-                onSetBundle={onSetBundle}
-                onSetPlugin={onSetPlugin}
-                onRemove={onRemove}
-                onUpdate={(src) => onInstall(src, true)}
+                onSetBundle={(name, on) => onSetBundle(name, on, "harness")}
+                onSetPlugin={(id, on) => onSetPlugin(id, on, "harness")}
+                onRemove={(name) => onRemove(name, "harness")}
+                onUpdate={(src) => onInstall(src, true, "harness")}
               />
             ))}
           </ul>
@@ -251,18 +340,59 @@ export function PluginsScreen({
         {status && status.orphans.length > 0 && (
           <>
             <div className="list-head">
-              <span>Rows of plugins that are not installed</span>
+              <span>Rows of Harness plugins that are not installed</span>
             </div>
             <ul className="plugin-rows">
               {status.orphans.map((row) => (
-                <RowItem key={row.id} row={row} bundleOn onSet={onSetPlugin} />
+                <RowItem key={row.id} row={row} bundleOn onSet={(id, on) => onSetPlugin(id, on, "harness")} />
               ))}
             </ul>
           </>
         )}
+
+        <div className="list-head">
+          <span>DeepSeek Harness plugins{deepseek?.runtime ? ` · runtime ${deepseek.runtime}` : ""}</span>
+        </div>
+        {deepseek && !deepseek.available ? (
+          <p className="notice-bar warn">
+            <TriangleAlert size={14} aria-hidden /> {deepseek.reason}
+          </p>
+        ) : deepseek?.error ? (
+          <p className="form-error" role="alert">
+            {deepseek.error}
+          </p>
+        ) : !deepseek || deepseek.bundles.length === 0 ? (
+          <p className="help">No DeepSeek Harness plugins yet. Select "DeepSeek" above, and install a bundle by its npm name.</p>
+        ) : (
+          <ul className="connection-list plugin-list">
+            {deepseek.bundles.map((b) => (
+              <BundleItem
+                key={b.name}
+                bundle={dshBundle(b)}
+                busy={busy}
+                onSetBundle={(name, on) => onSetBundle(name, on, "deepseek")}
+                onSetPlugin={(id, on) => onSetPlugin(id, on, "deepseek")}
+                onRemove={(name) => onRemove(name, "deepseek")}
+                onUpdate={() => undefined}
+              />
+            ))}
+          </ul>
+        )}
+        {deepseek?.warnings.map((w) => (
+          <p key={w} className="notice-bar warn">
+            <TriangleAlert size={14} aria-hidden /> {w}
+          </p>
+        ))}
+        {deepseek && deepseek.bundles.length > 0 && (
+          <p className="help">
+            A DeepSeek tool needs your approval for each call, as an MCP tool does. Change the config of a DeepSeek plugin in{" "}
+            <code>{deepseek.user_patch ?? "~/.harness/dsh/cordis.patch.yml"}</code>.
+          </p>
+        )}
+
         {status && (
           <p className="help">
-            Change the config of a plugin in <code>{status.paths.user_patch}</code>
+            Change the config of a Harness plugin in <code>{status.paths.user_patch}</code>
             {status.paths.project_patch ? (
               <>
                 {" "}

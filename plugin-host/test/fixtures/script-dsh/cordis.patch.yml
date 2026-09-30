@@ -1,0 +1,3 @@
+- insert:
+    - id: script
+      name: script-dsh

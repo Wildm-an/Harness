@@ -45,7 +45,7 @@ import {
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
 import { McpPanel } from "./components/McpPanel";
-import { PluginsScreen } from "./components/PluginsScreen";
+import { PluginsScreen, type PendingBuilds } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { FolderPicker } from "./components/FolderPicker";
@@ -262,6 +262,7 @@ export default function App() {
   const [plugins, setPlugins] = useState<PluginsStatus | null>(null);
   const [pluginError, setPluginError] = useState<string | null>(null);
   const [pluginBusy, setPluginBusy] = useState(false);
+  const [pendingBuilds, setPendingBuilds] = useState<PendingBuilds | null>(null); // A DeepSeek install that waits for approval.
 
   /** Opens the Plugins screen. Uses only refs and state setters: the message handler calls it too. */
   const showPlugins = useCallback(() => {
@@ -415,6 +416,7 @@ export default function App() {
           setPlugins(status);
           setPluginBusy(false);
           setPluginError(null);
+          if (status.installed) setPendingBuilds(null);
           // The plugins can add / commands and skills. The / menu needs the new list.
           if (status.loaded) conn.send({ type: "skills.list" });
           return;
@@ -451,6 +453,8 @@ export default function App() {
           if (msg.ref?.startsWith("plugins.")) {
             setPluginBusy(false);
             setPluginError(msg.message);
+            const keys = msg.data?.pending_builds;
+            setPendingBuilds(msg.ref === "plugins.install" && keys?.length && msg.data?.source ? { source: msg.data.source, keys } : null);
             return;
           }
           if (msg.ref === "projects.save" || msg.ref === "projects.delete") {
@@ -1479,17 +1483,24 @@ export default function App() {
             status={plugins}
             error={pluginError}
             busy={pluginBusy}
+            pendingBuilds={pendingBuilds}
             hasSession={session !== null}
-            onInstall={(source, replace) => {
+            onInstall={(source, replace, kind, approvedBuilds) => {
               setPluginError(null);
-              if (sendSafely({ type: "plugins.install", source, replace })) setPluginBusy(true);
+              setPendingBuilds(null);
+              const msg = { type: "plugins.install" as const, source, replace, kind, ...(approvedBuilds ? { approved_builds: approvedBuilds } : {}) };
+              if (sendSafely(msg)) setPluginBusy(true);
             }}
-            onRemove={(name) => {
+            onRemove={(name, kind) => {
               setPluginError(null);
-              if (sendSafely({ type: "plugins.remove", name })) setPluginBusy(true);
+              if (sendSafely({ type: "plugins.remove", name, kind })) setPluginBusy(true);
             }}
-            onSetBundle={(name, enabled) => sendSafely({ type: "plugins.set_bundle", name, enabled })}
-            onSetPlugin={(id, enabled) => sendSafely({ type: "plugins.set_plugin", id, enabled })}
+            onSetBundle={(name, enabled, kind) => sendSafely({ type: "plugins.set_bundle", name, enabled, kind })}
+            onSetPlugin={(id, enabled, kind) => sendSafely({ type: "plugins.set_plugin", id, enabled, kind })}
+            onDismissBuilds={() => {
+              setPendingBuilds(null);
+              setPluginError(null);
+            }}
             onReload={() => {
               setPluginError(null);
               if (sendSafely({ type: "plugins.reload" })) setPluginBusy(true);
