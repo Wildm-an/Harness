@@ -59,14 +59,13 @@ import {
   closePane,
   defaultLayout,
   findGroupOf,
-  openBelow,
   openPane,
   parseLayout,
   togglePane,
   type LayoutNode,
   type PaneId,
 } from "./layout/model";
-import { shortcutLabel, shortcutPane } from "./layout/shortcuts";
+import { SIDEBAR_SHORTCUT, isSidebarShortcut, shortcutLabel, shortcutPane } from "./layout/shortcuts";
 import { TerminalPane } from "./components/TerminalPane";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
@@ -968,9 +967,9 @@ export default function App() {
 
   const hidePane = useCallback((pane: PaneId) => setLayout((l) => closePane(l, pane)), []);
 
-  /** Shows or hides a pane of a shortcut. The terminal opens below the chat, as in Claude. */
+  /** Shows or hides a pane of a shortcut. It opens on the right of the chat, as the other panes do. */
   const toggleShortcutPane = useCallback((pane: PaneId) => {
-    setLayout((l) => togglePane(l, pane, pane === "terminal" ? (n) => openBelow(n, "terminal", "chat") : undefined));
+    setLayout((l) => togglePane(l, pane));
   }, []);
 
   // The pane shortcuts. The capture phase runs before the editor and the terminal get the keys.
@@ -1411,6 +1410,21 @@ export default function App() {
     setSidebarOpen(open);
     if (!narrow()) savePref("sidebar.open", open ? "1" : "0");
   };
+
+  // Ctrl+B shows or hides the sidebar on every screen. The capture phase runs before the editor
+  // and the terminal get the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isSidebarShortcut(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      setSidebarOpen(!sidebarOpen);
+      if (!window.matchMedia(NARROW_QUERY).matches) savePref("sidebar.open", sidebarOpen ? "0" : "1");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [sidebarOpen]);
   /** On a narrow window the sidebar covers the page. Close it after a choice. */
   const fromSidebar = (action: () => void) => () => {
     action();
@@ -1459,7 +1473,7 @@ export default function App() {
       <div className="shell">
         <header className="topbar">
           {!sidebarOpen && (
-            <button type="button" className="icon-btn ghost" onClick={() => showSidebar(true)} aria-label="Open the sidebar" title="Open the sidebar">
+            <button type="button" className="icon-btn ghost" onClick={() => showSidebar(true)} aria-label="Open the sidebar" title={`Open the sidebar (${SIDEBAR_SHORTCUT})`}>
               <PanelLeftOpen size={16} aria-hidden />
             </button>
           )}

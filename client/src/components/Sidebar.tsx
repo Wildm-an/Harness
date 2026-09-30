@@ -232,7 +232,7 @@ export function Sidebar({
   return (
     <nav className="sidebar" aria-label="Projects and tools">
       <div className="side-head">
-        <button type="button" className="icon-btn ghost" onClick={onCollapse} aria-label="Close the sidebar" title="Close the sidebar">
+        <button type="button" className="icon-btn ghost" onClick={onCollapse} aria-label="Close the sidebar" title="Close the sidebar (Ctrl+B)">
           <PanelLeftClose size={16} aria-hidden />
         </button>
       </div>

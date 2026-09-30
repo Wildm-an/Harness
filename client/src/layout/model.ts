@@ -62,8 +62,33 @@ function mapGroups(node: LayoutNode, fn: (g: Group) => LayoutNode | null): Layou
   return { ...node, children, sizes };
 }
 
-/** Removes empty groups and splits with one child. The sizes of each split add up to 1. */
+/**
+ * The chat always has the full height: no pane is above or below it. The group of the chat is
+ * never in a column split.
+ */
+export function chatHasFullHeight(node: LayoutNode, inColumn = false): boolean {
+  if (node.type === "group") return !(inColumn && node.tabs.includes("chat"));
+  return node.children.every((c) => chatHasFullHeight(c, inColumn || node.direction === "column"));
+}
+
+/** Moves the group of the chat out of a column split: the chat on the left, the other panes on the right. */
+function giveChatFullHeight(node: LayoutNode): LayoutNode {
+  const chat = findGroupOf(node, "chat");
+  if (!chat || chatHasFullHeight(node)) return node;
+  const rest = mapGroups(node, (g) => (g.id === chat.id ? null : g));
+  return rest ? split("row", [chat, rest], [0.45, 0.55]) : chat;
+}
+
+/**
+ * Removes empty groups and splits with one child. The sizes of each split add up to 1. The chat
+ * gets the full height (a saved layout can have a pane below the chat).
+ */
 export function normalize(node: LayoutNode | null): LayoutNode {
+  const clean = cleanLayout(node);
+  return chatHasFullHeight(clean) ? clean : cleanLayout(giveChatFullHeight(clean));
+}
+
+function cleanLayout(node: LayoutNode | null): LayoutNode {
   if (!node) return defaultLayout();
   const clean = (n: LayoutNode): LayoutNode | null => {
     if (n.type === "group") {
@@ -125,25 +150,15 @@ export function openPane(node: LayoutNode, pane: PaneId, targetGroupId?: string)
   return normalize(mapGroups(node, (g) => (g.id === target.id ? { ...g, tabs: [...g.tabs, pane], active: pane } : g)));
 }
 
-/**
- * Shows a pane in a new group below the group of ``anchor`` (for example the terminal below the
- * chat). A pane that is in the layout becomes the active tab of its group.
- */
-export function openBelow(node: LayoutNode, pane: PaneId, anchor: PaneId, share = 0.3): LayoutNode {
-  if (findGroupOf(node, pane)) return activate(node, pane);
-  const target = findGroupOf(node, anchor);
-  if (!target) return openPane(node, pane);
-  return normalize(
-    mapGroups(node, (g) => (g.id === target.id ? split("column", [g, group([pane])], [1 - share, share]) : g)),
-  );
-}
-
 /** Shows a pane, or closes it if it is the active tab of its group. */
 export function togglePane(node: LayoutNode, pane: PaneId, show: (n: LayoutNode) => LayoutNode = (n) => openPane(n, pane)): LayoutNode {
   return findGroupOf(node, pane)?.active === pane ? closePane(node, pane) : show(node);
 }
 
-/** Moves a pane to a group ("center"), or to a new group at one side of that group. */
+/**
+ * Moves a pane to a group ("center"), or to a new group at one side of that group. A move that
+ * puts a pane above or below the chat does nothing.
+ */
 export function movePane(node: LayoutNode, pane: PaneId, targetGroupId: string, zone: Zone): LayoutNode {
   const source = findGroupOf(node, pane);
   const target = groups(node).find((g) => g.id === targetGroupId);
@@ -167,7 +182,13 @@ export function movePane(node: LayoutNode, pane: PaneId, targetGroupId: string, 
     const children = zone === "left" || zone === "top" ? [fresh, g] : [g, fresh];
     return split(direction, children, [0.5, 0.5]);
   });
+  if (placed && !chatHasFullHeight(placed)) return node;
   return normalize(placed);
+}
+
+/** True if the move changes the layout and keeps the chat at the full height. */
+export function canMove(node: LayoutNode, pane: PaneId, targetGroupId: string, zone: Zone): boolean {
+  return movePane(node, pane, targetGroupId, zone) !== node;
 }
 
 export function resize(node: LayoutNode, splitId: string, sizes: number[]): LayoutNode {

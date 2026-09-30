@@ -26,3 +26,12 @@ export function shortcutPane(e: KeyInfo): PaneId | null {
 export function shortcutLabel(pane: PaneId): string {
   return PANE_SHORTCUTS.find((s) => s.pane === pane)?.label ?? "";
 }
+
+/** The key that shows or hides the sidebar. */
+export const SIDEBAR_SHORTCUT = "Ctrl+B";
+
+/** Ctrl+B (Cmd+B on macOS) shows or hides the sidebar. */
+export function isSidebarShortcut(e: KeyInfo): boolean {
+  if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
+  return e.code === "KeyB" || e.key.toLowerCase() === "b";
+}

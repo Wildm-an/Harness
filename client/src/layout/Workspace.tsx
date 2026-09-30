@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Columns2, EllipsisVertical, MoveRight, Rows2, X, type LucideIcon } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
-import { closePane, groups, movePane, resize, type Group, type LayoutNode, type PaneId, type Split, type Zone } from "./model";
+import { canMove, closePane, groups, movePane, resize, type Group, type LayoutNode, type PaneId, type Split, type Zone } from "./model";
 
 export interface PaneSpec {
   title: string;
@@ -35,12 +35,14 @@ function GroupMenu({
   groupCount,
   pane,
   closable,
+  canSplitDown,
   onAction,
 }: {
   group: Group;
   groupCount: number;
   pane: PaneId;
   closable: boolean;
+  canSplitDown: boolean; // False in the group of the chat: no pane goes below the chat.
   onAction: (action: "right" | "bottom" | "next" | "close") => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -80,7 +82,7 @@ function GroupMenu({
           <button type="button" role="menuitem" disabled={!canSplit} onClick={() => run("right")}>
             <Columns2 size={14} aria-hidden /> Split right
           </button>
-          <button type="button" role="menuitem" disabled={!canSplit} onClick={() => run("bottom")}>
+          <button type="button" role="menuitem" disabled={!canSplit || !canSplitDown} onClick={() => run("bottom")}>
             <Rows2 size={14} aria-hidden /> Split down
           </button>
           <button type="button" role="menuitem" disabled={groupCount < 2} onClick={() => run("next")}>
@@ -189,6 +191,7 @@ function GroupView({
           groupCount={all.length}
           pane={group.active}
           closable={panes[group.active].closable}
+          canSplitDown={canMove(root, group.active, group.id, "bottom")}
           onAction={action}
         />
       </div>
@@ -197,8 +200,14 @@ function GroupView({
         ref={body}
         onDragOver={(e) => {
           if (!dragging || !body.current) return;
+          const z = zoneAt(e, body.current);
+          // No drop zone above or below the chat.
+          if (z !== "center" && !canMove(root, dragging, group.id, z)) {
+            setZone(null);
+            return;
+          }
           e.preventDefault();
-          setZone(zoneAt(e, body.current));
+          setZone(z);
         }}
         onDragLeave={(e) => {
           if (!body.current?.contains(e.relatedTarget as Node)) setZone(null);
