@@ -118,13 +118,19 @@ def test_prompt_streams_and_resume_restores_history(daemon, project, fake_model)
     end, seen = c.until("turn.end")
     assert "".join(m["text"] for m in seen if m["type"] == "token") == "Hello there."
     assert end["stop_reason"] == "end" and end["usage"]["prompt_tokens"] == 100
+    usage = [m for m in seen if m["type"] == "turn.usage"]
+    assert usage and usage[-1]["completion_tokens"] == 10
+    # The model makes the title from the first prompt. It can come before or after turn.end.
+    title = next((m for m in seen if m["type"] == "session.title"), None) or c.until("session.title")[0]
+    assert title == {"type": "session.title", "id": ready["session_id"], "title": "Fake session title"}
+    assert "Say hello" in fake_model.title_requests[0]["messages"][0]["content"]
     c.close()
 
     c2 = Client(daemon)
     c2.until("auth.ok")
     c2.send({"type": "session.list"})
     sessions = c2.until("sessions")[0]["items"]
-    assert sessions[0]["id"] == ready["session_id"] and sessions[0]["title"] == "Say hello"
+    assert sessions[0]["id"] == ready["session_id"] and sessions[0]["title"] == "Fake session title"
     c2.send({"type": "session.resume", "session_id": ready["session_id"]})
     resumed = c2.until("session.ready")[0]
     assert [m["role"] for m in resumed["history"]] == ["user", "assistant"]

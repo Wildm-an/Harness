@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowUp,
   Check,
   ChevronDown,
   Clock,
+  CornerDownLeft,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -371,7 +371,7 @@ export function SessionStart({
           <textarea
             id="start-input"
             ref={area}
-            rows={3}
+            rows={1}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
@@ -379,36 +379,37 @@ export function SessionStart({
             placeholder={selected ? `Describe a task for ${selected.name}.` : "Add a project first."}
             spellCheck={false}
           />
-          <div className="prompt-tools">
-            <div className="prompt-tools-left">
-              <ProjectMenu
-                projects={projects}
-                selected={selected}
-                onSelect={select}
-                onAdd={() => openForm(NEW_PROJECT)}
-                onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
-                onDelete={onDeleteProject}
-              />
-              <ModelMenu
-                value={model}
-                models={models}
-                allowDefault
-                onOpen={onRequestModels}
-                onSelect={setModel}
-                onManage={onManageProviders}
-              />
-            </div>
-            <button
-              type="submit"
-              className="icon-btn send"
-              disabled={!canStart}
-              aria-label={text.trim() ? "Start the session with this task (Enter)" : "Start the session (Enter)"}
-              title={text.trim() ? "Start the session with this task (Enter)" : "Start the session (Enter)"}
-            >
-              {busy ? <LoaderCircle size={16} className="spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}
-            </button>
-          </div>
+          {/* In line with the text, as in a session. It stays at the bottom right when the text grows. */}
+          <button
+            type="submit"
+            className="icon-btn send"
+            disabled={!canStart}
+            aria-label={text.trim() ? "Start the session with this task (Enter)" : "Start the session (Enter)"}
+            title={text.trim() ? "Start the session with this task (Enter)" : "Start the session (Enter)"}
+          >
+            {busy ? <LoaderCircle size={16} className="spin" aria-hidden /> : <CornerDownLeft size={16} aria-hidden />}
+          </button>
         </form>
+        {/* The project and the model below the box, as the mode and the model in a session. */}
+        <div className="prompt-below">
+          <ProjectMenu
+            projects={projects}
+            selected={selected}
+            onSelect={select}
+            onAdd={() => openForm(NEW_PROJECT)}
+            onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
+            onDelete={onDeleteProject}
+          />
+          <ModelMenu
+            value={model}
+            models={models}
+            allowDefault
+            alignRight
+            onOpen={onRequestModels}
+            onSelect={setModel}
+            onManage={onManageProviders}
+          />
+        </div>
 
         {selected && !selected.exists && (
           <p className="start-help">

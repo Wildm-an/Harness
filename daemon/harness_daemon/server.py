@@ -60,6 +60,7 @@ from .session import Session
 from .skills import Skill, discover_skills
 from .storage import Storage
 from .terminal import TerminalError, TerminalHost
+from .titles import summarize_title
 
 log = logging.getLogger("harness.daemon")
 
@@ -326,6 +327,10 @@ class LiveSession:
         self.plugins: PluginHost | None = None  # make_agent loads them.
         self.files_token: str | None = None
         self.terminal: TerminalHost | None = None  # The shell of the terminal pane.
+        # The running turn: its start time (epoch seconds) and its output tokens, for the working line.
+        self.turn_started: float | None = None
+        self.turn_tokens = 0
+        self.title_task: asyncio.Task | None = None
 
     @property
     def id(self) -> str | None:
@@ -342,6 +347,8 @@ class LiveSession:
 
     async def send(self, message: dict[str, Any]) -> None:
         """Send an event of this session, with its session_id. Only the current session sends to the client."""
+        if message.get("type") == "turn.usage":
+            self.turn_tokens = int(message.get("completion_tokens") or 0)
         if self.conn.current is self and self.session is not None:
             await self.conn.send({**message, "session_id": self.session.id})
 
@@ -729,6 +736,8 @@ class Connection:
             "running": running,
             "partial": "".join(s.agent.streamed) if running and s.agent.streamed else None,
             "requests": list(live.requests.values()) if running else [],
+            "turn_started_at": live.turn_started if running else None,
+            "turn_tokens": live.turn_tokens if running else 0,
         })
 
     async def run_turn(self, live: LiveSession, text: str, display: str | None = None) -> None:
@@ -736,7 +745,8 @@ class Connection:
         shows a session reference with its name, and sends it with its id."""
         session = live.session
         assert session is not None
-        session.set_title_from(display or text)
+        if session.set_title_from(display or text):
+            self.start_title(live, display or text)
         # "@" references: add the files, lines, and sessions to the prompt. Load the referenced
         # sessions here: the file reads run in a thread, and the database stays in this loop.
         stored = {}
@@ -757,8 +767,26 @@ class Connection:
         """Start a turn in the current session. The turn continues if the client goes to another session."""
         live = self.require_live()
         self.require_idle()
+        live.turn_started = time.time()
+        live.turn_tokens = 0
         live.turn = asyncio.create_task(self.guarded(live, work(live)))
         await self.send_running()
+
+    def start_title(self, live: LiveSession, prompt: str) -> None:
+        """Ask the model for a short title of the first prompt. It runs next to the turn."""
+        session = live.session
+        assert session is not None
+
+        async def work() -> None:
+            title = await summarize_title(session.agent.client, prompt)
+            if not title:
+                return
+            session.title = title
+            self.storage.update_session(session.id, title=title)
+            # Not a session event: the sidebar shows the title also when the session is in the background.
+            await self.send({"type": "session.title", "id": session.id, "title": title})
+
+        live.title_task = asyncio.create_task(work())
 
     async def guarded(self, live: LiveSession, work: Awaitable[None]) -> None:
         """Run a turn. An unexpected error ends the turn with an error, so the client does not wait forever.

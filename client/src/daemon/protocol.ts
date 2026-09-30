@@ -565,7 +565,10 @@ export type DaemonMessage =
       running?: boolean;
       partial?: string | null;
       requests?: PermissionRequest[];
+      turn_started_at?: number | null; // Epoch seconds.
+      turn_tokens?: number; // The output tokens of the running turn so far.
     }
+  | { type: "session.title"; id: string; title: string } // The model made the title from the first prompt.
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
   // replay: the last output of a running shell. seq: the number of its last output.
   | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean }
@@ -621,6 +624,8 @@ export type DaemonMessage =
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
+  // The token counts of the turn so far, after each model reply.
+  | { type: "turn.usage"; prompt_tokens: number; completion_tokens: number; last_prompt_tokens: number }
   | { type: "fs.changed"; path: string; hash: string | null; by: "agent" | "external" }
   | {
       type: "command.result";

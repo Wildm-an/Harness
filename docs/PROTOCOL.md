@@ -120,6 +120,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `term.opened` | `id`, `new`, `replay`, `seq`, `reset` | Reply to `term.open`. `replay` is the output after `since`. If `reset` is true, `replay` is all the kept output (up to 256 KB), and the client clears its screen first. `seq` is the number of the last output. |
 | `term.output` | `id`, `data`, `seq` | Shell output. `seq` goes up by 1 for each message. |
 | `term.exit` | `id`, `code` | The shell stopped. The next `term.open` starts a new shell. |
+| `session.title` | `id`, `title` | The model made a short title from the first prompt of the session `id`. It replaces the first line of the prompt, which is the title until then. The daemon sends it also for a session in the background. |
+| `turn.usage` | `prompt_tokens`, `completion_tokens`, `last_prompt_tokens` | The token counts of the running turn so far, after each model reply. The working line shows `completion_tokens`. |
 | `sessions.running` | `items` | The sessions of the connection that have a running turn. Each item has `session_id` and `waiting` (the turn waits for a permission decision). The daemon sends it when the list changes. |
 
 | `command.result` | `name`, and `text`, `items`, `model`, `warnings`, `action`, or `panel` | Reply to a built-in command. `action: "open_panel"` tells the client to open `panel`. |
@@ -178,6 +180,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `session.ready` | `files_token` | Project files for the Browser pane: `GET /files/<files_token>/<path>`. The token ends with the session. |
 | `session.ready` | `project` | The saved project of the session folder: `id` and `name`, or null. |
 | `session.ready` | `auto_verify`, `image_input` | `auto_verify`: the agent checks the app after each UI change. `image_input`: the model accepts images, so the agent has `preview_screenshot`. |
+| `session.ready` | `turn_started_at`, `turn_tokens` | For a running turn: its start time (epoch seconds) and its output tokens so far. |
 | `session.ready` | `running`, `partial`, `requests` | `running` is true if the session has a running turn. Then `history` includes the turn so far, `partial` is the reply text that streams now (or null), and `requests` holds the open `permission.request` messages. |
 | The events of a session | `session_id` | The daemon adds the session id to each event of a session: the turn events, and the events of its servers, MCP servers, and agent browser. |
 | `command.result` | `image_input` | After `/model`: the new model accepts images. |

@@ -836,11 +836,7 @@ textarea:focus-visible {
   text-align: center;
 }
 
-.start-box textarea {
-  min-height: 72px;
-}
-
-.start-box textarea:disabled {
+.prompt-box.start-box textarea:disabled {
   cursor: not-allowed;
 }
 
@@ -4542,23 +4538,29 @@ select {
   padding: 4px 16px 16px;
 }
 
+/* The working line: the orange glyph, then the time, the tokens, the tasks, and the status. */
 .working {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
   padding: 0 6px 8px;
-  color: var(--accent);
+  color: var(--text-muted);
   font-size: 13px;
-  font-weight: 500;
 }
 
 .working-glyph {
+  flex: none;
+  color: var(--accent);
   animation: spin 2.4s linear infinite;
 }
 
-.working-hint {
-  color: var(--text-muted);
-  font-weight: 400;
+.working-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* One line of text and the send button in a row. The button stays at the bottom right when the text grows. */
@@ -4568,7 +4570,7 @@ select {
   gap: 8px;
   padding: 7px 7px 7px 16px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   transition: border-color var(--duration) var(--ease-out);

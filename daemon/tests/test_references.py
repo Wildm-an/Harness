@@ -92,9 +92,13 @@ def test_a_prompt_with_display_text(daemon, project, fake_model):  # noqa: F811
     ready = c.new_session(project)
     fake_model.script({"text": "OK."})
     c.send({"type": "prompt", "text": "Read @hello.py", "display": 'Read @"Hello file"'})
-    c.until("turn.end")
+    _, seen = c.until("turn.end")
     assert "hello.py:\n```" in fake_model.requests[-1]["messages"][-1]["content"]
+    # The title comes from the text that the user sees, not from the expanded prompt.
+    if not any(m["type"] == "session.title" for m in seen):
+        c.until("session.title")
+    assert 'Read @"Hello file"' in fake_model.title_requests[0]["messages"][0]["content"]
     c.send({"type": "session.resume", "session_id": ready["session_id"]})
     resumed = c.until("session.ready")[0]
-    assert resumed["history"][0]["display"] == 'Read @"Hello file"' and resumed["title"] == 'Read @"Hello file"'
+    assert resumed["history"][0]["display"] == 'Read @"Hello file"' and resumed["title"] == "Fake session title"
     c.close()

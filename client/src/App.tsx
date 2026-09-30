@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  Asterisk,
   Code2,
   Files,
   Folder,
@@ -67,6 +66,7 @@ import {
 } from "./layout/model";
 import { SIDEBAR_SHORTCUT, isSidebarShortcut, shortcutLabel, shortcutPane } from "./layout/shortcuts";
 import { TerminalPane } from "./components/TerminalPane";
+import { WorkingLine } from "./components/WorkingLine";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { BrowserPane } from "./browser/BrowserPane";
@@ -352,6 +352,8 @@ export default function App() {
             running: msg.running,
             partial: msg.partial,
             requests: msg.requests,
+            turnStartedAt: msg.turn_started_at,
+            turnTokens: msg.turn_tokens,
           });
           // A return to a turn that waits for approval of a change: show the change for review.
           const change = msg.running ? msg.requests?.find((r) => r.diff) : undefined;
@@ -375,6 +377,10 @@ export default function App() {
           }
           return;
         }
+        case "session.title":
+          setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
+          listRecent();
+          return;
         case "sessions.running":
           setRunningSessions(msg.items);
           listRecent(); // A turn in the background changes the title and the age of its session.
@@ -1248,15 +1254,7 @@ export default function App() {
       />
       <div className="composer">
         <div className="column">
-          {chat.running && (
-            <div className="working" role="status">
-              <Asterisk size={15} className="working-glyph" aria-hidden />
-              Working
-              <span className="working-hint">
-                <kbd>Esc</kbd> to interrupt
-              </span>
-            </div>
-          )}
+          {chat.running && <WorkingLine turn={chat.turn} items={chat.items} model={session?.model ?? ""} />}
           <PromptBox
             running={chat.running}
             disabled={status !== "open"}

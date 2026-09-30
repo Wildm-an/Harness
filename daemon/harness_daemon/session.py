@@ -26,13 +26,15 @@ class Session:
         self.storage.append_messages(self.id, history[self._saved:])
         self._saved = len(history)
 
-    def set_title_from(self, text: str) -> None:
+    def set_title_from(self, text: str) -> bool:
+        """Use the first line of the first prompt as the title. Return True if the title is new."""
         if self.title:
-            return
+            return False
         line = text.strip().splitlines()[0] if text.strip() else ""
         self.title = line[:TITLE_CHARS] or None
         if self.title:
             self.storage.update_session(self.id, title=self.title)
+        return self.title is not None
 
     def on_compact(self, removed: int, summary: str | None) -> None:
         """The agent removed the first ``removed`` history messages. They are all in storage."""

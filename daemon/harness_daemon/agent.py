@@ -59,7 +59,7 @@ CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image")
 IMAGE_MESSAGE = "The image from the {tool} tool call:"
 
 # Events of a subagent that the client does not get. The subagent report replaces its text.
-SUBAGENT_HIDDEN_EVENTS = {"token", "turn.end", "context.compacted", "command.result"}
+SUBAGENT_HIDDEN_EVENTS = {"token", "turn.end", "turn.usage", "context.compacted", "command.result"}
 
 FORK_REPORT_REQUEST = (
     "You run in a separate context for this skill. When the task is complete, write a short report "
@@ -346,6 +346,7 @@ class Agent:
                     usage["prompt_tokens"] += response.usage.get("prompt_tokens", 0)
                     usage["completion_tokens"] += response.usage.get("completion_tokens", 0)
                     usage["last_prompt_tokens"] = response.usage.get("prompt_tokens", 0)
+                    await self.emit({"type": "turn.usage", **usage})  # The working line shows the tokens.
 
                 response.tool_calls = self._unique_ids(response.tool_calls)
                 message: dict[str, Any] = {"role": "assistant", "content": response.text or None}

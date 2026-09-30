@@ -21,6 +21,8 @@ class FakeModel:
     def __init__(self, capabilities: list[str] | None = None):
         self.replies: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
+        self.title_requests: list[dict[str, Any]] = []
+        self.title = "Fake session title"
         self.capabilities = capabilities if capabilities is not None else ["completion", "tools"]
         self.num_ctx: int | None = 32768  # Reported by /api/show. None: not set.
         self.required_key: str | None = None  # If set, /v1/models needs "Authorization: Bearer <key>".
@@ -56,6 +58,11 @@ class FakeModel:
         @app.post("/v1/chat/completions")
         async def completions(request: Request):
             body = await request.json()
+            # A session title request (titles.py) gets its own reply. It does not use a scripted reply.
+            first = (body.get("messages") or [{}])[0].get("content")
+            if isinstance(first, str) and first.startswith("Write a short title for the task below"):
+                self.title_requests.append(body)
+                return StreamingResponse(_sse({"text": self.title}), media_type="text/event-stream")
             self.requests.append(body)
             if not self.replies:
                 return JSONResponse({"error": {"message": "No scripted reply."}}, status_code=500)

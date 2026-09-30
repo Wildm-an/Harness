@@ -37,14 +37,21 @@ export interface ContextUse {
   source?: string; // Where the daemon found the context length.
 }
 
+/** The running turn: its start time (epoch ms) and the output tokens that the endpoint counted. */
+export interface TurnInfo {
+  startedAt: number;
+  tokens: number;
+}
+
 export interface ChatState {
   items: ChatItem[];
   running: boolean;
   usage: Usage | null;
   context: ContextUse | null;
+  turn: TurnInfo | null;
 }
 
-export const emptyChat: ChatState = { items: [], running: false, usage: null, context: null };
+export const emptyChat: ChatState = { items: [], running: false, usage: null, context: null, turn: null };
 
 export type ChatAction =
   | { type: "daemon"; msg: DaemonMessage }
@@ -62,6 +69,8 @@ export type ChatAction =
       running?: boolean;
       partial?: string | null; // The reply text that streams now.
       requests?: PermissionRequest[]; // The permission requests that wait for a decision.
+      turnStartedAt?: number | null; // Epoch seconds.
+      turnTokens?: number;
     }
   | { type: "clear" };
 
@@ -180,12 +189,15 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
           { kind: "permission", id: msg.request_id, tool: msg.tool, input: msg.input, diff: msg.diff, rule: msg.rule },
         ],
       };
+    case "turn.usage":
+      return state.turn ? { ...state, turn: { ...state.turn, tokens: msg.completion_tokens } } : state;
     case "turn.end": {
       const items = expirePermissions(endStreaming(state.items));
       const text = STOP_NOTICES[msg.stop_reason];
       return {
         ...state,
         running: false,
+        turn: null,
         usage: msg.usage,
         context: { ...state.context, tokens: msg.usage.context_tokens, length: msg.usage.context_length },
         items: text ? [...items, { kind: "notice", id: nextId("notice"), level: "info", text }] : items,
@@ -232,12 +244,14 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         running: state.running || action.startsTurn,
+        turn: state.turn ?? (action.startsTurn ? { startedAt: Date.now(), tokens: 0 } : null),
         items: [...state.items, { kind: "user", id: nextId("user"), text: action.text }],
       };
     case "disconnected":
       return {
         ...state,
         running: false,
+        turn: null,
         items: [
           ...expirePermissions(endStreaming(state.items)),
           { kind: "notice", id: nextId("notice"), level: "error", text: "The connection to the daemon closed." },
@@ -261,6 +275,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       }
       return {
         running: action.running ?? false,
+        turn: action.running
+          ? { startedAt: action.turnStartedAt ? action.turnStartedAt * 1000 : Date.now(), tokens: action.turnTokens ?? 0 }
+          : null,
         usage: null,
         context: action.context,
         items: [...summary, ...historyToItems(action.history), ...warnings, ...live],
