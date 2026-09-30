@@ -41,6 +41,36 @@ describe("chatReducer", () => {
     expect(tools[1]).toMatchObject({ status: "error" });
   });
 
+  it("loads a running turn after a return to the session", () => {
+    let s = chatReducer(emptyChat, {
+      type: "load",
+      history: [
+        { role: "user", content: "edit it" },
+        { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "edit", arguments: "{}" } }] },
+      ],
+      warnings: [],
+      summary: null,
+      context: null,
+      running: true,
+      partial: null,
+      requests: [{ request_id: "r1", tool: "edit", input: {}, diff: null, rule: "edit(a.py)" }],
+    });
+    expect(s.running).toBe(true);
+    expect(s.items.map((i) => i.kind)).toEqual(["user", "tool", "permission"]);
+    // The tool.start event of a call that the history shows does not add a second card.
+    s = chatReducer(s, { type: "daemon", msg: { type: "tool.start", id: "c1", name: "edit", input: {} } });
+    expect(s.items.filter((i) => i.kind === "tool")).toHaveLength(1);
+  });
+
+  it("shows the streamed text of a running turn after a return to the session", () => {
+    const s = chatReducer(emptyChat, {
+      type: "load", history: [{ role: "user", content: "hi" }], warnings: [], summary: null, context: null,
+      running: true, partial: "Hel",
+    });
+    const next = chatReducer(s, { type: "daemon", msg: { type: "token", text: "lo" } });
+    expect(next.items[1]).toMatchObject({ kind: "assistant", text: "Hello", streaming: true });
+  });
+
   it("expires an open permission request when the turn ends", () => {
     let s = run({ type: "permission.request", request_id: "r1", tool: "bash", input: { command: "ls" }, diff: null, rule: "bash(ls)" });
     expect(s.items[1]).toMatchObject({ kind: "permission" });

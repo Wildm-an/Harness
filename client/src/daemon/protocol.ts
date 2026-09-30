@@ -25,6 +25,20 @@ export type HistoryMessage =
   // image: a data URL, for example a screenshot of preview_screenshot.
   | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string };
 
+export interface PermissionRequest {
+  request_id: string;
+  tool: string;
+  input: unknown;
+  diff: string | null;
+  rule: string; // The rule that "allow_always" adds.
+}
+
+/** A session with a running turn. waiting: the turn waits for a permission decision. */
+export interface RunningSession {
+  session_id: string;
+  waiting: boolean;
+}
+
 /** A small screenshot of the agent browser page after an agent action (SPEC.md section 8.7). */
 export interface AgentFrame {
   url: string;
@@ -428,6 +442,7 @@ export type ClientMessage =
   | { type: "auth"; token: string }
   | { type: "session.new"; cwd: string; model: string; provider?: string }
   | { type: "session.resume"; session_id: string }
+  | { type: "session.leave" } // The start screen. A running turn of the session continues.
   | { type: "session.list"; cwd?: string; limit?: number }
   | { type: "fs.find"; query: string }
   | { type: "context.get" }
@@ -541,7 +556,13 @@ export type DaemonMessage =
       auto_verify: boolean; // The agent checks the app after each UI change.
       permission_mode?: PermissionMode;
       image_input: boolean; // The model accepts images: the agent has preview_screenshot.
+      // A return to a session with a running turn: the reply text that streams now,
+      // and the permission requests that wait for a decision.
+      running?: boolean;
+      partial?: string | null;
+      requests?: PermissionRequest[];
     }
+  | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
@@ -589,14 +610,7 @@ export type DaemonMessage =
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
   | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string }
-  | {
-      type: "permission.request";
-      request_id: string;
-      tool: string;
-      input: unknown;
-      diff: string | null;
-      rule: string; // The rule that "allow_always" adds.
-    }
+  | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
   | { type: "fs.changed"; path: string; hash: string | null; by: "agent" | "external" }

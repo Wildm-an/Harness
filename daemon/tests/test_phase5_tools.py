@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import sys
 import time
 
 import pytest
@@ -11,6 +13,7 @@ import pytest
 from harness_daemon.config import DEFAULT_SETTINGS
 from harness_daemon.prompt import build_system_prompt, load_project_instructions
 from harness_daemon.tools import GlobTool, GrepTool, ToolContext, ToolError, WriteTool, detect_shell
+from harness_daemon.tools import search
 from harness_daemon.tools.search import find_ripgrep, glob_match
 
 RG = find_ripgrep()
@@ -112,6 +115,21 @@ def test_glob_lists_newest_first_and_skips_dependencies(ctx):
 def test_glob_in_a_subfolder(ctx):
     out = run(GlobTool().run({"pattern": "*", "path": "src/util"}, ctx)).output
     assert out == "src/util/helpers.py"
+
+
+def test_slow_ripgrep_gives_a_tool_error(tree, monkeypatch):
+    def slow(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], search.SEARCH_TIMEOUT)
+    monkeypatch.setattr(search.subprocess, "run", slow)
+    with pytest.raises(ToolError, match="stopped after 30 seconds"):
+        run(GlobTool().run({"pattern": "**/*.py"}, make_ctx(tree, ripgrep=sys.executable)))
+    with pytest.raises(ToolError, match="stopped after 30 seconds"):
+        run(GrepTool().run({"pattern": "hello"}, make_ctx(tree, ripgrep=sys.executable)))
+
+
+def test_slow_python_walk_gives_a_tool_error(tree):
+    with pytest.raises(ToolError, match="stopped after 0 seconds"):
+        list(search.walk_files(tree, timeout=0))
 
 
 # -- grep ----------------------------------------------------------------------

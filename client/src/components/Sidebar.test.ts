@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { folderName, groupByProject, pathKey, shortAge } from "./Sidebar";
+import { folderName, groupByProject, pathKey, sessionState, shortAge } from "./Sidebar";
 
 const session = (id: string, cwd: string, updated: number): SessionSummary => ({
   id, cwd, provider: "demo", model: "scripted", title: id, created_at: updated, updated_at: updated,
@@ -42,5 +42,16 @@ describe("the sidebar projects", () => {
     expect(shortAge(now - 300, now)).toBe("5m");
     expect(shortAge(now - 3 * 3600, now)).toBe("3h");
     expect(shortAge(now - 2 * 86400, now)).toBe("2d");
+  });
+});
+
+describe("the session state", () => {
+  it("is Idle, Running, Awaiting input, or Unread response", () => {
+    expect(sessionState(undefined, false)).toEqual({ kind: "idle", label: "Idle" });
+    expect(sessionState({ session_id: "a", waiting: false }, false)).toEqual({ kind: "running", label: "Running" });
+    expect(sessionState({ session_id: "a", waiting: true }, false).kind).toBe("awaiting");
+    expect(sessionState(undefined, true)).toEqual({ kind: "unread", label: "Unread response" });
+    // A new turn in a session with an unread response shows Running.
+    expect(sessionState({ session_id: "a", waiting: false }, true).kind).toBe("running");
   });
 });

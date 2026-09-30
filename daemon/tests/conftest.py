@@ -32,6 +32,8 @@ def fake_model(fake_model_server):
 
 @pytest.fixture
 def harness_home(tmp_path, monkeypatch, fake_model_server):
+    from harness_daemon.server import MODEL_CHECKS
+    MODEL_CHECKS.clear()  # Each test sets its own fake model.
     home = tmp_path / "harness-home"
     home.mkdir()
     monkeypatch.setenv("HARNESS_HOME", str(home))

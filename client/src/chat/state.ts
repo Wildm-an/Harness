@@ -1,6 +1,6 @@
 // Chat state. The reducer turns daemon events into items for the message list.
 
-import type { Decision, DaemonMessage, HistoryMessage, StopReason, Usage } from "../daemon/protocol";
+import type { Decision, DaemonMessage, HistoryMessage, PermissionRequest, StopReason, Usage } from "../daemon/protocol";
 
 export type ToolStatus = "running" | "done" | "error";
 
@@ -58,6 +58,10 @@ export type ChatAction =
       warnings: string[];
       summary: string | null;
       context: ContextUse | null;
+      // A return to a session with a running turn.
+      running?: boolean;
+      partial?: string | null; // The reply text that streams now.
+      requests?: PermissionRequest[]; // The permission requests that wait for a decision.
     }
   | { type: "clear" };
 
@@ -146,6 +150,8 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       return { ...state, items: [...state.items, item] };
     }
     case "tool.start":
+      // After a return to a running turn, the history already shows the tool call as running.
+      if (lastRunningTool(state.items, msg.id) >= 0) return state;
       return {
         ...state,
         items: [
@@ -246,11 +252,18 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const summary: ChatItem[] = action.summary
         ? [{ kind: "summary", id: nextId("summary"), text: action.summary, removed: 0, trimmed: 0, reason: "earlier" }]
         : [];
+      const live: ChatItem[] = [];
+      if (action.running && action.partial) {
+        live.push({ kind: "assistant", id: nextId("assistant"), text: action.partial, streaming: true });
+      }
+      for (const r of action.running ? action.requests ?? [] : []) {
+        live.push({ kind: "permission", id: r.request_id, tool: r.tool, input: r.input, diff: r.diff, rule: r.rule });
+      }
       return {
-        running: false,
+        running: action.running ?? false,
         usage: null,
         context: action.context,
-        items: [...summary, ...historyToItems(action.history), ...warnings],
+        items: [...summary, ...historyToItems(action.history), ...warnings, ...live],
       };
     }
     case "clear":

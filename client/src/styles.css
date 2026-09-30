@@ -533,7 +533,7 @@ textarea:focus-visible {
   gap: 8px;
   width: 100%;
   min-height: 32px;
-  padding: 0 10px 0 36px;
+  padding: 0 10px 0 20px;
   border: none;
   border-radius: var(--radius);
   background: transparent;
@@ -542,6 +542,33 @@ textarea:focus-visible {
   text-align: left;
   cursor: pointer;
   transition: background var(--duration) var(--ease-out);
+}
+
+/* The state of a session: a gray circle when idle, a pulsing gray dot when a turn runs, a yellow
+   dot when the turn awaits a permission decision, and a blue dot for an unread response (a turn
+   that ended while the user was in another session). */
+.side-session-status {
+  flex: none;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+}
+
+.side-session-status.running {
+  background: var(--text-muted);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.side-session-status.awaiting {
+  border-color: var(--warning);
+  background: var(--warning);
+}
+
+.side-session-status.unread {
+  border-color: var(--info);
+  background: var(--info);
 }
 
 .side-session-title {

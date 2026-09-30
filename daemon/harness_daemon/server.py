@@ -14,6 +14,7 @@ import secrets
 import socket
 import string
 import subprocess
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -101,6 +102,10 @@ PREVIEWS: set[PreviewHost] = set()
 # The MCP clients of all connections. The daemon stops their servers when it stops.
 MCPS: set[McpManager] = set()
 MCP_WAIT = 20  # Seconds that the first turn waits for the MCP servers.
+# The model checks of a session start: (provider, URL, kind, model, context_length setting) ->
+# (the time, the capabilities, the context length). A change to the providers clears it.
+MODEL_CHECKS: dict[tuple[Any, ...], tuple[float, list[str] | None, ContextInfo]] = {}
+MODEL_CHECKS_TTL = 600
 
 # Project settings that the client can change with "settings.set", and their types.
 CLIENT_SETTINGS: dict[str, type] = {"auto_verify": bool, "permission_mode": str}
@@ -299,23 +304,161 @@ def handler(name: str):
     return register
 
 
-class Connection:
-    def __init__(self, websocket: WebSocket, storage: Storage):
-        self.ws = websocket
-        self.storage = storage
+class LiveSession:
+    """A session that is open in a connection: its agent, its turn, its permission requests, and
+    its servers, MCP servers, agent browser, and plugins.
+
+    The client sees the events of the current session only. When the client goes to another
+    session, a session with a running turn stays open in the background. The connection closes
+    it when its turn ends. The client can return to it before that time.
+    """
+
+    def __init__(self, conn: Connection):
+        self.conn = conn
         self.session: Session | None = None
         self.turn: asyncio.Task | None = None
         self.pending: dict[str, asyncio.Future] = {}
+        self.requests: dict[str, dict[str, Any]] = {}  # The open permission requests, for a client that returns.
+        self.servers: ServerManager | None = None
+        self.preview: PreviewHost | None = None
+        self.mcp: McpManager | None = None
+        self.plugins: PluginHost | None = None  # make_agent loads them.
+        self.files_token: str | None = None
+
+    @property
+    def id(self) -> str | None:
+        return self.session.id if self.session is not None else None
+
+    @property
+    def running(self) -> bool:
+        return self.turn is not None and not self.turn.done()
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Send an event of this session, with its session_id. Only the current session sends to the client."""
+        if self.conn.current is self and self.session is not None:
+            await self.conn.send({**message, "session_id": self.session.id})
+
+    async def error(self, message: str, ref: str | None = None) -> None:
+        body: dict[str, Any] = {"type": "error", "message": message}
+        if ref:
+            body["ref"] = ref
+        await self.send(body)
+
+    async def approve(self, request: dict[str, Any]) -> str:
+        fut = asyncio.get_running_loop().create_future()
+        request_id = request["request_id"]
+        self.pending[request_id] = fut
+        self.requests[request_id] = request
+        await self.conn.send_running()  # The sidebar shows that the session waits for a decision.
+        try:
+            await self.send({"type": "permission.request", **request})
+            return await fut
+        finally:
+            self.pending.pop(request_id, None)
+            self.requests.pop(request_id, None)
+            await self.conn.send_running()
+
+    async def stop_turn(self) -> None:
+        if self.turn is not None and not self.turn.done():
+            self.turn.cancel()
+            try:
+                await self.turn
+            except asyncio.CancelledError:
+                pass
+        for fut in self.pending.values():
+            if not fut.done():
+                fut.set_result("deny")
+        self.pending.clear()
+
+    async def close(self) -> None:
+        """Stop the MCP servers, the agent browser, the servers, and the plugins of the session, and end its file URLs."""
+        if self.plugins is not None:
+            host, self.plugins = self.plugins, None
+            await host.dispose()
+        if self.mcp is not None:
+            manager, self.mcp = self.mcp, None
+            MCPS.discard(manager)
+            await manager.close()
+        if self.preview is not None:
+            await self.preview.close()
+            PREVIEWS.discard(self.preview)
+            self.preview = None
+        if self.servers is not None:
+            await self.servers.stop_all()
+            MANAGERS.discard(self.servers)
+            self.servers = None
+        if self.files_token:
+            FILE_ROOTS.pop(self.files_token, None)
+            self.files_token = None
+
+    def start(self) -> None:
+        """Start the servers, the agent browser, and the MCP servers of the session."""
+        session = self.session
+        assert session is not None
+        self.plugins = session.agent.plugins
+        self.servers = ServerManager(session.cwd, session.agent.ctx.shell, self.send)
+        MANAGERS.add(self.servers)
+        self.preview = PreviewHost(self.servers, self.send)
+        PREVIEWS.add(self.preview)
+        session.agent.enable_preview(self.preview)
+        self.files_token = secrets.token_urlsafe(24)
+        FILE_ROOTS[self.files_token] = session.cwd
+        # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
+        host = self.plugins
+        self.mcp = McpManager(session.cwd, self.send, session.agent.set_mcp_tools,
+                              host.mcp_servers if host is not None else None)
+        MCPS.add(self.mcp)
+        asyncio.create_task(self._start_mcp(self.mcp))
+
+    async def _start_mcp(self, manager: McpManager) -> None:
+        try:
+            await manager.start()
+        except Exception as e:  # noqa: BLE001 - a bad mcp.json must not stop the session.
+            log.exception("The MCP servers did not start")
+            await self.error(f"The MCP servers did not start: {e}", ref="mcp")
+
+    async def wait_for_mcp(self) -> None:
+        if self.mcp is not None:
+            await self.mcp.ready(MCP_WAIT)
+
+
+def _delegate(name: str) -> property:
+    """A Connection attribute that reads and writes the attribute of the current session."""
+    def get(conn: Connection) -> Any:
+        return getattr(conn.current, name) if conn.current is not None else None
+
+    def set_(conn: Connection, value: Any) -> None:
+        if conn.current is None:
+            raise ProtocolError("No session. Send 'session.new' or 'session.resume' first.")
+        setattr(conn.current, name, value)
+    return property(get, set_)
+
+
+class Connection:
+    # The attributes of the current session. A handler acts on the session that the client shows.
+    session = _delegate("session")
+    turn = _delegate("turn")
+    servers = _delegate("servers")
+    preview = _delegate("preview")
+    mcp = _delegate("mcp")
+    plugins = _delegate("plugins")
+    files_token = _delegate("files_token")
+
+    def __init__(self, websocket: WebSocket, storage: Storage):
+        self.ws = websocket
+        self.storage = storage
+        self.current: LiveSession | None = None  # The session that the client shows.
+        self.live: dict[str, LiveSession] = {}  # The open sessions: the current session and the background sessions.
         self._send_lock = asyncio.Lock()
         self._open = True
         # The files that the editor has open: relative path -> the last known hash.
         self.watched: dict[str, str | None] = {}
-        self.servers: ServerManager | None = None
-        self.preview: PreviewHost | None = None
-        self.mcp: McpManager | None = None
-        self.plugins: PluginHost | None = None  # The plugins of the session. make_agent loads them.
-        self.files_token: str | None = None
         self._watcher: asyncio.Task | None = None
+        self._running_sent: list[dict[str, Any]] | None = None
+
+    @property
+    def pending(self) -> dict[str, asyncio.Future]:
+        return self.current.pending if self.current is not None else {}
 
     async def send(self, message: dict[str, Any]) -> None:
         if not self._open:
@@ -395,8 +538,11 @@ class Connection:
             COOKBOOK.unlisten(self.send)
             if self._watcher:
                 self._watcher.cancel()
-            await self._stop_turn()
-            await self._close_session()
+            for live in list(self.live.values()):
+                await live.stop_turn()
+                await live.close()
+            self.live.clear()
+            self.current = None
 
     # -- helpers ---------------------------------------------------------
 
@@ -405,56 +551,38 @@ class Connection:
             raise ProtocolError("No session. Send 'session.new' or 'session.resume' first.")
         return self.session
 
-    async def _close_session(self) -> None:
-        """Stop the MCP servers, the agent browser, the servers, and the plugins of the session, and end its file URLs."""
-        if self.plugins is not None:
-            host, self.plugins = self.plugins, None
-            await host.dispose()
-        if self.mcp is not None:
-            manager, self.mcp = self.mcp, None
-            MCPS.discard(manager)
-            await manager.close()
-        if self.preview is not None:
-            await self.preview.close()
-            PREVIEWS.discard(self.preview)
-            self.preview = None
-        if self.servers is not None:
-            await self.servers.stop_all()
-            MANAGERS.discard(self.servers)
-            self.servers = None
-        if self.files_token:
-            FILE_ROOTS.pop(self.files_token, None)
-            self.files_token = None
+    def require_live(self) -> LiveSession:
+        if self.current is None or self.current.session is None:
+            raise ProtocolError("No session. Send 'session.new' or 'session.resume' first.")
+        return self.current
 
-    async def open_session(self, session: Session) -> None:
-        await self._close_session()
-        self.session = session
-        self.plugins = session.agent.plugins
+    async def leave_current(self) -> None:
+        """The client goes away from the current session. A session with a running turn stays open."""
+        live, self.current = self.current, None
         self.watched.clear()
-        self.servers = ServerManager(session.cwd, session.agent.ctx.shell, self.send)
-        MANAGERS.add(self.servers)
-        self.preview = PreviewHost(self.servers, self.send)
-        PREVIEWS.add(self.preview)
-        session.agent.enable_preview(self.preview)
-        self.files_token = secrets.token_urlsafe(24)
-        FILE_ROOTS[self.files_token] = session.cwd
-        # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
-        host = self.plugins
-        self.mcp = McpManager(session.cwd, self.send, session.agent.set_mcp_tools,
-                              host.mcp_servers if host is not None else None)
-        MCPS.add(self.mcp)
-        asyncio.create_task(self._start_mcp(self.mcp))
+        if live is not None and not live.running:
+            await self.close_live(live)
 
-    async def _start_mcp(self, manager: McpManager) -> None:
-        try:
-            await manager.start()
-        except Exception as e:  # noqa: BLE001 - a bad mcp.json must not stop the session.
-            log.exception("The MCP servers did not start")
-            await self.error(f"The MCP servers did not start: {e}", ref="mcp")
+    async def close_live(self, live: LiveSession) -> None:
+        if live.id is not None and self.live.get(live.id) is live:
+            del self.live[live.id]
+        await live.close()
 
-    async def wait_for_mcp(self) -> None:
-        if self.mcp is not None:
-            await self.mcp.ready(MCP_WAIT)
+    async def open_session(self, live: LiveSession) -> None:
+        """Make a new session the current session, and start its servers."""
+        await self.leave_current()
+        assert live.session is not None
+        self.live[live.session.id] = live
+        live.start()
+        self.current = live
+
+    async def send_running(self) -> None:
+        """Tell the client which sessions have a running turn. The sidebar shows them."""
+        items = [{"session_id": sid, "waiting": bool(live.pending)}
+                 for sid, live in self.live.items() if live.running]
+        if items != self._running_sent:
+            self._running_sent = items
+            await self.send({"type": "sessions.running", "items": items})
 
     def require_servers(self) -> ServerManager:
         self.require_session()
@@ -471,7 +599,7 @@ class Connection:
         if rules.allows("server", config.command):
             return True
         rule = f"server({config.command})"
-        decision = await self.approve({
+        decision = await self.require_live().approve({
             "request_id": secrets.token_hex(16),
             "tool": "server",
             "input": {"name": name, "command": config.command, "cwd": config.cwd},
@@ -497,28 +625,7 @@ class Connection:
         if self.turn is not None and not self.turn.done():
             raise ProtocolError("A turn is running. Send 'interrupt' first, or wait for 'turn.end'.")
 
-    async def _stop_turn(self) -> None:
-        if self.turn is not None and not self.turn.done():
-            self.turn.cancel()
-            try:
-                await self.turn
-            except asyncio.CancelledError:
-                pass
-        for fut in self.pending.values():
-            if not fut.done():
-                fut.set_result("deny")
-        self.pending.clear()
-
-    async def approve(self, request: dict[str, Any]) -> str:
-        fut = asyncio.get_running_loop().create_future()
-        self.pending[request["request_id"]] = fut
-        try:
-            await self.send({"type": "permission.request", **request})
-            return await fut
-        finally:
-            self.pending.pop(request["request_id"], None)
-
-    async def make_agent(self, cwd: Path, provider_name: str | None, model: str | None,
+    async def make_agent(self, live: LiveSession, cwd: Path, provider_name: str | None, model: str | None,
                          history: list[dict] | None = None, summary: str | None = None) -> tuple[Agent, list[str]]:
         settings = load_settings(cwd)
         # The plugins load first: a plugin can register the provider of the model.
@@ -527,8 +634,8 @@ class Connection:
         try:
             provider, model_name = resolve_model(model or settings.get("default_model"), provider_name)
             warnings, context, images = await self.model_checks(provider, model_name, settings)
-            agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=self.send,
-                          approver=self.approve, settings=settings, history=history,
+            agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=live.send,
+                          approver=live.approve, settings=settings, history=history,
                           summary=summary, context_length=context.length,
                           skills=discover_skills(cwd, plugins.skill_roots(), plugins.dsh_skills()),
                           image_input=images, context_source=context.source, plugins=plugins)
@@ -551,8 +658,15 @@ class Connection:
             configured = settings.get("context_length") or provider.context_length
             context = ContextInfo(int(configured), "settings") if configured else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default")
             return [str(e)], context, image_input(provider, model, settings, None)
-        caps, context = await asyncio.gather(
-            model_capabilities(reachable, model), resolve_context_length(reachable, model, settings))
+        # The checks send requests to the endpoint (up to a few seconds). A session switch uses the saved result.
+        key = (provider.name, reachable.base_url, reachable.kind, model, settings.get("context_length"))
+        saved = MODEL_CHECKS.get(key)
+        if saved is not None and time.monotonic() - saved[0] < MODEL_CHECKS_TTL:
+            caps, context = saved[1], saved[2]
+        else:
+            caps, context = await asyncio.gather(
+                model_capabilities(reachable, model), resolve_context_length(reachable, model, settings))
+            MODEL_CHECKS[key] = (time.monotonic(), caps, context)
         support = None if caps is None else "tools" in caps
         warnings = []
         if provider.key_missing:
@@ -567,7 +681,12 @@ class Connection:
         return warnings, context, image_input(provider, model, settings, caps)
 
     async def send_ready(self, warnings: list[str]) -> None:
-        s = self.require_session()
+        """Send the current session to the client. Build the message before the first await:
+        the events of a running turn that come after it go to the client after it."""
+        live = self.require_live()
+        s = live.session
+        assert s is not None
+        running = live.running
         await self.send({
             "type": "session.ready",
             "session_id": s.id,
@@ -578,20 +697,26 @@ class Connection:
             "history": s.agent.history,
             "summary": s.agent.summary,
             "context_length": s.agent.context_length,
-            "context_source": s.agent.context_source,
             "context_tokens": s.agent.context_tokens(),
+            "context_source": s.agent.context_source,
             "instructions": s.agent.instructions.name if s.agent.instructions else None,
-            "files_token": self.files_token,
+            "files_token": live.files_token,
             "project": _project_ref(self.storage, s.cwd),
             "auto_verify": bool(s.agent.settings.get("auto_verify")),
             "permission_mode": _permission_mode(s.agent.settings),
             "image_input": s.agent.image_input,
+            # A client that returns to a session with a running turn: the reply text that streams
+            # now, and the permission requests that wait for a decision.
+            "running": running,
+            "partial": "".join(s.agent.streamed) if running and s.agent.streamed else None,
+            "requests": list(live.requests.values()) if running else [],
         })
 
-    async def run_turn(self, text: str, display: str | None = None) -> None:
+    async def run_turn(self, live: LiveSession, text: str, display: str | None = None) -> None:
         """Run a prompt. ``display`` is the text that the user sees, if it is not ``text``: the client
         shows a session reference with its name, and sends it with its id."""
-        session = self.require_session()
+        session = live.session
+        assert session is not None
         session.set_title_from(display or text)
         # "@" references: add the files, lines, and sessions to the prompt. Load the referenced
         # sessions here: the file reads run in a thread, and the database stays in this loop.
@@ -601,46 +726,61 @@ class Connection:
             if row is not None and sid != session.id:
                 stored[sid] = (row, self.storage.load_messages(sid))
         expanded = await asyncio.to_thread(expand_references, text, session.cwd, stored.get)
-        await self.wait_for_mcp()
-        await self.refresh_dsh()
+        await live.wait_for_mcp()
+        await self.refresh_dsh(live)
         try:
             shown = display or text
             await session.agent.run_turn(expanded, display=shown if expanded != shown else None)
         finally:
             session.persist()
 
-    def start_turn(self, text: str, display: str | None = None) -> None:
-        self.turn = asyncio.create_task(self.guarded(self.run_turn(text, display)))
+    async def start_turn(self, work: Callable[[LiveSession], Awaitable[None]]) -> None:
+        """Start a turn in the current session. The turn continues if the client goes to another session."""
+        live = self.require_live()
+        self.require_idle()
+        live.turn = asyncio.create_task(self.guarded(live, work(live)))
+        await self.send_running()
 
-    async def guarded(self, work: Awaitable[None]) -> None:
-        """Run a turn. An unexpected error ends the turn with an error, so the client does not wait forever."""
+    async def guarded(self, live: LiveSession, work: Awaitable[None]) -> None:
+        """Run a turn. An unexpected error ends the turn with an error, so the client does not wait forever.
+
+        After the turn, close the session if the client went to another session.
+        """
         try:
             await work
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("The turn failed")
-            await self.error(f"Internal error in the turn: {type(e).__name__}: {e}")
+            await live.error(f"Internal error in the turn: {type(e).__name__}: {e}")
             usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "last_prompt_tokens": 0,
                                      "context_tokens": 0, "context_length": 0}
-            if self.session is not None:
-                usage.update(context_tokens=self.session.agent.context_tokens(),
-                             context_length=self.session.agent.context_length)
-            await self.send({"type": "turn.end", "usage": usage, "stop_reason": "error"})
+            if live.session is not None:
+                usage.update(context_tokens=live.session.agent.context_tokens(),
+                             context_length=live.session.agent.context_length)
+            await live.send({"type": "turn.end", "usage": usage, "stop_reason": "error"})
+        finally:
+            if live.turn is asyncio.current_task():
+                live.turn = None  # The session is idle now. A new prompt can start.
+            await self.send_running()
+            if live is not self.current:
+                await self.close_live(live)
 
-    def skills(self) -> dict[str, Skill]:
+    def skills(self, live: LiveSession | None = None) -> dict[str, Skill]:
         """The skills now on disk. The user can add a skill during a session."""
-        host = self.plugins
-        return discover_skills(self.session.cwd if self.session else None,
+        live = live or self.current
+        session = live.session if live is not None else None
+        host = live.plugins if live is not None else None
+        return discover_skills(session.cwd if session else None,
                                host.skill_roots() if host is not None else None,
                                host.dsh_skills() if host is not None else None)
 
-    async def refresh_dsh(self) -> None:
+    async def refresh_dsh(self, live: LiveSession) -> None:
         """Before a turn: read the DeepSeek plugin tools, commands, skills, and prompt text again.
 
         A DeepSeek plugin can change them at any time, and a prompt section can be a function.
         """
-        session, host = self.session, self.plugins
+        session, host = live.session, live.plugins
         if session is None or host is None or host.dsh is None:
             return
         try:
@@ -649,7 +789,7 @@ class Connection:
             log.warning("The DeepSeek plugins did not refresh: %s", e)
             return
         session.agent.set_plugins(host)
-        session.agent.set_skills(self.skills())
+        session.agent.set_skills(self.skills(live))
 
     async def reload_plugins(self) -> None:
         """Load the plugins of the session again, after an install or a change of the plugin files."""
@@ -680,25 +820,27 @@ class Connection:
             log.exception("The plugin command /%s failed", name)
             raise ProtocolError(f"The plugin command /{name} failed: {type(e).__name__}: {e}") from None
         if isinstance(value, Prompt):
-            self.require_idle()
-            self.start_turn(value.text, f"/{name} {args}".strip())
+            display = f"/{name} {args}".strip()
+            await self.start_turn(lambda live: self.run_turn(live, value.text, display))
             return True
         text = "" if value is None else value if isinstance(value, str) else json.dumps(value, indent=2, default=str)
         await self.send({"type": "command.result", "name": name, "text": text})
         return True
 
-    async def run_skill(self, skill: Skill, args: str) -> None:
-        session = self.require_session()
+    async def run_skill(self, live: LiveSession, skill: Skill, args: str) -> None:
+        session = live.session
+        assert session is not None
         session.set_title_from(f"/{skill.name} {args}")
-        await self.wait_for_mcp()
-        await self.refresh_dsh()
+        await live.wait_for_mcp()
+        await self.refresh_dsh(live)
         try:
             await session.agent.run_skill(skill, args)
         finally:
             session.persist()
 
-    async def run_compact(self) -> None:
-        session = self.require_session()
+    async def run_compact(self, live: LiveSession) -> None:
+        session = live.session
+        assert session is not None
         try:
             await session.agent.run_compact()
         finally:
@@ -732,30 +874,50 @@ def _text_arg(msg: dict[str, Any], key: str) -> str:
 # -- sessions ----------------------------------------------------------------
 
 
+# A session with a running turn stays open when the client goes to another session or to the
+# start screen. "session.resume" of an open session shows it again, with its running turn.
+
+
 @handler("session.new")
 async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
-    conn.require_idle()
     cwd = _project_dir(msg.get("cwd"))
-    agent, warnings = await conn.make_agent(cwd, msg.get("provider"), msg.get("model"))
+    live = LiveSession(conn)
+    agent, warnings = await conn.make_agent(live, cwd, msg.get("provider"), msg.get("model"))
     session_id = conn.storage.create_session(str(cwd), agent.client.provider.name, agent.client.model)
     conn.storage.touch_project(str(cwd))  # A new folder becomes a project.
-    await conn.open_session(Session(conn.storage, session_id, agent))
+    live.session = Session(conn.storage, session_id, agent)
+    await conn.open_session(live)
     await conn.send_ready(warnings)
 
 
 @handler("session.resume")
 async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
-    conn.require_idle()
     session_id = _text_arg(msg, "session_id")
+    live = conn.live.get(session_id)
+    if live is not None:
+        # The session is open: the current session, or a session with a running turn.
+        if live is not conn.current:
+            await conn.leave_current()
+            conn.current = live
+        await conn.send_ready([])  # No await between the change of the current session and the message.
+        return
     row = conn.storage.get_session(session_id)
     if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
     cwd = _project_dir(row["cwd"])
     history = conn.storage.load_messages(session_id)
-    agent, warnings = await conn.make_agent(cwd, row["provider"], row["model"], history, row["summary"])
+    live = LiveSession(conn)
+    agent, warnings = await conn.make_agent(live, cwd, row["provider"], row["model"], history, row["summary"])
     conn.storage.touch_project(str(cwd))
-    await conn.open_session(Session(conn.storage, session_id, agent, title=row["title"]))
+    live.session = Session(conn.storage, session_id, agent, title=row["title"])
+    await conn.open_session(live)
     await conn.send_ready(warnings)
+
+
+@handler("session.leave")
+async def on_session_leave(conn: Connection, msg: dict[str, Any]) -> None:
+    """The client shows the start screen. A running turn of the session continues in the background."""
+    await conn.leave_current()
 
 
 MAX_SESSION_LIST = 500
@@ -1233,7 +1395,8 @@ async def on_prompt(conn: Connection, msg: dict[str, Any]) -> None:
     if not text.strip():
         raise ProtocolError("The prompt is empty.")
     display = msg.get("display")
-    conn.start_turn(text, display.strip() if isinstance(display, str) and display.strip() else None)
+    shown = display.strip() if isinstance(display, str) and display.strip() else None
+    await conn.start_turn(lambda live: conn.run_turn(live, text, shown))
 
 
 @handler("interrupt")
@@ -1273,9 +1436,7 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"Unknown command: /{name}")
         if not skill.user_invocable:
             raise ProtocolError(f"The skill {name} is for the model only. It is not a / command.")
-        conn.require_session()
-        conn.require_idle()
-        conn.turn = asyncio.create_task(conn.guarded(conn.run_skill(skill, args)))
+        await conn.start_turn(lambda live: conn.run_skill(live, skill, args))
         return
 
     async def result(**fields: Any) -> None:
@@ -1307,9 +1468,7 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
                      warnings=warnings, context_length=context.length, context_source=context.source,
                      image_input=images)
     elif name == "compact":
-        conn.require_session()
-        conn.require_idle()
-        conn.turn = asyncio.create_task(conn.guarded(conn.run_compact()))
+        await conn.start_turn(conn.run_compact)
     elif name == "skills":
         items = [s.summary() for s in conn.skills().values()]
         await result(action="open_panel", panel="skills", items=items)
@@ -1393,6 +1552,7 @@ async def on_providers_save(conn: Connection, msg: dict[str, Any]) -> None:
     """Add or change a provider. With "previous_name", change (and maybe rename) that provider."""
     previous = msg.get("previous_name")
     name = provider_config.save_provider(_provider_fields(msg), previous if isinstance(previous, str) else None)
+    MODEL_CHECKS.clear()
     _refresh_session_provider(conn, [name])
     await _send_providers(conn)
 
@@ -1400,6 +1560,7 @@ async def on_providers_save(conn: Connection, msg: dict[str, Any]) -> None:
 @handler("providers.delete")
 async def on_providers_delete(conn: Connection, msg: dict[str, Any]) -> None:
     provider_config.delete_provider(_text_arg(msg, "name"))
+    MODEL_CHECKS.clear()
     await _send_providers(conn)
 
 
@@ -1409,6 +1570,7 @@ async def on_providers_enable(conn: Connection, msg: dict[str, Any]) -> None:
     if not isinstance(enabled, bool):
         raise ProtocolError("'enabled' must be true or false.")
     provider_config.set_enabled(_text_arg(msg, "name"), enabled)
+    MODEL_CHECKS.clear()
     await _send_providers(conn)
 
 
@@ -1419,6 +1581,7 @@ async def on_providers_keys(conn: Connection, msg: dict[str, Any]) -> None:
     if not isinstance(keys, dict):
         raise ProtocolError("'keys' must be an object that maps provider names to keys.")
     changed = provider_config.set_client_keys(keys)
+    MODEL_CHECKS.clear()
     if changed:
         _refresh_session_provider(conn, changed)
     await _send_providers(conn)

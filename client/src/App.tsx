@@ -30,6 +30,7 @@ import type {
   ProviderFields,
   ProviderItem,
   PermissionMode,
+  RunningSession,
   SessionSummary,
   SkillDetail,
 } from "./daemon/protocol";
@@ -186,6 +187,10 @@ export default function App() {
   // The stored sessions of one folder (cwd), or of all folders (cwd null).
   const [sessions, setSessions] = useState<{ cwd: string | null; items: SessionSummary[] }>({ cwd: null, items: [] });
   const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
+  const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
+  // The sessions with a turn that ended while the user was in another session (a blue dot in the sidebar).
+  const [unreadSessions, setUnreadSessions] = useState<Set<string>>(() => new Set());
+  const lastRunning = useRef<RunningSession[]>([]);
   const firstPrompt = useRef<string | null>(null); // The task from the start screen, for the new session.
   // The project that the start screen selects: from a "+" in the sidebar, or the last project at the start.
   const [startProject, setStartProject] = useState<{ id: string; key: number } | null>(null);
@@ -316,7 +321,7 @@ export default function App() {
   useEffect(() => {
     const offMessage = conn.onMessage((msg) => {
       switch (msg.type) {
-        case "session.ready":
+        case "session.ready": {
           if (sessionRef.current?.id !== msg.session_id) {
             setReviewId(null);
             setRules(null);
@@ -331,7 +336,16 @@ export default function App() {
             warnings: msg.warnings,
             summary: msg.summary,
             context: { tokens: msg.context_tokens, length: msg.context_length, source: msg.context_source },
+            running: msg.running,
+            partial: msg.partial,
+            requests: msg.requests,
           });
+          // A return to a turn that waits for approval of a change: show the change for review.
+          const change = msg.running ? msg.requests?.find((r) => r.diff) : undefined;
+          if (change) {
+            setReviewId(change.request_id);
+            setLayout((l) => openPane(l, "diff"));
+          }
           setInstructions(msg.instructions);
           setFilesToken(msg.files_token);
           setAutoVerify(msg.auto_verify);
@@ -346,6 +360,11 @@ export default function App() {
             conn.send({ type: "prompt", text });
             dispatch({ type: "user", text, startsTurn: true });
           }
+          return;
+        }
+        case "sessions.running":
+          setRunningSessions(msg.items);
+          listRecent(); // A turn in the background changes the title and the age of its session.
           return;
         case "sessions":
           // A list with no folder is the sidebar list. The start screen asks for the list of one folder.
@@ -540,6 +559,9 @@ export default function App() {
     conn.send({ type: "providers.list" });
     conn.send({ type: "projects.list" });
     setRecent([]);
+    lastRunning.current = [];
+    setRunningSessions([]);
+    setUnreadSessions(new Set());
     startPicked.current = false;
     conn.send({ type: "session.list", limit: SIDEBAR_SESSIONS });
     // The Hugging Face token of the Cookbook, from the keychain.
@@ -698,7 +720,26 @@ export default function App() {
     conn.send({ type: "session.resume", session_id: id });
   };
 
+  // The session that the user sees now. Other sessions get a blue dot when their turn ends.
+  const shownId = screen === "chat" ? (session?.id ?? null) : null;
+  useEffect(() => {
+    const now = new Set(runningSessions.map((r) => r.session_id));
+    const ended = lastRunning.current.map((r) => r.session_id).filter((id) => !now.has(id) && id !== shownId);
+    lastRunning.current = runningSessions;
+    if (ended.length > 0) setUnreadSessions((u) => new Set([...u, ...ended]));
+  }, [runningSessions, shownId]);
+  useEffect(() => {
+    if (!shownId) return;
+    setUnreadSessions((u) => {
+      if (!u.has(shownId)) return u;
+      const next = new Set(u);
+      next.delete(shownId);
+      return next;
+    });
+  }, [shownId]);
+
   const newSession = () => {
+    conn.leaveSession(); // A running turn of the session continues in the background.
     setSession(null);
     dispatch({ type: "clear" });
     setScreen("start");
@@ -1344,7 +1385,9 @@ export default function App() {
         <>
           <Sidebar
             sessions={recent}
-            activeId={screen === "chat" ? (session?.id ?? null) : null}
+            running={runningSessions}
+            unread={unreadSessions}
+            activeId={shownId}
             screen={screen}
             status={status}
             projects={projects ?? []}

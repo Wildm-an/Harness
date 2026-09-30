@@ -39,6 +39,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `session.new` | `cwd`, `model`, `provider` (optional) | `model` is `<provider>/<model>` or `<model>`. A bare model uses `provider`, or the first provider in `providers.json`. If `model` is empty, the daemon uses `default_model` from the settings. |
 
 | `session.list` | `cwd` (optional), `limit` (optional) | Asks for the stored sessions, newest first. With `cwd`, only the sessions of that folder (case-insensitive on Windows). `limit` is 50 by default, and at most 500. |
+| `session.leave` | — | The client shows the start screen. The current session closes, or stays open in the background if a turn runs. |
 | `projects.list` | — | Asks for the saved projects, the last used first. This needs no session. |
 | `projects.save` | `path`, `name` (optional), `id` (optional), `create` (optional) | Adds a project, or changes the project `id`. `path` must be absolute. With `create`, the daemon makes a missing folder. Two projects cannot use the same folder. |
 | `projects.delete` | `id` | Removes a project from the list. The folder, its files, and its sessions stay. |
@@ -113,6 +114,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `context.usage` | `tokens`, `length`, `compact_at`, `source`, `parts` | The size of each part of the next request: `system`, `instructions`, `skills`, `summary`, `tools`, `mcp_tools`, and `messages`. The parts are estimates, scaled so that their sum is `tokens` (the endpoint count of the last request, when the endpoint gives it). |
 | `fs.found` | `query`, `items` | Reply to `fs.find`: at most 40 project paths, best match first. A folder ends with `/`. |
 | `sessions` | `items`, `cwd` | Reply to `session.list`. `cwd` is the value from the request, or null. Each item has `id`, `cwd`, `provider`, `model`, `title`, `created_at`, and `updated_at`. |
+| `sessions.running` | `items` | The sessions of the connection that have a running turn. Each item has `session_id` and `waiting` (the turn waits for a permission decision). The daemon sends it when the list changes. |
 
 | `command.result` | `name`, and `text`, `items`, `model`, `warnings`, `action`, or `panel` | Reply to a built-in command. `action: "open_panel"` tells the client to open `panel`. |
 
@@ -170,6 +172,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `session.ready` | `files_token` | Project files for the Browser pane: `GET /files/<files_token>/<path>`. The token ends with the session. |
 | `session.ready` | `project` | The saved project of the session folder: `id` and `name`, or null. |
 | `session.ready` | `auto_verify`, `image_input` | `auto_verify`: the agent checks the app after each UI change. `image_input`: the model accepts images, so the agent has `preview_screenshot`. |
+| `session.ready` | `running`, `partial`, `requests` | `running` is true if the session has a running turn. Then `history` includes the turn so far, `partial` is the reply text that streams now (or null), and `requests` holds the open `permission.request` messages. |
+| The events of a session | `session_id` | The daemon adds the session id to each event of a session: the turn events, and the events of its servers, MCP servers, and agent browser. |
 | `command.result` | `image_input` | After `/model`: the new model accepts images. |
 | `tool.result` | `image` | A data URL of an image for the model, for example the screenshot of `preview_screenshot`. A stored `tool` message in `history` also has `image`. |
 | `permission.request` | `input` | For `preview_start`, `input` is `name`, `command`, and `cwd` of the server, and `rule` is `server(<command>)`: the same request as a start from the Servers pane. |
@@ -217,7 +221,9 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 
 
-- The daemon runs one turn at a time for each connection. A `prompt` during a turn gets an `error`.
+- The daemon runs one turn at a time for each session. A `prompt` during a turn gets an `error`.
+- The client can go to another session (`session.new`, `session.resume`) or to the start screen (`session.leave`) during a turn. The turn continues in the background, and the client gets no events of it. A later `session.resume` of that session shows the turn again. When a turn in the background ends, the session closes: its servers, MCP servers, and agent browser stop. When the connection closes, all turns stop.
+- A tool that fails with an unexpected error gives an error result to the model. The turn continues. A `glob` or `grep` search stops after 30 seconds with an error result.
 - A `command` with a skill name starts the skill as a turn. Built-in commands have priority over skills with the same name. A skill with `user-invocable: false` gets an `error`.
 - The daemon watches each file that the client read with `fs.read`, until `fs.unwatch`. If the file changes and the change is not from the agent tools or from `fs.write`, the daemon sends `fs.changed`. `by` is `agent` during a turn (probably a `bash` command), and `external` at other times.
 - A prompt can have references: lines (`@src/app.py:10-25`), a file (`@src/app.py`), a folder (`@src/`), or a session (`@session:<id>`). The daemon adds the referenced text to the prompt for the model, and it stores the original prompt as `display`. A `prompt` can have `display`: the text that the user sees, for example with the name of a session in place of its id.

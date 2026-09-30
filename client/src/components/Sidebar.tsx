@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Boxes, Cable, ChevronRight, Folder, FolderOpen, PanelLeftClose, Plus, Puzzle, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
-import type { ProjectItem, SessionSummary } from "../daemon/protocol";
+import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
 
 // A project shows this many sessions. "Show more" shows the rest.
@@ -68,6 +68,22 @@ function loadExpanded(): Record<string, boolean> {
   }
 }
 
+export interface SessionState {
+  kind: "idle" | "running" | "awaiting" | "unread";
+  label: string; // The tooltip of the indicator.
+}
+
+/**
+ * The state of a session row. "awaiting": the turn waits for a permission decision. "unread": the
+ * turn ended while the user was in another session. The unread state stays until the user opens the session.
+ */
+export function sessionState(running: RunningSession | undefined, unread: boolean): SessionState {
+  if (running?.waiting) return { kind: "awaiting", label: "Awaiting input: approve or deny a tool call" };
+  if (running) return { kind: "running", label: "Running" };
+  if (unread) return { kind: "unread", label: "Unread response" };
+  return { kind: "idle", label: "Idle" };
+}
+
 function NavButton({ icon: Icon, label, active, disabled, onClick }: {
   icon: LucideIcon;
   label: string;
@@ -89,10 +105,12 @@ function NavButton({ icon: Icon, label, active, disabled, onClick }: {
   );
 }
 
-function ProjectSection({ group, open, activeId, disabled, onToggle, onResume, onNewSession }: {
+function ProjectSection({ group, open, activeId, running, unread, disabled, onToggle, onResume, onNewSession }: {
   group: ProjectGroup;
   open: boolean;
   activeId: string | null;
+  running: Map<string, RunningSession>;
+  unread: Set<string>;
   disabled: boolean;
   onToggle: () => void;
   onResume: (id: string) => void;
@@ -133,6 +151,7 @@ function ProjectSection({ group, open, activeId, disabled, onToggle, onResume, o
           {group.sessions.length === 0 && <li className="side-empty">No sessions yet.</li>}
           {shown.map((s) => {
             const active = s.id === activeId;
+            const state = sessionState(running.get(s.id), unread.has(s.id));
             return (
               <li key={s.id}>
                 <button
@@ -143,6 +162,7 @@ function ProjectSection({ group, open, activeId, disabled, onToggle, onResume, o
                   aria-current={active ? "true" : undefined}
                   title={`${s.title ?? "Untitled session"}\n${s.provider}/${s.model}`}
                 >
+                  <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />
                   <span className="side-session-title">{s.title ?? "Untitled session"}</span>
                   <span className="side-session-age">{shortAge(s.updated_at)}</span>
                 </button>
@@ -165,6 +185,8 @@ function ProjectSection({ group, open, activeId, disabled, onToggle, onResume, o
 export function Sidebar({
   sessions,
   projects,
+  running,
+  unread,
   activeId,
   screen,
   status,
@@ -179,6 +201,8 @@ export function Sidebar({
 }: {
   sessions: SessionSummary[];
   projects: ProjectItem[];
+  running: RunningSession[]; // The sessions with a running turn.
+  unread: Set<string>; // The sessions with a turn that ended while the user was in another session.
   activeId: string | null;
   screen: string;
   status: ConnectionStatus;
@@ -194,6 +218,7 @@ export function Sidebar({
   const [expanded, setExpanded] = useState(loadExpanded);
   const open = status === "open";
   const groups = groupByProject(sessions, projects);
+  const runningById = new Map(running.map((r) => [r.session_id, r]));
   const activeKey = groups.find((g) => g.sessions.some((s) => s.id === activeId))?.key;
 
   // A project that the user did not open or close: open for the active session and the newest project.
@@ -231,6 +256,8 @@ export function Sidebar({
                 group={g}
                 open={isOpen(g, i)}
                 activeId={activeId}
+                running={runningById}
+                unread={unread}
                 disabled={!open}
                 onToggle={() => toggle(g, i)}
                 onResume={onResume}

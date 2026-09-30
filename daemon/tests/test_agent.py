@@ -107,6 +107,18 @@ def test_bad_arguments_and_unknown_tool_go_back_to_the_model(harness_home, proje
     assert "not valid JSON" in results[0]["output"] and "Unknown tool" in results[1]["output"]
 
 
+def test_unexpected_tool_error_goes_back_to_the_model(harness_home, project, fake_model):
+    fake_model.script({"tool_calls": [{"name": "glob", "arguments": {"pattern": "*.py"}}]}, {"text": "ok"})
+    agent, events, _ = make_agent(project)
+
+    async def broken(args, ctx):
+        raise RuntimeError("a bug in the tool")
+    agent.tools["glob"].run = broken
+    assert asyncio.run(agent.run_turn("go")) == "end"
+    result = next(e for e in events if e["type"] == "tool.result")
+    assert result["is_error"] and "RuntimeError: a bug in the tool" in result["output"]
+
+
 def test_interrupt_stops_a_running_command(harness_home, project, fake_model):
     fake_model.script({"tool_calls": [{"name": "bash", "arguments": {"command": "sleep 30"}}]})
     agent, events, _ = make_agent(project)

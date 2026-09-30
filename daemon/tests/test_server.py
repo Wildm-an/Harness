@@ -173,6 +173,80 @@ def test_interrupt(daemon, project, fake_model):
     c.close()
 
 
+def test_return_to_a_session_with_a_running_turn(daemon, project, fake_model):
+    fake_model.script(
+        {"tool_calls": [{"name": "edit", "arguments": {"path": "hello.py", "old_string": "'hello'", "new_string": "'hey'"}}]},
+        {"text": "Changed."},
+    )
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.send({"type": "prompt", "text": "edit it"})
+    request, seen = c.until("permission.request")
+    assert request["session_id"] == first["session_id"]
+    running = [m for m in seen if m["type"] == "sessions.running"]
+    assert running[-1]["items"] == [{"session_id": first["session_id"], "waiting": True}]
+
+    # Go to a new session. The turn of the first session waits in the background.
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    second, seen = c.until("session.ready")
+    assert second["session_id"] != first["session_id"] and not second["running"]
+    assert not [m for m in seen if m["type"] == "error"]
+
+    # Return to the first session. The client gets the open request again.
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    back = c.until("session.ready")[0]
+    assert back["running"] and back["requests"][0]["request_id"] == request["request_id"]
+    assert [m["role"] for m in back["history"]] == ["user", "assistant"]
+    c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
+    end, seen = c.until("turn.end")
+    assert end["session_id"] == first["session_id"] and end["stop_reason"] == "end"
+    assert "'hey'" in (project / "hello.py").read_text()
+    idle = c.until("sessions.running")[0]
+    assert idle["items"] == []
+    c.close()
+
+
+def test_turn_in_the_background_completes(daemon, project, fake_model):
+    (project / ".harness").mkdir()
+    (project / ".harness" / "settings.json").write_text(json.dumps({"allow": ["bash(sleep 2)"]}))
+    fake_model.script({"tool_calls": [{"name": "bash", "arguments": {"command": "sleep 2"}}]}, {"text": "Done."})
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.send({"type": "prompt", "text": "wait"})
+    c.until("tool.start")
+    c.send({"type": "session.leave"})  # The start screen.
+    # The client gets no events of the turn, only the running sessions.
+    msg, seen = c.until("sessions.running", timeout=20)
+    while msg["items"]:
+        msg, more = c.until("sessions.running", timeout=20)
+        seen += more
+    assert {m["type"] for m in seen} == {"sessions.running"}
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    back = c.until("session.ready")[0]
+    assert not back["running"]
+    assert back["history"][-1] == {"role": "assistant", "content": "Done."}
+    c.close()
+
+
+def test_session_switch_uses_the_saved_model_checks(daemon, project, fake_model, monkeypatch):
+    from harness_daemon import server
+    calls = []
+    real = server.resolve_context_length
+
+    async def counted(*args, **kwargs):
+        calls.append(args[1])
+        return await real(*args, **kwargs)
+    monkeypatch.setattr(server, "resolve_context_length", counted)
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    c.until("session.ready")
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    c.until("session.ready")
+    assert calls == ["test-model"]
+    c.close()
+
+
 def test_editor_files_and_conflict(daemon, project, fake_model):
     (project / "src").mkdir()
     (project / "src" / "app.py").write_bytes(b"x = 1\n")

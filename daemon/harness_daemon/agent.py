@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -40,6 +41,8 @@ from .tools import (
     preview_tools,
     truncate,
 )
+
+log = logging.getLogger("harness.agent")
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 # Called after a compaction with the number of removed history messages and the new summary.
@@ -113,6 +116,7 @@ class Agent:
         self.on_compact = on_compact
         # The prompt tokens that the endpoint reported, and the history length at that time.
         self._known_tokens: tuple[int, int] | None = None
+        self.streamed: list[str] = []  # The reply text that streams now. It is not in the history yet.
         self._rebuild_prompt()
 
     def _plugin_sections(self) -> list[str]:
@@ -323,6 +327,7 @@ class Agent:
         max_calls = int(self.settings["max_tool_calls"])
         calls_used = 0
         streamed: list[str] = []
+        self.streamed = streamed  # A client that returns to the session reads it.
         open_calls: list[dict[str, str]] = []  # Tool calls that have no result yet.
         in_flight: str | None = None  # The id of the tool call that runs now.
         stop = "end"
@@ -577,6 +582,9 @@ class Agent:
             call.result = ToolResult(str(e), is_error=True)
         except OSError as e:
             call.result = ToolResult(f"{type(e).__name__}: {e}", is_error=True)
+        except Exception as e:  # noqa: BLE001 - a tool bug gives an error result. The turn continues.
+            log.exception("The tool %s failed", name)
+            call.result = ToolResult(f"The tool failed: {type(e).__name__}: {e}", is_error=True)
         call = await self.hooks.emit("tool.after", call)
         return call.result if isinstance(call.result, ToolResult) else ToolResult(str(call.result))
 

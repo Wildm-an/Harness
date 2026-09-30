@@ -11,9 +11,12 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterator
+
+from .base import ToolError
 
 # Folders that the Python search never enters.
 SKIP_DIRS = {
@@ -21,7 +24,12 @@ SKIP_DIRS = {
     ".pytest_cache", ".ruff_cache", ".tox", "dist", "build", "target", ".next", ".cache", ".idea",
 }
 
-RG_TIMEOUT = 30
+# Seconds for one search. After this time, the tool gives an error result to the model.
+SEARCH_TIMEOUT = 30
+TIMEOUT_MESSAGE = (
+    "The search stopped after {seconds} seconds. The folder has too many files. "
+    "Use a narrower path or pattern."
+)
 
 
 def find_ripgrep(configured: str | None = None) -> str | None:
@@ -31,21 +39,31 @@ def find_ripgrep(configured: str | None = None) -> str | None:
 
 
 def run_ripgrep(rg: str, args: list[str], cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [rg, *args],
-        cwd=str(cwd),
-        capture_output=True,
-        timeout=RG_TIMEOUT,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    """Run ripgrep. Raise ToolError if it does not complete in SEARCH_TIMEOUT seconds."""
+    try:
+        return subprocess.run(
+            [rg, *args],
+            cwd=str(cwd),
+            capture_output=True,
+            timeout=SEARCH_TIMEOUT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.TimeoutExpired:
+        raise ToolError(TIMEOUT_MESSAGE.format(seconds=SEARCH_TIMEOUT)) from None
 
 
-def walk_files(root: Path) -> Iterator[Path]:
-    """Yield the files under ``root``. Skip the folders in SKIP_DIRS."""
+def walk_files(root: Path, timeout: float = SEARCH_TIMEOUT) -> Iterator[Path]:
+    """Yield the files under ``root``. Skip the folders in SKIP_DIRS.
+
+    Raise ToolError if the walk takes more than ``timeout`` seconds.
+    """
     if root.is_file():
         yield root
         return
+    deadline = time.monotonic() + timeout
     for folder, dirs, files in os.walk(root):
+        if time.monotonic() >= deadline:
+            raise ToolError(TIMEOUT_MESSAGE.format(seconds=timeout))
         dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
         for name in sorted(files):
             yield Path(folder) / name
