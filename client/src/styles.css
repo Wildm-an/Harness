@@ -3911,92 +3911,173 @@ select {
   color: var(--text-muted);
 }
 
-/* tool rows: a status dot, the tool name, and its input, as in Claude Code */
+/* Tool calls, as in Claude: a line with a muted verb and a bright object ("Read test.png >").
+   The calls in a row are one group: a summary line, and an accordion with one row for each call. */
 
 .tool-card {
   border-radius: var(--radius);
 }
 
-.tool-card + .tool-card {
-  margin-top: -6px;
-}
-
-.tool-head {
+.tool-head,
+.tool-group-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  max-width: 100%;
   min-height: 32px;
   padding: 0 8px;
   border: none;
   border-radius: var(--radius);
   background: transparent;
-  color: var(--text);
+  color: var(--text-muted);
   font: inherit;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
-  transition: background var(--duration) var(--ease-out);
+  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
 }
 
-.tool-head:hover {
-  background: var(--hover);
+.tool-head {
+  width: 100%;
 }
 
-.tool-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--success);
+.tool-head:hover,
+.tool-group-head:hover {
+  color: var(--text);
 }
 
-.tool-running .tool-dot {
-  background: var(--accent);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-.tool-error .tool-dot {
-  background: var(--danger);
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
-
-.tool-name {
-  flex: none;
-  font-weight: 600;
-  font-size: 13.5px;
-}
-
-.tool-summary {
-  flex: 1;
+.tool-text,
+.tool-group-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-verb {
   color: var(--text-muted);
+}
+
+.tool-object {
+  margin-left: 0.35em;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.tool-object.mono {
   font-family: var(--font-mono);
   font-size: 12.5px;
+  font-weight: 400;
+}
+
+.tool-state {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.tool-state.failed {
+  color: var(--danger);
+}
+
+.tool-error .tool-verb {
+  color: var(--danger);
 }
 
 .tool-chevron {
   flex: none;
   color: var(--text-muted);
-  opacity: 0;
-  transition: transform var(--duration) var(--ease-out), opacity var(--duration) var(--ease-out);
+  transition: transform var(--duration) var(--ease-out);
 }
 
-.tool-head:hover .tool-chevron,
-.tool-head:focus-visible .tool-chevron,
-.tool-head[aria-expanded="true"] .tool-chevron {
-  opacity: 1;
-}
-
-.tool-head[aria-expanded="true"] .tool-chevron {
+.tool-head[aria-expanded="true"] .tool-chevron,
+.tool-group-head[aria-expanded="true"] .tool-chevron {
   transform: rotate(90deg);
+}
+
+/* The rows of a group: a frame with a line between the rows. */
+.tool-group-list {
+  margin: 4px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.tool-group-list > .tool-card {
+  border-radius: 0;
+}
+
+.tool-group-list > .tool-card + .tool-card {
+  border-top: 1px solid var(--border);
+}
+
+.tool-group-list .tool-head {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 0;
+}
+
+.tool-group-list .tool-head:hover {
+  background: var(--hover);
+}
+
+.tool-group-list .tool-body {
+  margin: 0 14px 10px;
+}
+
+/* A file change in an opened row. */
+.inline-diff {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.inline-diff-line {
+  display: flex;
+  min-width: max-content;
+  padding-right: 12px;
+  white-space: pre;
+}
+
+.inline-diff-line.add {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.inline-diff-line.del {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.inline-diff-line.hunk {
+  padding: 2px 12px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.inline-diff-no {
+  flex: none;
+  width: 4ch;
+  padding-right: 8px;
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.inline-diff-sign {
+  flex: none;
+  width: 2ch;
+  user-select: none;
+}
+
+.inline-diff-line.add .inline-diff-sign {
+  color: var(--success);
+}
+
+.inline-diff-line.del .inline-diff-sign {
+  color: var(--danger);
 }
 
 /* The details hang under the name, as the output of a Claude Code tool. */

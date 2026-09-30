@@ -13,6 +13,12 @@ class BashTool(Tool):
         "properties": {
             "command": {"type": "string", "description": "The command to run."},
             "timeout": {"type": "integer", "description": "Timeout in seconds. Optional."},
+            # The client shows it in the list of actions, as Claude Code does. It does not change the command.
+            "description": {
+                "type": "string",
+                "description": "What the command does, in 3 to 8 words, in the past tense, for the user. "
+                               "For example: Listed the skill files. Optional.",
+            },
         },
         "required": ["command"],
     }

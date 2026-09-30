@@ -1,7 +1,9 @@
 import { memo, useState } from "react";
-import { ChevronRight, FileDiff, FileText } from "lucide-react";
+import { ChevronRight, CircleX, FileDiff, FileText, LoaderCircle } from "lucide-react";
 import type { ToolItem } from "../chat/state";
+import { toolAction } from "../chat/toolText";
 import { DiffStats } from "./DiffStats";
+import { InlineDiff } from "./InlineDiff";
 import { useOpenPath } from "../lib/openPath";
 
 // The names that Claude Code shows for its tools.
@@ -72,7 +74,7 @@ export const ToolCard = memo(function ToolCard({
     ? input.path
     : null;
   const summary = toolSummary(item.name, item.input);
-  const statusLabel = item.status === "running" ? "Running" : item.status === "error" ? "Failed" : "Done";
+  const action = toolAction(item);
 
   return (
     <div className={`tool-card tool-${item.status}`}>
@@ -81,16 +83,19 @@ export const ToolCard = memo(function ToolCard({
         className="tool-head"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={open ? "Hide details" : "Show details"}
+        title={`${toolLabel(item.name)}: ${summary}`}
       >
-        <span className="tool-dot" role="img" aria-label={statusLabel} title={statusLabel} />
-        <span className="tool-name">{toolLabel(item.name)}</span>
+        {item.status === "running" && <LoaderCircle size={13} className="tool-state spin" role="img" aria-label="Running" />}
+        {item.status === "error" && <CircleX size={13} className="tool-state failed" role="img" aria-label="Failed" />}
+        <span className="tool-text">
+          <span className="tool-verb">{action.verb}</span>
+          {action.object && <span className={`tool-object${action.mono ? " mono" : ""}`}>{action.object}</span>}
+        </span>
         {item.agent && (
           <span className="tool-agent" title={`The skill ${item.agent} runs this tool in a separate context`}>
             /{item.agent}
           </span>
         )}
-        <span className="tool-summary">{summary}</span>
         {item.diff && <DiffStats diff={item.diff} />}
         <ChevronRight className="tool-chevron" size={14} aria-hidden />
       </button>
@@ -112,6 +117,12 @@ export const ToolCard = memo(function ToolCard({
               <FileDiff size={14} aria-hidden />
               {reviewing ? "In review" : "Review the change"}
             </button>
+          )}
+          {item.diff && (
+            <>
+              <div className="tool-section-label">Change</div>
+              <InlineDiff diff={item.diff} />
+            </>
           )}
           <div className="tool-section-label">Input</div>
           <pre className="tool-pre">{JSON.stringify(item.input, null, 2)}</pre>

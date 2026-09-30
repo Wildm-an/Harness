@@ -4,9 +4,22 @@ import type { ChatItem } from "../chat/state";
 import type { Decision } from "../daemon/protocol";
 import { Markdown } from "./Markdown";
 import { PermissionCard } from "./PermissionCard";
-import { ToolCard } from "./ToolCard";
+import { ToolGroup } from "./ToolGroup";
 
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
+type ToolItem = Extract<ChatItem, { kind: "tool" }>;
+
+/** The items to show: the tool calls in a row become one group, as in Claude. */
+export function groupTools(items: ChatItem[]): (ChatItem | { kind: "tools"; id: string; items: ToolItem[] })[] {
+  const out: (ChatItem | { kind: "tools"; id: string; items: ToolItem[] })[] = [];
+  for (const item of items) {
+    const last = out[out.length - 1];
+    if (item.kind !== "tool") out.push(item);
+    else if (last?.kind === "tools") last.items.push(item);
+    else out.push({ kind: "tools", id: `tools-${item.id}`, items: [item] });
+  }
+  return out;
+}
 
 const NOTICE_ICONS = { error: CircleAlert, warning: TriangleAlert, info: Info };
 
@@ -89,7 +102,7 @@ export function MessageList({
     <div className="messages" ref={scroller} onScroll={onScroll} aria-live="polite">
       <div className="column">
         {items.length === 0 && <div className="empty-hint">{emptyHint}</div>}
-        {items.map((item) => {
+        {groupTools(items).map((item) => {
           switch (item.kind) {
             case "user":
               return (
@@ -103,8 +116,10 @@ export function MessageList({
                   <Markdown text={item.text} />
                 </div>
               );
+            case "tools":
+              return <ToolGroup key={item.id} items={item.items} reviewId={reviewId} onReview={onReview} />;
             case "tool":
-              return <ToolCard key={item.id} item={item} reviewing={reviewId === item.id} onReview={onReview} />;
+              return null; // In a group.
             case "permission":
               return (
                 <PermissionCard
