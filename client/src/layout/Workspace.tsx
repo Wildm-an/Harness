@@ -330,10 +330,14 @@ export function Workspace({
   layout,
   onChange,
   panes,
+  reveal,
 }: {
   layout: LayoutNode;
   onChange: (l: LayoutNode) => void;
   panes: Record<PaneId, PaneSpec>;
+  // A request to show a pane, for example "Open in terminal". A narrow window shows it also when the
+  // layout does not change (the pane was already the active tab of its group).
+  reveal?: { pane: PaneId; key: number } | null;
 }) {
   const [dragging, setDragging] = useState<PaneId | null>(null);
   useOverlay(dragging !== null);
@@ -343,6 +347,12 @@ export function Workspace({
   // The pane that became active last, for example after a shortcut. A narrow window shows it.
   const [opened, setOpened] = useState<PaneId | null>(null);
   const previous = useRef(layout);
+
+  useEffect(() => {
+    if (!reveal) return;
+    setOpened(reveal.pane);
+    setNarrowTab(null);
+  }, [reveal]);
 
   useEffect(() => {
     const before = new Set(groups(previous.current).map((g) => g.active));

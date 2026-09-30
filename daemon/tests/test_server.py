@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import socket
 import threading
 import time
@@ -427,4 +428,47 @@ def test_permission_rules_get_and_set(daemon, project, fake_model):
 
     c.send({"type": "permissions.set", "allow": ["not a rule!"], "deny": []})
     assert "Not a valid rule" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_rename_pin_and_delete_a_session(daemon, project, fake_model):
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.send({"type": "session.list"})
+    before = c.until("sessions")[0]["items"][0]
+    assert before["pinned"] is False
+    c.send({"type": "session.update", "session_id": first["session_id"], "title": "  My task  ", "pinned": True})
+    updated = c.until("session.updated")[0]
+    assert updated == {"type": "session.updated", "id": first["session_id"], "title": "My task", "pinned": True}
+    c.send({"type": "session.list"})
+    after = c.until("sessions")[0]["items"][0]
+    assert after["title"] == "My task" and after["pinned"] is True
+    assert after["updated_at"] == before["updated_at"]  # A rename does not change the age.
+    c.send({"type": "session.update", "session_id": first["session_id"], "title": " "})
+    assert "empty" in c.until("error")[0]["message"]
+
+    # Delete the open session: its events stop, and the session is gone.
+    c.send({"type": "session.delete", "session_id": first["session_id"]})
+    assert c.until("session.deleted")[0]["id"] == first["session_id"]
+    c.send({"type": "session.list"})
+    assert all(s["id"] != first["session_id"] for s in c.until("sessions")[0]["items"])
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    assert "Unknown session" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_move_a_session_to_another_folder(daemon, project, fake_model, tmp_path):
+    other = tmp_path / "other-project"
+    other.mkdir()
+    fake_model.script({"text": "Hello."})
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.send({"type": "prompt", "text": "hi"})
+    c.until("turn.end")
+    c.send({"type": "session.move", "session_id": first["session_id"], "cwd": str(other)})
+    moved = c.until("session.ready")[0]
+    assert moved["session_id"] == first["session_id"] and Path(moved["cwd"]) == other.resolve()
+    assert [m["role"] for m in moved["history"]] == ["user", "assistant"]  # The history stays.
+    c.send({"type": "session.move", "session_id": first["session_id"], "cwd": str(tmp_path / "missing")})
+    assert "does not exist" in c.until("error")[0]["message"]
     c.close()

@@ -176,6 +176,7 @@ export interface SessionSummary {
   title: string | null;
   created_at: number;
   updated_at: number;
+  pinned?: boolean; // The sidebar shows it in the Pinned list.
 }
 
 /** A saved project: a folder on the daemon computer. The agent keeps its files in this folder. */
@@ -441,9 +442,12 @@ export interface HfSearchFilters {
 
 export type ClientMessage =
   | { type: "auth"; token: string }
-  | { type: "session.new"; cwd: string; model: string; provider?: string }
+  | { type: "session.new"; cwd: string; model: string; provider?: string; permission_mode?: PermissionMode }
   | { type: "session.resume"; session_id: string }
   | { type: "session.leave" } // The start screen. A running turn of the session continues.
+  | { type: "session.update"; session_id: string; title?: string; pinned?: boolean } // Rename or pin.
+  | { type: "session.delete"; session_id: string }
+  | { type: "session.move"; session_id: string; cwd: string } // Change the folder. The history stays.
   // The terminal pane: the shell of the session.
   | { type: "term.open"; cols: number; rows: number; id?: string; since?: number } // since: the last output number that the pane has.
   | { type: "term.input"; id: string; data: string }
@@ -570,6 +574,8 @@ export type DaemonMessage =
       turn_tokens?: number; // The output tokens of the running turn so far.
     }
   | { type: "session.title"; id: string; title: string } // The model made the title from the first prompt.
+  | { type: "session.updated"; id: string; title: string | null; pinned: boolean }
+  | { type: "session.deleted"; id: string }
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
   // replay: the last output of a running shell. seq: the number of its last output.
   | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean }

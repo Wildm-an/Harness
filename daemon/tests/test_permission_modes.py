@@ -95,3 +95,15 @@ def test_modes_through_the_daemon(daemon, project, fake_model):  # noqa: F811
     c.send({"type": "settings.set", "permission_mode": "yolo"})
     assert "must be one of" in c.until("error")[0]["message"]
     c.close()
+
+
+def test_session_new_sets_the_mode_of_the_start_page(daemon, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model", "permission_mode": "auto"})
+    ready = c.until("session.ready")[0]
+    assert ready["permission_mode"] == "auto"
+    assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "auto"
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model", "permission_mode": "yolo"})
+    assert "must be one of" in c.until("error")[0]["message"]
+    c.close()

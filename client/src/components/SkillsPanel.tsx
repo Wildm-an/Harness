@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from "react";
-import { ArrowLeft, FileText, LoaderCircle, Search, Sparkles, X } from "lucide-react";
+import { ArrowLeft, FileText, LoaderCircle, Search, X } from "lucide-react";
+import { SlashIcon } from "./SlashIcon";
 import type { CommandItem, SkillDetail } from "../daemon/protocol";
 import { Markdown } from "./Markdown";
 
@@ -97,7 +98,7 @@ export const SkillsPanel = memo(function SkillsPanel({
   return (
     <section className="side-pane skills-panel" aria-label="Skills">
       <header className="pane-head">
-        <Sparkles size={16} aria-hidden className="pane-icon" />
+        <SlashIcon size={16} aria-hidden className="pane-icon" />
         <span className="pane-title">Skills{items ? ` (${items.length})` : ""}</span>
         <button type="button" className="icon-btn ghost" onClick={onClose} aria-label="Close skills" title="Close">
           <X size={16} aria-hidden />

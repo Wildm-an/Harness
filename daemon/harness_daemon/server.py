@@ -927,6 +927,16 @@ def _text_arg(msg: dict[str, Any], key: str) -> str:
 @handler("session.new")
 async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
     cwd = _project_dir(msg.get("cwd"))
+    mode = msg.get("permission_mode")
+    if mode is not None:
+        # The mode of the start page. It is a project setting, as with settings.set.
+        if mode not in MODES:
+            raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+        path = project_settings_path(cwd)
+        data = read_json(path, {})
+        if (data.get("permission_mode") or "default") != mode:
+            data["permission_mode"] = mode
+            write_json(path, data)
     live = LiveSession(conn)
     agent, warnings = await conn.make_agent(live, cwd, msg.get("provider"), msg.get("model"))
     session_id = conn.storage.create_session(str(cwd), agent.client.provider.name, agent.client.model)
@@ -947,6 +957,11 @@ async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
             conn.current = live
         await conn.send_ready([])  # No await between the change of the current session and the message.
         return
+    await _open_stored(conn, session_id)
+
+
+async def _open_stored(conn: Connection, session_id: str) -> None:
+    """Open a stored session in its folder, and make it the current session."""
     row = conn.storage.get_session(session_id)
     if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
@@ -958,6 +973,75 @@ async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
     live.session = Session(conn.storage, session_id, agent, title=row["title"])
     await conn.open_session(live)
     await conn.send_ready(warnings)
+
+
+@handler("session.move")
+async def on_session_move(conn: Connection, msg: dict[str, Any]) -> None:
+    """Move a session to another folder: {"session_id", "cwd"}. The history stays. Not during a turn.
+
+    The session opens again in the new folder: its servers, MCP servers, and shell start there.
+    """
+    session_id = _text_arg(msg, "session_id")
+    cwd = _project_dir(msg.get("cwd"))
+    if conn.storage.get_session(session_id) is None:
+        raise ProtocolError(f"Unknown session: {session_id}")
+    live = conn.live.get(session_id)
+    if live is not None:
+        if live.running:
+            raise ProtocolError("A turn is running. Send 'interrupt' first, or wait for 'turn.end'.")
+        if live is conn.current:
+            conn.current = None
+            conn.watched.clear()
+        await conn.close_live(live)
+    conn.storage.update_session(session_id, cwd=str(cwd))
+    await _open_stored(conn, session_id)
+
+
+MAX_TITLE = 120
+
+
+@handler("session.update")
+async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
+    """Rename or pin a session: {"session_id", "title"?, "pinned"?}. The age of the session stays."""
+    session_id = _text_arg(msg, "session_id")
+    if conn.storage.get_session(session_id) is None:
+        raise ProtocolError(f"Unknown session: {session_id}")
+    fields: dict[str, Any] = {}
+    if "title" in msg:
+        title = _text_arg(msg, "title").strip()
+        if not title:
+            raise ProtocolError("The name of the session is empty.")
+        fields["title"] = title[:MAX_TITLE]
+    if "pinned" in msg:
+        if not isinstance(msg["pinned"], bool):
+            raise ProtocolError("'pinned' must be true or false.")
+        fields["pinned"] = int(msg["pinned"])
+    if not fields:
+        raise ProtocolError("Give 'title' or 'pinned'.")
+    conn.storage.update_session(session_id, touch=False, **fields)
+    live = conn.live.get(session_id)
+    if live is not None and live.session is not None and "title" in fields:
+        live.session.title = fields["title"]
+    row = conn.storage.get_session(session_id)
+    await conn.send({"type": "session.updated", "id": session_id, "title": row["title"], "pinned": bool(row["pinned"])})
+
+
+@handler("session.delete")
+async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    """Delete a session and its messages. A running turn and a shell of the session stop."""
+    session_id = _text_arg(msg, "session_id")
+    if conn.storage.get_session(session_id) is None:
+        raise ProtocolError(f"Unknown session: {session_id}")
+    live = conn.live.get(session_id)
+    if live is not None:
+        if live is conn.current:
+            conn.current = None
+            conn.watched.clear()
+        await live.stop_turn()
+        await conn.close_live(live)
+        await conn.send_running()
+    conn.storage.delete_session(session_id)
+    await conn.send({"type": "session.deleted", "id": session_id})
 
 
 @handler("session.leave")

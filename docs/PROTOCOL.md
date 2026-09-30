@@ -36,10 +36,13 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 |---|---|---|
 
-| `session.new` | `cwd`, `model`, `provider` (optional) | `model` is `<provider>/<model>` or `<model>`. A bare model uses `provider`, or the first provider in `providers.json`. If `model` is empty, the daemon uses `default_model` from the settings. |
+| `session.new` | `cwd`, `model`, `provider` (optional), `permission_mode` (optional) | `model` is `<provider>/<model>` or `<model>`. A bare model uses `provider`, or the first provider in `providers.json`. If `model` is empty, the daemon uses `default_model` from the settings. `permission_mode` (the mode of the start page) becomes the project setting, as with `settings.set`. |
 
 | `session.list` | `cwd` (optional), `limit` (optional) | Asks for the stored sessions, newest first. With `cwd`, only the sessions of that folder (case-insensitive on Windows). `limit` is 50 by default, and at most 500. |
 | `session.leave` | — | The client shows the start screen. The current session closes, or stays open in the background if a turn or its shell runs. |
+| `session.update` | `session_id`, `title` (optional), `pinned` (optional) | Renames or pins a session. The age of the session stays. The reply is `session.updated`. |
+| `session.delete` | `session_id` | Deletes a session and its messages. A running turn and a shell of the session stop. The reply is `session.deleted`. |
+| `session.move` | `session_id`, `cwd` | Moves a session to another folder ("Change folder"). The history stays. Not during a turn. The session opens again there, and the reply is `session.ready`. |
 | `term.open` | `cols`, `rows`, `id` (optional), `since` (optional) | Shows the shell of the terminal pane: the running shell of the session, or a new shell in the project folder. `since` is the number of the last output that the client has for the shell `id`. |
 | `term.input` | `id`, `data` | Sends typed text to the shell. |
 | `term.resize` | `id`, `cols`, `rows` | Changes the size of the terminal. |
@@ -121,6 +124,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `term.output` | `id`, `data`, `seq` | Shell output. `seq` goes up by 1 for each message. |
 | `term.exit` | `id`, `code` | The shell stopped. The next `term.open` starts a new shell. |
 | `session.title` | `id`, `title` | The model made a short title from the first prompt of the session `id`. It replaces the first line of the prompt, which is the title until then. The daemon sends it also for a session in the background. |
+| `session.updated` | `id`, `title`, `pinned` | Reply to `session.update`. |
+| `session.deleted` | `id` | Reply to `session.delete`. |
 | `turn.usage` | `prompt_tokens`, `completion_tokens`, `last_prompt_tokens` | The token counts of the running turn so far, after each model reply. The working line shows `completion_tokens`. |
 | `sessions.running` | `items` | The sessions of the connection that have a running turn. Each item has `session_id` and `waiting` (the turn waits for a permission decision). The daemon sends it when the list changes. |
 

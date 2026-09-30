@@ -3,6 +3,9 @@ import { Boxes, Cable, ChevronRight, Folder, FolderOpen, PanelLeftClose, Plus, P
 import type { ConnectionStatus } from "../daemon/connection";
 import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
+import { SessionRow, sessionState, type SessionActions } from "./SessionRow";
+
+export { sessionState, shortAge } from "./SessionRow";
 
 // A project shows this many sessions. "Show more" shows the rest.
 const SHOWN_SESSIONS = 8;
@@ -49,16 +52,6 @@ export function groupByProject(sessions: SessionSummary[], projects: ProjectItem
   return [...groups.values()].sort((a, b) => latest(b) - latest(a) || a.name.localeCompare(b.name));
 }
 
-/** A short age for a session row: "now", "5m", "3h", "2d", or the date. */
-export function shortAge(seconds: number, now: number = Date.now() / 1000): string {
-  const diff = Math.max(0, now - seconds);
-  if (diff < 60) return "now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  if (diff < 7 * 86400) return `${Math.floor(diff / 86400)}d`;
-  return new Date(seconds * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 function loadExpanded(): Record<string, boolean> {
   try {
     const value = JSON.parse(loadPref(EXPANDED_PREF, "{}"));
@@ -66,22 +59,6 @@ function loadExpanded(): Record<string, boolean> {
   } catch {
     return {};
   }
-}
-
-export interface SessionState {
-  kind: "idle" | "running" | "awaiting" | "unread";
-  label: string; // The tooltip of the indicator.
-}
-
-/**
- * The state of a session row. "awaiting": the turn waits for a permission decision. "unread": the
- * turn ended while the user was in another session. The unread state stays until the user opens the session.
- */
-export function sessionState(running: RunningSession | undefined, unread: boolean): SessionState {
-  if (running?.waiting) return { kind: "awaiting", label: "Awaiting input: approve or deny a tool call" };
-  if (running) return { kind: "running", label: "Running" };
-  if (unread) return { kind: "unread", label: "Unread response" };
-  return { kind: "idle", label: "Idle" };
 }
 
 function NavButton({ icon: Icon, label, active, disabled, onClick }: {
@@ -105,7 +82,7 @@ function NavButton({ icon: Icon, label, active, disabled, onClick }: {
   );
 }
 
-function ProjectSection({ group, open, activeId, running, unread, disabled, onToggle, onResume, onNewSession }: {
+function ProjectSection({ group, open, activeId, running, unread, disabled, onToggle, actions, onNewSession }: {
   group: ProjectGroup;
   open: boolean;
   activeId: string | null;
@@ -113,7 +90,7 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
   unread: Set<string>;
   disabled: boolean;
   onToggle: () => void;
-  onResume: (id: string) => void;
+  actions: SessionActions;
   onNewSession: () => void;
 }) {
   const [all, setAll] = useState(false);
@@ -149,26 +126,17 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
       {open && (
         <ul id={listId} className="side-project-sessions">
           {group.sessions.length === 0 && <li className="side-empty">No sessions yet.</li>}
-          {shown.map((s) => {
-            const active = s.id === activeId;
-            const state = sessionState(running.get(s.id), unread.has(s.id));
-            return (
-              <li key={s.id}>
-                <button
-                  type="button"
-                  className={`side-session${active ? " active" : ""}`}
-                  onClick={() => !active && onResume(s.id)}
-                  disabled={disabled}
-                  aria-current={active ? "true" : undefined}
-                  title={`${s.title ?? "Untitled session"}\n${s.provider}/${s.model}`}
-                >
-                  <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />
-                  <span className="side-session-title">{s.title ?? "Untitled session"}</span>
-                  <span className="side-session-age">{shortAge(s.updated_at)}</span>
-                </button>
-              </li>
-            );
-          })}
+          {shown.map((s) => (
+            <SessionRow
+              key={s.id}
+              session={s}
+              active={s.id === activeId}
+              state={sessionState(running.get(s.id), unread.has(s.id))}
+              unread={unread.has(s.id)}
+              disabled={disabled}
+              actions={actions}
+            />
+          ))}
           {group.sessions.length > SHOWN_SESSIONS && (
             <li>
               <button type="button" className="side-more" onClick={() => setAll((v) => !v)}>
@@ -193,7 +161,7 @@ export function Sidebar({
   connection,
   onNewSession,
   onNewSessionIn,
-  onResume,
+  actions,
   onLocalModels,
   onPlugins,
   onConnections,
@@ -209,7 +177,7 @@ export function Sidebar({
   connection: React.ReactNode; // The computer button at the bottom.
   onNewSession: () => void;
   onNewSessionIn: (group: ProjectGroup) => void;
-  onResume: (id: string) => void;
+  actions: SessionActions; // Open, pin, mark as unread, rename, and delete a session.
   onLocalModels: () => void;
   onPlugins: () => void;
   onConnections: () => void;
@@ -217,7 +185,9 @@ export function Sidebar({
 }) {
   const [expanded, setExpanded] = useState(loadExpanded);
   const open = status === "open";
-  const groups = groupByProject(sessions, projects);
+  // Pinned sessions are in their own list at the top, as in Claude.
+  const pinned = sessions.filter((s) => s.pinned);
+  const groups = groupByProject(sessions.filter((s) => !s.pinned), projects);
   const runningById = new Map(running.map((r) => [r.session_id, r]));
   const activeKey = groups.find((g) => g.sessions.some((s) => s.id === activeId))?.key;
 
@@ -245,6 +215,24 @@ export function Sidebar({
       </div>
 
       <div className="side-sessions">
+        {pinned.length > 0 && (
+          <>
+            <h2 className="side-label">Pinned</h2>
+            <ul className="side-pinned">
+              {pinned.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  active={s.id === activeId}
+                  state={sessionState(runningById.get(s.id), unread.has(s.id))}
+                  unread={unread.has(s.id)}
+                  disabled={!open}
+                  actions={actions}
+                />
+              ))}
+            </ul>
+          </>
+        )}
         <h2 className="side-label">Projects</h2>
         {groups.length === 0 ? (
           <p className="side-empty">{open ? "No projects yet. Start a session to add one." : "Connect to a computer to see its projects."}</p>
@@ -260,7 +248,7 @@ export function Sidebar({
                 unread={unread}
                 disabled={!open}
                 onToggle={() => toggle(g, i)}
-                onResume={onResume}
+                actions={actions}
                 onNewSession={() => onNewSessionIn(g)}
               />
             ))}

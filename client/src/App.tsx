@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import {
   Code2,
   Files,
-  Folder,
   Globe as GlobeIcon,
   Server,
   FileDiff,
@@ -15,7 +14,6 @@ import {
   Plug,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   SquareTerminal,
 } from "lucide-react";
 import { chatReducer, emptyChat, type PermissionItem } from "./chat/state";
@@ -67,6 +65,8 @@ import {
 import { SIDEBAR_SHORTCUT, isSidebarShortcut, shortcutLabel, shortcutPane } from "./layout/shortcuts";
 import { TerminalPane } from "./components/TerminalPane";
 import { WorkingLine } from "./components/WorkingLine";
+import { SlashIcon } from "./components/SlashIcon";
+import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { BrowserPane } from "./browser/BrowserPane";
@@ -100,7 +100,10 @@ import {
   setLastConnectionId,
   type Connection,
 } from "./lib/connections";
-import { browserView, forwardCloseAll, forwardOpen, isTauri, pickFolder } from "./lib/tauri";
+import { browserView, forwardCloseAll, forwardOpen, isTauri, pickFolder, revealInExplorer } from "./lib/tauri";
+import { FolderMenu } from "./components/FolderMenu";
+import { QueuedPrompts } from "./components/QueuedPrompts";
+import type { SessionActions } from "./components/SessionRow";
 
 type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins";
 
@@ -202,6 +205,9 @@ export default function App() {
   const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
   // The sessions with a turn that ended while the user was in another session (a blue dot in the sidebar).
+  // The messages that wait for the running turn, for each session. The next one goes when the turn ends.
+  const [queues, setQueues] = useState<Record<string, { id: string; submission: Submission; label: string }[]>>({});
+  const showStartRef = useRef<() => void>(() => undefined);
   const [unreadSessions, setUnreadSessions] = useState<Set<string>>(() => new Set());
   const lastRunning = useRef<RunningSession[]>([]);
   const firstPrompt = useRef<string | null>(null); // The task from the start screen, for the new session.
@@ -379,6 +385,24 @@ export default function App() {
         }
         case "session.title":
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
+          listRecent();
+          return;
+        case "session.updated":
+          setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
+          listRecent();
+          return;
+        case "session.deleted":
+          if (sessionRef.current?.id === msg.id) showStartRef.current();
+          setUnreadSessions((u) => {
+            if (!u.has(msg.id)) return u;
+            const next = new Set(u);
+            next.delete(msg.id);
+            return next;
+          });
+          setQueues((q) => {
+            const { [msg.id]: _gone, ...rest } = q;
+            return rest;
+          });
           listRecent();
           return;
         case "sessions.running":
@@ -725,11 +749,11 @@ export default function App() {
   };
 
   /** Starts a session. The first task from the start screen goes to the agent when the session is ready. */
-  const startSession = (cwd: string, model: string, prompt: string) => {
+  const startSession = (cwd: string, model: string, prompt: string, mode: PermissionMode) => {
     setBusy(true);
     setStartError(null);
     firstPrompt.current = prompt || null;
-    conn.send({ type: "session.new", cwd, model });
+    conn.send({ type: "session.new", cwd, model, permission_mode: mode });
   };
 
   const resumeSession = (id: string) => {
@@ -764,6 +788,7 @@ export default function App() {
     setScreen("start");
     if (conn.status === "open") conn.send({ type: "projects.list" });
   };
+  showStartRef.current = newSession; // The message handler shows the start screen after a delete.
 
   // At the start, the start screen selects the project of the last prompt: the folder of the newest session.
   useEffect(() => {
@@ -919,6 +944,43 @@ export default function App() {
     }
   };
 
+  /** A message during a turn waits in the queue. Else it goes to the agent now. */
+  const submitOrQueue = (s: Submission): boolean => {
+    if (!session || !chat.running) return submit(s);
+    const label = s.kind === "prompt" ? (s.display ?? s.text) : `/${s.name}${s.args ? ` ${s.args}` : ""}`;
+    const item = { id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, submission: s, label };
+    setQueues((q) => ({ ...q, [session.id]: [...(q[session.id] ?? []), item] }));
+    return true;
+  };
+
+  const queue = session ? (queues[session.id] ?? []) : [];
+
+  // When the turn of the shown session ends, the next queued message goes to the agent.
+  useEffect(() => {
+    if (!session || chat.running || status !== "open" || screen !== "chat") return;
+    const next = queues[session.id]?.[0];
+    if (!next) return;
+    setQueues((q) => ({ ...q, [session.id]: (q[session.id] ?? []).filter((i) => i.id !== next.id) }));
+    submit(next.submission);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- submit uses only the connection and dispatch.
+  }, [chat.running, queues, session?.id, status, screen]);
+
+  /** "Send now": the message goes first, and the turn stops. The message then goes to the agent. */
+  const sendNow = (id: string) => {
+    if (!session) return;
+    setQueues((q) => {
+      const list = q[session.id] ?? [];
+      const item = list.find((i) => i.id === id);
+      return item ? { ...q, [session.id]: [item, ...list.filter((i) => i.id !== id)] } : q;
+    });
+    interrupt();
+  };
+
+  const removeQueued = (id: string) => {
+    if (!session) return;
+    setQueues((q) => ({ ...q, [session.id]: (q[session.id] ?? []).filter((i) => i.id !== id) }));
+  };
+
   const decide = useCallback(
     (requestId: string, decision: Decision) => {
       try {
@@ -976,6 +1038,13 @@ export default function App() {
   /** Shows or hides a pane of a shortcut. It opens on the right of the chat, as the other panes do. */
   const toggleShortcutPane = useCallback((pane: PaneId) => {
     setLayout((l) => togglePane(l, pane));
+  }, []);
+
+  // A pane to show now, also on a narrow window where only one tab shows (Workspace "reveal").
+  const [reveal, setReveal] = useState<{ pane: PaneId; key: number } | null>(null);
+  const showPane = useCallback((pane: PaneId) => {
+    setLayout((l) => openPane(l, pane));
+    setReveal((r) => ({ pane, key: (r?.key ?? 0) + 1 }));
   }, []);
 
   // The pane shortcuts. The capture phase runs before the editor and the terminal get the keys.
@@ -1102,6 +1171,7 @@ export default function App() {
   const changeMode = (mode: PermissionMode) => {
     if (!sendSafely({ type: "settings.set", permission_mode: mode })) return;
     setPermissionMode(mode);
+    saveLastMode(currentRef.current?.id ?? "local", mode); // The start page selects the last mode.
     // The mode text under the prompt box shows the mode. Only the bypass mode also gets a warning.
     if (mode === "bypassPermissions") {
       const label = MODES.find((m) => m.mode === mode)?.label ?? mode;
@@ -1255,10 +1325,11 @@ export default function App() {
       <div className="composer">
         <div className="column">
           {chat.running && <WorkingLine turn={chat.turn} items={chat.items} model={session?.model ?? ""} />}
+          <QueuedPrompts items={queue} onSendNow={sendNow} onRemove={removeQueued} />
           <PromptBox
             running={chat.running}
             disabled={status !== "open"}
-            onSubmit={submit}
+            onSubmit={submitOrQueue}
             onInterrupt={interrupt}
             commands={commands}
             onRequestCommands={requestCommands}
@@ -1357,7 +1428,7 @@ export default function App() {
     },
     skills: {
       title: "Skills",
-      icon: Sparkles,
+      icon: SlashIcon,
       closable: true,
       render: () => (
         <SkillsPanel items={skillItems} detail={skillDetail} onOpen={openSkill} onBack={backToSkills} onClose={() => hidePane("skills")} />
@@ -1403,6 +1474,28 @@ export default function App() {
     },
   };
 
+  /** Move the session to another folder. The daemon opens it again there. */
+  const changeFolder = async () => {
+    if (!session) return;
+    const path = await browseFolder(session.cwd);
+    if (path && path !== session.cwd) sendSafely({ type: "session.move", session_id: session.id, cwd: path });
+  };
+
+  // The menu of a session row: open, pin, mark as unread, rename, and delete.
+  const sessionActions: SessionActions = {
+    onResume: (id) => fromSidebar(() => resumeSession(id))(),
+    onPin: (id, pinned) => void sendSafely({ type: "session.update", session_id: id, pinned }),
+    onMarkUnread: (id, on) =>
+      setUnreadSessions((u) => {
+        const next = new Set(u);
+        if (on) next.add(id);
+        else next.delete(id);
+        return next;
+      }),
+    onRename: (id, title) => void sendSafely({ type: "session.update", session_id: id, title }),
+    onDelete: (id) => void sendSafely({ type: "session.delete", session_id: id }),
+  };
+
   const narrow = () => window.matchMedia(NARROW_QUERY).matches;
   const showSidebar = (open: boolean) => {
     setSidebarOpen(open);
@@ -1444,7 +1537,7 @@ export default function App() {
             projects={projects ?? []}
             onNewSession={fromSidebar(newSession)}
             onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
-            onResume={(id) => fromSidebar(() => resumeSession(id))()}
+            actions={sessionActions}
             onLocalModels={fromSidebar(showCookbook)}
             onPlugins={fromSidebar(showPlugins)}
             onConnections={fromSidebar(showProviders)}
@@ -1482,10 +1575,15 @@ export default function App() {
                   {/* The daemon gives the title after the first turn. The sidebar list has it. */}
                   {session.title ?? recent.find((r) => r.id === session.id)?.title ?? "New session"}
                 </span>
-                <span className="chip mono">
-                  <Folder size={12} aria-hidden />
-                  {folder}
-                </span>
+                <FolderMenu
+                  name={folder ?? session.cwd}
+                  path={session.cwd}
+                  canReveal={isTauri() && current?.kind === "local"}
+                  canChange={!chat.running && status === "open"}
+                  onReveal={() => void revealInExplorer(session.cwd).catch((e) => dispatch({ type: "notice", level: "error", text: errorText(e) }))}
+                  onChange={() => void changeFolder()}
+                  onOpenTerminal={() => showPane("terminal")}
+                />
               </>
             )}
           </div>
@@ -1514,7 +1612,7 @@ export default function App() {
                 active={paneVisible("editor")}
                 onClick={() => toggleShortcutPane("editor")}
               />
-              <PaneToggle icon={Sparkles} label="Skills" active={paneVisible("skills")} onClick={paneVisible("skills") ? () => hidePane("skills") : openSkills} />
+              <PaneToggle icon={SlashIcon} label="Skills" active={paneVisible("skills")} onClick={paneVisible("skills") ? () => hidePane("skills") : openSkills} />
               <PaneToggle
                 icon={Plug}
                 label={
@@ -1644,7 +1742,7 @@ export default function App() {
         )}
         {screen === "chat" && session && (
           <OpenPathContext.Provider value={openPath}>
-            <Workspace layout={layout} onChange={setLayout} panes={panes} />
+            <Workspace layout={layout} onChange={setLayout} panes={panes} reveal={reveal} />
           </OpenPathContext.Provider>
         )}
       </main>

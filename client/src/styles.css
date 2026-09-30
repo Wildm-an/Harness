@@ -955,6 +955,14 @@ textarea:focus-visible {
   white-space: normal;
 }
 
+/* The start page: the project and the permission mode on the left of the row under the box. */
+.prompt-below-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 /* The context ring, to the right of the model, and its breakdown panel. */
 .prompt-below-right {
   display: flex;
@@ -5150,4 +5158,212 @@ mark.word-del {
 .terminal-screen,
 .terminal-pane .xterm {
   height: 100%;
+}
+
+/* ---------- the session rows of the sidebar: the ⋮ menu (Pin, Mark as unread, Rename, Delete) ---------- */
+
+.side-session-row {
+  position: relative;
+}
+
+/* Room for the ⋮ button when it shows. */
+.side-session-row:hover .side-session,
+.side-session-row:focus-within .side-session,
+.side-session-row.menu-open .side-session {
+  padding-right: 36px;
+}
+
+.side-session-row:hover .side-session-age,
+.side-session-row:focus-within .side-session-age,
+.side-session-row.menu-open .side-session-age {
+  visibility: hidden;
+}
+
+.side-session-more {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity var(--duration) var(--ease-out), background var(--duration) var(--ease-out);
+}
+
+.side-session-row:hover .side-session-more,
+.side-session-row:focus-within .side-session-more,
+.side-session-row.menu-open .side-session-more {
+  opacity: 1;
+}
+
+.side-session-more:hover,
+.side-session-row.menu-open .side-session-more {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.side-session.renaming {
+  cursor: default;
+}
+
+.side-session-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+}
+
+/* The menu is fixed in the window: the list of sessions scrolls. */
+.menu.session-menu {
+  position: fixed;
+  right: auto;
+}
+
+.session-menu-label {
+  flex: 1;
+}
+
+/* A plain letter, as in Claude: no key frame. */
+.session-menu-key {
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  font: 12px var(--font-sans);
+}
+
+.menu button.danger {
+  color: var(--danger);
+}
+
+.session-menu-confirm {
+  padding: 8px 8px 4px;
+}
+
+.session-menu-confirm p {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.session-menu-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.menu .session-menu-confirm-actions button {
+  width: auto;
+  justify-content: center;
+}
+
+.side-pinned {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---------- the folder chip of the top bar and its menu ---------- */
+
+.folder-menu {
+  position: relative;
+  min-width: 0;
+}
+
+.folder-chip {
+  background: transparent;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: color var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out);
+}
+
+.folder-chip:hover,
+.folder-chip.active {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* Fixed in the window: the title area of the top bar hides its overflow. FolderMenu sets top and left. */
+.menu.folder-dropdown {
+  position: fixed;
+  right: auto;
+  min-width: 200px;
+}
+
+/* ---------- the queued messages above the prompt box ---------- */
+
+.queued {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.queued-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 4px 0 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.queued-icon {
+  flex: none;
+}
+
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-next {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.queued-send {
+  flex: none;
+  gap: 5px;
+}
+
+.queued-remove {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
+
+/* A text character as an icon, for example the "/" of skills. */
+.glyph-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  line-height: 1;
 }

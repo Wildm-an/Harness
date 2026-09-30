@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ClipboardList, FilePenLine, RefreshCw, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react";
 import type { PermissionMode } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
+import { loadPref, savePref } from "../lib/prefs";
 
 // label: the name in the menu. short: the name under the prompt box.
 export const MODES: { mode: PermissionMode; label: string; short: string; help: string; icon: LucideIcon }[] = [
@@ -33,6 +34,16 @@ export const MODES: { mode: PermissionMode; label: string; short: string; help: 
 // Shift+Tab goes through these modes, as in Claude Code. Bypass is only in the menu.
 const CYCLE: PermissionMode[] = ["default", "acceptEdits", "plan", "auto"];
 
+/** The mode of the last session on a connection. The start page selects it. */
+export function lastMode(scope: string): PermissionMode {
+  const saved = loadPref(`mode.${scope}`, "default");
+  return MODES.some((m) => m.mode === saved) ? (saved as PermissionMode) : "default";
+}
+
+export function saveLastMode(scope: string, mode: PermissionMode): void {
+  savePref(`mode.${scope}`, mode);
+}
+
 /** The mode after ``mode`` for Shift+Tab. */
 export function nextMode(mode: PermissionMode): PermissionMode {
   const i = CYCLE.indexOf(mode);
@@ -40,7 +51,11 @@ export function nextMode(mode: PermissionMode): PermissionMode {
 }
 
 /** The permission mode of the session: text under the prompt box, with a menu. */
-export function ModeMenu({ mode, onChange }: { mode: PermissionMode; onChange: (mode: PermissionMode) => void }) {
+export function ModeMenu({ mode, onChange, up = true }: {
+  mode: PermissionMode;
+  onChange: (mode: PermissionMode) => void;
+  up?: boolean; // Open above the chip (under the prompt box of a session). The start page opens it below.
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useOverlay(open);
@@ -85,7 +100,7 @@ export function ModeMenu({ mode, onChange }: { mode: PermissionMode; onChange: (
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && (
-        <div className="menu model-dropdown up mode-dropdown" role="menu" aria-label="Permission mode">
+        <div className={`menu model-dropdown${up ? " up" : ""} mode-dropdown`} role="menu" aria-label="Permission mode">
           {MODES.map((m) => {
             const ItemIcon = m.icon;
             return (

@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissions for the app webview only. The Browser pane webview (label browser) gets no permissions.",
   "webviews": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "opener:allow-open-url"]
+  "permissions": ["core:default", "dialog:allow-open", "opener:allow-open-url", "opener:allow-reveal-item-in-dir"]
 }

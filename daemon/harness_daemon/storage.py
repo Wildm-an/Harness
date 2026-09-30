@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     context_start INTEGER NOT NULL DEFAULT 0,
-    summary TEXT
+    summary TEXT,
+    pinned INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -61,6 +62,8 @@ class Storage:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}
         if "summary" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN summary TEXT")
+        if "pinned" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         # The first start with the projects table: add the folders of the stored sessions.
         if self.db.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
             rows = self.db.execute("SELECT cwd, MIN(created_at), MAX(updated_at) FROM sessions GROUP BY cwd").fetchall()
@@ -149,21 +152,34 @@ class Storage:
         return dict(row) if row else None
 
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        sql = "SELECT id, cwd, provider, model, title, created_at, updated_at FROM sessions"
+        sql = "SELECT id, cwd, provider, model, title, created_at, updated_at, pinned FROM sessions"
         params: tuple = ()
         sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
+        for r in rows:
+            r["pinned"] = bool(r["pinned"])
         if cwd:  # Compare as paths: case-insensitive on Windows.
             key = path_key(cwd)
             rows = [r for r in rows if path_key(r["cwd"]) == key]
         return rows[:limit]
 
-    def update_session(self, session_id: str, **fields: Any) -> None:
-        allowed = {"provider", "model", "title", "context_start", "summary"}
+    def update_session(self, session_id: str, touch: bool = True, **fields: Any) -> None:
+        """Change fields of a session. ``touch``: the session is newer (for example after a prompt).
+        A rename or a pin does not change the age of the session."""
+        allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "cwd"}
         fields = {k: v for k, v in fields.items() if k in allowed}
-        fields["updated_at"] = time.time()
+        if touch:
+            fields["updated_at"] = time.time()
+        if not fields:
+            return
         assignments = ", ".join(f"{k} = ?" for k in fields)
         self.db.execute(f"UPDATE sessions SET {assignments} WHERE id = ?", (*fields.values(), session_id))
+        self.db.commit()
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session and its messages. It cannot be undone."""
+        self.db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self.db.commit()
 
     def next_seq(self, session_id: str) -> int:

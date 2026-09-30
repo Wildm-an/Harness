@@ -22,6 +22,12 @@ export async function pickFolder(): Promise<string | null> {
   return typeof result === "string" ? result : null;
 }
 
+/** Shows a folder or a file in Explorer (Finder on macOS). Only for the daemon on this computer. */
+export async function revealInExplorer(path: string): Promise<void> {
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
+
 /** Opens an http or https URL in the system browser. */
 export async function openExternal(url: string): Promise<void> {
   if (isTauri()) {

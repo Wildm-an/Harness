@@ -13,9 +13,10 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { ProjectItem, SessionSummary } from "../daemon/protocol";
+import type { PermissionMode, ProjectItem, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
+import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
 import { loadPref, savePref } from "../lib/prefs";
 
 function relativeTime(seconds: number): string {
@@ -277,7 +278,8 @@ export function SessionStart({
   sessions: { cwd: string | null; items: SessionSummary[] };
   busy: boolean;
   error: string | null;
-  onStart: (cwd: string, model: string, prompt: string) => void; // prompt: the first task, or "" for none.
+  // prompt: the first task, or "" for none. mode: the permission mode of the new session.
+  onStart: (cwd: string, model: string, prompt: string, mode: PermissionMode) => void;
   onResume: (id: string) => void;
   prefScope: string; // The project and the model are remembered for each connection.
   onBrowse: (current: string) => Promise<string | null>; // The native dialog, or the remote folder picker.
@@ -296,6 +298,7 @@ export function SessionStart({
   const selected = projects?.find((p) => p.id === selectedId) ?? projects?.[0] ?? null;
   const modelKey = (id: string | undefined) => (id ? `model.${prefScope}.${id}` : `model.${prefScope}`);
   const [model, setModel] = useState("");
+  const [mode, setMode] = useState<PermissionMode>(() => lastMode(prefScope)); // The mode of the last session.
   const noProjects = projects !== null && projects.length === 0;
   // With no project, the form to add one is open: a session needs a project.
   const shownForm = form ?? (noProjects ? { draft: NEW_PROJECT, key: 0 } : null);
@@ -341,13 +344,17 @@ export function SessionStart({
     if (!canStart) return;
     savePref(modelKey(selected.id), model.trim());
     savePref(`model.${prefScope}`, model.trim());
-    onStart(selected.path, model.trim(), text.trim());
+    saveLastMode(prefScope, mode);
+    onStart(selected.path, model.trim(), text.trim(), mode);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       start();
+    } else if (e.key === "Tab" && e.shiftKey) {
+      e.preventDefault(); // Shift+Tab changes the mode, as in a session.
+      setMode(nextMode(mode));
     }
   };
 
@@ -390,16 +397,19 @@ export function SessionStart({
             {busy ? <LoaderCircle size={16} className="spin" aria-hidden /> : <CornerDownLeft size={16} aria-hidden />}
           </button>
         </form>
-        {/* The project and the model below the box, as the mode and the model in a session. */}
+        {/* The project, the permission mode, and the model below the box, as in a session. */}
         <div className="prompt-below">
-          <ProjectMenu
-            projects={projects}
-            selected={selected}
-            onSelect={select}
-            onAdd={() => openForm(NEW_PROJECT)}
-            onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
-            onDelete={onDeleteProject}
-          />
+          <div className="prompt-below-left">
+            <ProjectMenu
+              projects={projects}
+              selected={selected}
+              onSelect={select}
+              onAdd={() => openForm(NEW_PROJECT)}
+              onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
+              onDelete={onDeleteProject}
+            />
+            <ModeMenu mode={mode} onChange={setMode} up={false} />
+          </div>
           <ModelMenu
             value={model}
             models={models}

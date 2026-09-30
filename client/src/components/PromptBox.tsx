@@ -177,7 +177,7 @@ export function PromptBox({
 
   const submit = () => {
     const parsed = parseSubmission(text);
-    if (!parsed || running || disabled) return;
+    if (!parsed || disabled) return; // During a turn, the app puts the message in the queue.
     let s = parsed;
     if (s.kind === "prompt") {
       const resolved = resolveSessionRefs(s.text, sessionRefs.current);
@@ -191,7 +191,7 @@ export function PromptBox({
 
   /** Put the command in the box. A command with no arguments runs at once if ``run`` is set. */
   const choose = (item: CommandItem, run: boolean) => {
-    if (run && !item["argument-hint"] && !running) {
+    if (run && !item["argument-hint"]) {
       if (onSubmit({ kind: "command", name: item.name, args: "" })) change("");
       return;
     }
@@ -250,7 +250,7 @@ export function PromptBox({
     }
   };
 
-  const canSend = !running && !disabled && text.trim().length > 0;
+  const canSend = !disabled && text.trim().length > 0;
   const mentionOpen = mention !== null && mentionItems.length > 0;
   const activeId = menuOpen && matches.length > 0 ? `slash-opt-${active}` : mentionOpen ? `mention-opt-${mentionActive}` : undefined;
   const firstSession = mentionItems.findIndex((i) => i.kind === "session");
@@ -369,7 +369,7 @@ export function PromptBox({
           rows={1}
           value={text}
           disabled={disabled}
-          placeholder={running ? "The agent is working. Press Esc to interrupt." : "Ask the agent. Type / for commands, @ for files."}
+          placeholder={running ? "Type a message to queue it. Esc interrupts the agent." : "Ask the agent. Type / for commands, @ for files."}
           onChange={(e) => change(e.target.value, e.target.selectionStart)}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
@@ -381,7 +381,7 @@ export function PromptBox({
           aria-activedescendant={activeId}
         />
         {/* In line with the text. When the text grows, the button stays at the bottom right. */}
-        {running ? (
+        {running && !canSend ? (
           <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
             <Square size={12} fill="currentColor" aria-hidden />
           </button>
@@ -391,8 +391,8 @@ export function PromptBox({
             className="icon-btn send"
             onClick={submit}
             disabled={!canSend}
-            aria-label="Send (Enter)"
-            title="Send (Enter)"
+            aria-label={running ? "Queue (Enter)" : "Send (Enter)"}
+            title={running ? "Queue (Enter): it goes to the agent when the turn ends" : "Send (Enter)"}
           >
             <CornerDownLeft size={16} aria-hidden />
           </button>
