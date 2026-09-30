@@ -11,6 +11,10 @@ describe("the permission mode menu", () => {
     expect(nextMode("bypassPermissions")).toBe("default");
   });
 
+  it("has a short name for the chip under the prompt box", () => {
+    expect(MODES.map((m) => m.short)).toEqual(["Ask", "Accept edits", "Plan", "Auto", "Bypass"]);
+  });
+
   it("has a label for each mode", () => {
     expect(MODES.map((m) => m.mode)).toEqual(["default", "acceptEdits", "plan", "auto", "bypassPermissions"]);
   });
