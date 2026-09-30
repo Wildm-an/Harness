@@ -463,6 +463,58 @@ textarea:focus-visible {
   color: var(--accent);
 }
 
+/* The "More" accordion: the pane buttons of the open session. */
+.side-more-chevron {
+  transition: transform var(--duration) var(--ease-out);
+}
+
+.side-more-toggle.open .side-more-chevron {
+  transform: rotate(90deg);
+}
+
+.side-more-toggle,
+.side-more-list .side-item {
+  color: var(--text-muted);
+}
+
+.side-more-toggle:hover:not(:disabled),
+.side-more-list .side-item:hover:not(:disabled),
+.side-more-list .side-item.active {
+  color: var(--text);
+}
+
+.side-more-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.side-more-list .side-item > svg,
+.side-more-list .side-item > .glyph-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.side-item-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.side-item-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.side-item-alert {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
 .side-item:hover:not(:disabled),
 .side-session:hover:not(:disabled) {
   background: var(--hover);
@@ -518,14 +570,15 @@ textarea:focus-visible {
   background: var(--hover);
 }
 
+/* The project name, then its chevron, as in Claude. The name lines up with the "Projects" label. */
 .side-project-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   min-height: 34px;
-  padding: 0 4px 0 6px;
+  padding: 0 4px 0 10px;
   border: none;
   border-radius: var(--radius);
   background: transparent;
@@ -858,6 +911,20 @@ textarea:focus-visible {
 
 .topbar > .title-nav {
   margin-left: -8px;
+}
+
+/* The app logo, at the far left of the title bar. The window can be dragged by it. */
+.title-logo {
+  flex: none;
+  margin: 0 6px 0 4px;
+  user-select: none;
+}
+
+/* The logo is white. Make it black on the light theme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .title-logo {
+    filter: invert(1);
+  }
 }
 
 .topbar-title {

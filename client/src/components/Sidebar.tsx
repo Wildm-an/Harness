@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Boxes, Cable, ChevronRight, Folder, FolderOpen, Plus, Puzzle, type LucideIcon } from "lucide-react";
+import { Boxes, Cable, ChevronRight, Plus, Puzzle, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
 import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
@@ -7,9 +7,22 @@ import { SessionRow, sessionState, type SessionActions } from "./SessionRow";
 
 export { sessionState } from "./SessionRow";
 
+/** A pane button of the "This session" group: Skills, MCP servers, or Permission rules. */
+export interface SessionTool {
+  key: string;
+  icon: LucideIcon;
+  label: string;
+  active: boolean; // The pane is open.
+  detail?: string; // Short text on the right, for example "2/3" for the MCP servers.
+  alert?: boolean; // A red dot: for example, an MCP server failed.
+  title?: string; // The hover tip.
+  onClick: () => void;
+}
+
 // A project shows this many sessions. "Show more" shows the rest.
 const SHOWN_SESSIONS = 8;
 const EXPANDED_PREF = "sidebar.expanded";
+const MORE_PREF = "sidebar.more"; // "1": the "More" accordion is open.
 
 /** A key to compare folder paths: "/" separators, no trailing "/", and no case on Windows paths. */
 export function pathKey(path: string): string {
@@ -82,6 +95,30 @@ function NavButton({ icon: Icon, label, active, disabled, onClick }: {
   );
 }
 
+/** A button that shows or hides a pane of the session. */
+function ToolButton({ tool, disabled }: { tool: SessionTool; disabled: boolean }) {
+  const Icon = tool.icon;
+  return (
+    <button
+      type="button"
+      className={`side-item${tool.active ? " active" : ""}`}
+      onClick={tool.onClick}
+      disabled={disabled}
+      aria-pressed={tool.active}
+      title={tool.title}
+    >
+      <Icon size={16} aria-hidden />
+      <span>{tool.label}</span>
+      {(tool.detail || tool.alert) && (
+        <span className="side-item-end">
+          {tool.detail && <span className="side-item-detail">{tool.detail}</span>}
+          {tool.alert && <span className="side-item-alert" role="img" aria-label="A server failed" />}
+        </span>
+      )}
+    </button>
+  );
+}
+
 function ProjectSection({ group, open, activeId, running, unread, disabled, onToggle, actions, onNewSession }: {
   group: ProjectGroup;
   open: boolean;
@@ -96,7 +133,6 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
   const [all, setAll] = useState(false);
   const shown = all ? group.sessions : group.sessions.slice(0, SHOWN_SESSIONS);
   const listId = `side-project-${group.key.replace(/[^a-z0-9]/gi, "-")}`;
-  const Icon = open ? FolderOpen : Folder;
   return (
     <li className={`side-project${open ? " open" : ""}`}>
       <div className="side-project-head">
@@ -108,9 +144,8 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
           aria-controls={listId}
           title={group.path}
         >
-          <ChevronRight size={14} className="side-chevron" aria-hidden />
-          <Icon size={15} aria-hidden />
           <span className="side-project-name">{group.name}</span>
+          <ChevronRight size={14} className="side-chevron" aria-hidden />
         </button>
         <button
           type="button"
@@ -166,6 +201,7 @@ export function Sidebar({
   onPlugins,
   onConnections,
   head,
+  tools = [],
 }: {
   sessions: SessionSummary[];
   projects: ProjectItem[];
@@ -182,8 +218,14 @@ export function Sidebar({
   onPlugins: () => void;
   onConnections: () => void;
   head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
+  tools?: SessionTool[]; // The pane buttons of the open session. Empty on the other screens.
 }) {
   const [expanded, setExpanded] = useState(loadExpanded);
+  const [moreOpen, setMoreOpen] = useState(() => loadPref(MORE_PREF, "0") === "1");
+  const toggleMore = () => {
+    setMoreOpen(!moreOpen);
+    savePref(MORE_PREF, moreOpen ? "0" : "1");
+  };
   const open = status === "open";
   // Pinned sessions are in their own list at the top, as in Claude.
   const pinned = sessions.filter((s) => s.pinned);
@@ -210,6 +252,33 @@ export function Sidebar({
         <NavButton icon={Boxes} label="Local Models" active={screen === "cookbook"} disabled={!open} onClick={onLocalModels} />
         <NavButton icon={Puzzle} label="Plugins" active={screen === "plugins"} disabled={!open} onClick={onPlugins} />
         <NavButton icon={Cable} label="Connections" active={screen === "providers"} disabled={!open} onClick={onConnections} />
+        {/* The panes of the open session, in an accordion as the "More" row of Claude. */}
+        {tools.length > 0 && (
+          <>
+            <button
+              type="button"
+              className={`side-item side-more-toggle${moreOpen ? " open" : ""}`}
+              onClick={toggleMore}
+              aria-expanded={moreOpen}
+              aria-controls="side-more-list"
+            >
+              <ChevronRight size={16} className="side-more-chevron" aria-hidden />
+              <span>More</span>
+              {!moreOpen && tools.some((t) => t.alert) && (
+                <span className="side-item-end">
+                  <span className="side-item-alert" role="img" aria-label="A server failed" />
+                </span>
+              )}
+            </button>
+            {moreOpen && (
+              <div id="side-more-list" className="side-more-list" role="group" aria-label="More">
+                {tools.map((tool) => (
+                  <ToolButton key={tool.key} tool={tool} disabled={!open} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div className="side-sessions">

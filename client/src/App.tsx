@@ -96,7 +96,7 @@ import { ContextRing } from "./components/ContextRing";
 import { MessageList } from "./components/MessageList";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { SessionStart } from "./components/SessionStart";
-import { Sidebar, pathKey } from "./components/Sidebar";
+import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
 import { SkillsPanel } from "./components/SkillsPanel";
@@ -1602,6 +1602,7 @@ export default function App() {
   // bar: in the sidebar when it is open, and in the top bar when it is closed.
   const titleNav = (
     <div className="title-nav">
+      <img className="title-logo" src="/app-logo.png" alt="Harness" width={20} height={20} draggable={false} />
       <button
         type="button"
         className="icon-btn ghost"
@@ -1634,6 +1635,38 @@ export default function App() {
     </div>
   );
 
+  // The panes of the open session in the sidebar: Skills, MCP servers, and Permission rules.
+  const mcpConnected = mcpStatus?.items.filter((i) => i.state === "connected").length ?? 0;
+  const sessionTools: SessionTool[] =
+    screen === "chat" && session
+      ? [
+          {
+            key: "skills",
+            icon: SlashIcon,
+            label: "Skills",
+            active: paneVisible("skills"),
+            onClick: fromSidebar(paneVisible("skills") ? () => hidePane("skills") : openSkills),
+          },
+          {
+            key: "mcp",
+            icon: Plug,
+            label: "MCP servers",
+            active: paneVisible("mcp"),
+            detail: mcpStatus && mcpStatus.items.length > 0 ? `${mcpConnected}/${mcpStatus.items.length}` : undefined,
+            alert: mcpStatus?.items.some((i) => i.state === "failed"),
+            title: mcpStatus ? `${mcpConnected} of ${mcpStatus.items.length} servers connected` : undefined,
+            onClick: fromSidebar(paneVisible("mcp") ? () => hidePane("mcp") : openMcp),
+          },
+          {
+            key: "rules",
+            icon: ShieldCheck,
+            label: "Permission rules",
+            active: paneVisible("rules"),
+            onClick: fromSidebar(paneVisible("rules") ? () => hidePane("rules") : openRules),
+          },
+        ]
+      : [];
+
   const statusText = status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected";
 
   return (
@@ -1655,6 +1688,7 @@ export default function App() {
             onPlugins={fromSidebar(showPlugins)}
             onConnections={fromSidebar(showProviders)}
             head={titleNav}
+            tools={sessionTools}
             connection={
               <button
                 type="button"
@@ -1729,19 +1763,6 @@ export default function App() {
                 active={paneVisible("editor")}
                 onClick={() => toggleShortcutPane("editor")}
               />
-              <PaneToggle icon={SlashIcon} label="Skills" active={paneVisible("skills")} onClick={paneVisible("skills") ? () => hidePane("skills") : openSkills} />
-              <PaneToggle
-                icon={Plug}
-                label={
-                  mcpStatus
-                    ? `MCP: ${mcpStatus.items.filter((i) => i.state === "connected").length} of ${mcpStatus.items.length} servers connected`
-                    : "MCP servers"
-                }
-                active={paneVisible("mcp")}
-                alert={mcpStatus?.items.some((i) => i.state === "failed")}
-                onClick={paneVisible("mcp") ? () => hidePane("mcp") : openMcp}
-              />
-              <PaneToggle icon={ShieldCheck} label="Permission rules" active={paneVisible("rules")} onClick={paneVisible("rules") ? () => hidePane("rules") : openRules} />
             </div>
           )}
           {hasWindowControls() && <WindowControls />}
