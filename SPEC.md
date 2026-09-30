@@ -83,6 +83,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Messages are JSON. Each message
 | `permission.request` | `request_id`, `tool`, `input`, `diff` | The daemon asks for approval. |
 | `skills` | `items` | List of `name`, `description`, `argument-hint`, `source`. |
 | `turn.end` | `usage` | The turn is complete. Includes the token counts. |
+| `prompt.suggestion` | `text` | After a turn that ends normally: the next prompt that the model predicts. The client shows it in the empty prompt box. Tab puts it in the box. The project setting `prompt_suggestions: false` switches it off. |
 | `hf.results` | `items`, `page`, `has_more` | Search results with fit badges. |
 | `hf.detail` | `card`, `files`, `recommended` | Model card, file list, and fit result for each quant. |
 | `download.progress` | `id`, `bytes_done`, `bytes_total` | Download progress. |

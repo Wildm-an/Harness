@@ -30,16 +30,6 @@ export function sessionState(running: RunningSession | undefined, unread: boolea
   return { kind: "idle", label: "Idle" };
 }
 
-/** A short age for a session row: "now", "5m", "3h", "2d", or the date. */
-export function shortAge(seconds: number, now: number = Date.now() / 1000): string {
-  const diff = Math.max(0, now - seconds);
-  if (diff < 60) return "now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  if (diff < 7 * 86400) return `${Math.floor(diff / 86400)}d`;
-  return new Date(seconds * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 const MENU_WIDTH = 210;
 
 type MenuAction = "pin" | "unread" | "rename" | "delete";
@@ -211,7 +201,6 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
         >
           <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />
           <span className="side-session-title">{title}</span>
-          <span className="side-session-age">{shortAge(session.updated_at)}</span>
         </button>
       )}
       {!renaming && (

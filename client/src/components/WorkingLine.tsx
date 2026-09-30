@@ -1,8 +1,8 @@
 // The working line above the prompt box during a turn, as in Claude Code:
-// "1m 11s · 1.1k tokens · 1 running task · Waiting for qwen3…".
+// "1m 11s · 1.1k tokens · 1 running task · Waiting for qwen3…". A gray spinner turns during the turn.
 
 import { useEffect, useRef, useState } from "react";
-import { Asterisk } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import type { ChatItem, TurnInfo } from "../chat/state";
 import { toolLabel } from "./ToolCard";
 
@@ -65,7 +65,7 @@ export function WorkingLine({ turn, items, model }: { turn: TurnInfo | null; ite
 
   return (
     <div className="working" title="Esc to interrupt">
-      <Asterisk size={16} className="working-glyph" aria-hidden />
+      <LoaderCircle size={16} className="working-glyph" aria-hidden />
       <span className="working-text" aria-hidden>{parts.join(" · ")}</span>
       {/* Screen readers get the status only, not the time each second. */}
       <span className="sr-only" role="status">{text}</span>

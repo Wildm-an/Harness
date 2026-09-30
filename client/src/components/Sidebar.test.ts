@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { folderName, groupByProject, pathKey, sessionState, shortAge } from "./Sidebar";
+import { folderName, groupByProject, pathKey, sessionState } from "./Sidebar";
 
 const session = (id: string, cwd: string, updated: number): SessionSummary => ({
   id, cwd, provider: "demo", model: "scripted", title: id, created_at: updated, updated_at: updated,
@@ -34,14 +34,6 @@ describe("the sidebar projects", () => {
   it("shows the last folder of a path", () => {
     expect(folderName("C:\\work\\app")).toBe("app");
     expect(folderName("/home/me/app/")).toBe("app");
-  });
-
-  it("shows a short age", () => {
-    const now = 1_000_000;
-    expect(shortAge(now - 10, now)).toBe("now");
-    expect(shortAge(now - 300, now)).toBe("5m");
-    expect(shortAge(now - 3 * 3600, now)).toBe("3h");
-    expect(shortAge(now - 2 * 86400, now)).toBe("2d");
   });
 });
 

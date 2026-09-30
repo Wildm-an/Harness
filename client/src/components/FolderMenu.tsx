@@ -87,7 +87,7 @@ export function FolderMenu({ name, path, canReveal, canChange, onReveal, onChang
         {name}
       </button>
       {open && (
-        <div className="menu folder-dropdown" role="menu" aria-label={`The folder ${name}`} style={pos ?? undefined}>
+        <div className="menu folder-dropdown" role="menu" data-tauri-drag-region="false" aria-label={`The folder ${name}`} style={pos ?? undefined}>
           <button
             type="button"
             role="menuitem"

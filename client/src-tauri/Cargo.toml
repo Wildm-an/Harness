@@ -1,6 +1,6 @@
 [package]
 name = "harness"
-version = "0.1.13"
+version = "0.1.14"
 description = "Desktop client for the coding harness"
 edition = "2021"
 

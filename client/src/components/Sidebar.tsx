@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Boxes, Cable, ChevronRight, Folder, FolderOpen, PanelLeftClose, Plus, Puzzle, type LucideIcon } from "lucide-react";
+import { Boxes, Cable, ChevronRight, Folder, FolderOpen, Plus, Puzzle, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
 import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
 import { SessionRow, sessionState, type SessionActions } from "./SessionRow";
 
-export { sessionState, shortAge } from "./SessionRow";
+export { sessionState } from "./SessionRow";
 
 // A project shows this many sessions. "Show more" shows the rest.
 const SHOWN_SESSIONS = 8;
@@ -165,7 +165,7 @@ export function Sidebar({
   onLocalModels,
   onPlugins,
   onConnections,
-  onCollapse,
+  head,
 }: {
   sessions: SessionSummary[];
   projects: ProjectItem[];
@@ -181,7 +181,7 @@ export function Sidebar({
   onLocalModels: () => void;
   onPlugins: () => void;
   onConnections: () => void;
-  onCollapse: () => void;
+  head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
 }) {
   const [expanded, setExpanded] = useState(loadExpanded);
   const open = status === "open";
@@ -201,10 +201,8 @@ export function Sidebar({
 
   return (
     <nav className="sidebar" aria-label="Projects and tools">
-      <div className="side-head">
-        <button type="button" className="icon-btn ghost" onClick={onCollapse} aria-label="Close the sidebar" title="Close the sidebar (Ctrl+B)">
-          <PanelLeftClose size={16} aria-hidden />
-        </button>
+      <div className="side-head" data-tauri-drag-region="deep">
+        {head}
       </div>
 
       <div className="side-actions">

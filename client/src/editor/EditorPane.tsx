@@ -27,6 +27,8 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
   fontLigatures: false,
   lineHeight: 20,
   minimap: { enabled: false },
+  // The thin scrollbar of the rest of the app (styles.css): a 12px track and a 6px thumb.
+  scrollbar: { verticalScrollbarSize: 12, horizontalScrollbarSize: 12, verticalSliderSize: 6, horizontalSliderSize: 6, useShadows: false },
   scrollBeyondLastLine: false,
   glyphMargin: true,
   renderWhitespace: "selection",

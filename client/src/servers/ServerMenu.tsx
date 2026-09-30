@@ -40,12 +40,12 @@ export function ServerMenu({
         aria-label={running > 0 ? `Servers: ${running} running` : "Servers"}
         title={running > 0 ? `Servers: ${running} running` : "Servers"}
       >
-        <Server size={15} aria-hidden />
+        <Server size={14} aria-hidden />
         {running > 0 && <span className="tab-badge running" title={`${running} running`}>{running}</span>}
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && (
-        <div className="menu server-dropdown" role="menu">
+        <div className="menu server-dropdown" role="menu" data-tauri-drag-region="false">
           {api.items.length === 0 && <p className="menu-note">No server in .harness/launch.json.</p>}
           {api.items.map((item) => {
             const live = item.state === "running" || item.state === "starting";

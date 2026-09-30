@@ -59,7 +59,11 @@ export function PromptBox({
   fileMatches = null,
   onFindFiles,
   onCycleMode,
+  suggestion = null,
+  onDismissSuggestion,
 }: {
+  suggestion?: string | null; // The next prompt that the model predicts. The empty box shows it. Tab uses it.
+  onDismissSuggestion?: () => void; // The user typed, or pressed Esc.
   onCycleMode?: () => void; // Shift+Tab: the next permission mode.
   sessions?: MentionSession[]; // Other sessions for the "@" menu, newest first.
   fileMatches?: { query: string; items: string[] } | null; // The last fs.found reply.
@@ -159,6 +163,7 @@ export function PromptBox({
   }, [insert]);
 
   const change = (value: string, at?: number) => {
+    if (value && suggestion) onDismissSuggestion?.();
     setText(value);
     setCaret(at ?? value.length);
     if (!value.startsWith("/")) setDismissed(false);
@@ -228,6 +233,20 @@ export function PromptBox({
       if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing)) {
         e.preventDefault();
         choose(matches[Math.min(active, matches.length - 1)], e.key === "Enter");
+        return;
+      }
+    }
+    // The suggestion: Tab puts it in the empty box. Enter then sends it. Esc hides it.
+    if (!text && suggestion && !running) {
+      if (e.key === "Tab" && !e.shiftKey) {
+        e.preventDefault();
+        pendingCaret.current = suggestion.length;
+        change(suggestion);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onDismissSuggestion?.();
         return;
       }
     }
@@ -369,7 +388,13 @@ export function PromptBox({
           rows={1}
           value={text}
           disabled={disabled}
-          placeholder={running ? "Type a message to queue it. Esc interrupts the agent." : "Ask the agent. Type / for commands, @ for files."}
+          placeholder={
+            running
+              ? "Type a message to queue it. Esc interrupts the agent."
+              : suggestion
+                ? suggestion
+                : "Ask the agent. Type / for commands, @ for files."
+          }
           onChange={(e) => change(e.target.value, e.target.selectionStart)}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
@@ -380,6 +405,11 @@ export function PromptBox({
           aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : mentionOpen ? "mention-menu" : undefined}
           aria-activedescendant={activeId}
         />
+        {!text && suggestion && !running && (
+          <span className="suggestion-hint" aria-hidden>
+            <kbd>Tab</kbd>
+          </span>
+        )}
         {/* In line with the text. When the text grows, the button stays at the bottom right. */}
         {running && !canSend ? (
           <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">

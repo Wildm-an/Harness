@@ -24,6 +24,8 @@ class FakeModel:
         self.requests: list[dict[str, Any]] = []
         self.title_requests: list[dict[str, Any]] = []
         self.title = "Fake session title"
+        self.suggestion_requests: list[dict[str, Any]] = []
+        self.suggestion = "Run the tests"
         self.classifier_requests: list[dict[str, Any]] = []
         self.verdicts: list[Any] = []  # Auto mode verdicts: dicts, or raw text for a bad reply.
         self.capabilities = capabilities if capabilities is not None else ["completion", "tools"]
@@ -66,6 +68,10 @@ class FakeModel:
             if isinstance(first, str) and first.startswith("Write a short title for the task below"):
                 self.title_requests.append(body)
                 return StreamingResponse(_sse({"text": self.title}), media_type="text/event-stream")
+            # A prompt suggestion request (suggestions.py) gets its own reply too.
+            if isinstance(first, str) and first.startswith("You predict the next message that the user"):
+                self.suggestion_requests.append(body)
+                return StreamingResponse(_sse({"text": self.suggestion}), media_type="text/event-stream")
             # An auto mode check (auto_mode.py): the next scripted verdict, or "allow".
             if isinstance(first, str) and first.startswith("You check one tool call of a coding agent"):
                 self.classifier_requests.append(body)

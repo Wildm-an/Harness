@@ -35,3 +35,15 @@ export function isSidebarShortcut(e: KeyInfo): boolean {
   if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
   return e.code === "KeyB" || e.key.toLowerCase() === "b";
 }
+
+/** The keys of the back and forward buttons, as in Claude. */
+export const BACK_SHORTCUT = "Alt+Left";
+export const FORWARD_SHORTCUT = "Alt+Right";
+
+/** Alt+Left goes back (-1). Alt+Right goes forward (1). Other keys give null. */
+export function navShortcut(e: KeyInfo): -1 | 1 | null {
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return null;
+  if (e.key === "ArrowLeft") return -1;
+  if (e.key === "ArrowRight") return 1;
+  return null;
+}

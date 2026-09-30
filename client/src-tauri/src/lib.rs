@@ -114,15 +114,21 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         // The main window opens at the position and size of its last close. The plugin saves them
         // in the app data folder, and it does not restore a position that no monitor shows.
+        // The window starts hidden (tauri.conf.json). The setup shows it after the plugin
+        // restores the state, so the window does not move after it opens.
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+                // The app draws its own title bar on Windows. Do not restore the old system frame.
+                .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE & !StateFlags::DECORATIONS)
                 .build(),
         )
         .manage(Sidecar::default())
         .manage(Tunnels::default())
         .manage(Forwards::default())
         .setup(|app| {
+            if let Some(window) = app.get_window("main") {
+                window.show()?;
+            }
             // Start the daemon early, so that it is ready when the UI asks for it.
             let sidecar = app.state::<Sidecar>().inner().clone();
             tauri::async_runtime::spawn_blocking(move || {

@@ -631,6 +631,8 @@ export type DaemonMessage =
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
+  // After a turn: the next prompt that the model predicts. The prompt box shows it. Tab puts it in the box.
+  | { type: "prompt.suggestion"; text: string }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string } // For example, a plugin added a message.
   // The token counts of the turn so far, after each model reply.
   | { type: "turn.usage"; prompt_tokens: number; completion_tokens: number; last_prompt_tokens: number }

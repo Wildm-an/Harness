@@ -60,6 +60,7 @@ from .session import Session
 from .skills import Skill, discover_skills
 from .storage import Storage
 from .terminal import TerminalError, TerminalHost
+from .suggestions import suggest_prompt
 from .titles import summarize_title
 
 log = logging.getLogger("harness.daemon")
@@ -331,6 +332,7 @@ class LiveSession:
         self.turn_started: float | None = None
         self.turn_tokens = 0
         self.title_task: asyncio.Task | None = None
+        self.suggestion_task: asyncio.Task | None = None  # The next prompt of the user (suggestions.py).
 
     @property
     def id(self) -> str | None:
@@ -384,9 +386,15 @@ class LiveSession:
                 fut.set_result("deny")
         self.pending.clear()
 
+    def cancel_suggestion(self) -> None:
+        if self.suggestion_task is not None and not self.suggestion_task.done():
+            self.suggestion_task.cancel()
+        self.suggestion_task = None
+
     async def close(self) -> None:
         """Stop the shell, the MCP servers, the agent browser, the servers, and the plugins of the
         session, and end its file URLs."""
+        self.cancel_suggestion()
         if self.terminal is not None:
             self.terminal.close()
             self.terminal = None
@@ -759,14 +767,17 @@ class Connection:
         await self.refresh_dsh(live)
         try:
             shown = display or text
-            await session.agent.run_turn(expanded, display=shown if expanded != shown else None)
+            stop = await session.agent.run_turn(expanded, display=shown if expanded != shown else None)
         finally:
             session.persist()
+        if stop == "end":
+            self.start_suggestion(live)
 
     async def start_turn(self, work: Callable[[LiveSession], Awaitable[None]]) -> None:
         """Start a turn in the current session. The turn continues if the client goes to another session."""
         live = self.require_live()
         self.require_idle()
+        live.cancel_suggestion()  # The model can start the turn at once.
         live.turn_started = time.time()
         live.turn_tokens = 0
         live.turn = asyncio.create_task(self.guarded(live, work(live)))
@@ -787,6 +798,23 @@ class Connection:
             await self.send({"type": "session.title", "id": session.id, "title": title})
 
         live.title_task = asyncio.create_task(work())
+
+    def start_suggestion(self, live: LiveSession) -> None:
+        """After a turn, ask the model for the next prompt of the user. The client shows it in the
+        empty prompt box. The "prompt_suggestions" setting can switch it off."""
+        session = live.session
+        assert session is not None
+        if not session.agent.settings.get("prompt_suggestions", True):
+            return
+        history = list(session.agent.history)
+
+        async def work() -> None:
+            text = await suggest_prompt(session.agent.client, history)
+            if text and not live.running:
+                await live.send({"type": "prompt.suggestion", "text": text})
+
+        live.cancel_suggestion()
+        live.suggestion_task = asyncio.create_task(work())
 
     async def guarded(self, live: LiveSession, work: Awaitable[None]) -> None:
         """Run a turn. An unexpected error ends the turn with an error, so the client does not wait forever.

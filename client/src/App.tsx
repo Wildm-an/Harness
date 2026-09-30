@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
   Code2,
   Files,
   Globe as GlobeIcon,
@@ -10,7 +12,7 @@ import {
   LoaderCircle,
   MessageSquare,
   Monitor,
-  PanelLeftOpen,
+  PanelLeft,
   Plug,
   RefreshCw,
   ShieldCheck,
@@ -62,10 +64,21 @@ import {
   type LayoutNode,
   type PaneId,
 } from "./layout/model";
-import { SIDEBAR_SHORTCUT, isSidebarShortcut, shortcutLabel, shortcutPane } from "./layout/shortcuts";
+import {
+  BACK_SHORTCUT,
+  FORWARD_SHORTCUT,
+  SIDEBAR_SHORTCUT,
+  isSidebarShortcut,
+  navShortcut,
+  shortcutLabel,
+  shortcutPane,
+} from "./layout/shortcuts";
+import { emptyHistory, placeOf, samePlace, step, visit, type NavHistory, type Place } from "./layout/history";
 import { TerminalPane } from "./components/TerminalPane";
 import { WorkingLine } from "./components/WorkingLine";
 import { SlashIcon } from "./components/SlashIcon";
+import { WindowControls, hasWindowControls } from "./components/WindowControls";
+import { SIDEBAR_DEFAULT, SidebarResizer, clampSidebar } from "./components/SidebarResizer";
 import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
@@ -220,7 +233,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(
     () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches,
   );
+  const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebar(Number(loadPref("sidebar.width", String(SIDEBAR_DEFAULT)))));
   const [session, setSession] = useState<ActiveSession | null>(null);
+  // The next prompt that the model predicts after a turn, for the session that got it.
+  const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
   const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
@@ -387,6 +403,11 @@ export default function App() {
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
           return;
+        case "prompt.suggestion": {
+          const id = sessionRef.current?.id;
+          if (id) setSuggestion({ sessionId: id, text: msg.text });
+          return;
+        }
         case "session.updated":
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
@@ -928,6 +949,7 @@ export default function App() {
   }, [screen, status, conn]);
 
   const submit = (s: Submission): boolean => {
+    setSuggestion(null);
     try {
       if (s.kind === "prompt") {
         conn.send({ type: "prompt", text: s.text, ...(s.display ? { display: s.display } : {}) });
@@ -1338,6 +1360,8 @@ export default function App() {
             fileMatches={fileMatches}
             onFindFiles={(query) => sendSafely({ type: "fs.find", query })}
             onCycleMode={() => changeMode(nextMode(permissionMode))}
+            suggestion={!chat.running && session && suggestion?.sessionId === session.id ? suggestion.text : null}
+            onDismissSuggestion={() => setSuggestion(null)}
             below={
               session && (
                 <>
@@ -1521,10 +1545,99 @@ export default function App() {
     action();
     if (narrow()) setSidebarOpen(false);
   };
+  // Back and forward, as in Claude. Each new screen or session goes into the history.
+  const [nav, setNav] = useState<NavHistory>(emptyHistory);
+  const navTarget = useRef<Place | null>(null); // The place that a back or forward step opens.
+  useEffect(() => {
+    const place = placeOf(screen, session?.id);
+    if (!place) return;
+    const target = navTarget.current;
+    navTarget.current = null;
+    if (!samePlace(target ?? undefined, place)) setNav((h) => visit(h, place));
+  }, [screen, session?.id]);
+
+  const openPlace = (place: Place) => {
+    switch (place.screen) {
+      case "start":
+        return newSession();
+      case "chat":
+        return session?.id === place.id ? setScreen("chat") : resumeSession(place.id);
+      case "cookbook":
+        return showCookbook();
+      case "plugins":
+        return showPlugins();
+      case "providers":
+        return showProviders();
+      case "connections":
+        return openConnections();
+    }
+  };
+  const canNav = status === "open" && !busy;
+  const goNav = (delta: -1 | 1) => {
+    const next = canNav ? step(nav, delta) : null;
+    if (!next) return;
+    navTarget.current = next.place;
+    setNav(next.history);
+    openPlace(next.place);
+  };
+  const goNavRef = useRef(goNav);
+  goNavRef.current = goNav;
+
+  // Alt+Left and Alt+Right go back and forward. The terminal keeps these keys for the shell.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const delta = navShortcut(e);
+      if (delta === null) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest(".xterm")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) goNavRef.current(delta);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // The sidebar button and the back and forward buttons. They are at the far left of the title
+  // bar: in the sidebar when it is open, and in the top bar when it is closed.
+  const titleNav = (
+    <div className="title-nav">
+      <button
+        type="button"
+        className="icon-btn ghost"
+        onClick={() => showSidebar(!sidebarOpen)}
+        aria-label={sidebarOpen ? "Hide the sidebar" : "Show the sidebar"}
+        title={`${sidebarOpen ? "Hide sidebar" : "Show sidebar"} (${SIDEBAR_SHORTCUT})`}
+      >
+        <PanelLeft size={16} aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="icon-btn ghost"
+        onClick={() => goNav(-1)}
+        disabled={!canNav || nav.index <= 0}
+        aria-label="Back"
+        title={`Back (${BACK_SHORTCUT})`}
+      >
+        <ArrowLeft size={16} aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="icon-btn ghost"
+        onClick={() => goNav(1)}
+        disabled={!canNav || nav.index >= nav.stack.length - 1}
+        aria-label="Forward"
+        title={`Forward (${FORWARD_SHORTCUT})`}
+      >
+        <ArrowRight size={16} aria-hidden />
+      </button>
+    </div>
+  );
+
   const statusText = status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected";
 
   return (
-    <div className={`app${sidebarOpen ? " sidebar-open" : ""}`}>
+    <div className={`app${sidebarOpen ? " sidebar-open" : ""}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       {sidebarOpen && (
         <>
           <Sidebar
@@ -1541,7 +1654,7 @@ export default function App() {
             onLocalModels={fromSidebar(showCookbook)}
             onPlugins={fromSidebar(showPlugins)}
             onConnections={fromSidebar(showProviders)}
-            onCollapse={() => showSidebar(false)}
+            head={titleNav}
             connection={
               <button
                 type="button"
@@ -1558,16 +1671,20 @@ export default function App() {
               </button>
             }
           />
+          <SidebarResizer
+            width={sidebarWidth}
+            onChange={setSidebarWidth}
+            onDone={(w) => {
+              setSidebarWidth(w);
+              savePref("sidebar.width", String(w));
+            }}
+          />
           <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden />
         </>
       )}
       <div className="shell">
-        <header className="topbar">
-          {!sidebarOpen && (
-            <button type="button" className="icon-btn ghost" onClick={() => showSidebar(true)} aria-label="Open the sidebar" title={`Open the sidebar (${SIDEBAR_SHORTCUT})`}>
-              <PanelLeftOpen size={16} aria-hidden />
-            </button>
-          )}
+        <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">
+          {!sidebarOpen && titleNav}
           <div className="topbar-title" title={session?.cwd}>
             {screen === "chat" && session && (
               <>
@@ -1627,6 +1744,7 @@ export default function App() {
               <PaneToggle icon={ShieldCheck} label="Permission rules" active={paneVisible("rules")} onClick={paneVisible("rules") ? () => hidePane("rules") : openRules} />
             </div>
           )}
+          {hasWindowControls() && <WindowControls />}
         </header>
 
       <main className="main">

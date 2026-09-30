@@ -21,6 +21,9 @@ function terminalTheme(): ITheme {
     cursor: cssVar("--text"),
     cursorAccent: cssVar("--surface-sunken"),
     selectionBackground: cssVar("--border-strong"),
+    scrollbarSliderBackground: cssVar("--border-strong"),
+    scrollbarSliderHoverBackground: cssVar("--border-strong"),
+    scrollbarSliderActiveBackground: cssVar("--border-strong"),
   };
 }
 
