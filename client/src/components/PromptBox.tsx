@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, FileText, Folder, LoaderCircle, MessageSquare, Square } from "lucide-react";
+import { CornerDownLeft, FileText, Folder, LoaderCircle, MessageSquare, Square } from "lucide-react";
 import type { CommandItem } from "../daemon/protocol";
 import {
   filterSessions,
@@ -54,7 +54,6 @@ export function PromptBox({
   onSubmit,
   onInterrupt,
   insert,
-  footer,
   below,
   sessions = [],
   fileMatches = null,
@@ -66,7 +65,6 @@ export function PromptBox({
   fileMatches?: { query: string; items: string[] } | null; // The last fs.found reply.
   onFindFiles?: (query: string) => void; // Asks the daemon for the files that match an "@" query.
   insert?: { text: string; key: number } | null; // Text to add, for example "@src/app.py:10-25" from the editor.
-  footer?: React.ReactNode; // The left part of the tool row below the text: the context use.
   below?: React.ReactNode; // A row under the box, on the right: the model menu.
   running: boolean;
   disabled: boolean;
@@ -382,25 +380,23 @@ export function PromptBox({
           aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : mentionOpen ? "mention-menu" : undefined}
           aria-activedescendant={activeId}
         />
-        <div className="prompt-tools">
-          <div className="prompt-tools-left">{footer}</div>
-          {running ? (
-            <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
-              <Square size={14} fill="currentColor" aria-hidden />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="icon-btn send"
-              onClick={submit}
-              disabled={!canSend}
-              aria-label="Send (Enter)"
-              title="Send (Enter)"
-            >
-              <ArrowUp size={16} aria-hidden />
-            </button>
-          )}
-        </div>
+        {/* In line with the text. When the text grows, the button stays at the bottom right. */}
+        {running ? (
+          <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
+            <Square size={12} fill="currentColor" aria-hidden />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="icon-btn send"
+            onClick={submit}
+            disabled={!canSend}
+            aria-label="Send (Enter)"
+            title="Send (Enter)"
+          >
+            <CornerDownLeft size={16} aria-hidden />
+          </button>
+        )}
       </div>
       {below && <div className="prompt-below">{below}</div>}
     </div>

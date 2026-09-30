@@ -4561,11 +4561,12 @@ select {
   font-weight: 400;
 }
 
+/* One line of text and the send button in a row. The button stays at the bottom right when the text grows. */
 .prompt-box {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 12px 10px 16px;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 7px 7px 7px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   background: var(--surface);
@@ -4578,35 +4579,20 @@ select {
 }
 
 .prompt-box textarea {
-  width: 100%;
-  min-height: 48px;
-  padding: 2px 0;
+  flex: 1;
+  min-width: 0;
+  min-height: 32px; /* The height of the button: one line of text is in line with it. */
+  padding: 5px 0;
   border: none;
   outline: none;
   resize: none;
   background: transparent;
   color: var(--text);
-  font: 15px/1.5 var(--font-sans);
+  font: 15px/22px var(--font-sans);
 }
 
 .prompt-box textarea:focus-visible {
   box-shadow: none;
-}
-
-.prompt-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.prompt-tools-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: 12px;
 }
 
 .prompt-chip {
@@ -4634,9 +4620,29 @@ select {
   color: var(--text);
 }
 
+/* The buttons in the prompt box are icons only, as in Claude. */
 .prompt-box .icon-btn.send,
 .prompt-box .icon-btn.stop {
-  border-radius: 50%;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+}
+
+.prompt-box .icon-btn.send:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.prompt-box .icon-btn.send:disabled {
+  color: var(--text-muted);
+}
+
+.prompt-box .icon-btn.stop:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 /* ---------- split layout and side panes ---------- */
