@@ -181,7 +181,7 @@ class Terminal:
                     code = self._pty.exit_code()
                 except Exception:  # noqa: BLE001 - the code is for information only.
                     code = None
-                self._loop.call_soon_threadsafe(self._stopped, code)
+                self._post(self._stopped, code)
                 return
 
     def _read_loop(self) -> None:
@@ -189,12 +189,26 @@ class Terminal:
             text = self._pty.read()
             if not text:
                 break
-            self._loop.call_soon_threadsafe(self._output, text)
+            if not self._post(self._output, text):
+                break
         try:
             code = self._pty.exit_code()
         except Exception:  # noqa: BLE001 - the code is for information only.
             code = None
-        self._loop.call_soon_threadsafe(self._stopped, code)
+        self._post(self._stopped, code)
+
+    def _post(self, callback: Callable[..., None], *args: Any) -> bool:
+        """Run ``callback`` on the event loop from a thread. Return False if the loop is closed.
+
+        The loop of the connection can close before the shell stops. Then nothing receives the output.
+        """
+        if self._loop.is_closed():
+            return False
+        try:
+            self._loop.call_soon_threadsafe(callback, *args)
+        except RuntimeError:  # The loop closed after the check.
+            return False
+        return True
 
     def _output(self, text: str) -> None:
         self.seq += 1
