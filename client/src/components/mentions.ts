@@ -1,5 +1,7 @@
 /** The "@" references of the prompt box: files and folders of the project, and other sessions. */
 
+import { pathKey } from "./Sidebar";
+
 export interface MentionSession {
   id: string;
   title: string | null;
@@ -47,4 +49,11 @@ export function insertMention(text: string, caret: number, start: number, token:
 export function filterSessions(sessions: MentionSession[], query: string, limit = MAX_MENTION_SESSIONS): MentionSession[] {
   const q = query.toLowerCase();
   return sessions.filter((s) => !q || (s.title ?? "").toLowerCase().includes(q) || s.id.startsWith(q)).slice(0, limit);
+}
+
+/** The sessions of the "@" menu: not the session ``skip``, and the sessions of the folder ``cwd`` first. */
+export function mentionOrder<T extends MentionSession>(sessions: T[], cwd: string, skip?: string): T[] {
+  const here = pathKey(cwd);
+  const others = sessions.filter((s) => s.id !== skip);
+  return [...others.filter((s) => pathKey(s.cwd) === here), ...others.filter((s) => pathKey(s.cwd) !== here)];
 }

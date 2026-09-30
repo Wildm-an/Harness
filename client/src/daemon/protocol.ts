@@ -106,6 +106,22 @@ export interface ClientSettings {
 }
 
 /** A / menu item: a built-in command or a skill. */
+/** A background task: a command that the agent runs with bash and run_in_background. */
+export interface TaskItem {
+  id: string;
+  command: string;
+  description: string;
+  status: "running" | "done" | "failed" | "stopped";
+  started_at: number; // Epoch seconds.
+  ended_at: number | null;
+  returncode: number | null;
+}
+
+export interface TaskDetail extends TaskItem {
+  output: string; // The kept output: the end of a long output.
+  dropped: number; // Characters of output that are not kept.
+}
+
 export interface CommandItem {
   name: string;
   description: string;
@@ -449,11 +465,22 @@ export type ClientMessage =
   | { type: "session.delete"; session_id: string }
   | { type: "session.move"; session_id: string; cwd: string } // Change the folder. The history stays.
   // The terminal pane: the shell of the session.
-  | { type: "term.open"; cols: number; rows: number; id?: string; since?: number } // since: the last output number that the pane has.
+  // id: the shell of a tab. new: a new shell, for a new tab. since: the last output number that the tab has.
+  // ref: the tab, which comes back in term.opened.
+  | { type: "term.open"; cols: number; rows: number; id?: string; since?: number; new?: boolean; ref?: string }
+  | { type: "term.close"; id: string } // The user closed the tab: the daemon stops its shell.
+  // The side chat (Ctrl+;): a quick question that sees the session. Nothing is added to the session.
+  // history: the earlier questions and answers of the side chat.
+  | { type: "side.ask"; id: string; question: string; history?: { role: "user" | "assistant"; content: string }[] }
+  | { type: "side.cancel"; id: string }
+  | { type: "tasks.list" }
+  | { type: "task.get"; id: string }
+  | { type: "task.stop"; id: string }
+  | { type: "session.keep_awake"; on: boolean } // Only for this session. The daemon does not save it.
   | { type: "term.input"; id: string; data: string }
   | { type: "term.resize"; id: string; cols: number; rows: number }
   | { type: "session.list"; cwd?: string; limit?: number }
-  | { type: "fs.find"; query: string }
+  | { type: "fs.find"; query: string; cwd?: string } // cwd: the start screen, which has no session.
   | { type: "context.get" }
   | { type: "projects.list" }
   | { type: "projects.save"; id?: string; name: string; path: string; create?: boolean }
@@ -462,7 +489,7 @@ export type ClientMessage =
   | { type: "command"; name: string; args: string }
   | { type: "permission.reply"; request_id: string; decision: Decision }
   | { type: "interrupt" }
-  | { type: "skills.list" }
+  | { type: "skills.list"; cwd?: string } // cwd: the start screen, which has no session.
   | { type: "skills.get"; name: string }
   | { type: "fs.dirs"; path?: string; hidden?: boolean }
   | { type: "fs.list"; path: string }
@@ -565,6 +592,7 @@ export type DaemonMessage =
       auto_verify: boolean; // The agent checks the app after each UI change.
       permission_mode?: PermissionMode;
       image_input: boolean; // The model accepts images: the agent has preview_screenshot.
+      keep_awake?: boolean; // The "Keep computer awake" switch of this session.
       // A return to a session with a running turn: the reply text that streams now,
       // and the permission requests that wait for a decision.
       running?: boolean;
@@ -578,9 +606,15 @@ export type DaemonMessage =
   | { type: "session.deleted"; id: string }
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
   // replay: the last output of a running shell. seq: the number of its last output.
-  | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean }
+  | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean; ref?: string }
   | { type: "term.output"; id: string; data: string; seq: number }
   | { type: "term.exit"; id: string; code: number | null }
+  | { type: "side.token"; id: string; text: string; session_id?: string } // A part of a side chat answer.
+  | { type: "side.done"; id: string; text: string; session_id?: string }
+  | { type: "side.error"; id: string; message: string; session_id?: string }
+  | { type: "tasks"; items: TaskItem[] } // The background tasks of the session, after each start and end.
+  | ({ type: "task" } & TaskDetail)
+  | { type: "keep_awake"; on: boolean; active: boolean } // active: the computer stays awake now.
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)

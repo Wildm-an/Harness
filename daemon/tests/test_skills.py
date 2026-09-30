@@ -282,3 +282,17 @@ def test_skills_panel_messages(daemon, project, project_skills, fake_model):  # 
     assert skill["files"] == ["SKILL.md", "notes.md"] and "Say hello to $0." in skill["content"]
     assert skill["allowed-tools"] == ["Bash(echo hi)"]
     c.close()
+
+
+def test_start_screen_menus_with_no_session(daemon, project, project_skills, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.send({"type": "skills.list", "cwd": str(project)})
+    names = [i["name"] for i in c.until("skills")[0]["items"]]
+    assert "clear" in names and "greet" in names and "research" in names  # The project skills, with no session.
+    c.send({"type": "fs.find", "query": "", "cwd": str(project)})
+    assert c.until("fs.found")[0]["items"]
+    c.send({"type": "fs.find", "query": ""})
+    assert "No session" in c.until("error")[0]["message"]
+    c.send({"type": "skills.list", "cwd": str(project / "missing")})
+    assert "does not exist" in c.until("error")[0]["message"]
+    c.close()

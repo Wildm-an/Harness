@@ -2942,6 +2942,10 @@ select {
 
 .split-view.column {
   flex-direction: column;
+  /* The chat rule ".column" gives a maximum width. A split of windows uses all the space. */
+  width: auto;
+  max-width: none;
+  margin: 0;
 }
 
 .split-cell {
@@ -3097,6 +3101,178 @@ select {
 
 .pane-content[hidden] {
   display: none;
+}
+
+.split-cell[hidden] {
+  display: none;
+}
+
+/* Each pane is a window: a card with a header, as in the Claude Code desktop app. The header shows
+   the title, or the tabs of the pane (the browser and the terminal), then the window buttons. */
+/* A window fills its cell to the edges of the app window: no margin. The split lines separate the windows. */
+.pane-group.pane-window {
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.win-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 0 6px;
+  flex: none;
+  user-select: none;
+}
+
+.win-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px;
+  color: var(--text);
+  font: 500 12.5px var(--font-sans);
+  white-space: nowrap;
+  cursor: grab;
+}
+
+.win-title > svg {
+  color: var(--text-muted);
+}
+
+.win-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+}
+
+.win-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.win-actions:empty {
+  display: none;
+}
+
+.icon-btn.win-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+
+/* The narrow window view: all panes are tabs of one window. */
+.win-panes {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* Tabs in a window header: the panes of the narrow view, and the tabs of the browser and the terminal. */
+.win-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.win-pane,
+.win-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 28px;
+  max-width: 210px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: 500 12.5px var(--font-sans);
+  cursor: pointer;
+}
+
+.win-tab {
+  padding: 0 3px 0 10px;
+}
+
+.win-pane:hover,
+.win-tab:hover {
+  color: var(--text);
+}
+
+.win-pane.active,
+.win-tab.active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* A tab is a row: the button that selects it, and its close button. */
+.win-tab-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.win-tab-main > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.win-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.win-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.win-tab:hover .win-tab-close,
+.win-tab.active .win-tab-close,
+.win-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.win-tab-close:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.icon-btn.win-tab-add {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  margin-left: 2px;
 }
 
 .drop-zone {
@@ -4566,6 +4742,17 @@ select {
   position: relative;
 }
 
+/* The menus are placed on the box, not on the row under it. */
+.prompt-anchor {
+  position: relative;
+}
+
+/* The start screen: the box is near the top, so the menus open below it. */
+.prompt-wrap.menu-below .slash-menu {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
 .slash-menu {
   position: absolute;
   left: 0;
@@ -5025,6 +5212,13 @@ select {
   padding: 14px;
 }
 
+/* The body of a workspace window: its pane fills it to the edges, for example the browser page.
+   The panel rule above (padding and scroll) is for the body of a side panel in a window. */
+.pane-group > .pane-body {
+  padding: 0;
+  overflow: hidden;
+}
+
 /* The body of a side panel is one column. The workspace rule for .pane-body above is a flex row. */
 .side-pane .pane-body {
   display: block;
@@ -5388,6 +5582,11 @@ mark.word-del {
   height: 100%;
 }
 
+/* Each tab of the terminal pane has a screen. Only the screen of the active tab shows. */
+.terminal-screen[hidden] {
+  display: none;
+}
+
 /* ---------- the session rows of the sidebar: the ⋮ menu (Pin, Mark as unread, Rename, Delete) ---------- */
 
 .side-session-row {
@@ -5588,4 +5787,301 @@ mark.word-del {
   font-family: var(--font-sans);
   font-weight: 600;
   line-height: 1;
+}
+
+/* ---------- the side chat (Ctrl+;): quick questions beside the main thread, as in Claude ---------- */
+
+.side-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  background: var(--surface);
+}
+
+/* The floating side chat: a card at the top right of the chat. */
+.side-chat.floating {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: var(--z-banner);
+  width: min(380px, calc(100% - 32px));
+  height: min(400px, calc(100% - 150px));
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.side-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 0 6px 0 12px;
+  flex: none;
+}
+
+.side-chat-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.side-chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 8px;
+}
+
+.side-chat-hint {
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.side-chat-item {
+  margin-bottom: 12px;
+}
+
+/* The question on the right, as a user message of the chat. */
+.side-chat-question {
+  width: fit-content;
+  max-width: 85%;
+  margin: 0 0 6px auto;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.side-chat-answer {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.side-chat-answer.error {
+  color: var(--danger);
+}
+
+.side-chat-wait,
+.side-chat-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.side-chat-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 0 10px 10px;
+  padding: 5px 5px 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  flex: none;
+}
+
+.side-chat-box:focus-within {
+  border-color: var(--text-muted);
+}
+
+.side-chat-box textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  max-height: 120px;
+  padding: 5px 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  resize: none;
+  outline: none;
+  field-sizing: content;
+}
+
+.side-chat-box .icon-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+/* ---------- the ⋮ menu of the title bar: Files, Background tasks, Keep computer awake ---------- */
+
+.more-menu {
+  position: relative;
+}
+
+.menu.more-dropdown {
+  min-width: 250px;
+  padding: 6px;
+}
+
+.more-dropdown button {
+  min-height: 34px;
+  gap: 10px;
+}
+
+.more-dropdown button > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.more-label {
+  flex: 1;
+}
+
+.more-key {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.more-count {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.more-dropdown button.more-awake {
+  min-height: 46px;
+  gap: 12px;
+}
+
+.more-awake-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.more-awake-sub {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.more-awake .switch {
+  pointer-events: none; /* The row is the button. */
+}
+
+/* ---------- the Background tasks pane ---------- */
+
+.tasks-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tasks-list {
+  flex: none;
+  max-height: 40%;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.task-row:hover,
+.task-row.active {
+  background: var(--surface-2);
+}
+
+.task-row > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.task-row > svg.task-ok {
+  color: var(--success);
+}
+
+.task-row > svg.task-failed {
+  color: var(--danger);
+}
+
+.task-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-title,
+.task-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-title {
+  font-size: 13px;
+}
+
+.task-command {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.task-time {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.icon-btn.task-stop {
+  width: 24px;
+  height: 24px;
+}
+
+.task-output-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-output-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.task-output {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 12px 12px;
+  overflow: auto;
+  background: var(--surface-sunken);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

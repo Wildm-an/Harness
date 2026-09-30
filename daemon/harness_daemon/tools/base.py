@@ -23,6 +23,8 @@ class ToolContext:
     read_roots: tuple[Path, ...] = ()
     # The preview host of the session (preview.py): servers and the agent browser. None outside a session.
     preview: Any = None
+    # The background tasks of the session (tasks.py). None outside a session, for example in a subagent.
+    tasks: Any = None
 
     def resolve(self, path: Any, read_only: bool = False) -> Path:
         try:

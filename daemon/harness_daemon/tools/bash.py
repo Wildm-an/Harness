@@ -13,6 +13,11 @@ class BashTool(Tool):
         "properties": {
             "command": {"type": "string", "description": "The command to run."},
             "timeout": {"type": "integer", "description": "Timeout in seconds. Optional."},
+            "run_in_background": {
+                "type": "boolean",
+                "description": "Run the command as a background task and return at once, for a long build, "
+                               "test run, or watcher. Read its output later with task_output. Optional.",
+            },
             # The client shows it in the list of actions, as Claude Code does. It does not change the command.
             "description": {
                 "type": "string",
@@ -43,6 +48,8 @@ class BashTool(Tool):
 
     async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         command = self._command(args)
+        if args.get("run_in_background") is True:
+            return self._start_task(command, args, ctx)
         limit = ctx.settings["bash_max_timeout"]
         timeout = get_int(args, "timeout", ctx.settings["bash_timeout"])
         timeout = min(max(timeout, 1), limit)
@@ -55,3 +62,17 @@ class BashTool(Tool):
         if result.returncode:
             return ToolResult(f"{output}\n[Exit code: {result.returncode}]", is_error=True)
         return ToolResult(output)
+
+    def _start_task(self, command: str, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        from ..tasks import TaskError
+
+        if ctx.tasks is None:
+            raise ToolError("Background tasks are not available here. Run the command without run_in_background.")
+        description = args.get("description") if isinstance(args.get("description"), str) else ""
+        try:
+            task = ctx.tasks.start(command, description)
+        except TaskError as e:
+            raise ToolError(str(e)) from e
+        return ToolResult(f"The command runs as the background task {task.id}. Read its output with "
+                          f"task_output, and stop it with task_stop. The next message of the user tells "
+                          f"you when it ends.")

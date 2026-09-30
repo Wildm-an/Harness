@@ -78,7 +78,28 @@ export function PromptBox({
   onCycleMode,
   suggestion = null,
   onDismissSuggestion,
+  inputId = "prompt-input",
+  label = "Message to the agent",
+  placeholder,
+  sendEmpty = false,
+  busy = false,
+  sendBlocked = false,
+  sendLabel,
+  menuBelow = false,
+  boxClassName,
+  focusKey,
 }: {
+  // The start screen uses the same box as a session. These props change it for the start screen.
+  inputId?: string;
+  label?: string; // The label for a screen reader.
+  placeholder?: string; // Replaces the default text of the empty box.
+  sendEmpty?: boolean; // Enter with no text sends an empty prompt: the start screen then starts a session with no task.
+  busy?: boolean; // The send button shows a spinner and does not send.
+  sendBlocked?: boolean; // The send button does not send, but the user can type.
+  sendLabel?: { empty: string; text: string }; // The hint of the send button, with no text and with text.
+  menuBelow?: boolean; // The / and @ menus open below the box, not above it.
+  boxClassName?: string;
+  focusKey?: unknown; // A change puts the focus in the box. null: the box does not take the focus.
   suggestion?: string | null; // The next prompt that the model predicts. The empty box shows it. Tab uses it.
   onDismissSuggestion?: () => void; // The user typed, or pressed Esc.
   onCycleMode?: () => void; // Shift+Tab: the next permission mode.
@@ -171,8 +192,8 @@ export function PromptBox({
   }, [text]);
 
   useEffect(() => {
-    if (!disabled) area.current?.focus();
-  }, [disabled]);
+    if (!disabled && focusKey !== null) area.current?.focus();
+  }, [disabled, focusKey]);
 
   useEffect(() => {
     if (!insert) return;
@@ -201,9 +222,9 @@ export function PromptBox({
   };
 
   const submit = () => {
-    const parsed = parseSubmission(text);
-    if (!parsed || disabled) return; // During a turn, the app puts the message in the queue.
-    let s = parsed;
+    const parsed = parseSubmission(text) ?? (sendEmpty ? { kind: "prompt", text: "" } : null);
+    if (!parsed || disabled || busy || sendBlocked) return; // During a turn, the app puts the message in the queue.
+    let s: Submission = parsed;
     if (s.kind === "prompt") {
       const resolved = resolveSessionRefs(s.text, sessionRefs.current);
       if (resolved !== s.text) s = { kind: "prompt", text: resolved, display: s.text };
@@ -293,164 +314,168 @@ export function PromptBox({
     }
   };
 
-  const canSend = !disabled && text.trim().length > 0;
+  const canSend = !disabled && !busy && !sendBlocked && (sendEmpty || text.trim().length > 0);
   const mentionOpen = mention !== null && mentionItems.length > 0;
+  const sendHint = sendLabel ? (text.trim() ? sendLabel.text : sendLabel.empty) : running ? "Queue (Enter)" : "Send (Enter)";
   const activeId = menuOpen && matches.length > 0 ? `slash-opt-${active}` : mentionOpen ? `mention-opt-${mentionActive}` : undefined;
   const firstSession = mentionItems.findIndex((i) => i.kind === "session");
 
   return (
-    <div className="prompt-wrap">
-      {menuOpen && (
-        <div className="slash-menu">
-          {commands === null ? (
-            <p className="slash-empty">Loading the commands.</p>
-          ) : matches.length === 0 ? (
-            <p className="slash-empty">{inline ? `No skill matches /${token.query}.` : `No command or skill matches /${token.query}.`}</p>
-          ) : (
-            <ul id="slash-menu" role="listbox" aria-label={inline ? "Skills" : "Commands and skills"} ref={list}>
-              {matches.map((item, i) => (
-                <li
-                  key={`${item.builtin ? "b" : "s"}-${item.name}`}
-                  id={`slash-opt-${i}`}
-                  data-index={i}
-                  role="option"
-                  aria-selected={i === active}
-                  className={i === active ? "active" : undefined}
-                  onMouseDown={(e) => e.preventDefault()} // Keep the focus in the text box.
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => choose(item, true)}
-                >
-                  <span className="slash-name mono">/{item.name}</span>
-                  {item["argument-hint"] && <span className="slash-hint mono">{item["argument-hint"]}</span>}
-                  <span className={`slash-source${item.builtin ? " builtin" : ""}`}>{item.builtin ? "command" : item.source}</span>
-                  <span className="slash-desc">{item.description}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="slash-foot">
-            <span>
-              <kbd>↑</kbd> <kbd>↓</kbd> select
-            </span>
-            <span>
-              <kbd>Tab</kbd> complete
-            </span>
-            <span>
-              <kbd>Enter</kbd> {inline ? "add" : "run"}
-            </span>
-            <span>
-              <kbd>Esc</kbd> close
-            </span>
+    <div className={`prompt-wrap${menuBelow ? " menu-below" : ""}`}>
+      {/* The menus open above the box, or below it. The row under the box is not in the anchor. */}
+      <div className="prompt-anchor">
+        {menuOpen && (
+          <div className="slash-menu">
+            {commands === null ? (
+              <p className="slash-empty">Loading the commands.</p>
+            ) : matches.length === 0 ? (
+              <p className="slash-empty">{inline ? `No skill matches /${token.query}.` : `No command or skill matches /${token.query}.`}</p>
+            ) : (
+              <ul id="slash-menu" role="listbox" aria-label={inline ? "Skills" : "Commands and skills"} ref={list}>
+                {matches.map((item, i) => (
+                  <li
+                    key={`${item.builtin ? "b" : "s"}-${item.name}`}
+                    id={`slash-opt-${i}`}
+                    data-index={i}
+                    role="option"
+                    aria-selected={i === active}
+                    className={i === active ? "active" : undefined}
+                    onMouseDown={(e) => e.preventDefault()} // Keep the focus in the text box.
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => choose(item, true)}
+                  >
+                    <span className="slash-name mono">/{item.name}</span>
+                    {item["argument-hint"] && <span className="slash-hint mono">{item["argument-hint"]}</span>}
+                    <span className={`slash-source${item.builtin ? " builtin" : ""}`}>{item.builtin ? "command" : item.source}</span>
+                    <span className="slash-desc">{item.description}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="slash-foot">
+              <span>
+                <kbd>↑</kbd> <kbd>↓</kbd> select
+              </span>
+              <span>
+                <kbd>Tab</kbd> complete
+              </span>
+              <span>
+                <kbd>Enter</kbd> {inline ? "add" : "run"}
+              </span>
+              <span>
+                <kbd>Esc</kbd> close
+              </span>
+            </div>
           </div>
-        </div>
-      )}
-      {mention && (
-        <div className="slash-menu mention-menu">
-          {mentionItems.length === 0 ? (
-            <p className="slash-empty">
-              {filesReady ? (
-                `No file, folder, or session matches @${mention.query}.`
-              ) : (
-                <>
-                  <LoaderCircle size={13} className="spin" aria-hidden /> Looking for files.
-                </>
-              )}
-            </p>
-          ) : (
-            <ul id="mention-menu" role="listbox" aria-label="Files and sessions" ref={mentionList}>
-              {mentionItems.map((item, i) => (
-                <li
-                  key={item.kind === "file" ? `f-${item.path}` : `s-${item.session.id}`}
-                  id={`mention-opt-${i}`}
-                  data-index={i}
-                  role="option"
-                  aria-selected={i === mentionActive}
-                  className={`${i === mentionActive ? "active" : ""}${i === firstSession && i > 0 ? " mention-first-session" : ""}`}
-                  onMouseDown={(e) => e.preventDefault()} // Keep the focus in the text box.
-                  onMouseEnter={() => setMentionActive(i)}
-                  onClick={() => chooseMention(item)}
-                >
-                  {item.kind === "file" ? (
-                    <>
-                      {item.path.endsWith("/") ? <Folder size={14} aria-hidden /> : <FileText size={14} aria-hidden />}
-                      <span className="slash-name mono">{item.path}</span>
-                    </>
-                  ) : (
-                    <>
-                      <MessageSquare size={14} aria-hidden />
-                      <span className="mention-title">{item.session.title ?? "Untitled session"}</span>
-                      <span className="slash-source">session</span>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="slash-foot">
-            <span>
-              <kbd>↑</kbd> <kbd>↓</kbd> select
-            </span>
-            <span>
-              <kbd>Enter</kbd> add
-            </span>
-            <span>
-              <kbd>Esc</kbd> close
-            </span>
+        )}
+        {mention && (
+          <div className="slash-menu mention-menu">
+            {mentionItems.length === 0 ? (
+              <p className="slash-empty">
+                {filesReady ? (
+                  `No file, folder, or session matches @${mention.query}.`
+                ) : (
+                  <>
+                    <LoaderCircle size={13} className="spin" aria-hidden /> Looking for files.
+                  </>
+                )}
+              </p>
+            ) : (
+              <ul id="mention-menu" role="listbox" aria-label="Files and sessions" ref={mentionList}>
+                {mentionItems.map((item, i) => (
+                  <li
+                    key={item.kind === "file" ? `f-${item.path}` : `s-${item.session.id}`}
+                    id={`mention-opt-${i}`}
+                    data-index={i}
+                    role="option"
+                    aria-selected={i === mentionActive}
+                    className={`${i === mentionActive ? "active" : ""}${i === firstSession && i > 0 ? " mention-first-session" : ""}`}
+                    onMouseDown={(e) => e.preventDefault()} // Keep the focus in the text box.
+                    onMouseEnter={() => setMentionActive(i)}
+                    onClick={() => chooseMention(item)}
+                  >
+                    {item.kind === "file" ? (
+                      <>
+                        {item.path.endsWith("/") ? <Folder size={14} aria-hidden /> : <FileText size={14} aria-hidden />}
+                        <span className="slash-name mono">{item.path}</span>
+                      </>
+                    ) : (
+                      <>
+                        <MessageSquare size={14} aria-hidden />
+                        <span className="mention-title">{item.session.title ?? "Untitled session"}</span>
+                        <span className="slash-source">session</span>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="slash-foot">
+              <span>
+                <kbd>↑</kbd> <kbd>↓</kbd> select
+              </span>
+              <span>
+                <kbd>Enter</kbd> add
+              </span>
+              <span>
+                <kbd>Esc</kbd> close
+              </span>
+            </div>
           </div>
-        </div>
-      )}
-      <span className="sr-only" aria-live="polite">
-        {menuOpen && commands ? `${matches.length} ${inline ? "skills" : "commands"} match.` : mentionOpen ? `${mentionItems.length} files and sessions match.` : ""}
-      </span>
-      <div className="prompt-box">
-        <label htmlFor="prompt-input" className="sr-only">
-          Message to the agent
-        </label>
-        <textarea
-          id="prompt-input"
-          ref={area}
-          rows={1}
-          value={text}
-          disabled={disabled}
-          placeholder={
-            running
-              ? "Type a message to queue it. Esc interrupts the agent."
-              : suggestion
-                ? suggestion
-                : "Ask the agent. Type / for commands and skills, @ for files."
-          }
-          onChange={(e) => change(e.target.value, e.target.selectionStart)}
-          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-          onKeyDown={onKeyDown}
-          spellCheck={false}
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={(menuOpen && matches.length > 0) || mentionOpen}
-          aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : mentionOpen ? "mention-menu" : undefined}
-          aria-activedescendant={activeId}
-        />
-        {!text && suggestion && !running && (
-          <span className="suggestion-hint" aria-hidden>
-            <kbd>Tab</kbd>
-          </span>
         )}
-        {/* In line with the text. When the text grows, the button stays at the bottom right. */}
-        {running && !canSend ? (
-          <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
-            <Square size={12} fill="currentColor" aria-hidden />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="icon-btn send"
-            onClick={submit}
-            disabled={!canSend}
-            aria-label={running ? "Queue (Enter)" : "Send (Enter)"}
-            title={running ? "Queue (Enter): it goes to the agent when the turn ends" : "Send (Enter)"}
-          >
-            <CornerDownLeft size={16} aria-hidden />
-          </button>
-        )}
+        <span className="sr-only" aria-live="polite">
+          {menuOpen && commands ? `${matches.length} ${inline ? "skills" : "commands"} match.` : mentionOpen ? `${mentionItems.length} files and sessions match.` : ""}
+        </span>
+        <div className={`prompt-box${boxClassName ? ` ${boxClassName}` : ""}`}>
+          <label htmlFor={inputId} className="sr-only">
+            {label}
+          </label>
+          <textarea
+            id={inputId}
+            ref={area}
+            rows={1}
+            value={text}
+            disabled={disabled}
+            placeholder={
+              running
+                ? "Type a message to queue it. Esc interrupts the agent."
+                : suggestion
+                  ? suggestion
+                  : (placeholder ?? "Ask the agent. Type / for commands and skills, @ for files.")
+            }
+            onChange={(e) => change(e.target.value, e.target.selectionStart)}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onKeyDown={onKeyDown}
+            spellCheck={false}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={(menuOpen && matches.length > 0) || mentionOpen}
+            aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : mentionOpen ? "mention-menu" : undefined}
+            aria-activedescendant={activeId}
+          />
+          {!text && suggestion && !running && (
+            <span className="suggestion-hint" aria-hidden>
+              <kbd>Tab</kbd>
+            </span>
+          )}
+          {/* In line with the text. When the text grows, the button stays at the bottom right. */}
+          {running && !canSend ? (
+            <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
+              <Square size={12} fill="currentColor" aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="icon-btn send"
+              onClick={submit}
+              disabled={!canSend}
+              aria-label={sendHint}
+              title={sendLabel || !running ? sendHint : "Queue (Enter): it goes to the agent when the turn ends"}
+            >
+              {busy ? <LoaderCircle size={16} className="spin" aria-hidden /> : <CornerDownLeft size={16} aria-hidden />}
+            </button>
+          )}
+      </div>
       </div>
       {below && <div className="prompt-below">{below}</div>}
     </div>

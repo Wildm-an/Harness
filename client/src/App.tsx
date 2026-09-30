@@ -11,6 +11,8 @@ import {
   KeyRound,
   LoaderCircle,
   MessageSquare,
+  MessagesSquare,
+  ListChecks,
   Monitor,
   PanelLeft,
   Plug,
@@ -69,12 +71,16 @@ import {
   FORWARD_SHORTCUT,
   SIDEBAR_SHORTCUT,
   isSidebarShortcut,
+  isSideChatShortcut,
   navShortcut,
   shortcutLabel,
   shortcutPane,
 } from "./layout/shortcuts";
 import { emptyHistory, placeOf, samePlace, step, visit, type NavHistory, type Place } from "./layout/history";
 import { TerminalPane } from "./components/TerminalPane";
+import { SideChat, useSideChat } from "./components/SideChat";
+import { MoreMenu } from "./components/MoreMenu";
+import { TasksPane } from "./components/TasksPane";
 import { WorkingLine } from "./components/WorkingLine";
 import { SlashIcon } from "./components/SlashIcon";
 import { WindowControls, hasWindowControls } from "./components/WindowControls";
@@ -82,11 +88,11 @@ import { SIDEBAR_DEFAULT, SidebarResizer, clampSidebar } from "./components/Side
 import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
-import { BrowserPane } from "./browser/BrowserPane";
+import { BrowserPane, clearBrowserData } from "./browser/BrowserPane";
 import { ServerMenu } from "./servers/ServerMenu";
 import { ServersPane } from "./servers/ServersPane";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ServerItem } from "./daemon/protocol";
+import type { AgentFrame, ClientMessage, ServerItem, TaskDetail, TaskItem } from "./daemon/protocol";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath } from "./editor/paths";
@@ -95,6 +101,7 @@ import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
 import { MessageList } from "./components/MessageList";
 import { PromptBox, type Submission } from "./components/PromptBox";
+import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
@@ -113,7 +120,7 @@ import {
   setLastConnectionId,
   type Connection,
 } from "./lib/connections";
-import { browserView, forwardCloseAll, forwardOpen, isTauri, pickFolder, revealInExplorer } from "./lib/tauri";
+import { forwardCloseAll, forwardOpen, isTauri, pickFolder, revealInExplorer } from "./lib/tauri";
 import { FolderMenu } from "./components/FolderMenu";
 import { QueuedPrompts } from "./components/QueuedPrompts";
 import type { SessionActions } from "./components/SessionRow";
@@ -191,6 +198,19 @@ interface ActiveSession {
   project: string | null; // The name of the saved project.
 }
 
+/** The daemon message of a prompt or a command, and the user message that the chat shows. */
+function submissionMessage(s: Submission): { message: ClientMessage; shown: string; startsTurn: boolean } {
+  if (s.kind === "prompt") {
+    return { message: { type: "prompt", text: s.text, ...(s.display ? { display: s.display } : {}) }, shown: s.display ?? s.text, startsTurn: true };
+  }
+  // /compact runs like a turn: the daemon ends it with turn.end.
+  return {
+    message: { type: "command", name: s.name, args: s.args },
+    shown: `/${s.name}${s.args ? ` ${s.args}` : ""}`,
+    startsTurn: s.name === "compact",
+  };
+}
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -223,7 +243,7 @@ export default function App() {
   const showStartRef = useRef<() => void>(() => undefined);
   const [unreadSessions, setUnreadSessions] = useState<Set<string>>(() => new Set());
   const lastRunning = useRef<RunningSession[]>([]);
-  const firstPrompt = useRef<string | null>(null); // The task from the start screen, for the new session.
+  const firstPrompt = useRef<Submission | null>(null); // The task or command from the start screen, for the new session.
   // The project that the start screen selects: from a "+" in the sidebar, or the last project at the start.
   const [startProject, setStartProject] = useState<{ id: string; key: number } | null>(null);
   const startPicked = useRef(false); // The start screen got the last project after this connection.
@@ -392,10 +412,10 @@ export default function App() {
           setStartError(null);
           listRecent();
           if (firstPrompt.current) {
-            const text = firstPrompt.current;
+            const first = submissionMessage(firstPrompt.current);
             firstPrompt.current = null;
-            conn.send({ type: "prompt", text });
-            dispatch({ type: "user", text, startsTurn: true });
+            conn.send(first.message);
+            dispatch({ type: "user", text: first.shown, startsTurn: first.startsTurn });
           }
           return;
         }
@@ -770,10 +790,10 @@ export default function App() {
   };
 
   /** Starts a session. The first task from the start screen goes to the agent when the session is ready. */
-  const startSession = (cwd: string, model: string, prompt: string, mode: PermissionMode) => {
+  const startSession = (cwd: string, model: string, prompt: Submission | null, mode: PermissionMode) => {
     setBusy(true);
     setStartError(null);
-    firstPrompt.current = prompt || null;
+    firstPrompt.current = prompt;
     conn.send({ type: "session.new", cwd, model, permission_mode: mode });
   };
 
@@ -951,14 +971,9 @@ export default function App() {
   const submit = (s: Submission): boolean => {
     setSuggestion(null);
     try {
-      if (s.kind === "prompt") {
-        conn.send({ type: "prompt", text: s.text, ...(s.display ? { display: s.display } : {}) });
-        dispatch({ type: "user", text: s.display ?? s.text, startsTurn: true });
-      } else {
-        conn.send({ type: "command", name: s.name, args: s.args });
-        // /compact runs like a turn: the daemon ends it with turn.end.
-        dispatch({ type: "user", text: `/${s.name}${s.args ? ` ${s.args}` : ""}`, startsTurn: s.name === "compact" });
-      }
+      const { message, shown, startsTurn } = submissionMessage(s);
+      conn.send(message);
+      dispatch({ type: "user", text: shown, startsTurn });
       return true;
     } catch (e) {
       dispatch({ type: "notice", level: "error", text: errorText(e) });
@@ -1082,6 +1097,57 @@ export default function App() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [screen, toggleShortcutPane]);
+
+  // The side chat (Ctrl+;): it floats over the chat, or it is a window of the workspace.
+  const side = useSideChat(conn, session?.id ?? null);
+  // The background tasks of the session, and the "Keep computer awake" switch (the ⋮ menu).
+  const [tasks, setTasks] = useState<TaskItem[] | null>(null);
+  const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
+  const [keepAwake, setKeepAwake] = useState(false);
+  useEffect(
+    () =>
+      conn.onMessage((msg) => {
+        if (msg.type === "tasks") setTasks(msg.items);
+        else if (msg.type === "task") {
+          const { type: _type, ...detail } = msg;
+          setTaskDetail(detail);
+        } else if (msg.type === "keep_awake") setKeepAwake(msg.on);
+        else if (msg.type === "session.ready") {
+          setKeepAwake(!!msg.keep_awake);
+          setTasks(null);
+          setTaskDetail(null);
+          try {
+            conn.send({ type: "tasks.list" });
+          } catch {
+            // The next session.ready asks again.
+          }
+        }
+      }),
+    [conn],
+  );
+  const runningTasks = tasks?.filter((t) => t.status === "running").length ?? 0;
+  const [sideFloating, setSideFloating] = useState(false);
+  const [sideFocus, setSideFocus] = useState(0);
+  const sideDocked = findGroupOf(layout, "side") !== null;
+  const toggleSideChat = useCallback(() => {
+    if (sideDocked) {
+      setLayout((l) => closePane(l, "side"));
+      return;
+    }
+    setSideFloating((open) => !open);
+    setSideFocus((k) => k + 1);
+  }, [sideDocked]);
+  useEffect(() => {
+    if (screen !== "chat") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isSideChatShortcut(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) toggleSideChat();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [screen, toggleSideChat]);
 
   const sendSafely = useCallback(
     (msg: Parameters<DaemonConnection["send"]>[0]) => {
@@ -1219,7 +1285,7 @@ export default function App() {
     for (const s of servers.items) {
       const before = serverStates.current[s.name];
       if (s.state === "starting" && before && before !== "starting" && isTauri() && loadPref("browserKeepData", "true") === "false") {
-        void browserView.clearData().catch(() => undefined);
+        void clearBrowserData().catch(() => undefined);
       }
       serverStates.current[s.name] = s.state;
     }
@@ -1305,15 +1371,28 @@ export default function App() {
   const folder = session?.project ?? session?.cwd.split(/[\\/]/).filter(Boolean).pop();
 
   // The sessions of the "@" menu: not this session, and the sessions of this project first.
-  const mentionSessions = useMemo(() => {
-    if (!session) return [];
-    const here = pathKey(session.cwd);
-    const others = recent.filter((s) => s.id !== session.id);
-    return [...others.filter((s) => pathKey(s.cwd) === here), ...others.filter((s) => pathKey(s.cwd) !== here)];
-  }, [recent, session?.id, session?.cwd]);
+  const mentionSessions = useMemo(
+    () => (session ? mentionOrder(recent, session.cwd, session.id) : []),
+    [recent, session?.id, session?.cwd],
+  );
 
   const chatPane = (
     <div className="chat">
+      {sideFloating && !sideDocked && session && (
+        <SideChat
+          items={side.items}
+          running={side.running}
+          onAsk={side.ask}
+          onStop={side.stop}
+          onClear={side.clear}
+          onClose={() => setSideFloating(false)}
+          onPopOut={() => {
+            setSideFloating(false);
+            showPane("side");
+          }}
+          focusKey={sideFocus}
+        />
+      )}
       {status === "closed" && (
         <div className="banner" role="alert">
           <span>The connection to the daemon closed.</span>
@@ -1401,6 +1480,43 @@ export default function App() {
   const dirtyCount = editor.files.filter((f) => f.dirty).length;
   const panes: Record<PaneId, PaneSpec> = {
     chat: { title: "Chat", icon: MessageSquare, closable: false, render: () => chatPane },
+    tasks: {
+      title: "Background tasks",
+      icon: ListChecks,
+      closable: true,
+      badge: runningTasks ? <span className="tab-badge" title={`${runningTasks} running`}>{runningTasks}</span> : undefined,
+      render: () => (
+        <TasksPane
+          items={tasks}
+          detail={taskDetail}
+          onRequest={() => sendSafely({ type: "tasks.list" })}
+          onOpen={(id) => sendSafely({ type: "task.get", id })}
+          onStop={(id) => sendSafely({ type: "task.stop", id })}
+        />
+      ),
+    },
+    side: {
+      title: "Side chat",
+      icon: MessagesSquare,
+      closable: true,
+      render: () =>
+        session ? (
+          <SideChat
+            items={side.items}
+            running={side.running}
+            onAsk={side.ask}
+            onStop={side.stop}
+            onClear={side.clear}
+            onDock={() => {
+              hidePane("side");
+              setSideFloating(true);
+              setSideFocus((k) => k + 1);
+            }}
+          />
+        ) : (
+          <p className="pane-empty">Open a session to use the side chat.</p>
+        ),
+    },
     editor: {
       title: "Files",
       icon: Files,
@@ -1462,12 +1578,16 @@ export default function App() {
       title: "Terminal",
       icon: SquareTerminal,
       closable: true,
-      render: () => <TerminalPane conn={conn} sessionKey={session?.id ?? ""} connected={status === "open"} />,
+      ownHeader: true, // Its tabs are in the window header.
+      render: () => (
+        <TerminalPane conn={conn} sessionKey={session?.id ?? ""} connected={status === "open"} onEmpty={() => hidePane("terminal")} />
+      ),
     },
     browser: {
       title: "Browser",
       icon: GlobeIcon,
       closable: true,
+      ownHeader: true, // Its tabs are in the window header.
       render: () => (
         <BrowserPane
           request={browserRequest}
@@ -1476,6 +1596,7 @@ export default function App() {
           onOpenServer={(s) => void openServer(s)}
           onOpenAgentPage={openAgentPage}
           onError={browserError}
+          onEmpty={() => hidePane("browser")}
         />
       ),
     },
@@ -1746,22 +1867,34 @@ export default function App() {
                 onOpenPane={() => setLayout((l) => openPane(l, "servers"))}
               />
               <PaneToggle
-                icon={GlobeIcon}
-                label={`Browser (${shortcutLabel("browser")})`}
-                active={paneVisible("browser")}
-                onClick={() => toggleShortcutPane("browser")}
-              />
-              <PaneToggle
                 icon={SquareTerminal}
                 label={`Terminal (${shortcutLabel("terminal")})`}
                 active={paneVisible("terminal")}
                 onClick={() => toggleShortcutPane("terminal")}
               />
               <PaneToggle
-                icon={Files}
-                label={`Files (${shortcutLabel("editor")})`}
-                active={paneVisible("editor")}
-                onClick={() => toggleShortcutPane("editor")}
+                icon={FileDiff}
+                label={`Diff (${shortcutLabel("diff")})`}
+                active={paneVisible("diff")}
+                onClick={() => toggleShortcutPane("diff")}
+              />
+              <PaneToggle
+                icon={GlobeIcon}
+                label={`Browser (${shortcutLabel("browser")})`}
+                active={paneVisible("browser")}
+                onClick={() => toggleShortcutPane("browser")}
+              />
+              <MoreMenu
+                filesKey={shortcutLabel("editor")}
+                filesOpen={paneVisible("editor")}
+                onFiles={() => toggleShortcutPane("editor")}
+                runningTasks={runningTasks}
+                onTasks={() => showPane("tasks")}
+                keepAwake={keepAwake}
+                onKeepAwake={(on) => {
+                  if (sendSafely({ type: "session.keep_awake", on })) setKeepAwake(on);
+                }}
+                disabled={status !== "open"}
               />
             </div>
           )}
@@ -1809,6 +1942,11 @@ export default function App() {
             onDeleteProject={deleteProject}
             onListSessions={listSessions}
             selectProject={startProject}
+            commands={commands}
+            onRequestCommands={(cwd) => sendSafely({ type: "skills.list", cwd })}
+            recentSessions={recent}
+            fileMatches={fileMatches}
+            onFindFiles={(query, cwd) => sendSafely({ type: "fs.find", query, cwd })}
           />
         )}
         {screen === "cookbook" && (

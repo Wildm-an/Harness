@@ -43,7 +43,14 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `session.update` | `session_id`, `title` (optional), `pinned` (optional) | Renames or pins a session. The age of the session stays. The reply is `session.updated`. |
 | `session.delete` | `session_id` | Deletes a session and its messages. A running turn and a shell of the session stop. The reply is `session.deleted`. |
 | `session.move` | `session_id`, `cwd` | Moves a session to another folder ("Change folder"). The history stays. Not during a turn. The session opens again there, and the reply is `session.ready`. |
-| `term.open` | `cols`, `rows`, `id` (optional), `since` (optional) | Shows the shell of the terminal pane: the running shell of the session, or a new shell in the project folder. `since` is the number of the last output that the client has for the shell `id`. |
+| `term.open` | `cols`, `rows`, `id` (optional), `since` (optional), `new` (optional), `ref` (optional) | Shows a shell of the terminal pane. Each tab of the pane has its own shell (at most 8 for each session). `id`: the shell of a tab. `new: true`: a new shell, for a new tab. With neither: the first running shell, or a new shell in the project folder. `since` is the number of the last output that the client has for the shell `id`. `ref` comes back in `term.opened`. |
+| `term.close` | `id` | The user closed a tab of the terminal pane. The daemon stops its shell. |
+| `side.ask` | `id`, `question`, `history` (optional) | A side chat question (Ctrl+;). The model sees the full session (the system prompt, the messages, and the tools) and the earlier side chat messages in `history` (`role`: `user` or `assistant`, `content`). Nothing is added to the session. It can run during a turn. The answer comes as `side.token`, then `side.done` or `side.error`. |
+| `side.cancel` | `id` | Stops the answer of a side chat question. |
+| `tasks.list` | | The background tasks of the session: the commands that the agent runs with `bash` and `run_in_background`. The reply is `tasks`. |
+| `task.get` | `id` | One background task with its output. The reply is `task`. |
+| `task.stop` | `id` | Stops a background task and its child processes. |
+| `session.keep_awake` | `on` | The "Keep computer awake" switch of the session. While it is on, the computer of the daemon does not sleep during a turn or a background task of the session. The daemon does not save it. The reply is `keep_awake`. |
 | `term.input` | `id`, `data` | Sends typed text to the shell. |
 | `term.resize` | `id`, `cols`, `rows` | Changes the size of the terminal. |
 | `projects.list` | — | Asks for the saved projects, the last used first. This needs no session. |
@@ -52,7 +59,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 | `fs.dirs` | `path` (optional), `hidden` (optional) | Asks for the folders in a folder of the daemon host. The default is the home folder. This needs no session: the client uses it to select a project folder on a remote daemon. |
 | `context.get` | none | Asks for the context breakdown of the session. The reply is `context.usage`. |
-| `fs.find` | `query` | File and folder names for the "@" menu of the prompt box. The reply is `fs.found`. |
+| `fs.find` | `query`, `cwd` (optional) | File and folder names for the "@" menu of the prompt box. The reply is `fs.found`. The start screen has no session: it sends the project folder as `cwd`. |
 | `fs.search` | `query`, `regex` (optional), `case` (optional), `glob` (optional) | Searches the project for the editor. Without `regex`, `query` is plain text. Without `case`, the search ignores case. |
 | `fs.unwatch` | `path` | The editor closed a file. The daemon stops the change reports for it. |
 | `server.list` | — | Asks for the servers of `.harness/launch.json`. |
@@ -120,9 +127,15 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `context.usage` | `tokens`, `length`, `compact_at`, `source`, `parts` | The size of each part of the next request: `system`, `instructions`, `skills`, `summary`, `tools`, `mcp_tools`, and `messages`. The parts are estimates, scaled so that their sum is `tokens` (the endpoint count of the last request, when the endpoint gives it). |
 | `fs.found` | `query`, `items` | Reply to `fs.find`: at most 40 project paths, best match first. A folder ends with `/`. |
 | `sessions` | `items`, `cwd` | Reply to `session.list`. `cwd` is the value from the request, or null. Each item has `id`, `cwd`, `provider`, `model`, `title`, `created_at`, and `updated_at`. |
-| `term.opened` | `id`, `new`, `replay`, `seq`, `reset` | Reply to `term.open`. `replay` is the output after `since`. If `reset` is true, `replay` is all the kept output (up to 256 KB), and the client clears its screen first. `seq` is the number of the last output. |
+| `term.opened` | `id`, `new`, `replay`, `seq`, `reset`, `ref` (optional) | Reply to `term.open`. `replay` is the output after `since`. If `reset` is true, `replay` is all the kept output (up to 256 KB), and the client clears its screen first. `seq` is the number of the last output. |
 | `term.output` | `id`, `data`, `seq` | Shell output. `seq` goes up by 1 for each message. |
 | `term.exit` | `id`, `code` | The shell stopped. The next `term.open` starts a new shell. |
+| `side.token` | `id`, `text` | A part of the answer of a side chat question. |
+| `side.done` | `id`, `text` | The side chat answer is complete. `text` is all the answer. |
+| `side.error` | `id`, `message` | The side chat question failed. |
+| `tasks` | `items` | The background tasks of the session: `id`, `command`, `description`, `status` (`running`, `done`, `failed`, or `stopped`), `started_at`, `ended_at`, `returncode`. The daemon also sends it when a task starts or ends. |
+| `task` | the fields of an item of `tasks`, `output`, `dropped` | Reply to `task.get`. `output` is the kept output (the last 256 K characters). `dropped` is the number of earlier characters that are not kept. |
+| `keep_awake` | `on`, `active` | Reply to `session.keep_awake`. `active` is true while the computer stays awake. `session.ready` has the switch in `keep_awake`. |
 | `session.title` | `id`, `title` | The model made a short title from the first prompt of the session `id`. It replaces the first line of the prompt, which is the title until then. The daemon sends it also for a session in the background. |
 | `session.updated` | `id`, `title`, `pinned` | Reply to `session.update`. |
 | `session.deleted` | `id` | Reply to `session.delete`. |

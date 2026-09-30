@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSidebarShortcut, navShortcut, shortcutPane } from "./shortcuts";
+import { isSideChatShortcut, isSidebarShortcut, navShortcut, shortcutPane } from "./shortcuts";
 import { chatHasFullHeight, defaultLayout, findGroupOf, group, movePane, normalize, togglePane, type LayoutNode } from "./model";
 
 const key = (code: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean; key?: string } = {}) => ({
@@ -48,17 +48,16 @@ describe("the terminal layout", () => {
   it("opens the terminal on the right of the chat, and a second toggle closes it", () => {
     const open = togglePane(defaultLayout(), "terminal");
     const terminal = findGroupOf(open, "terminal");
-    expect(terminal?.tabs).toContain("editor"); // The group on the right.
-    expect(terminal?.active).toBe("terminal");
+    expect(terminal?.tabs).toEqual(["terminal"]); // Its own window, below the editor.
+    expect(findGroupOf(open, "editor")).not.toBe(terminal);
     expect(chatHasFullHeight(open)).toBe(true);
     const closed = togglePane(open, "terminal");
     expect(findGroupOf(closed, "terminal")).toBeNull();
   });
 
-  it("shows a pane that is not the active tab, and does not close it", () => {
-    const layout = defaultLayout(); // The editor is active, the browser is the second tab.
-    const shown = togglePane(layout, "browser");
-    expect(findGroupOf(shown, "browser")?.active).toBe("browser");
+  it("opens the browser in its own window", () => {
+    const shown = togglePane(defaultLayout(), "browser");
+    expect(findGroupOf(shown, "browser")?.tabs).toEqual(["browser"]);
   });
 });
 
@@ -67,13 +66,14 @@ describe("the chat has the full height", () => {
     const layout = togglePane(defaultLayout(), "terminal");
     const chat = findGroupOf(layout, "chat")!;
     const right = findGroupOf(layout, "terminal")!;
+    const editor = findGroupOf(layout, "editor")!;
     expect(movePane(layout, "terminal", chat.id, "bottom")).toBe(layout);
     expect(movePane(layout, "terminal", chat.id, "top")).toBe(layout);
     expect(movePane(layout, "chat", right.id, "top")).toBe(layout);
-    // Beside the chat, below another pane, and in the tabs of the chat group are allowed.
+    // Beside the chat, and above or beside another pane, are allowed.
     expect(movePane(layout, "terminal", chat.id, "right")).not.toBe(layout);
-    expect(movePane(layout, "terminal", right.id, "bottom")).not.toBe(layout);
-    expect(chatHasFullHeight(movePane(layout, "terminal", right.id, "bottom"))).toBe(true);
+    expect(movePane(layout, "terminal", editor.id, "top")).not.toBe(layout);
+    expect(chatHasFullHeight(movePane(layout, "terminal", editor.id, "top"))).toBe(true);
   });
 
   it("moves the chat out of a column in a saved layout", () => {
@@ -104,5 +104,15 @@ describe("the back and forward keys", () => {
     expect(navShortcut(key("ArrowLeft", { key: "ArrowLeft" }))).toBeNull();
     expect(navShortcut(key("ArrowLeft", { alt: true, ctrl: true, key: "ArrowLeft" }))).toBeNull();
     expect(navShortcut(key("ArrowRight", { alt: true, shift: true, key: "ArrowRight" }))).toBeNull();
+  });
+});
+
+describe("the side chat key", () => {
+  it("is Ctrl+; or Cmd+;, with no other modifier", () => {
+    const key = (k: Partial<KeyboardEvent>) => ({ code: "Semicolon", key: ";", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...k });
+    expect(isSideChatShortcut(key({ ctrlKey: true }))).toBe(true);
+    expect(isSideChatShortcut(key({ metaKey: true }))).toBe(true);
+    expect(isSideChatShortcut(key({}))).toBe(false);
+    expect(isSideChatShortcut(key({ ctrlKey: true, shiftKey: true }))).toBe(false);
   });
 });

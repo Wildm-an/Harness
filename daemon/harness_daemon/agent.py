@@ -153,6 +153,14 @@ class Agent:
             self._sync_preview_tools()
         self._rebuild_prompt()
 
+    def enable_tasks(self, host: Any) -> None:
+        """Add the background task tools. ``host`` is the task host of the session (tasks.py)."""
+        from .tools.tasks import task_tools
+
+        self.ctx.tasks = host
+        self.tools.update({t.name: t for t in task_tools()})
+        self._rebuild_prompt()
+
     def enable_preview(self, host: Any) -> None:
         """Add the preview tools. ``host`` is the preview host of the session (preview.py)."""
         self.ctx.preview = host

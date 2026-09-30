@@ -3,7 +3,6 @@ import {
   Check,
   ChevronDown,
   Clock,
-  CornerDownLeft,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -13,11 +12,13 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { PermissionMode, ProjectItem, SessionSummary } from "../daemon/protocol";
+import type { CommandItem, PermissionMode, ProjectItem, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
 import { loadPref, savePref } from "../lib/prefs";
+import { PromptBox, type Submission } from "./PromptBox";
+import { mentionOrder, type MentionSession } from "./mentions";
 
 function relativeTime(seconds: number): string {
   const diff = Date.now() / 1000 - seconds;
@@ -255,8 +256,6 @@ function ProjectMenu({
   );
 }
 
-const MAX_HEIGHT_PX = 320;
-
 export function SessionStart({
   projects,
   sessions,
@@ -273,13 +272,24 @@ export function SessionStart({
   onDeleteProject,
   onListSessions,
   selectProject,
+  commands,
+  onRequestCommands,
+  recentSessions,
+  fileMatches,
+  onFindFiles,
 }: {
   projects: ProjectItem[] | null; // null: loading.
   sessions: { cwd: string | null; items: SessionSummary[] };
   busy: boolean;
   error: string | null;
-  // prompt: the first task, or "" for none. mode: the permission mode of the new session.
-  onStart: (cwd: string, model: string, prompt: string, mode: PermissionMode) => void;
+  // prompt: the first task or command, or null for none. mode: the permission mode of the new session.
+  onStart: (cwd: string, model: string, prompt: Submission | null, mode: PermissionMode) => void;
+  // The prompt box is the same as in a session: the / menu and the @ menu of the selected project.
+  commands: CommandItem[] | null;
+  onRequestCommands: (cwd: string) => void;
+  recentSessions: MentionSession[]; // The sessions of all folders. The "@" menu shows those of the project first.
+  fileMatches: { query: string; items: string[] } | null;
+  onFindFiles: (query: string, cwd: string) => void;
   onResume: (id: string) => void;
   prefScope: string; // The project and the model are remembered for each connection.
   onBrowse: (current: string) => Promise<string | null>; // The native dialog, or the remote folder picker.
@@ -293,8 +303,6 @@ export function SessionStart({
 }) {
   const [selectedId, setSelectedId] = useState(() => loadPref(`project.${prefScope}`, ""));
   const [form, setForm] = useState<{ draft: ProjectDraft; key: number } | null>(null);
-  const [text, setText] = useState("");
-  const area = useRef<HTMLTextAreaElement>(null);
   const selected = projects?.find((p) => p.id === selectedId) ?? projects?.[0] ?? null;
   const modelKey = (id: string | undefined) => (id ? `model.${prefScope}.${id}` : `model.${prefScope}`);
   const [model, setModel] = useState("");
@@ -308,18 +316,6 @@ export function SessionStart({
     setModel(loadPref(modelKey(selected?.id), loadPref(`model.${prefScope}`, "")));
     if (selected) onListSessions(selected.path);
   }, [selected?.id, selected?.sessions]);
-
-  useEffect(() => {
-    if (selected && !form) area.current?.focus();
-  }, [selected?.id, form]);
-
-  // Grow the text box with its content, up to a limit.
-  useEffect(() => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = "";
-    if (el.value) el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
-  }, [text]);
 
   const select = (id: string) => {
     setSelectedId(id);
@@ -340,22 +336,14 @@ export function SessionStart({
 
   const canStart = !busy && selected !== null && selected.exists;
 
-  const start = () => {
-    if (!canStart) return;
+  /** Start a session. It returns false: the box keeps the text, for a new try after an error. */
+  const start = (s: Submission): boolean => {
+    if (!canStart) return false;
     savePref(modelKey(selected.id), model.trim());
     savePref(`model.${prefScope}`, model.trim());
     saveLastMode(prefScope, mode);
-    onStart(selected.path, model.trim(), text.trim(), mode);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      start();
-    } else if (e.key === "Tab" && e.shiftKey) {
-      e.preventDefault(); // Shift+Tab changes the mode, as in a session.
-      setMode(nextMode(mode));
-    }
+    onStart(selected.path, model.trim(), s.kind === "prompt" && !s.text.trim() ? null : s, mode);
+    return false;
   };
 
   const recent = selected && sessions.cwd === selected.path ? sessions.items : [];
@@ -365,61 +353,52 @@ export function SessionStart({
       <section className="start-hero" aria-labelledby="start-title">
         <h1 id="start-title">What do you want to work on?</h1>
 
-        <form
-          className="prompt-box start-box"
-          onSubmit={(e) => {
-            e.preventDefault();
-            start();
-          }}
-        >
-          <label htmlFor="start-input" className="sr-only">
-            The first task for the agent
-          </label>
-          <textarea
-            id="start-input"
-            ref={area}
-            rows={1}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKeyDown}
-            disabled={!selected}
-            placeholder={selected ? `Describe a task for ${selected.name}.` : "Add a project first."}
-            spellCheck={false}
-          />
-          {/* In line with the text, as in a session. It stays at the bottom right when the text grows. */}
-          <button
-            type="submit"
-            className="icon-btn send"
-            disabled={!canStart}
-            aria-label={text.trim() ? "Start the session with this task (Enter)" : "Start the session (Enter)"}
-            title={text.trim() ? "Start the session with this task (Enter)" : "Start the session (Enter)"}
-          >
-            {busy ? <LoaderCircle size={16} className="spin" aria-hidden /> : <CornerDownLeft size={16} aria-hidden />}
-          </button>
-        </form>
-        {/* The project, the permission mode, and the model below the box, as in a session. */}
-        <div className="prompt-below">
-          <div className="prompt-below-left">
-            <ProjectMenu
-              projects={projects}
-              selected={selected}
-              onSelect={select}
-              onAdd={() => openForm(NEW_PROJECT)}
-              onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
-              onDelete={onDeleteProject}
-            />
-            <ModeMenu mode={mode} onChange={setMode} up={false} />
-          </div>
-          <ModelMenu
-            value={model}
-            models={models}
-            allowDefault
-            alignRight
-            onOpen={onRequestModels}
-            onSelect={setModel}
-            onManage={onManageProviders}
-          />
-        </div>
+        <PromptBox
+          running={false}
+          disabled={!selected}
+          busy={busy}
+          sendBlocked={!canStart}
+          sendEmpty
+          inputId="start-input"
+          label="The first task for the agent"
+          placeholder={selected ? `Describe a task for ${selected.name}. Type / for commands and skills, @ for files.` : "Add a project first."}
+          sendLabel={{ empty: "Start the session (Enter)", text: "Start the session with this task (Enter)" }}
+          boxClassName="start-box"
+          menuBelow
+          focusKey={form ? null : selected?.id}
+          commands={commands}
+          onRequestCommands={() => selected?.exists && onRequestCommands(selected.path)}
+          sessions={selected ? mentionOrder(recentSessions, selected.path) : recentSessions}
+          fileMatches={fileMatches}
+          onFindFiles={(query) => selected?.exists && onFindFiles(query, selected.path)}
+          onSubmit={start}
+          onInterrupt={() => {}}
+          onCycleMode={() => setMode(nextMode(mode))} // Shift+Tab changes the mode, as in a session.
+          below={
+            <>
+              <div className="prompt-below-left">
+                <ProjectMenu
+                  projects={projects}
+                  selected={selected}
+                  onSelect={select}
+                  onAdd={() => openForm(NEW_PROJECT)}
+                  onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
+                  onDelete={onDeleteProject}
+                />
+                <ModeMenu mode={mode} onChange={setMode} up={false} />
+              </div>
+              <ModelMenu
+                value={model}
+                models={models}
+                allowDefault
+                alignRight
+                onOpen={onRequestModels}
+                onSelect={setModel}
+                onManage={onManageProviders}
+              />
+            </>
+          }
+        />
 
         {selected && !selected.exists && (
           <p className="start-help">

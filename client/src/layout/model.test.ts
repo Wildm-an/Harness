@@ -10,6 +10,8 @@ import {
   openPane,
   parseLayout,
   resize,
+  setSideShare,
+  sideShareOf,
   type LayoutNode,
   type Split,
 } from "./model";
@@ -23,16 +25,23 @@ const shape = (n: LayoutNode): unknown =>
 
 describe("layout", () => {
   it("has chat on the left and the editor on the right by default", () => {
-    expect(shape(defaultLayout())).toEqual({ row: [["chat"], ["editor", "browser"]] });
+    expect(shape(defaultLayout())).toEqual({ row: [["chat"], ["editor"]] });
   });
 
-  it("opens a new pane in the group without the chat, and activates a pane that is there", () => {
+  it("opens each new pane in its own window, below the last window", () => {
     let l = openPane(base(), "diff");
-    expect(shape(l)).toEqual({ row: [["chat"], ["editor", "diff"]] });
-    expect(findGroupOf(l, "diff")!.active).toBe("diff");
-    l = openPane(l, "editor");
-    expect(findGroupOf(l, "editor")!.active).toBe("editor");
-    expect(shape(l)).toEqual({ row: [["chat"], ["editor", "diff"]] });
+    expect(shape(l)).toEqual({ row: [["chat"], { column: [["editor"], ["diff"]] }] });
+    l = openPane(l, "terminal");
+    expect(shape(l)).toEqual({ row: [["chat"], { column: [["editor"], ["diff"], ["terminal"]] }] });
+    expect(openPane(l, "editor")).toEqual(l); // A pane that is open stays where it is.
+  });
+
+  it("gives each pane of an old saved group its own window", () => {
+    const old = { type: "split", id: "s1", direction: "row", sizes: [0.4, 0.6],
+      children: [{ type: "group", id: "g1", tabs: ["chat"], active: "chat" }, { type: "group", id: "g2", tabs: ["editor", "browser"], active: "browser" }] };
+    expect(shape(parseLayout(old)!)).toEqual({ row: [["chat"], { column: [["editor"], ["browser"]] }] });
+    const mixed = { type: "group", id: "g3", tabs: ["chat", "terminal"], active: "chat" };
+    expect(shape(parseLayout(mixed)!)).toEqual({ row: [["chat"], ["terminal"]] });
   });
 
   it("adds a group on the right when all groups have the chat", () => {
@@ -49,11 +58,9 @@ describe("layout", () => {
     expect(shape(left)).toEqual({ row: [["diff"], ["chat"], ["editor"]] });
   });
 
-  it("moves a pane into another group and removes the empty group", () => {
+  it("does not put two panes in one window", () => {
     const l = base();
-    const moved = movePane(l, "editor", findGroupOf(l, "chat")!.id, "center");
-    expect(shape(moved)).toEqual(["chat", "editor"]);
-    expect(moved.type === "group" && moved.active).toBe("editor");
+    expect(movePane(l, "editor", findGroupOf(l, "chat")!.id, "center")).toBe(l);
   });
 
   it("does not move a single pane beside itself", () => {
@@ -82,10 +89,20 @@ describe("layout", () => {
     expect(parseLayout({ type: "nonsense" })).toBeNull();
     expect(parseLayout(null)).toBeNull();
     const saved = JSON.parse(JSON.stringify(defaultLayout()));
-    expect(shape(parseLayout(saved)!)).toEqual({ row: [["chat"], ["editor", "browser"]] });
+    expect(shape(parseLayout(saved)!)).toEqual({ row: [["chat"], ["editor"]] });
     const noChat = { type: "group", id: "g1", tabs: ["editor"], active: "editor" };
     expect(findGroupOf(parseLayout(noChat)!, "chat")).not.toBeNull();
     const unknownTab = { type: "group", id: "g1", tabs: ["chat", "no-such-pane"], active: "no-such-pane" };
     expect(parseLayout(unknownTab)).toMatchObject({ tabs: ["chat"], active: "chat" });
+  });
+
+  it("opens a new side area at the last width of the side windows", () => {
+    setSideShare(0.3);
+    const l = openPane(group(["chat"]), "terminal") as Split;
+    expect(l.sizes[0]).toBeCloseTo(0.7);
+    expect(sideShareOf(l)).toBeCloseTo(0.3);
+    setSideShare(5); // Out of range: at most 0.8.
+    expect(sideShareOf(openPane(group(["chat"]), "terminal"))).toBeCloseTo(0.8);
+    setSideShare(0.55);
   });
 });

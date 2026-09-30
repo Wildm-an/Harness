@@ -246,6 +246,25 @@ def _term_text(c: Client, marker: str, timeout: float = 20) -> str:
     return text
 
 
+def test_terminal_tabs_have_their_own_shells(daemon, project, fake_model):
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "term.open", "cols": 80, "rows": 24, "ref": "tab-a"})
+    a = c.until("term.opened")[0]
+    c.send({"type": "term.open", "cols": 80, "rows": 24, "new": True, "ref": "tab-b"})
+    b = c.until("term.opened")[0]
+    assert (a["ref"], b["ref"]) == ("tab-a", "tab-b") and a["new"] and b["new"] and a["id"] != b["id"]
+    c.send({"type": "term.input", "id": b["id"], "data": "echo tab-b-ok\r"})
+    _term_text(c, "tab-b-ok")
+    # Each tab opens its own shell again.
+    c.send({"type": "term.open", "cols": 80, "rows": 24, "id": a["id"]})
+    assert c.until("term.opened")[0]["id"] == a["id"]
+    c.send({"type": "term.close", "id": b["id"]})
+    c.send({"type": "term.input", "id": b["id"], "data": "x"})
+    assert "Unknown terminal" in c.until("error")[0]["message"]
+    c.close()
+
+
 def test_terminal_runs_a_shell_and_stays_open_in_the_background(daemon, project, fake_model):
     c = Client(daemon)
     first = c.new_session(project)

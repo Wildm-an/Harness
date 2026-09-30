@@ -238,42 +238,65 @@ class Terminal:
             log.debug("The terminal %s did not stop cleanly", self.id, exc_info=True)
 
 
+MAX_TERMINALS = 8  # The running shells of one session: the tabs of the terminal pane.
+
+
 class TerminalHost:
-    """The shell of one session."""
+    """The shells of one session. Each tab of the terminal pane has one shell."""
 
     def __init__(self, cwd: Path, emit: Emit, on_exit: Callable[[], None] | None = None):
         self.cwd = cwd
         self._emit = emit
         self._on_exit = on_exit
-        self.terminal: Terminal | None = None
+        self.terminals: dict[str, Terminal] = {}  # By id, in the order of their start.
 
     @property
     def alive(self) -> bool:
-        return self.terminal is not None and self.terminal.alive
+        return any(t.alive for t in self.terminals.values())
 
-    def open(self, cols: int, rows: int, shell: str | None = None) -> tuple[Terminal, bool]:
-        """Return the running shell, or start one. The flag is True for a new shell."""
-        if self.terminal is not None and self.terminal.alive:
-            self.terminal.resize(cols, rows)
-            return self.terminal, False
+    def open(self, cols: int, rows: int, shell: str | None = None, terminal_id: str | None = None,
+             new: bool = False) -> tuple[Terminal, bool]:
+        """Return a running shell, or start one. The flag is True for a new shell.
+
+        ``terminal_id``: that shell, if it runs. ``new``: always a new shell, for a new tab.
+        With neither: the first running shell. A stopped shell is replaced by a new one.
+        """
+        if not new:
+            found = (self.terminals.get(terminal_id) if terminal_id
+                     else next((t for t in self.terminals.values() if t.alive), None))
+            if found is not None and found.alive:
+                found.resize(cols, rows)
+                return found, False
+        # The output of stopped shells is not needed any more.
+        self.terminals = {k: t for k, t in self.terminals.items() if t.alive}
+        if len(self.terminals) >= MAX_TERMINALS:
+            raise TerminalError(f"A session can have at most {MAX_TERMINALS} terminals. Close one first.")
         argv = shell_command(shell)
         try:
             pty = _Pty(argv, self.cwd, cols, rows)
         except Exception as e:  # noqa: BLE001 - report any start error to the client.
             raise TerminalError(f"The shell did not start ({argv[0]}): {e}") from e
-        self.terminal = Terminal(pty, self._emit, asyncio.get_running_loop(), self._exited)
-        return self.terminal, True
+        terminal = Terminal(pty, self._emit, asyncio.get_running_loop(), self._exited)
+        self.terminals[terminal.id] = terminal
+        return terminal, True
 
     def get(self, terminal_id: str) -> Terminal:
-        if self.terminal is None or self.terminal.id != terminal_id:
+        terminal = self.terminals.get(terminal_id)
+        if terminal is None:
             raise TerminalError(f"Unknown terminal: {terminal_id}")
-        return self.terminal
+        return terminal
+
+    def close_one(self, terminal_id: str) -> None:
+        """Stop the shell of a tab that the user closed. An unknown id is not an error."""
+        terminal = self.terminals.pop(terminal_id, None)
+        if terminal is not None:
+            terminal.kill()
 
     def _exited(self, terminal: Terminal) -> None:
         if self._on_exit is not None:
             self._on_exit()
 
     def close(self) -> None:
-        if self.terminal is not None:
-            self.terminal.kill()
-            self.terminal = None
+        for terminal in self.terminals.values():
+            terminal.kill()
+        self.terminals.clear()

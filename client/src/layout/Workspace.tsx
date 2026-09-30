@@ -1,7 +1,25 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { Columns2, EllipsisVertical, MoveRight, Rows2, X, type LucideIcon } from "lucide-react";
+import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Maximize2, Minimize2, X, type LucideIcon } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
-import { canMove, closePane, groups, movePane, resize, type Group, type LayoutNode, type PaneId, type Split, type Zone } from "./model";
+import { loadPref, savePref } from "../lib/prefs";
+import {
+  canMove,
+  closePane,
+  groups,
+  movePane,
+  resize,
+  setSideShare,
+  sideShareOf,
+  type Group,
+  type LayoutNode,
+  type PaneId,
+  type Split,
+  type Zone,
+} from "./model";
+
+// The width of the windows beside the chat, in pixels. It stays for all projects and after a restart.
+const SIDE_WIDTH_PREF = "layout.sideWidth";
 
 export interface PaneSpec {
   title: string;
@@ -9,6 +27,9 @@ export interface PaneSpec {
   closable: boolean;
   render: () => ReactNode;
   badge?: ReactNode;
+  // The pane puts its own content in the window header with <PaneHeader>, for example its tabs.
+  // The header then shows no title.
+  ownHeader?: boolean;
 }
 
 const DRAG_TYPE = "application/x-harness-pane";
@@ -16,6 +37,22 @@ const MIN_SHARE = 0.08;
 const MIN_PX = 240; // A pane narrower than this is hard to use.
 const KEY_STEP = 0.04;
 
+// The places in the window header for the content of the pane: its tabs, and its buttons.
+const HeaderSlots = createContext<{ main: HTMLElement | null; actions: HTMLElement | null } | null>(null);
+
+/** Content of a pane in its window header, on the left: for example the tabs of the pane. */
+export function PaneHeader({ children }: { children: ReactNode }) {
+  const slots = useContext(HeaderSlots);
+  return slots?.main ? createPortal(children, slots.main) : null;
+}
+
+/** Buttons of a pane in its window header, on the right, before the window buttons. */
+export function PaneActions({ children }: { children: ReactNode }) {
+  const slots = useContext(HeaderSlots);
+  return slots?.actions ? createPortal(children, slots.actions) : null;
+}
+
+/** The side of the window under the pointer. The center is not a drop zone: a window shows one pane. */
 function zoneAt(e: React.DragEvent, el: HTMLElement): Zone {
   const r = el.getBoundingClientRect();
   const x = (e.clientX - r.left) / r.width;
@@ -26,75 +63,7 @@ function zoneAt(e: React.DragEvent, el: HTMLElement): Zone {
     ["top", y],
     ["bottom", 1 - y],
   ];
-  const [zone, distance] = edges.reduce((a, b) => (b[1] < a[1] ? b : a));
-  return distance < 0.25 ? zone : "center";
-}
-
-function GroupMenu({
-  group,
-  groupCount,
-  pane,
-  closable,
-  canSplitDown,
-  onAction,
-}: {
-  group: Group;
-  groupCount: number;
-  pane: PaneId;
-  closable: boolean;
-  canSplitDown: boolean; // False in the group of the chat: no pane goes below the chat.
-  onAction: (action: "right" | "bottom" | "next" | "close") => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useOverlay(open);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [open]);
-
-  const canSplit = group.tabs.length > 1;
-  const run = (action: "right" | "bottom" | "next" | "close") => {
-    setOpen(false);
-    onAction(action);
-  };
-
-  return (
-    <div className="group-menu" ref={ref} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
-      <button
-        type="button"
-        className="icon-btn ghost"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        title="Pane actions"
-        aria-label={`Actions for the ${pane} pane`}
-      >
-        <EllipsisVertical size={14} aria-hidden />
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          <button type="button" role="menuitem" disabled={!canSplit} onClick={() => run("right")}>
-            <Columns2 size={14} aria-hidden /> Split right
-          </button>
-          <button type="button" role="menuitem" disabled={!canSplit || !canSplitDown} onClick={() => run("bottom")}>
-            <Rows2 size={14} aria-hidden /> Split down
-          </button>
-          <button type="button" role="menuitem" disabled={groupCount < 2} onClick={() => run("next")}>
-            <MoveRight size={14} aria-hidden /> Move to the next group
-          </button>
-          <button type="button" role="menuitem" disabled={!closable} onClick={() => run("close")}>
-            <X size={14} aria-hidden /> Close
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  return edges.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
 }
 
 function GroupView({
@@ -104,6 +73,8 @@ function GroupView({
   onChange,
   dragging,
   setDragging,
+  maximized,
+  onMaximize,
 }: {
   group: Group;
   root: LayoutNode;
@@ -111,10 +82,16 @@ function GroupView({
   onChange: (l: LayoutNode) => void;
   dragging: PaneId | null;
   setDragging: (p: PaneId | null) => void;
+  maximized: boolean;
+  onMaximize: ((on: boolean) => void) | null; // null: the window cannot fill the workspace (it is the only one).
 }) {
   const [zone, setZone] = useState<Zone | null>(null);
+  const [main, setMain] = useState<HTMLElement | null>(null);
+  const [actions, setActions] = useState<HTMLElement | null>(null);
   const body = useRef<HTMLDivElement>(null);
-  const all = groups(root);
+  const spec = panes[group.active];
+  const chatOnly = group.tabs.length === 1 && group.tabs[0] === "chat";
+  const tabbed = group.tabs.length > 1; // Only the narrow view has more panes in one window.
 
   const select = (pane: PaneId) => onChange(replaceGroup(root, group.id, { ...group, active: pane }));
 
@@ -126,75 +103,82 @@ function GroupView({
     if (pane) onChange(movePane(root, pane, group.id, z));
   };
 
-  const action = (a: "right" | "bottom" | "next" | "close") => {
-    const pane = group.active;
-    if (a === "close") onChange(closePane(root, pane));
-    else if (a === "next") {
-      const index = all.findIndex((g) => g.id === group.id);
-      onChange(movePane(root, pane, all[(index + 1) % all.length].id, "center"));
-    } else onChange(movePane(root, pane, group.id, a));
-  };
-
+  const Icon = spec.icon;
   return (
-    // The chat alone in a group needs no tab row, as in the Claude Code desktop app.
+    // The chat alone in a window needs no header, as in the Claude Code desktop app.
     <section
-      className={`pane-group${group.tabs.length === 1 && group.tabs[0] === "chat" ? " chat-only" : ""}`}
-      aria-label={`${panes[group.active].title} pane group`}
+      className={`pane-group${chatOnly ? " chat-only" : " pane-window"}${maximized ? " is-max" : ""}`}
+      aria-label={`${spec.title} pane`}
     >
-      <div
-        className="pane-tabs"
-        role="tablist"
-        onDragOver={(e) => dragging && (e.preventDefault(), setZone("center"))}
-        onDrop={(e) => drop(e, "center")}
-      >
-        {group.tabs.map((pane) => {
-          const spec = panes[pane];
-          const Icon = spec.icon;
-          const selected = pane === group.active;
-          return (
-            <div key={pane} className={`pane-tab${selected ? " active" : ""}`} role="presentation">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(DRAG_TYPE, pane);
-                  e.dataTransfer.effectAllowed = "move";
-                  setDragging(pane);
-                }}
-                onDragEnd={() => setDragging(null)}
-                onClick={() => select(pane)}
-                title="Drag to move or split"
-              >
+      {!chatOnly && (
+        <div
+          className="win-head"
+          draggable={!tabbed}
+          onDragStart={(e) => {
+            e.dataTransfer.setData(DRAG_TYPE, group.active);
+            e.dataTransfer.effectAllowed = "move";
+            setDragging(group.active);
+          }}
+          onDragEnd={() => setDragging(null)}
+          onDoubleClick={(e) => {
+            if (onMaximize && !(e.target as HTMLElement).closest("button, input")) onMaximize(!maximized);
+          }}
+        >
+          {tabbed ? (
+            <div className="win-panes" role="tablist">
+              {group.tabs.map((pane) => {
+                const TabIcon = panes[pane].icon;
+                return (
+                  <button
+                    key={pane}
+                    type="button"
+                    role="tab"
+                    aria-selected={pane === group.active}
+                    className={`win-pane${pane === group.active ? " active" : ""}`}
+                    onClick={() => select(pane)}
+                  >
+                    <TabIcon size={13} aria-hidden />
+                    {panes[pane].title}
+                    {panes[pane].badge}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            !spec.ownHeader && (
+              <span className="win-title" title="Drag to move the window">
                 <Icon size={13} aria-hidden />
                 {spec.title}
                 {spec.badge}
-              </button>
-              {spec.closable && (
-                <button
-                  type="button"
-                  className="pane-tab-close"
-                  onClick={() => onChange(closePane(root, pane))}
-                  aria-label={`Close the ${spec.title} pane`}
-                  title="Close"
-                >
-                  <X size={12} aria-hidden />
-                </button>
-              )}
-            </div>
-          );
-        })}
-        <span className="spacer" />
-        <GroupMenu
-          group={group}
-          groupCount={all.length}
-          pane={group.active}
-          closable={panes[group.active].closable}
-          canSplitDown={canMove(root, group.active, group.id, "bottom")}
-          onAction={action}
-        />
-      </div>
+              </span>
+            )
+          )}
+          <div className="win-slot" ref={setMain} />
+          <div className="win-actions" ref={setActions} />
+          {onMaximize && !tabbed && (
+            <button
+              type="button"
+              className="icon-btn ghost win-btn"
+              onClick={() => onMaximize(!maximized)}
+              aria-label={maximized ? "Restore the window" : "Fill the workspace"}
+              title={maximized ? "Restore" : "Fill the workspace"}
+            >
+              {maximized ? <Minimize2 size={13} aria-hidden /> : <Maximize2 size={13} aria-hidden />}
+            </button>
+          )}
+          {spec.closable && (
+            <button
+              type="button"
+              className="icon-btn ghost win-btn"
+              onClick={() => onChange(closePane(root, group.active))}
+              aria-label={`Close the ${spec.title} pane`}
+              title="Close"
+            >
+              <X size={14} aria-hidden />
+            </button>
+          )}
+        </div>
+      )}
       <div
         className="pane-body"
         ref={body}
@@ -202,7 +186,7 @@ function GroupView({
           if (!dragging || !body.current) return;
           const z = zoneAt(e, body.current);
           // No drop zone above or below the chat.
-          if (z !== "center" && !canMove(root, dragging, group.id, z)) {
+          if (!canMove(root, dragging, group.id, z)) {
             setZone(null);
             return;
           }
@@ -216,7 +200,7 @@ function GroupView({
       >
         {group.tabs.map((pane) => (
           <div key={pane} role="tabpanel" className="pane-content" hidden={pane !== group.active}>
-            {panes[pane].render()}
+            <HeaderSlots.Provider value={pane === group.active ? { main, actions } : null}>{panes[pane].render()}</HeaderSlots.Provider>
           </div>
         ))}
         {dragging && zone && <div className={`drop-zone zone-${zone}`} aria-hidden />}
@@ -230,21 +214,17 @@ function replaceGroup(node: LayoutNode, id: string, next: Group): LayoutNode {
   return { ...node, children: node.children.map((c) => replaceGroup(c, id, next)) };
 }
 
-function SplitView({
-  node,
-  root,
-  panes,
-  onChange,
-  dragging,
-  setDragging,
-}: {
+function SplitView(props: {
   node: Split;
   root: LayoutNode;
   panes: Record<PaneId, PaneSpec>;
   onChange: (l: LayoutNode) => void;
   dragging: PaneId | null;
   setDragging: (p: PaneId | null) => void;
+  maxId: string | null;
+  onMaximize: ((id: string, on: boolean) => void) | null;
 }) {
+  const { node, root, onChange, maxId } = props;
   const container = useRef<HTMLDivElement>(null);
   const row = node.direction === "row";
 
@@ -283,10 +263,15 @@ function SplitView({
     <div className={`split-view ${node.direction}`} ref={container}>
       {node.children.map((child, i) => (
         <Fragment key={child.id}>
-          <div className="split-cell" style={{ flexGrow: node.sizes[i], flexBasis: 0 }}>
-            <NodeView node={child} root={root} panes={panes} onChange={onChange} dragging={dragging} setDragging={setDragging} />
+          <div
+            className="split-cell"
+            // A share below 1 with no siblings does not fill the split: the filled window gets all the space.
+            style={{ flexGrow: maxId !== null ? 1 : node.sizes[i], flexBasis: 0 }}
+            hidden={maxId !== null && !hasGroup(child, maxId)} // Another window fills the workspace.
+          >
+            <NodeView {...props} node={child} />
           </div>
-          {i < node.children.length - 1 && (
+          {i < node.children.length - 1 && maxId === null && (
             <div
               className="split-handle"
               role="separator"
@@ -319,8 +304,24 @@ function NodeView(props: {
   onChange: (l: LayoutNode) => void;
   dragging: PaneId | null;
   setDragging: (p: PaneId | null) => void;
+  maxId: string | null;
+  onMaximize: ((id: string, on: boolean) => void) | null;
 }) {
-  return props.node.type === "group" ? <GroupView {...props} group={props.node} /> : <SplitView {...props} node={props.node} />;
+  const { node, maxId, onMaximize } = props;
+  if (node.type === "split") return <SplitView {...props} node={node} />;
+  return (
+    <GroupView
+      {...props}
+      group={node}
+      maximized={maxId === node.id}
+      onMaximize={onMaximize && ((on: boolean) => onMaximize(node.id, on))}
+    />
+  );
+}
+
+/** True if a node has the window ``id``: the split cells on the way to a filled window stay. */
+function hasGroup(node: LayoutNode, id: string): boolean {
+  return node.type === "group" ? node.id === id : node.children.some((c) => hasGroup(c, id));
 }
 
 /**
@@ -342,6 +343,34 @@ export function Workspace({
   const [dragging, setDragging] = useState<PaneId | null>(null);
   useOverlay(dragging !== null);
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 900px)").matches);
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [narrow]); // The narrow view has another element.
+
+  // Remember the width of the side windows. With no side windows, the next side area opens at that width.
+  useEffect(() => {
+    if (width < 100 || window.matchMedia("(max-width: 900px)").matches) return;
+    const share = sideShareOf(layout);
+    if (share !== null) {
+      setSideShare(share);
+      savePref(SIDE_WIDTH_PREF, String(Math.round(share * width)));
+      return;
+    }
+    const saved = Number(loadPref(SIDE_WIDTH_PREF, ""));
+    if (saved > 0) setSideShare(saved / width);
+  }, [layout, width]);
+  // The window that fills the workspace. It ends when the window closes.
+  const [maxed, setMaxed] = useState<string | null>(null);
+  const all = groups(layout);
+  const maxId = maxed && all.length > 1 && all.some((g) => g.id === maxed) ? maxed : null;
+  const onMaximize = all.length > 1 ? (id: string, on: boolean) => setMaxed(on ? id : null) : null;
   // The tab that the user selected on a narrow window. A layout change from elsewhere (a pane opens) replaces it.
   const [narrowTab, setNarrowTab] = useState<{ pane: PaneId; layout: LayoutNode } | null>(null);
   // The pane that became active last, for example after a shortcut. A narrow window shows it.
@@ -358,7 +387,10 @@ export function Workspace({
     const before = new Set(groups(previous.current).map((g) => g.active));
     previous.current = layout;
     const pane = groups(layout).map((g) => g.active).find((p) => !before.has(p));
-    if (pane) setOpened(pane);
+    if (pane) {
+      setOpened(pane);
+      setMaxed(null);
+    }
   }, [layout]);
 
   useEffect(() => {
@@ -378,7 +410,7 @@ export function Workspace({
       : focused.active;
     const single: Group = { type: "group", id: "narrow", tabs, active: chosen };
     return (
-      <div className="workspace">
+      <div className="workspace" ref={box}>
         <GroupView
           group={single}
           root={single}
@@ -396,14 +428,25 @@ export function Workspace({
           }}
           dragging={null}
           setDragging={() => undefined}
+          maximized={false}
+          onMaximize={null}
         />
       </div>
     );
   }
 
   return (
-    <div className="workspace">
-      <NodeView node={layout} root={layout} panes={panes} onChange={onChange} dragging={dragging} setDragging={setDragging} />
+    <div className="workspace" ref={box}>
+      <NodeView
+        node={layout}
+        root={layout}
+        panes={panes}
+        onChange={onChange}
+        dragging={dragging}
+        setDragging={setDragging}
+        maxId={maxId}
+        onMaximize={onMaximize}
+      />
     </div>
   );
 }

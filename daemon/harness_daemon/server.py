@@ -57,6 +57,9 @@ from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
 from .session import Session
+from .keepawake import AWAKE
+from .sidechat import NO_TOOLS_REPLY, clean_side_history, side_messages
+from .tasks import TaskError, TaskHost
 from .skills import Skill, discover_skills, inline_skill_text
 from .storage import Storage
 from .terminal import TerminalError, TerminalHost
@@ -333,6 +336,10 @@ class LiveSession:
         self.turn_tokens = 0
         self.title_task: asyncio.Task | None = None
         self.suggestion_task: asyncio.Task | None = None  # The next prompt of the user (suggestions.py).
+        self.side_tasks: dict[str, asyncio.Task] = {}  # The answers of the side chat that run, by question id.
+        self.tasks: TaskHost | None = None  # The background tasks that the agent started (tasks.py).
+        # "Keep computer awake" (keepawake.py): only for this session, while the daemon keeps it open.
+        self.keep_awake = False
 
     @property
     def id(self) -> str | None:
@@ -343,9 +350,28 @@ class LiveSession:
         return self.turn is not None and not self.turn.done()
 
     @property
+    def working(self) -> bool:
+        """A turn or a background task runs."""
+        return self.running or (self.tasks is not None and bool(self.tasks.running))
+
+    @property
     def keep_open(self) -> bool:
-        """A session in the background stays open while its turn runs or its shell runs."""
-        return self.running or (self.terminal is not None and self.terminal.alive)
+        """A session in the background stays open while its turn, a background task, or its shell runs."""
+        return self.working or (self.terminal is not None and self.terminal.alive)
+
+    def update_awake(self) -> None:
+        """Keep the computer awake while this session works, if its switch is on."""
+        AWAKE.hold(self, self.keep_awake and self.working and self.session is not None)
+
+    def tasks_message(self) -> dict[str, Any]:
+        items = [t.summary() for t in self.tasks.tasks.values()] if self.tasks is not None else []
+        return {"type": "tasks", "items": items}
+
+    def _tasks_changed(self) -> None:
+        """A background task started or ended: tell the client, and check the awake state."""
+        self.update_awake()
+        asyncio.ensure_future(self.send(self.tasks_message()))
+        asyncio.ensure_future(self.conn.close_if_done(self))
 
     async def send(self, message: dict[str, Any]) -> None:
         """Send an event of this session, with its session_id. Only the current session sends to the client."""
@@ -391,10 +417,21 @@ class LiveSession:
             self.suggestion_task.cancel()
         self.suggestion_task = None
 
+    def cancel_side(self, question_id: str | None = None) -> None:
+        """Stop one answer of the side chat, or all of them."""
+        for key in [question_id] if question_id is not None else list(self.side_tasks):
+            task = self.side_tasks.pop(key, None)
+            if task is not None and not task.done():
+                task.cancel()
+
     async def close(self) -> None:
         """Stop the shell, the MCP servers, the agent browser, the servers, and the plugins of the
         session, and end its file URLs."""
         self.cancel_suggestion()
+        self.cancel_side()
+        if self.tasks is not None:
+            self.tasks.close()
+        AWAKE.hold(self, False)
         if self.terminal is not None:
             self.terminal.close()
             self.terminal = None
@@ -429,6 +466,8 @@ class LiveSession:
         session.agent.enable_preview(self.preview)
         self.files_token = secrets.token_urlsafe(24)
         FILE_ROOTS[self.files_token] = session.cwd
+        self.tasks = TaskHost(session.cwd, session.agent.ctx.shell, on_change=self._tasks_changed)
+        session.agent.enable_tasks(self.tasks)
         self.terminal = TerminalHost(session.cwd, self.send,
                                      on_exit=lambda: asyncio.ensure_future(self.conn.close_if_done(self)))
         # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
@@ -483,6 +522,8 @@ class Connection:
         self.watched: dict[str, str | None] = {}
         self._watcher: asyncio.Task | None = None
         self._running_sent: list[dict[str, Any]] | None = None
+        # The plugins of the project on the start screen, for its / menu. A session loads its own plugins.
+        self._start_plugins: PluginHost | None = None
 
     @property
     def pending(self) -> dict[str, asyncio.Future]:
@@ -572,6 +613,7 @@ class Connection:
                 await live.close()
             self.live.clear()
             self.current = None
+            await self.drop_start_plugins()
 
     # -- helpers ---------------------------------------------------------
 
@@ -612,6 +654,8 @@ class Connection:
 
     async def send_running(self) -> None:
         """Tell the client which sessions have a running turn. The sidebar shows them."""
+        for live in self.live.values():
+            live.update_awake()  # A turn started or ended.
         items = [{"session_id": sid, "waiting": bool(live.pending)}
                  for sid, live in self.live.items() if live.running]
         if items != self._running_sent:
@@ -662,6 +706,7 @@ class Connection:
     async def make_agent(self, live: LiveSession, cwd: Path, provider_name: str | None, model: str | None,
                          history: list[dict] | None = None, summary: str | None = None) -> tuple[Agent, list[str]]:
         settings = load_settings(cwd)
+        await self.drop_start_plugins()  # The session loads its own plugins.
         # The plugins load first: a plugin can register the provider of the model.
         plugins = PluginHost(cwd)
         await plugins.load()
@@ -739,6 +784,7 @@ class Connection:
             "auto_verify": bool(s.agent.settings.get("auto_verify")),
             "permission_mode": _permission_mode(s.agent.settings),
             "image_input": s.agent.image_input,
+            "keep_awake": live.keep_awake,  # The switch of this session. It is not saved.
             # A client that returns to a session with a running turn: the reply text that streams
             # now, and the permission requests that wait for a decision.
             "running": running,
@@ -767,6 +813,10 @@ class Connection:
         await self.refresh_dsh(live)
         # "/name" skills in the typed text (not in the referenced files): add their instructions.
         # Read the skills after refresh_dsh, so that the skills of a DeepSeek plugin are current.
+        if live.tasks is not None:
+            notes = live.tasks.take_ended_notes()
+            if notes:
+                expanded = f"{expanded}\n\n" + "\n".join(f"[{note}]" for note in notes)
         allow: tuple[str, ...] = ()
         if "/" in text:
             def skill_block() -> tuple[str, tuple[str, ...]]:
@@ -878,8 +928,26 @@ class Connection:
         session.agent.set_plugins(host)
         session.agent.set_skills(self.skills(live))
 
+    async def start_plugins(self, folder: Path) -> PluginHost:
+        """The plugins of a project with no session, for the / menu of the start screen.
+        They stay loaded while the start screen shows the same project."""
+        host = self._start_plugins
+        if host is not None and host.cwd == folder:
+            return host
+        await self.drop_start_plugins()
+        host = PluginHost(folder)
+        await host.load()
+        self._start_plugins = host
+        return host
+
+    async def drop_start_plugins(self) -> None:
+        host, self._start_plugins = self._start_plugins, None
+        if host is not None:
+            await host.dispose()
+
     async def reload_plugins(self) -> None:
         """Load the plugins of the session again, after an install or a change of the plugin files."""
+        await self.drop_start_plugins()  # The start screen loads them again for its next / menu.
         session, host = self.session, self.plugins
         if session is None or host is None:
             return
@@ -1109,20 +1177,130 @@ def _terminal(conn: Connection) -> TerminalHost:
 
 @handler("term.open")
 async def on_term_open(conn: Connection, msg: dict[str, Any]) -> None:
-    """Show the shell of the session: the running shell with its last output, or a new shell.
+    """Show a shell of the session: a running shell with its last output, or a new shell.
 
-    "since": the number of the last output that the client has for this shell (0: none). The reply
-    has only the output after it, or all the kept output with "reset": true.
+    "id": the shell of a tab. "new": true starts a new shell, for a new tab. With neither, the
+    first running shell. "since": the number of the last output that the client has for the shell
+    "id" (0: none). The reply has only the output after it, or all the kept output with "reset":
+    true. "ref" comes back in the reply, so that the client knows the tab of a new shell.
     """
     live = conn.require_live()
     host = _terminal(conn)
     cols, rows = _term_size(msg)
     since = msg.get("since") if isinstance(msg.get("since"), int) else 0
+    wanted = msg.get("id") if isinstance(msg.get("id"), str) else None
     shell = live.session.agent.settings.get("terminal_shell") if live.session else None
-    terminal, new = host.open(cols, rows, shell if isinstance(shell, str) and shell else None)
-    replay, seq, reset = terminal.replay(0 if new or msg.get("id") != terminal.id else since)
-    await live.send({"type": "term.opened", "id": terminal.id, "new": new, "replay": replay, "seq": seq,
-                     "reset": reset})
+    terminal, new = host.open(cols, rows, shell if isinstance(shell, str) and shell else None,
+                              terminal_id=wanted, new=msg.get("new") is True)
+    replay, seq, reset = terminal.replay(0 if new or wanted != terminal.id else since)
+    reply = {"type": "term.opened", "id": terminal.id, "new": new, "replay": replay, "seq": seq, "reset": reset}
+    if isinstance(msg.get("ref"), str):
+        reply["ref"] = msg["ref"]
+    await live.send(reply)
+
+
+# -- background tasks (tasks.py) and "Keep computer awake" (keepawake.py) ---------------------------
+
+
+def _tasks(conn: Connection) -> TaskHost:
+    live = conn.require_live()
+    assert live.tasks is not None
+    return live.tasks
+
+
+@handler("tasks.list")
+async def on_tasks_list(conn: Connection, msg: dict[str, Any]) -> None:
+    """The background tasks of the session. The daemon also sends "tasks" when a task starts or ends."""
+    _tasks(conn)
+    await conn.current.send(conn.current.tasks_message())  # type: ignore[union-attr]
+
+
+@handler("task.get")
+async def on_task_get(conn: Connection, msg: dict[str, Any]) -> None:
+    """One background task with its output, for the Background tasks pane."""
+    try:
+        task = _tasks(conn).get(_text_arg(msg, "id"))
+    except TaskError as e:
+        raise ProtocolError(str(e)) from None
+    await conn.current.send({"type": "task", **task.summary(), "output": task.output,  # type: ignore[union-attr]
+                             "dropped": task.dropped})
+
+
+@handler("task.stop")
+async def on_task_stop(conn: Connection, msg: dict[str, Any]) -> None:
+    try:
+        await _tasks(conn).stop(_text_arg(msg, "id"))
+    except TaskError as e:
+        raise ProtocolError(str(e)) from None
+
+
+@handler("session.keep_awake")
+async def on_keep_awake(conn: Connection, msg: dict[str, Any]) -> None:
+    """The "Keep computer awake" switch of the session. It is not saved: only for this session."""
+    live = conn.require_live()
+    live.keep_awake = msg.get("on") is True
+    live.update_awake()
+    await live.send({"type": "keep_awake", "on": live.keep_awake, "active": AWAKE.active})
+
+
+# -- the side chat (sidechat.py) -------------------------------------------------------------------
+
+MAX_SIDE_QUESTIONS = 4  # Answers of the side chat that run at the same time.
+
+
+@handler("side.ask")
+async def on_side_ask(conn: Connection, msg: dict[str, Any]) -> None:
+    """A quick question beside the main thread. The model sees the full session, and nothing is
+    added to it. The answer streams as "side.token", then "side.done" or "side.error". It can
+    run during a turn of the session."""
+    live = conn.require_live()
+    session = live.session
+    assert session is not None
+    question_id = _text_arg(msg, "id")
+    question = _text_arg(msg, "question").strip()
+    if not question or len(question_id) > 64:
+        raise ProtocolError("'question' must not be empty, and 'id' must have at most 64 characters.")
+    live.side_tasks = {k: t for k, t in live.side_tasks.items() if not t.done()}
+    if len(live.side_tasks) >= MAX_SIDE_QUESTIONS:
+        raise ProtocolError("Too many side questions run now. Wait for an answer, or stop one.")
+    agent = session.agent
+    # A copy of the session now: the main thread can change during the answer.
+    messages = side_messages(agent.messages(), clean_side_history(msg.get("history")), question)
+    tools = agent.tool_schemas()
+
+    async def token(text: str) -> None:
+        await live.send({"type": "side.token", "id": question_id, "text": text})
+
+    async def work() -> None:
+        try:
+            response = await agent.client.stream(messages, tools, token)
+            text = response.text
+            if not text.strip() and response.tool_calls:
+                text = NO_TOOLS_REPLY
+                await token(text)
+            await live.send({"type": "side.done", "id": question_id, "text": text})
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - report the error in the side chat.
+            log.info("A side question failed: %s", e)
+            await live.send({"type": "side.error", "id": question_id, "message": str(e) or type(e).__name__})
+        finally:
+            live.side_tasks.pop(question_id, None)
+
+    live.cancel_side(question_id)
+    live.side_tasks[question_id] = asyncio.create_task(work())
+
+
+@handler("side.cancel")
+async def on_side_cancel(conn: Connection, msg: dict[str, Any]) -> None:
+    """Stop an answer of the side chat."""
+    conn.require_live().cancel_side(_text_arg(msg, "id"))
+
+
+@handler("term.close")
+async def on_term_close(conn: Connection, msg: dict[str, Any]) -> None:
+    """The user closed a tab of the terminal pane: stop its shell."""
+    _terminal(conn).close_one(_text_arg(msg, "id"))
 
 
 @handler("term.input")
@@ -1875,14 +2053,25 @@ async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("skills.list")
 async def on_skills_list(conn: Connection, msg: dict[str, Any]) -> None:
-    """The contents of the / menu: the built-in commands, then the user-invocable skills."""
+    """The contents of the / menu: the built-in commands, then the user-invocable skills.
+
+    The start screen has no session. It sends the project folder as "cwd": the list then has the
+    same commands and skills as a new session in that folder, with the global skills.
+    """
     builtins = [{"name": n, "description": d, "argument-hint": BUILTIN_HINTS.get(n, ""), "source": "built-in",
                  "builtin": True} for n, d in BUILTIN_COMMANDS.items()]
-    plugin_commands = conn.plugins.commands() if conn.plugins is not None else {}
+    folder = _project_dir(msg["cwd"]) if msg.get("cwd") is not None else None
+    if folder is None or (conn.session is not None and conn.session.cwd == folder):
+        plugin_commands = conn.plugins.commands() if conn.plugins is not None else {}
+        found = conn.skills()
+    else:
+        host = await conn.start_plugins(folder)
+        plugin_commands = host.commands()
+        found = await asyncio.to_thread(discover_skills, folder, host.skill_roots(), host.dsh_skills())
     commands = [{"name": c.name, "description": c.description, "argument-hint": c.argument_hint,
                  "source": f"plugin ({c.plugin})", "builtin": False}
                 for c in plugin_commands.values() if c.name not in BUILTIN_COMMANDS]
-    skills = [s.summary() for s in conn.skills().values()
+    skills = [s.summary() for s in found.values()
               if s.user_invocable and s.name not in BUILTIN_COMMANDS and s.name not in plugin_commands]
     await conn.send({"type": "skills", "items": builtins + commands + skills})
 
@@ -2146,10 +2335,11 @@ MAX_FOUND = 40
 
 @handler("fs.find")
 async def on_fs_find(conn: Connection, msg: dict[str, Any]) -> None:
-    """File and folder names for the "@" menu of the prompt box. An empty query gives the top of the project."""
-    session = conn.require_session()
+    """File and folder names for the "@" menu of the prompt box. An empty query gives the top of the project.
+    The start screen has no session: it sends the project folder as "cwd"."""
+    folder = _project_dir(msg["cwd"]) if msg.get("cwd") is not None else conn.require_session().cwd
     query = msg.get("query") if isinstance(msg.get("query"), str) else ""
-    items = await asyncio.to_thread(find_paths, session.cwd, query, MAX_FOUND)
+    items = await asyncio.to_thread(find_paths, folder, query, MAX_FOUND)
     await conn.send({"type": "fs.found", "query": query, "items": items})
 
 

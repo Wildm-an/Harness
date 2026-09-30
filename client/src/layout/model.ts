@@ -1,8 +1,11 @@
-// The pane layout (SPEC.md section 8.4): tab groups in nested rows and columns.
+// The pane layout (SPEC.md section 8.4): windows in nested rows and columns.
+// Each window (a "group") shows one pane, as in the Claude Code desktop app. The data keeps a list
+// of tabs: only the narrow window view puts all panes in one group. A saved layout from an older
+// version can have groups with more tabs: normalize() gives each pane its own window.
 // All functions are pure. Each one returns a new layout.
 
-export type PaneId = "chat" | "editor" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp" | "terminal";
-export const PANE_IDS: PaneId[] = ["chat", "editor", "browser", "servers", "diff", "rules", "skills", "mcp", "terminal"];
+export type PaneId = "chat" | "editor" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp" | "terminal" | "side" | "tasks";
+export const PANE_IDS: PaneId[] = ["chat", "editor", "browser", "servers", "diff", "rules", "skills", "mcp", "terminal", "side", "tasks"];
 
 export type Zone = "center" | "left" | "right" | "top" | "bottom";
 
@@ -26,6 +29,29 @@ export type LayoutNode = Group | Split;
 let counter = 0;
 const newId = (prefix: string) => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
 
+// The share of the workspace width for the windows beside the chat. The workspace sets it from the
+// last width of the side windows (Workspace.tsx), so a new side area opens at the width of the last one.
+let sideShare = 0.55;
+const MIN_SIDE_SHARE = 0.2;
+const MAX_SIDE_SHARE = 0.8;
+
+export function setSideShare(share: number): void {
+  if (Number.isFinite(share)) sideShare = Math.min(MAX_SIDE_SHARE, Math.max(MIN_SIDE_SHARE, share));
+}
+
+export function getSideShare(): number {
+  return sideShare;
+}
+
+const chatSizes = (): number[] => [1 - sideShare, sideShare];
+
+/** The share of the side windows in a layout: the part of the root row that is not the chat. */
+export function sideShareOf(node: LayoutNode): number | null {
+  if (node.type !== "split" || node.direction !== "row" || node.children.length < 2) return null;
+  const i = node.children.findIndex((c) => c.type === "group" && c.tabs.includes("chat"));
+  return i < 0 ? null : 1 - (node.sizes[i] ?? 0);
+}
+
 export function group(tabs: PaneId[], active?: PaneId): Group {
   return { type: "group", id: newId("g"), tabs, active: active ?? tabs[0] };
 }
@@ -34,9 +60,19 @@ function split(direction: Split["direction"], children: LayoutNode[], sizes?: nu
   return { type: "split", id: newId("s"), direction, children, sizes: sizes ?? children.map(() => 1 / children.length) };
 }
 
-/** Chat on the left. The editor and the browser as tabs on the right (SPEC.md section 8.4). */
+/** Chat on the left. The editor on the right (SPEC.md section 8.4). */
 export function defaultLayout(): LayoutNode {
-  return split("row", [group(["chat"]), group(["editor", "browser"], "editor")], [0.45, 0.55]);
+  return split("row", [group(["chat"]), group(["editor"])], chatSizes());
+}
+
+/** One window for each pane of a group: the chat on the left, the other panes in a column. */
+function splitTabs(g: Group): LayoutNode {
+  if (g.tabs.length < 2) return g;
+  const others = g.tabs.filter((t) => t !== "chat");
+  const column =
+    others.length === 1 ? group(others) : split("column", others.map((t) => group([t])));
+  if (!g.tabs.includes("chat")) return column.type === "group" ? { ...column, id: g.id } : column;
+  return split("row", [{ ...group(["chat"]), id: g.id }, column], chatSizes());
 }
 
 export function groups(node: LayoutNode): Group[] {
@@ -76,7 +112,7 @@ function giveChatFullHeight(node: LayoutNode): LayoutNode {
   const chat = findGroupOf(node, "chat");
   if (!chat || chatHasFullHeight(node)) return node;
   const rest = mapGroups(node, (g) => (g.id === chat.id ? null : g));
-  return rest ? split("row", [chat, rest], [0.45, 0.55]) : chat;
+  return rest ? split("row", [chat, rest], chatSizes()) : chat;
 }
 
 /**
@@ -94,7 +130,7 @@ function cleanLayout(node: LayoutNode | null): LayoutNode {
     if (n.type === "group") {
       const tabs = n.tabs.filter((t, i) => PANE_IDS.includes(t) && n.tabs.indexOf(t) === i);
       if (tabs.length === 0) return null;
-      return { ...n, tabs, active: tabs.includes(n.active) ? n.active : tabs[0] };
+      return splitTabs({ ...n, tabs, active: tabs.includes(n.active) ? n.active : tabs[0] });
     }
     const kids: LayoutNode[] = [];
     const sizes: number[] = [];
@@ -138,16 +174,16 @@ export function closePane(node: LayoutNode, pane: PaneId): LayoutNode {
 }
 
 /**
- * Shows a pane. A pane that is in the layout becomes the active tab of its group. A new pane
- * goes into ``targetGroupId``, or into the first group that has no chat, or into a new group
- * on the right.
+ * Shows a pane in its own window. A new window goes below ``targetGroupId``, or below the last
+ * window that has no chat, or on the right of the chat.
  */
 export function openPane(node: LayoutNode, pane: PaneId, targetGroupId?: string): LayoutNode {
   if (findGroupOf(node, pane)) return activate(node, pane);
   const all = groups(node);
-  const target = all.find((g) => g.id === targetGroupId) ?? all.find((g) => !g.tabs.includes("chat"));
-  if (!target) return normalize(split("row", [node, group([pane])], [0.5, 0.5]));
-  return normalize(mapGroups(node, (g) => (g.id === target.id ? { ...g, tabs: [...g.tabs, pane], active: pane } : g)));
+  const others = all.filter((g) => !g.tabs.includes("chat"));
+  const target = all.find((g) => g.id === targetGroupId && !g.tabs.includes("chat")) ?? others[others.length - 1];
+  if (!target) return normalize(split("row", [node, group([pane])], chatSizes()));
+  return normalize(mapGroups(node, (g) => (g.id === target.id ? split("column", [g, group([pane])]) : g)));
 }
 
 /** Shows a pane, or closes it if it is the active tab of its group. */
@@ -156,14 +192,15 @@ export function togglePane(node: LayoutNode, pane: PaneId, show: (n: LayoutNode)
 }
 
 /**
- * Moves a pane to a group ("center"), or to a new group at one side of that group. A move that
- * puts a pane above or below the chat does nothing.
+ * Moves the window of a pane to one side of another window. Each pane has its own window, so a
+ * move to the "center" of a window does nothing. A move that puts a pane above or below the chat
+ * does nothing.
  */
 export function movePane(node: LayoutNode, pane: PaneId, targetGroupId: string, zone: Zone): LayoutNode {
   const source = findGroupOf(node, pane);
   const target = groups(node).find((g) => g.id === targetGroupId);
   if (!source || !target) return node;
-  if (zone === "center" && source.id === target.id) return activate(node, pane);
+  if (zone === "center") return source.id === target.id ? activate(node, pane) : node;
   // One pane alone cannot move beside itself.
   if (source.id === target.id && source.tabs.length === 1) return node;
 
@@ -176,7 +213,6 @@ export function movePane(node: LayoutNode, pane: PaneId, targetGroupId: string, 
 
   const placed = mapGroups(without, (g) => {
     if (g.id !== target.id) return g;
-    if (zone === "center") return { ...g, tabs: [...g.tabs, pane], active: pane };
     const fresh = group([pane]);
     const direction = zone === "left" || zone === "right" ? "row" : "column";
     const children = zone === "left" || zone === "top" ? [fresh, g] : [g, fresh];

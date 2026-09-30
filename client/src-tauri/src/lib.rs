@@ -73,39 +73,51 @@ fn forward_close_all(state: State<'_, Forwards>) {
     state.close_all();
 }
 
+// The browser commands are async: a synchronous command that makes a webview deadlocks on Windows.
+// "id" is the tab of the Browser pane. Each tab has its own webview.
 #[tauri::command]
-fn browser_open(app: AppHandle, url: String, bounds: Bounds) -> Result<(), String> {
-    browser::open(&app, &url, bounds)
+async fn browser_open(app: AppHandle, id: String, url: String, bounds: Bounds) -> Result<(), String> {
+    browser::open(&app, &id, &url, bounds)
 }
 
 #[tauri::command]
-fn browser_bounds(app: AppHandle, bounds: Bounds) -> Result<(), String> {
-    browser::set_bounds(&app, bounds)
+async fn browser_bounds(app: AppHandle, id: String, bounds: Bounds) -> Result<(), String> {
+    browser::set_bounds(&app, &id, bounds)
 }
 
 #[tauri::command]
-fn browser_visible(app: AppHandle, visible: bool) -> Result<(), String> {
-    browser::set_visible(&app, visible)
+async fn browser_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
+    browser::set_visible(&app, &id, visible)
 }
 
 #[tauri::command]
-fn browser_navigate(app: AppHandle, url: String) -> Result<(), String> {
-    browser::navigate(&app, &url)
+async fn browser_navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
+    browser::navigate(&app, &id, &url)
 }
 
 #[tauri::command]
-fn browser_history(app: AppHandle, action: String) -> Result<(), String> {
-    browser::history(&app, &action)
+async fn browser_history(app: AppHandle, id: String, action: String) -> Result<(), String> {
+    browser::history(&app, &id, &action)
 }
 
 #[tauri::command]
-fn browser_devtools(app: AppHandle) -> Result<(), String> {
-    browser::devtools(&app)
+async fn browser_devtools(app: AppHandle, id: String) -> Result<(), String> {
+    browser::devtools(&app, &id)
 }
 
 #[tauri::command]
-fn browser_clear_data(app: AppHandle) -> Result<(), String> {
-    browser::clear_data(&app)
+async fn browser_clear_data(app: AppHandle, id: String) -> Result<(), String> {
+    browser::clear_data(&app, &id)
+}
+
+#[tauri::command]
+async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
+    browser::close(&app, &id)
+}
+
+#[tauri::command]
+async fn browser_close_all(app: AppHandle) -> Result<(), String> {
+    browser::close_all(&app)
 }
 
 pub fn run() {
@@ -154,7 +166,9 @@ pub fn run() {
             browser_navigate,
             browser_history,
             browser_devtools,
-            browser_clear_data
+            browser_clear_data,
+            browser_close,
+            browser_close_all
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");

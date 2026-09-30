@@ -99,39 +99,60 @@ export interface Bounds {
   height: number;
 }
 
-/** The Browser pane webview. Each call does nothing outside the desktop app. */
+export interface BrowserEvent {
+  id: string; // The tab.
+  url: string;
+  loading: boolean;
+  title?: string; // Only in a title change.
+}
+
+/** The webviews of the Browser pane: one for each tab. Each call does nothing outside the desktop app. */
 export const browserView = {
-  async open(url: string, bounds: Bounds) {
+  async open(id: string, url: string, bounds: Bounds) {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_open", { url, bounds });
+    await invoke("browser_open", { id, url, bounds });
   },
-  async bounds(bounds: Bounds) {
+  async bounds(id: string, bounds: Bounds) {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_bounds", { bounds });
+    await invoke("browser_bounds", { id, bounds });
   },
-  async visible(visible: boolean) {
+  async visible(id: string, visible: boolean) {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_visible", { visible });
+    await invoke("browser_visible", { id, visible });
   },
-  async navigate(url: string) {
+  async navigate(id: string, url: string) {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_navigate", { url });
+    await invoke("browser_navigate", { id, url });
   },
-  async history(action: "back" | "forward" | "reload") {
+  async history(id: string, action: "back" | "forward" | "reload") {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_history", { action });
+    await invoke("browser_history", { id, action });
   },
-  async devtools() {
+  async devtools(id: string) {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_devtools");
+    await invoke("browser_devtools", { id });
   },
-  async clearData() {
+  async clearData(id: string) {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_clear_data");
+    await invoke("browser_clear_data", { id });
   },
-  /** Page loads in the browser webview. Returns a function that stops the listener. */
-  async onEvent(fn: (event: { url: string; loading: boolean }) => void): Promise<() => void> {
+  async close(id: string) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_close", { id });
+  },
+  /** Close the webviews of all tabs: the page of the app loaded again, and its tabs are gone. */
+  async closeAll() {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_close_all");
+  },
+  /** Page loads and title changes in the tabs. Returns a function that stops the listener. */
+  async onEvent(fn: (event: BrowserEvent) => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
-    return listen<{ url: string; loading: boolean }>("browser-event", (e) => fn(e.payload));
+    return listen<BrowserEvent>("browser-event", (e) => fn(e.payload));
+  },
+  /** A page asks for a new window, for example a link with target="_blank". */
+  async onNewTab(fn: (event: { id: string; url: string }) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<{ id: string; url: string }>("browser-new-tab", (e) => fn(e.payload));
   },
 };

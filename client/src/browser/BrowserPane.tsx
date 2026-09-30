@@ -16,6 +16,8 @@ import {
   Tablet,
 } from "lucide-react";
 import type { AgentFrame, ServerItem } from "../daemon/protocol";
+import { PaneActions, PaneHeader } from "../layout/Workspace";
+import { WindowTabs } from "../layout/WindowTabs";
 import { useOverlay, useOverlayOpen } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
 import { browserView, isTauri, type Bounds } from "../lib/tauri";
@@ -28,6 +30,8 @@ const DEVICES: Record<Device, { label: string; icon: typeof Monitor; size?: { wi
   phone: { label: "Mobile", icon: Smartphone, size: { width: 375, height: 812 } },
   tablet: { label: "Tablet", icon: Tablet, size: { width: 768, height: 1024 } },
 };
+
+const MAX_TABS = 12;
 
 /** Adds "http://" to an address with no scheme. Keeps "about:blank". */
 export function normalizeAddress(text: string): string {
@@ -45,6 +49,47 @@ export function deviceBounds(area: Bounds, device: Device): Bounds {
   const width = Math.min(size.width, area.width);
   const height = Math.min(size.height, area.height);
   return { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height };
+}
+
+export interface BrowserTab {
+  id: string; // Also the label of its webview: "browser-<id>".
+  url: string | null; // null: a new tab with no page.
+  address: string; // The text of the address bar.
+  title: string; // The page title. Empty until the page gives one.
+  loading: boolean;
+  frame: number; // The iframe key outside the desktop app. A change reloads the page.
+}
+
+let tabCounter = 0;
+export function newTab(url: string | null = null): BrowserTab {
+  const id = `t${Date.now().toString(36)}${(tabCounter++).toString(36)}`;
+  return { id, url, address: url ?? "", title: "", loading: false, frame: 0 };
+}
+
+/** The label of a tab: the page title, else the host of the page, else "New tab". */
+export function tabLabel(tab: BrowserTab): string {
+  if (tab.title.trim()) return tab.title.trim();
+  if (!tab.url || tab.url === "about:blank") return "New tab";
+  try {
+    return new URL(tab.url).host || tab.url;
+  } catch {
+    return tab.url;
+  }
+}
+
+// The tabs stay when the pane closes: the next time it opens, it shows the same pages. The webviews
+// of the tabs stay too (hidden), so a page keeps its state.
+let kept: { tabs: BrowserTab[]; active: string } | null = null;
+const opened = new Set<string>(); // The tabs that have a webview.
+let handledRequest = 0; // The key of the last navigation request from the app. It stays when the pane closes.
+
+// A new page of the app has no tabs yet. Webviews from an earlier page (a reload) must go.
+if (isTauri()) void browserView.closeAll().catch(() => undefined);
+
+/** Clear the cookies and storage of the browser. All tabs share them, so any open tab can do it. */
+export async function clearBrowserData(): Promise<void> {
+  const id = opened.values().next().value;
+  if (id) await browserView.clearData(id);
 }
 
 function Menu({ children, label, icon }: { children: (close: () => void) => React.ReactNode; label: string; icon: React.ReactNode }) {
@@ -78,6 +123,7 @@ export function BrowserPane({
   onOpenServer,
   onOpenAgentPage,
   onError,
+  onEmpty,
 }: {
   request: { url: string; key: number } | null; // A navigation request from the app.
   servers: ServerItem[];
@@ -85,97 +131,150 @@ export function BrowserPane({
   onOpenServer: (server: ServerItem) => void;
   onOpenAgentPage: (url: string) => void;
   onError: (message: string) => void;
+  onEmpty: () => void; // The user closed the last tab: close the pane.
 }) {
   const tauri = isTauri();
   const area = useRef<HTMLDivElement>(null);
+  const [tabs, setTabs] = useState<BrowserTab[]>(() => kept?.tabs ?? [newTab()]);
+  const [activeId, setActiveId] = useState<string>(() => kept?.active ?? tabs[0].id);
+  const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
   // "page": the browser of the user. "agent": the newest screenshot of the agent browser.
   const [view, setView] = useState<"page" | "agent">("page");
   const [unseen, setUnseen] = useState(false); // A new agent frame came while the user looks at the page.
-  const [url, setUrl] = useState<string | null>(null);
-  const [address, setAddress] = useState("");
-  const [loading, setLoading] = useState(false);
   const [device, setDevice] = useState<Device>(() => (loadPref("browserDevice", "desktop") as Device) || "desktop");
   const [keepData, setKeepData] = useState(() => loadPref("browserKeepData", "true") !== "false");
-  const [iframeKey, setIframeKey] = useState(0);
   const overlay = useOverlayOpen();
-  const opened = useRef(false);
-  const lastSync = useRef(""); // The last bounds and visibility that went to the webview.
+  const lastSync = useRef(new Map<string, string>()); // The last bounds and visibility of each webview.
+  const selectOnFocus = useRef(false);
+
+  useEffect(() => {
+    kept = { tabs, active: active.id };
+  }, [tabs, active.id]);
+
+  const update = useCallback((id: string, change: Partial<BrowserTab>) => {
+    setTabs((list) => list.map((t) => (t.id === id ? { ...t, ...change } : t)));
+  }, []);
 
   const measure = useCallback((): Bounds | null => {
     const el = area.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) return null; // The pane is hidden (another tab is active).
+    if (r.width < 2 || r.height < 2) return null; // The pane is hidden.
     return deviceBounds({ x: r.left, y: r.top, width: r.width, height: r.height }, device);
   }, [device]);
 
+  /** Show a page in a tab. The webview of the tab opens when the tab shows. */
   const go = useCallback(
-    async (target: string) => {
+    async (id: string, target: string) => {
       const next = normalizeAddress(target);
-      setUrl(next);
-      setAddress(next);
-      if (!tauri) {
-        setIframeKey((k) => k + 1);
-        return;
-      }
-      const bounds = measure();
+      setTabs((list) => list.map((t) => (t.id === id ? { ...t, url: next, address: next, title: "", frame: t.frame + 1 } : t)));
+      if (!tauri || !opened.has(id)) return; // The sync effect opens the webview.
       try {
-        if (!opened.current) {
-          if (!bounds) return; // Opens when the pane shows.
-          await browserView.open(next, bounds);
-          opened.current = true;
-        } else {
-          await browserView.navigate(next);
-        }
+        await browserView.navigate(id, next);
       } catch (e) {
         onError(e instanceof Error ? e.message : String(e));
       }
     },
-    [tauri, measure, onError],
+    [tauri, onError],
   );
 
-  // A navigation request from the app: a server, a project file, or /preview.
+  const addTab = useCallback(
+    (url: string | null = null) => {
+      if (tabs.length >= MAX_TABS) {
+        onError(`The browser can have at most ${MAX_TABS} tabs. Close a tab first.`);
+        return null;
+      }
+      const tab = newTab(url);
+      setTabs((list) => [...list, tab]);
+      setActiveId(tab.id);
+      setView("page");
+      return tab;
+    },
+    [tabs.length, onError],
+  );
+
+  const closeTab = (id: string) => {
+    if (opened.delete(id)) void browserView.close(id).catch(() => undefined);
+    lastSync.current.delete(id);
+    const index = tabs.findIndex((t) => t.id === id);
+    const rest = tabs.filter((t) => t.id !== id);
+    if (rest.length === 0) {
+      const tab = newTab(); // The next time, the pane opens with one new tab.
+      kept = { tabs: [tab], active: tab.id }; // The pane closes now: the effect that saves the tabs does not run.
+      setTabs([tab]);
+      setActiveId(tab.id);
+      onEmpty();
+      return;
+    }
+    setTabs(rest);
+    if (id === active.id) setActiveId(rest[Math.max(0, index - 1)].id);
+  };
+
+  // A navigation request from the app: a server, a project file, or /preview. It uses the tab that
+  // shows no page, or a new tab.
   useEffect(() => {
-    if (!request) return;
+    if (!request || request.key === handledRequest) return;
+    handledRequest = request.key;
     setView("page");
-    void go(request.url);
+    const target = active.url ? addTab(request.url) : active;
+    if (target) void go(target.id, request.url);
   }, [request?.key]);
 
   // A new page of the agent browser. With no page of its own, the pane shows the agent page.
   useEffect(() => {
     if (!agentFrame) return;
-    if (!url) setView("agent");
+    if (!active.url) setView("agent");
     else if (view === "page") setUnseen(true);
   }, [agentFrame?.key]);
 
-  // Page loads in the webview update the address bar.
+  // Page loads and title changes of the webviews. A link that opens a window opens a new tab.
   useEffect(() => {
     if (!tauri) return;
-    let stop: (() => void) | undefined;
-    void browserView.onEvent((event) => {
-      setLoading(event.loading);
-      if (!event.loading) setAddress(event.url);
-    }).then((fn) => (stop = fn));
-    return () => stop?.();
-  }, [tauri]);
+    const stops: (() => void)[] = [];
+    let live = true;
+    void browserView
+      .onEvent((event) => {
+        if (event.title !== undefined) update(event.id, { title: event.title });
+        else if (event.loading) update(event.id, { loading: true });
+        else update(event.id, { loading: false, address: event.url, url: event.url });
+      })
+      .then((stop) => (live ? stops.push(stop) : stop()));
+    void browserView
+      .onNewTab((event) => {
+        const tab = newTab(event.url);
+        setTabs((list) => (list.length >= MAX_TABS ? list : [...list, tab]));
+        setActiveId(tab.id);
+      })
+      .then((stop) => (live ? stops.push(stop) : stop()));
+    return () => {
+      live = false;
+      stops.forEach((stop) => stop());
+    };
+  }, [tauri, update]);
 
-  // Keep the webview over the pane area. Hide it when the pane is hidden or an overlay is open.
+  // Keep the webview of the active tab over the pane area. Hide the other webviews, and hide all
+  // of them when the pane is hidden or an overlay (a menu, a dialog) is open.
   useLayoutEffect(() => {
     if (!tauri) return;
     const sync = () => {
       const bounds = measure();
-      const show = !!bounds && !overlay && !!url && view === "page";
-      const key = JSON.stringify([bounds, show, opened.current]);
-      if (key === lastSync.current) return;
-      lastSync.current = key;
-      if (show && bounds) {
-        if (!opened.current && url) {
-          void browserView.open(url, bounds).then(() => (opened.current = true)).catch((e) => onError(String(e)));
-        } else {
-          void browserView.bounds(bounds);
+      for (const tab of tabs) {
+        const show = tab.id === active.id && !!bounds && !overlay && !!tab.url && view === "page";
+        const key = JSON.stringify([show ? bounds : null, show, opened.has(tab.id)]);
+        if (lastSync.current.get(tab.id) === key) continue;
+        lastSync.current.set(tab.id, key);
+        if (show && bounds && tab.url && !opened.has(tab.id)) {
+          opened.add(tab.id);
+          void browserView.open(tab.id, tab.url, bounds).catch((e) => {
+            opened.delete(tab.id);
+            onError(e instanceof Error ? e.message : String(e));
+          });
+          continue;
         }
+        if (!opened.has(tab.id)) continue;
+        if (show && bounds) void browserView.bounds(tab.id, bounds);
+        void browserView.visible(tab.id, show);
       }
-      if (opened.current) void browserView.visible(show);
     };
     sync();
     const observer = new ResizeObserver(sync);
@@ -187,41 +286,99 @@ export function BrowserPane({
       window.removeEventListener("resize", sync);
       window.clearInterval(timer);
     };
-  }, [tauri, measure, overlay, url, view, onError]);
+  }, [tauri, measure, overlay, tabs, active.id, view, onError]);
 
-  // Hide the webview when the pane closes.
-  useEffect(() => () => void (opened.current && browserView.visible(false)), []);
+  // Hide the webviews when the pane closes. They stay open for the next time.
+  useEffect(
+    () => () => {
+      for (const id of opened) void browserView.visible(id, false).catch(() => undefined);
+      lastSync.current.clear();
+    },
+    [],
+  );
 
   const running = servers.filter((s) => s.state === "running" && s.url);
   const DeviceIcon = DEVICES[device].icon;
   const agentView = view === "agent" && !!agentFrame;
-  const navOff = !url || agentView;
+  const navOff = !active.url || agentView;
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (e.key === "t") {
+      e.preventDefault();
+      addTab();
+    } else if (e.key === "w") {
+      e.preventDefault();
+      closeTab(active.id);
+    }
+  };
 
   return (
-    <section className="browser-pane" aria-label="Browser">
+    <section className="browser-pane" aria-label="Browser" onKeyDown={onKeyDown}>
+      <PaneHeader>
+        <WindowTabs
+          kind="Browser"
+          tabs={tabs.map((t) => ({ id: t.id, label: tabLabel(t), icon: t.loading ? LoaderCircle : Globe, busy: t.loading }))}
+          active={active.id}
+          onSelect={(id) => {
+            setActiveId(id);
+            setView("page");
+          }}
+          onClose={closeTab}
+          onAdd={() => addTab()}
+          addLabel="New tab (Ctrl+T)"
+        />
+      </PaneHeader>
+      <PaneActions>
+        <Menu label="More" icon={<EllipsisVertical size={15} aria-hidden />}>
+          {(close) => (
+            <>
+              <button type="button" role="menuitem" disabled={!tauri || !opened.has(active.id)} onClick={() => { close(); void browserView.devtools(active.id); }}>
+                <Bug size={14} aria-hidden /> Open the developer tools
+              </button>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={keepData}
+                onClick={() => {
+                  const next = !keepData;
+                  setKeepData(next);
+                  savePref("browserKeepData", String(next));
+                }}
+              >
+                <span className="menu-check" aria-hidden>{keepData ? "✓" : ""}</span>
+                Keep cookies and storage when a server restarts
+              </button>
+              <button type="button" role="menuitem" disabled={!tauri || !opened.has(active.id)} onClick={() => { close(); void browserView.clearData(active.id); }}>
+                <span className="menu-check" aria-hidden /> Clear cookies and storage now
+              </button>
+            </>
+          )}
+        </Menu>
+      </PaneActions>
       <form
         className="browser-bar"
         onSubmit={(e) => {
           e.preventDefault();
           if (agentView) return;
-          void go(address);
+          void go(active.id, active.address);
         }}
       >
-        <button type="button" className="icon-btn ghost" onClick={() => (tauri ? browserView.history("back") : history.back())} disabled={navOff} aria-label="Back" title="Back">
+        <button type="button" className="icon-btn ghost" onClick={() => tauri && browserView.history(active.id, "back")} disabled={navOff || !tauri} aria-label="Back" title="Back">
           <ArrowLeft size={15} aria-hidden />
         </button>
-        <button type="button" className="icon-btn ghost" onClick={() => tauri && browserView.history("forward")} disabled={navOff || !tauri} aria-label="Forward" title="Forward">
+        <button type="button" className="icon-btn ghost" onClick={() => tauri && browserView.history(active.id, "forward")} disabled={navOff || !tauri} aria-label="Forward" title="Forward">
           <ArrowRight size={15} aria-hidden />
         </button>
         <button
           type="button"
           className="icon-btn ghost"
-          onClick={() => (tauri ? browserView.history("reload") : setIframeKey((k) => k + 1))}
+          onClick={() => (tauri ? browserView.history(active.id, "reload") : update(active.id, { frame: active.frame + 1 }))}
           disabled={navOff}
           aria-label="Reload"
           title="Reload"
         >
-          {loading && !agentView ? <LoaderCircle size={15} className="spin" aria-hidden /> : <RotateCw size={15} aria-hidden />}
+          {active.loading && !agentView ? <LoaderCircle size={15} className="spin" aria-hidden /> : <RotateCw size={15} aria-hidden />}
         </button>
         <label htmlFor="browser-address" className="sr-only">
           {agentView ? "Address of the agent browser page" : "Address"}
@@ -229,8 +386,17 @@ export function BrowserPane({
         <input
           id="browser-address"
           className={`mono browser-address${agentView ? " agent" : ""}`}
-          value={agentView ? agentFrame.url : address}
-          onChange={(e) => setAddress(e.target.value)}
+          value={agentView ? agentFrame.url : active.address}
+          onChange={(e) => update(active.id, { address: e.target.value })}
+          // The first click selects all the address, as in a browser. The mouseup must not clear the selection.
+          onFocus={(e) => {
+            e.currentTarget.select();
+            selectOnFocus.current = true;
+          }}
+          onMouseUp={(e) => {
+            if (selectOnFocus.current) e.preventDefault();
+            selectOnFocus.current = false;
+          }}
           readOnly={agentView}
           placeholder="localhost:5173, or a web address"
           spellCheck={false}
@@ -289,31 +455,6 @@ export function BrowserPane({
             })
           }
         </Menu>
-        <Menu label="More" icon={<EllipsisVertical size={15} aria-hidden />}>
-          {(close) => (
-            <>
-              <button type="button" role="menuitem" disabled={!tauri || !url} onClick={() => { close(); void browserView.devtools(); }}>
-                <Bug size={14} aria-hidden /> Open the developer tools
-              </button>
-              <button
-                type="button"
-                role="menuitemcheckbox"
-                aria-checked={keepData}
-                onClick={() => {
-                  const next = !keepData;
-                  setKeepData(next);
-                  savePref("browserKeepData", String(next));
-                }}
-              >
-                <span className="menu-check" aria-hidden>{keepData ? "✓" : ""}</span>
-                Keep cookies and storage when a server restarts
-              </button>
-              <button type="button" role="menuitem" disabled={!tauri || !url} onClick={() => { close(); void browserView.clearData(); }}>
-                <span className="menu-check" aria-hidden /> Clear cookies and storage now
-              </button>
-            </>
-          )}
-        </Menu>
       </form>
       <div className={`browser-area device-${device}`} ref={area}>
         {agentView ? (
@@ -331,21 +472,26 @@ export function BrowserPane({
             </div>
             <img className="agent-frame" src={agentFrame.image} alt={`The agent browser page: ${agentFrame.title || agentFrame.url}`} />
           </div>
-        ) : !url ? (
+        ) : !active.url ? (
           <div className="editor-empty">
             <Globe size={28} aria-hidden />
             <p>Open a running server from the Servers pane, or type an address.</p>
             <p className="help">A project file path in the chat (HTML, PDF, image, or video) also opens here.</p>
           </div>
-        ) : !tauri ? (
-          <iframe
-            key={iframeKey}
-            src={url}
-            title="Browser"
-            className="browser-frame"
-            style={DEVICES[device].size ? { maxWidth: DEVICES[device].size!.width, maxHeight: DEVICES[device].size!.height } : undefined}
-          />
         ) : null}
+        {!tauri &&
+          tabs.map((t) =>
+            t.url ? (
+              <iframe
+                key={`${t.id}-${t.frame}`}
+                src={t.url}
+                title={tabLabel(t)}
+                className="browser-frame"
+                hidden={t.id !== active.id || agentView}
+                style={DEVICES[device].size ? { maxWidth: DEVICES[device].size!.width, maxHeight: DEVICES[device].size!.height } : undefined}
+              />
+            ) : null,
+          )}
       </div>
     </section>
   );
