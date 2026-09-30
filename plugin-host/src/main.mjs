@@ -32,7 +32,7 @@ const HOST_VERSION = require("../package.json").version;
 
 const rpc = new RpcPeer(process.stdin, (line) => writeOut(line + "\n"));
 const profile = new Profile(values.home);
-const runtime = new Runtime(profile, (method, params) => rpc.notify(method, params));
+const runtime = new Runtime(profile, (method, params) => rpc.notify(method, params), (method, params, signal) => rpc.request(method, params, signal));
 
 function need(params, key, type = "string") {
   if (typeof params[key] !== type) throw new RpcError(INVALID_PARAMS, `'${key}' must be a ${type}.`);
@@ -78,7 +78,7 @@ rpc.on("reload", async () => {
 });
 rpc.on("logs", () => runtime.logs.slice(-100));
 
-rpc.on("agent.open", (p) => runtime.openAgent(need(p, "agentId"), typeof p.cwd === "string" ? p.cwd : null));
+rpc.on("agent.open", (p) => runtime.openAgent(need(p, "agentId"), typeof p.cwd === "string" ? p.cwd : null, typeof p.source === "string" ? p.source : "startup"));
 rpc.on("agent.close", (p) => {
   runtime.closeAgent(need(p, "agentId"));
   return { ok: true };
@@ -86,6 +86,9 @@ rpc.on("agent.close", (p) => {
 rpc.on("snapshot", (p, signal) => runtime.snapshot(need(p, "agentId"), signal));
 rpc.on("tools.execute", (p, signal) => runtime.executeTool(need(p, "agentId"), { callId: need(p, "callId"), name: need(p, "name"), arguments: p.arguments }, signal));
 rpc.on("commands.execute", (p, signal) => runtime.executeCommand(need(p, "agentId"), need(p, "line"), signal));
+// Phase 2: the agent and tool events of the Harness loop. "event.emit" is a notification.
+rpc.on("event.dispatch", (p, signal) => runtime.dispatch(need(p, "agentId"), need(p, "name"), p.payload ?? {}, signal));
+rpc.on("event.emit", (p) => runtime.emit(need(p, "agentId"), need(p, "name"), p.payload ?? {}));
 
 // Package operations. A changed package needs a new host process: the daemon restarts it.
 rpc.on("plugins.install", (p, signal) => wrap(() => profile.install(need(p, "spec"), { approvedBuilds: Array.isArray(p.approvedBuilds) ? p.approvedBuilds : [], signal })));

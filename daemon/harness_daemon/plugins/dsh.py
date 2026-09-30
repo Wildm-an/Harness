@@ -7,6 +7,11 @@ with JSON-RPC 2.0 on stdin and stdout, one JSON message on each line.
 Each session gets a DshSession: one shim agent in the host, and the tools, commands, skills,
 and prompt text that the plugins give that agent. The PluginHost of the session adds them to
 the agent, next to the Python plugins.
+
+Phase 2: the session also adds handlers to the hook bus of the agent. They send the agent and
+tool events of the loop to the host (for example agent/pre-step and tools/pre-execute), only for
+the events that have a DeepSeek listener. The host sends requests back: "approval.request" (the
+permission card) and the notification "agent.steer" (a user message for the next step).
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -96,6 +102,8 @@ class DshBridge:
         self.agents: dict[str, str | None] = {}  # Open agents: id -> cwd. A restart opens them again.
         self.state: dict[str, Any] | None = None
         self.generation = 0  # Changes when the plugins change. Sessions refresh at their next turn.
+        self.sessions: dict[str, "DshSession"] = {}  # Agent id -> session, for the requests of the host.
+        self._incoming: dict[Any, asyncio.Task] = {}  # Requests of the host that run now.
         self._write_lock = threading.Lock()
         self._start_lock: asyncio.Lock | None = None
         self._log_file = None
@@ -184,11 +192,62 @@ class DshBridge:
             return
         method = message.get("method")
         params = message.get("params") or {}
+        if method and "id" in message:
+            self._incoming[message["id"]] = asyncio.ensure_future(self._answer(message["id"], method, params))
+            return
+        if method == "$/cancel":
+            task = self._incoming.pop(params.get("id"), None)
+            if task is not None:
+                task.cancel()
+            return
+        if method == "agent.steer":
+            session = self.sessions.get(str(params.get("agentId")))
+            if session is not None:
+                session.on_steer(str(params.get("text") or ""))
+            return
         if method == "changed":
             self.generation += 1
         elif method == "log":
             level = {"error": logging.ERROR, "warn": logging.WARNING, "info": logging.INFO}.get(params.get("level"), logging.DEBUG)
             log.log(level, "[%s] %s", params.get("name"), params.get("text"))
+
+    async def _answer(self, request_id: Any, method: str, params: dict[str, Any]) -> None:
+        """Answer a request of the host."""
+        try:
+            if method != "approval.request":
+                raise DshError(f"Unknown method: {method}", -32601)
+            session = self.sessions.get(str(params.get("agentId")))
+            outcome = await session.approve(params) if session is not None else "unavailable"
+            self._reply(request_id, {"outcome": outcome})
+        except asyncio.CancelledError:
+            self._reply(request_id, {"outcome": "cancelled"})
+        except DshError as e:
+            self._reply(request_id, None, {"code": e.code or -32603, "message": str(e)})
+        except Exception as e:  # noqa: BLE001 - the host must get an answer.
+            log.exception("The answer to %s failed", method)
+            self._reply(request_id, None, {"code": -32603, "message": f"{type(e).__name__}: {e}"})
+        finally:
+            self._incoming.pop(request_id, None)
+
+    def _reply(self, request_id: Any, result: Any, error: dict[str, Any] | None = None) -> None:
+        message: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id}
+        if error is not None:
+            message["error"] = error
+        else:
+            message["result"] = result
+        try:
+            self._write(message)
+        except DshError:
+            pass
+
+    def notify(self, method: str, params: dict[str, Any]) -> None:
+        """Send a notification to the host. It has no answer, so the loop does not wait."""
+        if not self.running:
+            return
+        try:
+            self._write({"jsonrpc": "2.0", "method": method, "params": params})
+        except DshError:
+            pass
 
     def _exited(self, proc: subprocess.Popen) -> None:
         if self.proc is proc:
@@ -328,14 +387,25 @@ class DshSession:
         self.skills: dict[str, Skill] = {}
         self.prompt = ""
         self.seen = -1  # The bridge generation of the last snapshot.
+        self.listeners: set[str] = set()  # The DeepSeek events that have listeners.
+        self.agent: Any = None  # The Harness agent of the session. Agent.set_plugins sets it.
+        self.hooks: Any = None  # The hook bus of the PluginHost. The handlers below go there.
+        self._unhook: list[Callable[[], Any]] = []
+        self._stream: dict[str, Any] = {}  # The assistant-stream frame state of the current step.
+        self.warnings: list[str] = []
 
-    async def open(self) -> None:
+    async def open(self, source: str = "startup") -> None:
         await self.bridge.ensure()
-        await self.bridge.request("agent.open", {"agentId": self.agent_id, "cwd": self.cwd})
+        opened = await self.bridge.request("agent.open", {"agentId": self.agent_id, "cwd": self.cwd, "source": source})
+        if isinstance(opened, dict) and opened.get("warning"):
+            self.warnings.append(str(opened["warning"]))
         self.bridge.agents[self.agent_id] = self.cwd
+        self.bridge.sessions[self.agent_id] = self
         await self.refresh()
 
     async def close(self) -> None:
+        self._bind_hooks(set())
+        self.bridge.sessions.pop(self.agent_id, None)
         self.bridge.agents.pop(self.agent_id, None)
         if self.bridge.running:
             try:
@@ -363,7 +433,169 @@ class DshSession:
         self.commands = commands
         self.skills = {s.name: s for s in (self._skill(raw) for raw in snap.get("skills") or []) if s is not None}
         self.prompt = str(snap.get("prompt") or "")
+        self._bind_hooks({str(n) for n in snap.get("listeners") or []})
         self.seen = generation
+
+    # -- phase 2: the events of the loop ------------------------------------------------------------
+
+    def _bind_hooks(self, listeners: set[str]) -> None:
+        """Add a handler to the hook bus for each event that a DeepSeek plugin listens to (decision D5)."""
+        for dispose in self._unhook:
+            dispose()
+        self._unhook = []
+        self.listeners = listeners
+        if self.hooks is None:
+            return
+        wanted = {
+            "tool.before": "tools/pre-execute" in listeners,
+            "tool.after": bool({"tools/post-execute", "tools/result"} & listeners),
+            "step.before": "agent/pre-step" in listeners,
+            "request.before": "agent/request" in listeners,
+            "request.error": "agent/request-error" in listeners,
+            "turn.stopping": "agent/turn-stopping" in listeners,
+            "turn.start": bool({"agent/status", "agent/inbox/inserted", "agent/inbox/claimed"} & listeners),
+            "turn.end": bool({"agent/status", "agent/error"} & listeners),
+            "stream.text": "agent/assistant-stream" in listeners,
+            "stream.end": "agent/assistant-stream" in listeners,
+        }
+        handlers = {
+            "tool.before": self._tool_before, "tool.after": self._tool_after, "step.before": self._step_before,
+            "request.before": self._request_before, "request.error": self._request_error,
+            "turn.stopping": self._turn_stopping, "turn.start": self._turn_start, "turn.end": self._turn_end,
+            "stream.text": self._stream_text, "stream.end": self._stream_end,
+        }
+        for event, on in wanted.items():
+            if on:
+                self._unhook.append(self.hooks.add(event, handlers[event]))
+
+    async def _dispatch(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run one waterfall or serial event in the host. An error is logged: the turn continues."""
+        try:
+            result = await self.bridge.request("event.dispatch", {"agentId": self.agent_id, "name": name, "payload": payload})
+        except DshError as e:
+            log.warning("The DeepSeek event %s failed: %s", name, e)
+            return {}
+        return result if isinstance(result, dict) else {}
+
+    def _emit(self, name: str, payload: dict[str, Any]) -> None:
+        if name in self.listeners:
+            self.bridge.notify("event.emit", {"agentId": self.agent_id, "name": name, "payload": payload})
+
+    def _is_dsh_tool(self, name: str) -> bool:
+        # A DeepSeek tool gets its events in the host, through the DeepSeek tool pipeline.
+        return any(t.name == name for t in self.tools)
+
+    async def _tool_before(self, call: Any) -> None:
+        if self._is_dsh_tool(call.name):
+            return
+        result = await self._dispatch("tools/pre-execute", {"callId": call.call_id, "name": call.name, "arguments": call.args})
+        decision = result.get("decision") or {}
+        kind = decision.get("kind")
+        if kind == "deny":
+            call.block(str(decision.get("reason") or "A DeepSeek plugin denied the tool call."))
+        elif kind == "cancel":
+            call.block("A DeepSeek plugin cancelled the tool call.", cancel=True)
+        elif kind == "ask":
+            reason = decision.get("reason") or (decision.get("displayReason") or {}).get("en")
+            call.ask(str(reason or "A DeepSeek plugin asks for approval."))
+
+    async def _tool_after(self, call: Any) -> None:
+        if self._is_dsh_tool(call.name) or call.result is None:
+            return
+        payload = {"callId": call.call_id, "name": call.name, "arguments": call.args,
+                   "result": {"isError": call.result.is_error, "text": call.result.output}}
+        # A blocked call has a final result: no tools/post-execute, only tools/result (as in DeepSeek).
+        if "tools/post-execute" in self.listeners and not call.blocked:
+            decision = (await self._dispatch("tools/post-execute", payload)).get("decision") or {}
+            if decision.get("kind") == "block":
+                call.result = ToolResult(str(decision.get("text") or "A DeepSeek plugin blocked the tool result."), is_error=True)
+            elif decision.get("text") is not None:
+                call.result.output = str(decision["text"])
+            for text in decision.get("contexts") or []:
+                call.add_context(str(text))
+            payload["result"] = {"isError": call.result.is_error, "text": call.result.output}
+        self._emit("tools/result", payload)
+
+    async def _step_before(self, event: Any) -> None:
+        result = await self._dispatch("agent/pre-step", {"turn": event.turn, "step": event.step, "messages": event.messages})
+        if result.get("kind") == "reject":
+            event.reject("A DeepSeek plugin ended the turn.")
+        elif isinstance(result.get("messages"), list):
+            event.messages = [str(m) for m in result["messages"]]
+
+    async def _request_before(self, event: Any) -> None:
+        config = {"provider": event.provider, "model": event.model}
+        for key, value in (("temperature", event.temperature), ("maxTokens", event.max_tokens), ("stop", event.stop),
+                           ("reasoningEffort", event.reasoning_effort)):
+            if value is not None:
+                config[key] = value
+        result = (await self._dispatch("agent/request", {"turn": event.turn, "step": event.step, "config": config})).get("config")
+        if not isinstance(result, dict):
+            return
+        event.provider = str(result.get("provider") or event.provider)
+        event.model = str(result.get("model") or event.model)
+        event.temperature = result.get("temperature", event.temperature)
+        event.max_tokens = result.get("maxTokens", event.max_tokens)
+        event.stop = result.get("stop", event.stop)
+        event.reasoning_effort = result.get("reasoningEffort", event.reasoning_effort)
+
+    async def _request_error(self, event: Any) -> None:
+        result = await self._dispatch("agent/request-error", {"turn": event.turn, "step": event.step,
+                                                              "provider": event.provider, "message": event.error})
+        event.retry = event.retry or bool(result.get("retry"))
+
+    async def _turn_stopping(self, event: Any) -> None:
+        for text in (await self._dispatch("agent/turn-stopping", {"turn": event.turn})).get("steered") or []:
+            event.steer(str(text))
+
+    async def _turn_start(self, event: Any) -> None:
+        turn = (self.agent.turn_number + 1) if self.agent is not None else 0
+        self._emit("agent/inbox/inserted", {"text": event.text, "turn": turn})
+        self._emit("agent/status", {"status": "running"})
+        self._emit("agent/inbox/claimed", {"text": event.text, "turn": turn})
+
+    async def _turn_end(self, event: Any) -> None:
+        if event.stop == "error":
+            self._emit("agent/error", {"turn": self.agent.turn_number if self.agent is not None else 0})
+        self._emit("agent/status", {"status": "idle"})
+
+    async def _stream_text(self, event: Any) -> None:
+        key = f"{event.turn}:{event.step}"
+        if self._stream.get("key") != key:
+            self._stream = {"key": key, "attemptId": f"attempt-{uuid.uuid4().hex[:12]}", "index": 0}
+            self._emit("agent/assistant-stream", {"frame": {"type": "start", "attemptId": self._stream["attemptId"],
+                                                            "revision": 0, "turn": event.turn, "step": event.step}})
+        index = self._stream["index"]
+        self._stream["index"] = index + 1
+        self._emit("agent/assistant-stream", {"frame": {
+            "type": "chunk", "attemptId": self._stream["attemptId"], "revision": 0, "index": index,
+            "time": int(time.time() * 1000), "chunk": {"type": "text-delta", "index": 0, "text": event.text}}})
+
+    async def _stream_end(self, event: Any) -> None:
+        if self._stream.get("key") != f"{event.turn}:{event.step}":
+            await self._stream_text(type(event)(event.turn, event.step, "", event.cwd))  # A reply with no text.
+        self._emit("agent/assistant-stream", {"frame": {
+            "type": "end", "attemptId": self._stream["attemptId"], "revision": 0, "index": self._stream["index"],
+            "outcome": {"kind": "committed", "eventType": "assistant/message", "seq": 0}}})
+        self._stream = {}
+
+    async def approve(self, params: dict[str, Any]) -> str:
+        """A DeepSeek tool that a plugin asks about: the permission card of the session."""
+        agent = self.agent
+        if agent is None:
+            return "unavailable"
+        tool = str(params.get("toolName") or "tool")
+        reason = params.get("reason") or "A DeepSeek plugin asks for approval."
+        decision = await agent.gate.approver({
+            "request_id": uuid.uuid4().hex, "tool": tool, "input": {"reason": reason},
+            "diff": None, "rule": None, "reason": reason,
+        })
+        return "allowed-once" if decision in ("allow_once", "allow_always") else "rejected"
+
+    def on_steer(self, text: str) -> None:
+        """A plugin added a user message. It goes into the next step of the agent."""
+        if text and self.agent is not None:
+            self.agent.pending_steer.append(text)
 
     def _command_handler(self, name: str) -> Callable[[Any], Any]:
         async def handler(invocation: Any) -> str:

@@ -98,12 +98,17 @@ Import other values from `harness_daemon.plugins`, for example `Prompt`, `ToolEr
 
 | Event | The handler gets | The handler can |
 |---|---|---|
-| `tool.before` | `ToolCall` with `name`, `args`, and `cwd` | Change `args`. Call `block(reason)` to stop the call. The agent gets the reason as an error. |
-| `tool.after` | `ToolCall` with `result` | Read or replace `result`. |
 | `turn.start` | `TurnEvent` with `text` and `cwd` | Change `text` before the agent gets it. |
+| `step.before` | `StepEvent` with `turn`, `step`, and `messages` | Change the new user messages of the step (the prompt at step 1). Call `reject(reason)` to end the turn with no model call. The stop reason is `blocked`. |
+| `request.before` | `RequestEvent` with `provider`, `model`, `temperature`, `max_tokens`, and `stop` | Change the model or the call options of one model call. |
+| `request.error` | `RequestErrorEvent` with `error` and `attempt` | Set `retry = True` to call the model again, up to 3 times. |
+| `stream.text`, `stream.end` | `StreamEvent` with `text` | Read each chunk of the reply, and the full reply text. |
+| `tool.before` | `ToolCall` with `name`, `args`, `call_id`, and `cwd` | Change `args`. Call `block(reason)` to stop the call: the agent gets the reason as an error. `block(reason, cancel=True)` also stops the turn. Call `ask(reason)`: the user approves the call, also if a rule allows it. |
+| `tool.after` | `ToolCall` with `result` | Read or replace `result`. Call `add_context(text)` to add a user message after the tool results. For a blocked call, `blocked` is set. |
+| `turn.stopping` | `TurnStoppingEvent` with `turn` | Call `steer(text)` to add a user message: the turn continues with another model call. A turn continues 5 times or less. |
 | `turn.end` | `TurnEvent` with `stop` | Read the stop reason. |
 
-Handlers can be `async`. They run in the order of registration. An error in a handler goes to the daemon log. It does not stop the turn.
+Handlers can be `async`. They run in the order of registration. An error in a handler goes to the daemon log. It does not stop the turn. A handler that blocks or rejects stops the handlers after it.
 
 ## Rows and patch layers
 
@@ -169,10 +174,33 @@ The host installs the bundle with pnpm 11 into `~/.harness/dsh/`, with the DeepS
 - A Harness tool wins over a DeepSeek tool with the same name. A Harness plugin command wins over a DeepSeek command.
 - A skill in a folder wins over a DeepSeek skill with the same name.
 
-### Limits of this version (phase 1)
+### Agent and tool events (phase 2)
 
-- The host has the core services only. A plugin that needs another service (for example `webServer`, `fs`, or `agents`) waits, and the Plugins screen names the missing services. Later phases add more services.
-- The agent events (`agent/pre-step`, `agent/turn-stopping`, and others) and the tool events for Harness tools do not reach DeepSeek plugins yet. The tool events for DeepSeek tools work.
+Each Harness session is one agent in the real DeepSeek `agents` service. The daemon sends the events of the Harness loop to the DeepSeek plugins, with the scope of that agent. It sends an event only when a plugin listens to it.
+
+| DeepSeek event | When | What a plugin can do |
+|---|---|---|
+| `agent/created`, `agent/disposed` | A session opens or closes | Read the agent. |
+| `agent/status`, `agent/inbox/inserted`, `agent/inbox/claimed` | A turn starts or ends | Read the state and the prompt. |
+| `agent/pre-step` | Before each model call | Change the new user messages. "reject" ends the turn as `blocked`. |
+| `agent/request` | Before each model call | Change the provider, model, temperature, max tokens, and stop list. |
+| `agent/request-error` | A model call fails | "retry" calls the model again. |
+| `agent/assistant-stream` | Each chunk of the reply | Read the `start`, `chunk`, and `end` frames. |
+| `agent/turn-stopping` | The turn is about to end | `agent.steer(text)` adds a message, and the turn continues. |
+| `agent/error` | The turn ends with an error | Read it. |
+| `tools/pre-execute` | Before each Harness tool call | "deny", "cancel", or "ask" (the permission card, also if a rule allows the call). |
+| `tools/post-execute` | After each Harness tool call | Replace the output, "block" it, or add user messages (`additionalContexts`). |
+| `tools/result` | After each tool call | Read the final result. |
+| `approval/request` | A plugin asks about a DeepSeek tool | Answer first. With no answer, the user sees the permission card. |
+
+DeepSeek tools get their `tools/*` events in the host, through the DeepSeek tool pipeline. A plugin that asks about a DeepSeek tool shows a second permission card, after the Harness approval of the tool.
+
+`agent.steer()` outside `agent/turn-stopping` adds the message to the next step of the session. If no turn runs, the message waits for the next turn.
+
+### Limits of this version (phase 2)
+
+- The host has the core services and the `agents` and `approval` services. A plugin that needs another service (for example `webServer` or `fs`) waits, and the Plugins screen names the missing services. Later phases add more services.
+- `session/event` and `llm/stream` do not reach DeepSeek plugins yet.
 - LLM adapters of DeepSeek plugins do not show as providers yet.
 - The UI half of a bundle does not load.
 - A remote daemon that runs from source needs `npm install` in `plugin-host/`.

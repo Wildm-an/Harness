@@ -1,7 +1,8 @@
 """A fake OpenAI-compatible model server for tests.
 
 Each request takes the next scripted reply. A reply is a dict:
-``{"text": "...", "tool_calls": [{"name": "read", "arguments": {...}}]}``.
+``{"text": "...", "tool_calls": [{"name": "read", "arguments": {...}}]}``, or
+``{"error": "...", "status": 400}`` for an HTTP error.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ class FakeModel:
         self.requests: list[dict[str, Any]] = []
         self.title_requests: list[dict[str, Any]] = []
         self.title = "Fake session title"
+        self.classifier_requests: list[dict[str, Any]] = []
+        self.verdicts: list[Any] = []  # Auto mode verdicts: dicts, or raw text for a bad reply.
         self.capabilities = capabilities if capabilities is not None else ["completion", "tools"]
         self.num_ctx: int | None = 32768  # Reported by /api/show. None: not set.
         self.required_key: str | None = None  # If set, /v1/models needs "Authorization: Bearer <key>".
@@ -63,10 +66,18 @@ class FakeModel:
             if isinstance(first, str) and first.startswith("Write a short title for the task below"):
                 self.title_requests.append(body)
                 return StreamingResponse(_sse({"text": self.title}), media_type="text/event-stream")
+            # An auto mode check (auto_mode.py): the next scripted verdict, or "allow".
+            if isinstance(first, str) and first.startswith("You check one tool call of a coding agent"):
+                self.classifier_requests.append(body)
+                verdict = self.verdicts.pop(0) if self.verdicts else {"decision": "allow", "rule": "", "reason": "ok"}
+                text = verdict if isinstance(verdict, str) else json.dumps(verdict)
+                return StreamingResponse(_sse({"text": text}), media_type="text/event-stream")
             self.requests.append(body)
             if not self.replies:
                 return JSONResponse({"error": {"message": "No scripted reply."}}, status_code=500)
             reply = self.replies.pop(0)
+            if "error" in reply:  # {"error": "text", "status": 400}: an HTTP error for this request.
+                return JSONResponse({"error": {"message": reply["error"]}}, status_code=reply.get("status", 400))
             return StreamingResponse(_sse(reply), media_type="text/event-stream")
 
         return app

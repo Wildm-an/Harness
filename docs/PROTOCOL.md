@@ -96,7 +96,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `serve.stop` | `host`, `name` | Stops a served model and removes its provider. |
 | `serve.output` | `host`, `name` | Asks for the last lines of the llama-server log. |
 | `settings.get` | — | Asks for the project settings that the client can change. |
-| `settings.set` | `auto_verify`, `permission_mode` | Changes project settings in `.harness/settings.json`. `permission_mode` is `default`, `acceptEdits`, `plan`, or `bypassPermissions`. The other keys of the file stay the same. The next model call uses the new value. |
+| `settings.set` | `auto_verify`, `permission_mode` | Changes project settings in `.harness/settings.json`. `permission_mode` is `default`, `acceptEdits`, `plan`, `auto` (see [AUTO_MODE.md](AUTO_MODE.md)), or `bypassPermissions`. The other keys of the file stay the same. The next model call uses the new value. |
 
 
 
@@ -168,11 +168,13 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 |---|---|---|
 
-| `permission.request` | `rule` | The rule that `allow_always` adds, for example `edit(src/app.py)` or `bash(npm test)`. |
+| `permission.request` | `rule` | The rule that `allow_always` adds, for example `edit(src/app.py)` or `bash(npm test)`. `null` when a plugin asks for approval: there is no "always" choice, because the plugin asks each time. |
+| `permission.request` | `reason` | Why a plugin asks for approval, if a plugin asks. |
 
 | `tool.result` | `diff` | A unified diff of the file change, for a tool that changed a file. The field is not present for other tools. |
 
-| `turn.end` | `stop_reason` | `end`, `max_tool_calls`, `denied`, `interrupted`, or `error`. |
+| `turn.end` | `stop_reason` | `end`, `max_tool_calls`, `denied`, `interrupted`, `error`, or `blocked` (a plugin ended the turn). |
+| `notice` | `level`, `text` | A message for the chat, for example "A plugin added a message: …". `level` is `info`, `warning`, or `error`. |
 
 | `turn.end` | `usage` | `prompt_tokens` and `completion_tokens` are sums for the turn. `last_prompt_tokens` is the prompt size of the last model call. `context_tokens` is the size of the next request (an estimate), and `context_length` is the limit. |
 | `command.result` | `context_length`, `context_source` | After `/model`, the context length of the new model and its source. |

@@ -25,6 +25,8 @@ export class RpcPeer {
     this.write = write;
     this.handlers = new Map();
     this.running = new Map(); // Request id -> AbortController.
+    this.outgoing = new Map(); // Id of a request to the daemon -> { resolve, reject }.
+    this.nextId = 1;
     this.closed = new Promise((resolve) => (this._resolveClosed = resolve));
     let buffer = "";
     input.setEncoding?.("utf8");
@@ -37,8 +39,13 @@ export class RpcPeer {
         if (line) this._receive(line);
       }
     });
-    input.on("end", () => this._resolveClosed());
-    input.on("close", () => this._resolveClosed());
+    const closed = () => {
+      for (const waiting of this.outgoing.values()) waiting.reject(new RpcError(INTERNAL_ERROR, "The daemon closed the connection."));
+      this.outgoing.clear();
+      this._resolveClosed();
+    };
+    input.on("end", closed);
+    input.on("close", closed);
   }
 
   /** Register a handler: async (params, signal) => result. */
@@ -48,6 +55,25 @@ export class RpcPeer {
 
   notify(method, params) {
     this._send({ jsonrpc: "2.0", method, params });
+  }
+
+  /** Send a request to the daemon, for example "approval.request". An abort sends "$/cancel". */
+  request(method, params, signal) {
+    const id = `host-${this.nextId++}`;
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        this.outgoing.delete(id);
+        this.notify("$/cancel", { id });
+        reject(signal.reason ?? new RpcError(REQUEST_CANCELLED, "The request was cancelled."));
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.outgoing.set(id, {
+        resolve: (value) => (signal?.removeEventListener("abort", onAbort), resolve(value)),
+        reject: (error) => (signal?.removeEventListener("abort", onAbort), reject(error)),
+      });
+      this._send({ jsonrpc: "2.0", id, method, params });
+    });
   }
 
   _send(message) {
@@ -70,7 +96,15 @@ export class RpcPeer {
       this.running.get(message.params?.id)?.abort(new RpcError(REQUEST_CANCELLED, "The request was cancelled."));
       return;
     }
-    if (typeof message.method !== "string") return; // A response: the host sends no requests.
+    if (typeof message.method !== "string") {
+      // A response to a request of the host.
+      const waiting = this.outgoing.get(message.id);
+      if (!waiting) return;
+      this.outgoing.delete(message.id);
+      if (message.error) waiting.reject(new RpcError(message.error.code, message.error.message, message.error.data));
+      else waiting.resolve(message.result);
+      return;
+    }
     const handler = this.handlers.get(message.method);
     const isRequest = message.id !== undefined && message.id !== null;
     if (!handler) {

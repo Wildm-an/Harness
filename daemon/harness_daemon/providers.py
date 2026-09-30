@@ -493,9 +493,13 @@ class ModelClient:
         return f"{self.provider.name}/{self.model}"
 
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
-                     _retry_tunnel: bool = True) -> ModelResponse:
+                     _retry_tunnel: bool = True, options: dict[str, Any] | None = None) -> ModelResponse:
+        """Stream one completion. ``options``: ``temperature``, ``max_tokens``, and ``stop``, from plugins."""
         client = await self._openai()
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
+        for key in ("temperature", "max_tokens", "stop"):
+            if options and options.get(key) is not None:
+                kwargs[key] = options[key]
         if tools:
             kwargs["tools"] = tools
         if self._send_stream_options:
@@ -506,13 +510,13 @@ class ModelClient:
             # Some servers reject stream_options. Try once more without it.
             if self._send_stream_options and "stream_options" in str(e):
                 self._send_stream_options = False
-                return await self.stream(messages, tools, on_text)
+                return await self.stream(messages, tools, on_text, options=options)
             raise ModelError(f"The model endpoint rejected the request: {e}") from e
         except openai.APIConnectionError as e:
             if self.provider.ssh is not None and _retry_tunnel:
                 # The tunnel can stop between two requests. The next call opens a new one.
                 await asyncio.sleep(0.5)
-                return await self.stream(messages, tools, on_text, _retry_tunnel=False)
+                return await self.stream(messages, tools, on_text, _retry_tunnel=False, options=options)
             where = f"{self.provider.base_url} through SSH {self.provider.ssh.label}" if self.provider.ssh else self.provider.base_url
             raise ModelError(f"Cannot connect to the model endpoint at {where}.") from e
         except openai.APIStatusError as e:

@@ -22,13 +22,16 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .config import load_settings
+from .config import ConfigError, load_settings
 from .context import CHARS_PER_TOKEN, COMPACT_AT, KEEP_TURNS, estimate_tokens, split_turns, summarize, trim_tool_outputs
 from .files import file_hash, relpath
+from .auto_mode import AutoReviewer
 from .permissions import Approver, PermissionGate
-from .plugins.host import Hooks, PluginHost, ToolCall, TurnEvent
+from .plugins.host import (
+    Hooks, PluginHost, RequestErrorEvent, RequestEvent, StepEvent, StreamEvent, ToolCall, TurnEvent, TurnStoppingEvent,
+)
 from .prompt import build_system_prompt, load_project_instructions, system_prompt_parts
-from .providers import DEFAULT_CONTEXT_LENGTH, ModelClient, ModelError
+from .providers import DEFAULT_CONTEXT_LENGTH, ModelClient, ModelError, resolve_model
 from .skills import Skill, render_skill
 from .tools import (
     SkillTool,
@@ -49,6 +52,8 @@ Emit = Callable[[dict[str, Any]], Awaitable[None]]
 OnCompact = Callable[[int, "str | None"], None]
 
 INTERRUPTED = "The user interrupted the turn. The tool did not complete."
+MAX_REQUEST_RETRIES = 3  # The retries that request.error handlers can ask for, for each model call.
+MAX_STEER_CONTINUATIONS = 5  # The extra steps that turn.stopping handlers can add to one turn.
 DENIED = "The user denied this tool call."
 SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 
@@ -108,6 +113,7 @@ class Agent:
         self._set_plugin_tools(plugins)
         self.gate = PermissionGate(self.cwd, approver, session_allow,
                                    mode=lambda: self.settings.get("permission_mode") or "default")
+        self.gate.auto = AutoReviewer(self)
         self.history: list[dict[str, Any]] = list(history or [])
         self.instructions = load_project_instructions(self.cwd)
         self.summary = summary
@@ -117,6 +123,12 @@ class Agent:
         # The prompt tokens that the endpoint reported, and the history length at that time.
         self._known_tokens: tuple[int, int] | None = None
         self.streamed: list[str] = []  # The reply text that streams now. It is not in the history yet.
+        self.turn_number = 0
+        self.in_turn = False
+        # User messages from plugins (DeepSeek agent.steer) that wait for the next step.
+        self.pending_steer: list[str] = []
+        self._step_contexts: list[str] = []  # tool.after contexts: user messages after the tool results.
+        self._cancel_turn = False  # A tool.before handler cancelled a call: the turn stops.
         self._rebuild_prompt()
 
     def _plugin_sections(self) -> list[str]:
@@ -169,6 +181,8 @@ class Agent:
             self.tools.pop(name, None)
         self.plugins = host
         self.hooks = host.hooks if host is not None else Hooks()
+        if host is not None and host.dsh is not None and host.dsh.agent is None:
+            host.dsh.agent = self  # The main agent of the session, not a subagent of a skill.
         # A built-in tool, an MCP tool, or a preview tool wins over a plugin tool with the same name.
         added = [t for t in (host.tools() if host is not None else []) if t.name not in self.tools]
         self.tools.update({t.name: t for t in added})
@@ -323,6 +337,13 @@ class Agent:
             message["display"] = display
         self.history.append(message)
         self.gate.turn_allow = list(allow)
+        self.turn_number += 1
+        turn = self.turn_number
+        step = 0
+        continuations = 0
+        new_messages = [message]  # The new user messages of the next step, for step.before.
+        self.in_turn = True
+        self._cancel_turn = False
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "last_prompt_tokens": 0}
         max_calls = int(self.settings["max_tool_calls"])
         calls_used = 0
@@ -335,13 +356,29 @@ class Agent:
         async def on_text(chunk: str) -> None:
             streamed.append(chunk)
             await self.emit({"type": "token", "text": chunk})
+            if self.hooks.has("stream.text"):
+                await self.hooks.emit("stream.text", StreamEvent(turn, step, chunk, self.cwd))
 
         try:
             while True:
                 streamed.clear()
+                step += 1
+                new_messages += self._take_pending_steer()
+                if self.hooks.has("step.before"):
+                    event = await self.hooks.emit("step.before", StepEvent(
+                        turn, step, [str(m.get("content") or "") for m in new_messages], self.cwd))
+                    if event.blocked:
+                        await self.emit({"type": "notice", "level": "info", "text": event.blocked})
+                        stop = "blocked"
+                        break
+                    self._replace_new_messages(new_messages, event.messages)
+                new_messages = []
                 if self.context_tokens() >= COMPACT_AT * self.context_length:
                     await self.compact("auto")
-                response = await self.client.stream(self.messages(), self.tool_schemas(), on_text)
+                client, options = await self._request_config(turn, step)
+                response = await self._stream_with_retries(client, options, on_text, streamed, turn, step)
+                if self.hooks.has("stream.end"):
+                    await self.hooks.emit("stream.end", StreamEvent(turn, step, response.text or "", self.cwd))
                 if response.usage:
                     usage["prompt_tokens"] += response.usage.get("prompt_tokens", 0)
                     usage["completion_tokens"] += response.usage.get("completion_tokens", 0)
@@ -361,6 +398,13 @@ class Agent:
                     total = response.usage["prompt_tokens"] + response.usage.get("completion_tokens", 0)
                     self._known_tokens = (total, len(self.history))
                 if not response.tool_calls:
+                    # turn.stopping handlers can add messages: then the turn continues.
+                    if self.hooks.has("turn.stopping") and continuations < MAX_STEER_CONTINUATIONS:
+                        stopping = await self.hooks.emit("turn.stopping", TurnStoppingEvent(turn, self.cwd))
+                        if stopping.steered:
+                            continuations += 1
+                            new_messages = [self._add_steered(t) for t in stopping.steered]
+                            continue
                     break
 
                 open_calls = list(response.tool_calls)
@@ -384,6 +428,14 @@ class Agent:
                         stop = "denied"
                         self._close_open_calls(open_calls, SKIPPED_AFTER_DENY)
                         break
+                    if self._cancel_turn:
+                        stop = "blocked"
+                        self._close_open_calls(open_calls, "Not run, because a plugin cancelled an earlier tool call.")
+                        break
+                # tool.after contexts: user messages after the tool results of the step.
+                for text in self._step_contexts:
+                    new_messages.append(self._add_steered(text))
+                self._step_contexts = []
                 if stop != "end":
                     break
         except asyncio.CancelledError:
@@ -400,9 +452,67 @@ class Agent:
             await self.emit({"type": "error", "message": str(e)})
             stop = "error"
 
+        self.in_turn = False
+        self._step_contexts = []
         await self.hooks.emit("turn.end", TurnEvent(text, self.cwd, stop))
         await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
         return stop
+
+    # -- plugin events of the loop ----------------------------------------------------------------
+
+    def _take_pending_steer(self) -> list[dict[str, Any]]:
+        texts, self.pending_steer = self.pending_steer, []
+        return [self._add_steered(t) for t in texts]
+
+    def _add_steered(self, text: str) -> dict[str, Any]:
+        """Add a user message from a plugin. The client shows it as a notice."""
+        message = {"role": "user", "content": text}
+        self.history.append(message)
+        asyncio.ensure_future(self.emit({"type": "notice", "level": "info", "text": f"A plugin added a message: {text}"}))
+        return message
+
+    def _replace_new_messages(self, messages: list[dict[str, Any]], texts: list[str]) -> None:
+        """Use the new user messages that step.before handlers returned."""
+        for message, text in zip(messages, texts):
+            message["content"] = text
+        for message in messages[len(texts):]:  # A handler removed messages.
+            if message in self.history:
+                self.history.remove(message)
+        for text in texts[len(messages):]:  # A handler added messages.
+            self.history.append({"role": "user", "content": text})
+
+    async def _request_config(self, turn: int, step: int) -> tuple[ModelClient, dict[str, Any]]:
+        """request.before handlers can change the model and the call options of one model call."""
+        client = self.client
+        if not self.hooks.has("request.before"):
+            return client, {}
+        event = await self.hooks.emit("request.before", RequestEvent(
+            turn, step, client.provider.name, client.model, self.cwd))
+        options = {"temperature": event.temperature, "max_tokens": event.max_tokens, "stop": event.stop}
+        if (event.provider, event.model) != (client.provider.name, client.model):
+            try:
+                provider, model = resolve_model(f"{event.provider}/{event.model}")
+                client = ModelClient(provider, model)
+            except ConfigError as e:
+                log.warning("A plugin selected the model %s/%s, which is not available: %s", event.provider, event.model, e)
+        return client, options
+
+    async def _stream_with_retries(self, client: ModelClient, options: dict[str, Any], on_text: Any,
+                                   streamed: list[str], turn: int, step: int) -> Any:
+        """One model call. request.error handlers can ask for a retry, up to MAX_REQUEST_RETRIES times."""
+        attempt = 0
+        while True:
+            try:
+                return await client.stream(self.messages(), self.tool_schemas(), on_text, options=options)
+            except ModelError as e:
+                attempt += 1
+                if not self.hooks.has("request.error") or attempt > MAX_REQUEST_RETRIES:
+                    raise
+                event = await self.hooks.emit("request.error", RequestErrorEvent(
+                    turn, step, client.provider.name, str(e), self.cwd, attempt))
+                if not event.retry:
+                    raise
+                streamed.clear()
 
     def _usage(self, usage: dict[str, int]) -> dict[str, int]:
         return {**usage, "context_tokens": self.context_tokens(), "context_length": self.context_length}
@@ -438,6 +548,8 @@ class Agent:
         if self.ctx.preview is not None:
             sub.enable_preview(self.ctx.preview)
         sub.set_mcp_tools(self.mcp_tools())
+        # Auto mode checks the calls of the subagent with the messages of the user in this session.
+        sub.gate.auto = self.gate.auto
         prompt = f"{render_skill(skill, args, self.cwd)}\n\n{FORK_REPORT_REQUEST}"
         stop = await sub.run_turn(prompt)
         if stop == "interrupted":
@@ -547,7 +659,7 @@ class Agent:
         args, parse_error = _parse_arguments(call["arguments"])
         await self.emit({"type": "tool.start", "id": call_id, "name": name, "input": args if args is not None else call["arguments"]})
 
-        result = await self._execute(name, args, parse_error)
+        result = await self._execute(name, args, parse_error, call_id)
         if result is not _DENIED_RESULT:
             result.output = truncate(result.output, int(self.settings["max_output_chars"]))
         event = {"type": "tool.result", "id": call_id, "output": result.output, "is_error": result.is_error}
@@ -560,20 +672,26 @@ class Agent:
             await self.emit({"type": "fs.changed", "path": relpath(self.cwd, path), "hash": file_hash(path), "by": "agent"})
         return result
 
-    async def _execute(self, name: str, args: dict[str, Any] | None, parse_error: str | None) -> ToolResult:
+    async def _execute(self, name: str, args: dict[str, Any] | None, parse_error: str | None,
+                       call_id: str = "") -> ToolResult:
         tool = self.tools.get(name)
         if tool is None:
             return ToolResult(f"Unknown tool: {name}. The tools are: {', '.join(self.tools)}.", is_error=True)
         if args is None:
             return ToolResult(f"The tool arguments are not valid JSON: {parse_error}", is_error=True)
-        call = await self.hooks.emit("tool.before", ToolCall(name, args, self.cwd))
+        call = await self.hooks.emit("tool.before", ToolCall(name, args, self.cwd, call_id=call_id))
         if call.blocked:
-            return ToolResult(f"A plugin blocked this tool call: {call.blocked}", is_error=True)
+            if call.cancelled:
+                self._cancel_turn = True
+            # tool.after still runs, so that result observers see the blocked call (``call.blocked`` is set).
+            call.result = ToolResult(f"A plugin blocked this tool call: {call.blocked}", is_error=True)
+            call = await self.hooks.emit("tool.after", call)
+            return call.result if isinstance(call.result, ToolResult) else ToolResult(str(call.result))
         args = call.args
         try:
             tool.validate(args)
             approval = await tool.prepare(args, self.ctx)
-            allowed = await self.gate.check(tool, args, approval)
+            allowed = await self.gate.check(tool, args, approval, force=call.asked)
             if isinstance(allowed, str):  # The permission mode blocked the action. The turn continues.
                 return ToolResult(allowed, is_error=True)
             if not allowed:
@@ -587,6 +705,7 @@ class Agent:
             log.exception("The tool %s failed", name)
             call.result = ToolResult(f"The tool failed: {type(e).__name__}: {e}", is_error=True)
         call = await self.hooks.emit("tool.after", call)
+        self._step_contexts.extend(call.contexts)
         return call.result if isinstance(call.result, ToolResult) else ToolResult(str(call.result))
 
 

@@ -1109,7 +1109,12 @@ textarea:focus-visible {
 .ctx-buffer { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); }
 .context-bar > .ctx-free { box-shadow: none; }
 
-/* The mode color: bypass is a warning, plan is blue, accept edits is green. */
+/* The mode color: bypass is a warning, plan is blue, accept edits is green, auto is the accent. */
+.prompt-below .prompt-chip.mode-auto > svg,
+.mode-item.mode-auto > svg {
+  color: var(--accent);
+}
+
 .prompt-below .prompt-chip.mode-bypassPermissions,
 .mode-item.mode-bypassPermissions > svg {
   color: var(--warning);
@@ -4090,6 +4095,12 @@ select {
 
 .permission-outcome.expired {
   color: var(--text-muted);
+}
+
+.permission-reason {
+  margin: 8px 14px 0;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .permission-command {

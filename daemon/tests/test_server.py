@@ -221,12 +221,12 @@ def test_turn_in_the_background_completes(daemon, project, fake_model):
     c.send({"type": "prompt", "text": "wait"})
     c.until("tool.start")
     c.send({"type": "session.leave"})  # The start screen.
-    # The client gets no events of the turn, only the running sessions.
+    # The client gets no events of the turn, only the running sessions (and the title, for the sidebar).
     msg, seen = c.until("sessions.running", timeout=20)
     while msg["items"]:
         msg, more = c.until("sessions.running", timeout=20)
         seen += more
-    assert {m["type"] for m in seen} == {"sessions.running"}
+    assert {m["type"] for m in seen} <= {"sessions.running", "session.title"}
     c.send({"type": "session.resume", "session_id": first["session_id"]})
     back = c.until("session.ready")[0]
     assert not back["running"]

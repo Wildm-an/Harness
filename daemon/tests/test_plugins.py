@@ -280,3 +280,42 @@ def test_plugins_screen_with_no_session_and_install(daemon, harness_home):  # no
 
 def test_prompt_type_is_exported():
     assert Prompt("x").text == "x"
+
+
+def test_python_plugins_get_the_loop_events(daemon, harness_home, project, fake_model):  # noqa: F811
+    make_bundle(harness_home / "plugins", "loop", {"plugin.py": (
+        "stopped = set()\n"
+        "def apply(ctx, config):\n"
+        "    def step(e):\n"
+        "        if e.step == 1:\n"
+        "            e.messages = ['[step] ' + m for m in e.messages]\n"
+        "    def request(e):\n"
+        "        e.temperature = 0.5\n"
+        "    def before(call):\n"
+        "        if call.name == 'glob':\n"
+        "            call.ask('loop asks')\n"
+        "    def after(call):\n"
+        "        if call.name == 'glob':\n"
+        "            call.add_context('glob done')\n"
+        "    def stopping(e):\n"
+        "        if e.turn not in stopped:\n"
+        "            stopped.add(e.turn)\n"
+        "            e.steer('one more')\n"
+        "    ctx.on('step.before', step)\n"
+        "    ctx.on('request.before', request)\n"
+        "    ctx.on('tool.before', before)\n"
+        "    ctx.on('tool.after', after)\n"
+        "    ctx.on('turn.stopping', stopping)\n")})
+    c = Client(daemon)
+    c.new_session(project)
+    fake_model.script({"tool_calls": [{"name": "glob", "arguments": {"pattern": "*.py"}}]}, {"text": "a"}, {"text": "b"})
+    c.send({"type": "prompt", "text": "Hi"})
+    request = c.until("permission.request", timeout=30)[0]
+    assert request["tool"] == "glob" and request["reason"] == "loop asks" and request["rule"] is None
+    c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
+    assert c.until("turn.end", timeout=30)[0]["stop_reason"] == "end"
+    first, second, third = fake_model.requests
+    assert first["messages"][-1] == {"role": "user", "content": "[step] Hi"} and first["temperature"] == 0.5
+    assert second["messages"][-1] == {"role": "user", "content": "glob done"}
+    assert third["messages"][-1] == {"role": "user", "content": "one more"}
+    c.close()

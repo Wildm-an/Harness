@@ -5,6 +5,7 @@ They need the plugin host (npm install in plugin-host/) and a Node: the tests ar
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -116,4 +117,91 @@ def test_build_scripts_need_approval_and_remove(daemon, harness_home):  # noqa: 
     c.send({"type": "plugins.remove", "kind": "deepseek", "name": "script-dsh"})
     listing = c.until("plugins", timeout=180)[0]
     assert listing["removed"] == "script-dsh" and listing["deepseek"]["bundles"] == []
+    c.close()
+
+
+# -- phase 2: the agent and tool events ---------------------------------------------------------------
+
+
+def answer(c: Client, seen: list, decision: str = "allow_once", timeout: float = 60) -> dict:
+    """Wait for the next permission request, answer it, and keep the messages before it."""
+    request, before = c.until("permission.request", timeout=timeout)
+    seen += before
+    c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": decision})
+    return request
+
+
+def test_deepseek_plugins_get_the_events_of_the_loop(daemon, harness_home, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.until("auth.ok")
+    install(c, "events-dsh")
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    assert c.until("session.ready", timeout=60)[0]["warnings"] == []
+
+    fake_model.script(
+        {"error": "The server is busy.", "status": 400},  # agent/request-error asks for one retry.
+        {"tool_calls": [{"name": "read", "arguments": {"path": "hello.py"}}]},
+        {"tool_calls": [{"name": "write", "arguments": {"path": "x.txt", "content": "x"}}]},
+        {"tool_calls": [{"name": "glob", "arguments": {"pattern": "*.py"}}]},
+        {"text": "Done."},
+        {"text": "Goodbye."},  # After the steer of agent/turn-stopping.
+    )
+    c.send({"type": "prompt", "text": "Hello"})
+    seen: list = []
+    request = answer(c, seen)  # tools/pre-execute "ask" for glob: glob needs no approval without the plugin.
+    assert request["tool"] == "glob" and request["reason"] == "events-dsh asks before glob" and request["rule"] is None
+    end, rest = c.until("turn.end", timeout=60)
+    seen += rest
+    assert end["stop_reason"] == "end"
+
+    first = fake_model.requests[0]
+    assert first["messages"][-1] == {"role": "user", "content": "[checked] Hello"}  # agent/pre-step
+    assert first["temperature"] == 0.25 and first["max_tokens"] == 77  # agent/request
+    assert fake_model.requests[1]["messages"][-1]["content"] == "[checked] Hello"  # The retry sends the same request.
+
+    results = {r["id"]: r for r in seen if r["type"] == "tool.result"}
+    outputs = [r["output"] for r in results.values()]
+    assert any(o.endswith("[read checked]") for o in outputs)  # tools/post-execute
+    assert any("events-dsh blocks write" in o for o in outputs)  # tools/pre-execute "deny"
+    assert not (project / "x.txt").exists()
+    after_read = fake_model.requests[2]["messages"]
+    assert {"role": "user", "content": "Note from events-dsh."} in after_read  # additionalContexts
+    last = fake_model.requests[-1]["messages"]
+    assert last[-1] == {"role": "user", "content": "Also say goodbye."}  # agent/turn-stopping steer
+    assert len(fake_model.requests) == 6
+
+    c.send({"type": "command", "name": "events", "args": ""})
+    events = json.loads(c.until("command.result", timeout=30)[0]["text"])
+    names = [e["name"] for e in events]
+    assert "agent/created" in names and "agent/request-error" in names
+    assert {"name": "agent/status", "status": "running"} in events and {"name": "agent/status", "status": "idle"} in events
+    assert {"name": "agent/inbox/claimed", "text": "Hello"} in events
+    assert {"name": "tools/result", "tool": "read", "isError": False} in events
+    assert {"name": "tools/result", "tool": "write", "isError": True} in events
+    assert {"name": "agent/assistant-stream", "type": "start"} in events and {"name": "agent/assistant-stream", "type": "end"} in events
+
+    # agent/pre-step "reject": the turn ends with no model call.
+    count = len(fake_model.requests)
+    c.send({"type": "prompt", "text": "please reject this"})
+    assert c.until("turn.end", timeout=60)[0]["stop_reason"] == "blocked"
+    assert len(fake_model.requests) == count
+    c.close()
+
+
+def test_a_hook_that_asks_about_a_deepseek_tool_uses_the_permission_card(daemon, harness_home, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.until("auth.ok")
+    install(c, "events-dsh")
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    c.until("session.ready", timeout=60)
+    fake_model.script({"tool_calls": [{"name": "askme", "arguments": {}}]}, {"text": "Done."}, {"text": "Bye."})
+    c.send({"type": "prompt", "text": "Run askme."})
+    seen: list = []
+    first = answer(c, seen)  # The Harness approval of a DeepSeek tool.
+    assert first["tool"] == "askme" and first["rule"] == "askme"
+    second = answer(c, seen)  # The approval service of the host: the plugin asked.
+    assert second["tool"] == "askme" and second["reason"] == "events-dsh asks before askme" and second["rule"] is None
+    seen += c.until("turn.end", timeout=60)[1]
+    result = next(m for m in seen if m["type"] == "tool.result")
+    assert result["output"] == "askme ran" and not result["is_error"]
     c.close()

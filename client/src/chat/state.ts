@@ -24,7 +24,8 @@ export type ChatItem =
       tool: string;
       input: unknown;
       diff: string | null;
-      rule: string;
+      rule: string | null;
+      reason?: string | null;
       decision?: Decision;
       expired?: boolean; // The turn ended before a decision.
     }
@@ -81,6 +82,7 @@ const STOP_NOTICES: Partial<Record<StopReason, string>> = {
   interrupted: "The turn was interrupted.",
   denied: "The tool call was denied. The agent waits for your instructions.",
   max_tool_calls: "The turn stopped at the tool call limit.",
+  blocked: "A plugin ended the turn.",
 };
 
 function endStreaming(items: ChatItem[]): ChatItem[] {
@@ -186,7 +188,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         ...state,
         items: [
           ...endStreaming(state.items),
-          { kind: "permission", id: msg.request_id, tool: msg.tool, input: msg.input, diff: msg.diff, rule: msg.rule },
+          { kind: "permission", id: msg.request_id, tool: msg.tool, input: msg.input, diff: msg.diff, rule: msg.rule, reason: msg.reason },
         ],
       };
     case "turn.usage":
@@ -220,6 +222,8 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
     }
     case "error":
       return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: "error", text: msg.message }] };
+    case "notice":
+      return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: msg.level, text: msg.text }] };
     case "command.result": {
       const notices: ChatItem[] = [];
       if (msg.text) notices.push({ kind: "notice", id: nextId("notice"), level: "info", text: msg.text });
@@ -271,7 +275,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         live.push({ kind: "assistant", id: nextId("assistant"), text: action.partial, streaming: true });
       }
       for (const r of action.running ? action.requests ?? [] : []) {
-        live.push({ kind: "permission", id: r.request_id, tool: r.tool, input: r.input, diff: r.diff, rule: r.rule });
+        live.push({ kind: "permission", id: r.request_id, tool: r.tool, input: r.input, diff: r.diff, rule: r.rule, reason: r.reason });
       }
       return {
         running: action.running ?? false,

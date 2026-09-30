@@ -2,7 +2,7 @@
 
 export type Decision = "allow_once" | "allow_always" | "deny";
 
-export type StopReason = "end" | "max_tool_calls" | "denied" | "interrupted" | "error";
+export type StopReason = "end" | "max_tool_calls" | "denied" | "interrupted" | "error" | "blocked"; // blocked: a plugin ended the turn.
 
 export interface Usage {
   prompt_tokens: number;
@@ -30,7 +30,8 @@ export interface PermissionRequest {
   tool: string;
   input: unknown;
   diff: string | null;
-  rule: string; // The rule that "allow_always" adds.
+  rule: string | null; // The rule that "allow_always" adds. null: a plugin asks each time, so there is no "always".
+  reason?: string | null; // Why a plugin asks for approval.
 }
 
 /** A session with a running turn. waiting: the turn waits for a permission decision. */
@@ -97,7 +98,7 @@ export interface ModelContext {
 import type { ContextUsage } from "../lib/context";
 
 /** The permission mode of a project, as in Claude Code. See daemon/harness_daemon/permissions.py. */
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions";
 
 export interface ClientSettings {
   auto_verify: boolean;
@@ -624,6 +625,7 @@ export type DaemonMessage =
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
+  | { type: "notice"; level: "error" | "warning" | "info"; text: string } // For example, a plugin added a message.
   // The token counts of the turn so far, after each model reply.
   | { type: "turn.usage"; prompt_tokens: number; completion_tokens: number; last_prompt_tokens: number }
   | { type: "fs.changed"; path: string; hash: string | null; by: "agent" | "external" }

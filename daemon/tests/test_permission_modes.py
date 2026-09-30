@@ -72,10 +72,10 @@ def test_an_unknown_mode_asks(project):
 
 def test_modes_through_the_daemon(daemon, project, fake_model):  # noqa: F811
     (project / ".harness").mkdir(exist_ok=True)
-    (project / ".harness" / "settings.json").write_text(json.dumps({"permission_mode": "auto"}))
+    (project / ".harness" / "settings.json").write_text(json.dumps({"permission_mode": "dontAsk"}))
     c = Client(daemon)
     ready = c.new_session(project)
-    assert ready["permission_mode"] == "default"  # An old "auto" setting is the default mode.
+    assert ready["permission_mode"] == "default"  # An unknown setting (for example of another tool) is the default mode.
 
     c.send({"type": "settings.set", "permission_mode": "plan"})
     assert c.until("settings")[0]["permission_mode"] == "plan"
@@ -92,6 +92,6 @@ def test_modes_through_the_daemon(daemon, project, fake_model):  # noqa: F811
     # The system prompt tells the model about plan mode.
     assert "Plan mode is on" in fake_model.requests[-1]["messages"][0]["content"]
 
-    c.send({"type": "settings.set", "permission_mode": "auto"})
+    c.send({"type": "settings.set", "permission_mode": "yolo"})
     assert "must be one of" in c.until("error")[0]["message"]
     c.close()

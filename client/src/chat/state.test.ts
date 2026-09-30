@@ -85,6 +85,15 @@ describe("chatReducer", () => {
     expect(s.items[1]).toMatchObject({ decision: "deny" });
   });
 
+  it("keeps the reason of a plugin approval request, and shows plugin notices and a blocked turn", () => {
+    let s = run({ type: "permission.request", request_id: "r2", tool: "glob", input: {}, diff: null, rule: null, reason: "A plugin asks." });
+    expect(s.items[1]).toMatchObject({ kind: "permission", rule: null, reason: "A plugin asks." });
+    s = chatReducer(s, { type: "daemon", msg: { type: "notice", level: "info", text: "A plugin added a message: more" } });
+    expect(s.items.at(-1)).toMatchObject({ kind: "notice", level: "info", text: "A plugin added a message: more" });
+    s = chatReducer(s, { type: "daemon", msg: { type: "turn.end", usage, stop_reason: "blocked" } });
+    expect(s.items.at(-1)).toMatchObject({ kind: "notice", text: "A plugin ended the turn." });
+  });
+
   it("stops the turn on disconnect", () => {
     const s = chatReducer(run({ type: "token", text: "x" }), { type: "disconnected" });
     expect(s.running).toBe(false);

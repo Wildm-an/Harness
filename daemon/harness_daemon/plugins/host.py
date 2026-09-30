@@ -43,7 +43,8 @@ log = logging.getLogger("harness.plugins")
 
 Disposer = Callable[[], Any]
 
-EVENTS = ("tool.before", "tool.after", "turn.start", "turn.end")
+EVENTS = ("tool.before", "tool.after", "turn.start", "turn.end", "turn.stopping", "step.before",
+          "request.before", "request.error", "stream.text", "stream.end")
 BUILTIN_SERVICES = ("tools", "commands", "skills", "prompt", "hooks", "mcp", "providers")
 TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 COMMAND_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
@@ -71,9 +72,22 @@ class ToolCall:
     cwd: Path
     result: ToolResult | None = None
     blocked: str | None = None
+    asked: str | None = None  # ``ask(reason)``: the user approves the call, also if a rule allows it.
+    contexts: list[str] = field(default_factory=list)  # User messages to add after the tool results.
+    call_id: str = ""
+    cancelled: bool = False  # ``block(reason, cancel=True)``: the turn stops after this call.
 
-    def block(self, reason: str) -> None:
+    def block(self, reason: str, cancel: bool = False) -> None:
         self.blocked = reason or "A plugin blocked the tool call."
+        self.cancelled = cancel
+
+    def ask(self, reason: str = "") -> None:
+        self.asked = reason or "A plugin asks for approval."
+
+    def add_context(self, text: str) -> None:
+        """Add a user message after the tool results of this step."""
+        if text:
+            self.contexts.append(text)
 
 
 @dataclass
@@ -83,6 +97,76 @@ class TurnEvent:
     text: str
     cwd: Path
     stop: str | None = None
+
+
+@dataclass
+class StepEvent:
+    """The event of ``step.before``: it runs before each model call of a turn.
+
+    ``messages`` are the new user messages of the step (the prompt at step 1, and messages from
+    ``turn.stopping`` later). A handler can change them, or call ``reject(reason)`` to end the turn.
+    """
+
+    turn: int
+    step: int
+    messages: list[str]
+    cwd: Path
+    blocked: str | None = None
+
+    def reject(self, reason: str = "") -> None:
+        self.blocked = reason or "A plugin ended the turn."
+
+
+@dataclass
+class RequestEvent:
+    """The event of ``request.before``: the model call. A handler can change these values."""
+
+    turn: int
+    step: int
+    provider: str
+    model: str
+    cwd: Path
+    temperature: float | None = None
+    max_tokens: int | None = None
+    stop: list[str] | None = None
+    reasoning_effort: str | None = None
+
+
+@dataclass
+class RequestErrorEvent:
+    """The event of ``request.error``: the model call failed. A handler can set ``retry``."""
+
+    turn: int
+    step: int
+    provider: str
+    error: str
+    cwd: Path
+    attempt: int = 1
+    retry: bool = False
+
+
+@dataclass
+class TurnStoppingEvent:
+    """The event of ``turn.stopping``: the turn is about to end. ``steer(text)`` adds a user message,
+    and the turn continues with another model call."""
+
+    turn: int
+    cwd: Path
+    steered: list[str] = field(default_factory=list)
+
+    def steer(self, text: str) -> None:
+        if text:
+            self.steered.append(text)
+
+
+@dataclass
+class StreamEvent:
+    """The events ``stream.text`` (one chunk of the reply) and ``stream.end`` (the reply is complete)."""
+
+    turn: int
+    step: int
+    text: str
+    cwd: Path
 
 
 @dataclass
@@ -194,13 +278,18 @@ class Hooks:
     def count(self) -> int:
         return sum(len(h) for h in self._handlers.values())
 
+    def has(self, event: str) -> bool:
+        return bool(self._handlers.get(event))
+
     async def emit(self, event: str, payload: Any) -> Any:
+        """Run the handlers in order. A handler that blocks or rejects stops the handlers after it."""
+        blocked_before = getattr(payload, "blocked", None)
         for fn in list(self._handlers.get(event, [])):
             try:
                 await _maybe_await(fn(payload))
             except Exception:  # noqa: BLE001 - a plugin bug must not stop the turn.
                 log.exception("A %s handler of a plugin failed", event)
-            if getattr(payload, "blocked", None):
+            if not blocked_before and getattr(payload, "blocked", None):
                 break
         return payload
 
@@ -564,6 +653,7 @@ class PluginHost:
         if self.cwd is None or not BRIDGE.wanted():
             return
         session = DshSession(BRIDGE, self.cwd)
+        session.hooks = self.hooks  # The DeepSeek event handlers go on the bus of this host.
         try:
             await session.open()
         except DshError as e:
@@ -571,6 +661,7 @@ class PluginHost:
             log.warning("The DeepSeek plugins did not load: %s", e)
             return
         self.dsh = session
+        self.warnings.extend(session.warnings)
 
     def scan(self) -> None:
         """Compose the rows, but run no plugin code. For the Plugins screen when no session is open."""
@@ -754,5 +845,6 @@ async def run_command(command: Command, invocation: Invocation) -> Any:
 
 __all__ = [
     "BUILTIN_SERVICES", "Command", "Context", "EVENTS", "Hooks", "Invocation", "PluginError",
-    "PluginHost", "PluginTool", "Prompt", "ToolCall", "TurnEvent", "object_schema", "run_command",
+    "PluginHost", "PluginTool", "Prompt", "RequestErrorEvent", "RequestEvent", "StepEvent", "StreamEvent",
+    "ToolCall", "TurnEvent", "TurnStoppingEvent", "object_schema", "run_command",
 ]

@@ -55,11 +55,14 @@ export const PermissionCard = memo(function PermissionCard({
     document.getElementById("prompt-input")?.focus({ preventScroll: true });
   };
 
+  // A plugin that asks for approval gets no "always" choice: the keys are 1 (yes) and 2 (no).
+  const choices = item.rule ? CHOICES : CHOICES.filter((c) => c !== "allow_always");
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const index = ["1", "2", "3"].indexOf(e.key);
-    if (index >= 0) {
+    if (index >= 0 && index < choices.length) {
       e.preventDefault();
-      decide(CHOICES[index]);
+      decide(choices[index]);
     } else if (e.key === "Escape") {
       e.preventDefault();
       decide("deny");
@@ -105,6 +108,7 @@ export const PermissionCard = memo(function PermissionCard({
       {!decided && (
         <>
           {!item.diff && <pre className="permission-command">{toolSummary(item.tool, item.input)}</pre>}
+          {item.reason && <p className="permission-reason">{item.reason}</p>}
           <p className="permission-question" id={`perm-q-${item.id}`}>
             Do you want to proceed?
           </p>
@@ -120,19 +124,21 @@ export const PermissionCard = memo(function PermissionCard({
               <kbd>1</kbd>
               <span>Yes</span>
             </button>
-            <button
-              type="button"
-              className="permission-option"
-              onClick={() => decide("allow_always")}
-              title={`Adds ${item.rule} to the project permission rules`}
-            >
-              <kbd>2</kbd>
-              <span>
-                Yes, and do not ask again for <code>{item.rule}</code>
-              </span>
-            </button>
+            {item.rule && (
+              <button
+                type="button"
+                className="permission-option"
+                onClick={() => decide("allow_always")}
+                title={`Adds ${item.rule} to the project permission rules`}
+              >
+                <kbd>2</kbd>
+                <span>
+                  Yes, and do not ask again for <code>{item.rule}</code>
+                </span>
+              </button>
+            )}
             <button type="button" className="permission-option deny" onClick={() => decide("deny")}>
-              <kbd>3</kbd>
+              <kbd>{choices.length}</kbd>
               <span>No</span>
               <span className="permission-key-hint">Esc</span>
             </button>

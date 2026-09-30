@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ClipboardList, FilePenLine, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, ClipboardList, FilePenLine, ShieldCheck, ShieldOff, Sparkles, type LucideIcon } from "lucide-react";
 import type { PermissionMode } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 
@@ -7,11 +7,17 @@ export const MODES: { mode: PermissionMode; label: string; help: string; icon: L
   { mode: "default", label: "Ask permissions", help: "Ask before each action that changes something.", icon: ShieldCheck },
   { mode: "acceptEdits", label: "Accept edits", help: "Change the project files with no question. Ask for the other actions.", icon: FilePenLine },
   { mode: "plan", label: "Plan mode", help: "Read and make a plan. No file changes.", icon: ClipboardList },
+  {
+    mode: "auto",
+    label: "Auto mode",
+    help: "A model checks each action. Safe actions run, risky actions are blocked. After 3 blocks in a row it asks you.",
+    icon: Sparkles,
+  },
   { mode: "bypassPermissions", label: "Bypass permissions", help: "Run each action with no question. Only the deny rules apply.", icon: ShieldOff },
 ];
 
 // Shift+Tab goes through these modes, as in Claude Code. Bypass is only in the menu.
-const CYCLE: PermissionMode[] = ["default", "acceptEdits", "plan"];
+const CYCLE: PermissionMode[] = ["default", "acceptEdits", "plan", "auto"];
 
 /** The mode after ``mode`` for Shift+Tab. */
 export function nextMode(mode: PermissionMode): PermissionMode {
