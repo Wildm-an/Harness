@@ -4,6 +4,7 @@
 # build/sidecar/dist/harness-daemon (.exe on Windows).
 
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
@@ -19,6 +20,8 @@ hiddenimports = [
     *collect_submodules("websockets"),
     # mcp.cli needs typer, and the daemon does not use it.
     *collect_submodules("mcp", filter=lambda name: not name.startswith("mcp.cli")),
+    # The terminal pane on Windows (ConPTY). terminal.py imports it in a function.
+    *(["winpty"] if sys.platform == "win32" else []),
 ]
 
 datas = [
@@ -33,11 +36,20 @@ datas = [
     (os.path.join(PLUGIN_HOST, "node_modules"), "plugin-host/node_modules"),
 ]
 
+binaries = []
+if sys.platform == "win32":
+    # The terminal pane: pywinpty starts these helper programs from its package folder.
+    import winpty
+
+    WINPTY = os.path.dirname(winpty.__file__)
+    binaries += [(os.path.join(WINPTY, name), "winpty") for name in ("OpenConsole.exe", "winpty-agent.exe")]
+
 a = Analysis(
     [os.path.join(SPECPATH, "entry.py")],
     pathex=[DAEMON],
     hiddenimports=hiddenimports,
     datas=datas,
+    binaries=binaries,
     excludes=["tkinter", "pytest", "_pytest", "IPython", "matplotlib", "numpy.tests"],
     noarchive=False,
 )

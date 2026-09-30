@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { openExternal } from "../lib/tauri";
 import { parsePathRef, useOpenPath } from "../lib/openPath";
 
-/** Inline code. A file path such as `src/app.py:42` opens the file in the editor. */
+/** Inline code. A file path such as `src/app.py:42` opens the file in the Files pane. */
 function Code({ className, children }: { className?: string; children?: ReactNode }) {
   const openPath = useOpenPath();
   const text = typeof children === "string" ? children : Array.isArray(children) && children.every((c) => typeof c === "string") ? children.join("") : null;
@@ -15,7 +15,7 @@ function Code({ className, children }: { className?: string; children?: ReactNod
         type="button"
         className="path-link"
         onClick={() => openPath(ref.path, ref.line)}
-        title={`Open ${ref.path}${ref.line ? ` at line ${ref.line}` : ""} in the editor`}
+        title={`Open ${ref.path}${ref.line ? ` at line ${ref.line}` : ""} in the Files pane`}
       >
         {text}
       </button>

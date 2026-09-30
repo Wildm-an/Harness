@@ -443,6 +443,10 @@ export type ClientMessage =
   | { type: "session.new"; cwd: string; model: string; provider?: string }
   | { type: "session.resume"; session_id: string }
   | { type: "session.leave" } // The start screen. A running turn of the session continues.
+  // The terminal pane: the shell of the session.
+  | { type: "term.open"; cols: number; rows: number; id?: string; since?: number } // since: the last output number that the pane has.
+  | { type: "term.input"; id: string; data: string }
+  | { type: "term.resize"; id: string; cols: number; rows: number }
   | { type: "session.list"; cwd?: string; limit?: number }
   | { type: "fs.find"; query: string }
   | { type: "context.get" }
@@ -563,6 +567,10 @@ export type DaemonMessage =
       requests?: PermissionRequest[];
     }
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
+  // replay: the last output of a running shell. seq: the number of its last output.
+  | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean }
+  | { type: "term.output"; id: string; data: string; seq: number }
+  | { type: "term.exit"; id: string; code: number | null }
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)

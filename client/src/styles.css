@@ -533,7 +533,7 @@ textarea:focus-visible {
   gap: 8px;
   width: 100%;
   min-height: 32px;
-  padding: 0 10px 0 20px;
+  padding: 0 10px 0 14px; /* The status dot is centered between the row edge and the title (36px). */
   border: none;
   border-radius: var(--radius);
   background: transparent;
@@ -552,6 +552,7 @@ textarea:focus-visible {
   box-sizing: border-box;
   width: 8px;
   height: 8px;
+  margin-right: 6px; /* With the 8px gap: 14px to the title, the same as the row padding. */
   border: 1.5px solid var(--text-muted);
   border-radius: 50%;
 }
@@ -5033,4 +5034,20 @@ mark.word-del {
   .msg-user {
     max-width: 100%;
   }
+}
+
+/* The terminal pane. xterm.js draws the text. */
+.terminal-pane {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 6px 4px 4px 10px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.terminal-screen,
+.terminal-pane .xterm {
+  height: 100%;
 }

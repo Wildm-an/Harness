@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import {
   Asterisk,
   Code2,
+  Files,
   Folder,
   Globe as GlobeIcon,
   Server,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  SquareTerminal,
 } from "lucide-react";
 import { chatReducer, emptyChat, type PermissionItem } from "./chat/state";
 import { DaemonConnection, type ConnectionStatus } from "./daemon/connection";
@@ -53,7 +55,19 @@ import { FolderPicker } from "./components/FolderPicker";
 import { DiffReview } from "./components/DiffReview";
 import { RulesPanel, type Rules } from "./components/RulesPanel";
 import { Workspace, type PaneSpec } from "./layout/Workspace";
-import { closePane, defaultLayout, findGroupOf, openPane, parseLayout, type LayoutNode, type PaneId } from "./layout/model";
+import {
+  closePane,
+  defaultLayout,
+  findGroupOf,
+  openBelow,
+  openPane,
+  parseLayout,
+  togglePane,
+  type LayoutNode,
+  type PaneId,
+} from "./layout/model";
+import { shortcutLabel, shortcutPane } from "./layout/shortcuts";
+import { TerminalPane } from "./components/TerminalPane";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { BrowserPane } from "./browser/BrowserPane";
@@ -954,6 +968,25 @@ export default function App() {
 
   const hidePane = useCallback((pane: PaneId) => setLayout((l) => closePane(l, pane)), []);
 
+  /** Shows or hides a pane of a shortcut. The terminal opens below the chat, as in Claude. */
+  const toggleShortcutPane = useCallback((pane: PaneId) => {
+    setLayout((l) => togglePane(l, pane, pane === "terminal" ? (n) => openBelow(n, "terminal", "chat") : undefined));
+  }, []);
+
+  // The pane shortcuts. The capture phase runs before the editor and the terminal get the keys.
+  useEffect(() => {
+    if (screen !== "chat") return;
+    const onKey = (e: KeyboardEvent) => {
+      const pane = shortcutPane(e);
+      if (!pane) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) toggleShortcutPane(pane);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [screen, toggleShortcutPane]);
+
   const sendSafely = useCallback(
     (msg: Parameters<DaemonConnection["send"]>[0]) => {
       try {
@@ -1277,8 +1310,8 @@ export default function App() {
   const panes: Record<PaneId, PaneSpec> = {
     chat: { title: "Chat", icon: MessageSquare, closable: false, render: () => chatPane },
     editor: {
-      title: "Editor",
-      icon: Code2,
+      title: "Files",
+      icon: Files,
       closable: true,
       badge: dirtyCount ? <span className="tab-badge" title={`${dirtyCount} unsaved`}>{dirtyCount}</span> : undefined,
       render: () => <EditorPane api={editor} sessionKey={session?.id ?? ""} agentLines={agentLines} onReference={addReference} />,
@@ -1332,6 +1365,12 @@ export default function App() {
       render: () => (
         <SkillsPanel items={skillItems} detail={skillDetail} onOpen={openSkill} onBack={backToSkills} onClose={() => hidePane("skills")} />
       ),
+    },
+    terminal: {
+      title: "Terminal",
+      icon: SquareTerminal,
+      closable: true,
+      render: () => <TerminalPane conn={conn} sessionKey={session?.id ?? ""} connected={status === "open"} />,
     },
     browser: {
       title: "Browser",
@@ -1446,10 +1485,22 @@ export default function App() {
                 onOpenPane={() => setLayout((l) => openPane(l, "servers"))}
               />
               <PaneToggle
-                icon={Code2}
-                label="Editor"
+                icon={GlobeIcon}
+                label={`Browser (${shortcutLabel("browser")})`}
+                active={paneVisible("browser")}
+                onClick={() => toggleShortcutPane("browser")}
+              />
+              <PaneToggle
+                icon={SquareTerminal}
+                label={`Terminal (${shortcutLabel("terminal")})`}
+                active={paneVisible("terminal")}
+                onClick={() => toggleShortcutPane("terminal")}
+              />
+              <PaneToggle
+                icon={Files}
+                label={`Files (${shortcutLabel("editor")})`}
                 active={paneVisible("editor")}
-                onClick={() => setLayout((l) => (paneVisible("editor") ? closePane(l, "editor") : openPane(l, "editor")))}
+                onClick={() => toggleShortcutPane("editor")}
               />
               <PaneToggle icon={Sparkles} label="Skills" active={paneVisible("skills")} onClick={paneVisible("skills") ? () => hidePane("skills") : openSkills} />
               <PaneToggle

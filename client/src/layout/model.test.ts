@@ -85,7 +85,7 @@ describe("layout", () => {
     expect(shape(parseLayout(saved)!)).toEqual({ row: [["chat"], ["editor", "browser"]] });
     const noChat = { type: "group", id: "g1", tabs: ["editor"], active: "editor" };
     expect(findGroupOf(parseLayout(noChat)!, "chat")).not.toBeNull();
-    const unknownTab = { type: "group", id: "g1", tabs: ["chat", "terminal"], active: "terminal" };
+    const unknownTab = { type: "group", id: "g1", tabs: ["chat", "no-such-pane"], active: "no-such-pane" };
     expect(parseLayout(unknownTab)).toMatchObject({ tabs: ["chat"], active: "chat" });
   });
 });

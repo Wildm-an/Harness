@@ -228,6 +228,47 @@ def test_turn_in_the_background_completes(daemon, project, fake_model):
     c.close()
 
 
+def _term_text(c: Client, marker: str, timeout: float = 20) -> str:
+    """The terminal output until it has ``marker``."""
+    text = ""
+    deadline = time.time() + timeout
+    while marker not in text:
+        msg = c.recv(max(deadline - time.time(), 0.01))
+        if msg["type"] == "term.output":
+            text += msg["data"]
+    return text
+
+
+def test_terminal_runs_a_shell_and_stays_open_in_the_background(daemon, project, fake_model):
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.send({"type": "term.open", "cols": 80, "rows": 24})
+    opened = c.until("term.opened")[0]
+    assert opened["new"] and opened["session_id"] == first["session_id"]
+    c.send({"type": "term.input", "id": opened["id"], "data": "echo harness-term-ok\r"})
+    _term_text(c, "harness-term-ok")
+    c.send({"type": "term.resize", "id": opened["id"], "cols": 100, "rows": 30})
+
+    # Go to a new session. The shell of the first session keeps running.
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    c.until("session.ready")
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    c.until("session.ready")
+    c.send({"type": "term.open", "cols": 80, "rows": 24})
+    again = c.until("term.opened")[0]
+    assert again["id"] == opened["id"] and not again["new"]
+    assert "harness-term-ok" in again["replay"] and again["seq"] >= 1 and again["reset"]
+    # A client that has the screen gets only the output after its last output number.
+    c.send({"type": "term.open", "cols": 80, "rows": 24, "id": opened["id"], "since": again["seq"]})
+    delta = c.until("term.opened")[0]
+    assert not delta["reset"] and "harness-term-ok" not in delta["replay"]
+
+    c.send({"type": "term.input", "id": opened["id"], "data": "exit\r"})
+    end = c.until("term.exit", timeout=20)[0]
+    assert end["id"] == opened["id"]
+    c.close()
+
+
 def test_session_switch_uses_the_saved_model_checks(daemon, project, fake_model, monkeypatch):
     from harness_daemon import server
     calls = []

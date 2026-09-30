@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harness-daemon"
-version = "0.1.6"
+version = "0.1.7"
 description = "Agent daemon for the coding harness: agent loop, tools, sessions, and the WebSocket protocol."
 requires-python = ">=3.11"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
     "playwright>=1.45",  # The agent browser. It also needs: python -m playwright install chromium
     "huggingface_hub>=0.25",  # The Cookbook model browser and downloads.
     "mcp>=2.2",  # The MCP client (stdio, streamable HTTP, and SSE).
+    "pywinpty>=2.0; sys_platform == 'win32'",  # The terminal pane on Windows (ConPTY).
 ]
 
 [project.optional-dependencies]

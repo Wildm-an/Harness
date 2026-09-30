@@ -1,8 +1,8 @@
 // The pane layout (SPEC.md section 8.4): tab groups in nested rows and columns.
 // All functions are pure. Each one returns a new layout.
 
-export type PaneId = "chat" | "editor" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp";
-export const PANE_IDS: PaneId[] = ["chat", "editor", "browser", "servers", "diff", "rules", "skills", "mcp"];
+export type PaneId = "chat" | "editor" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp" | "terminal";
+export const PANE_IDS: PaneId[] = ["chat", "editor", "browser", "servers", "diff", "rules", "skills", "mcp", "terminal"];
 
 export type Zone = "center" | "left" | "right" | "top" | "bottom";
 
@@ -123,6 +123,24 @@ export function openPane(node: LayoutNode, pane: PaneId, targetGroupId?: string)
   const target = all.find((g) => g.id === targetGroupId) ?? all.find((g) => !g.tabs.includes("chat"));
   if (!target) return normalize(split("row", [node, group([pane])], [0.5, 0.5]));
   return normalize(mapGroups(node, (g) => (g.id === target.id ? { ...g, tabs: [...g.tabs, pane], active: pane } : g)));
+}
+
+/**
+ * Shows a pane in a new group below the group of ``anchor`` (for example the terminal below the
+ * chat). A pane that is in the layout becomes the active tab of its group.
+ */
+export function openBelow(node: LayoutNode, pane: PaneId, anchor: PaneId, share = 0.3): LayoutNode {
+  if (findGroupOf(node, pane)) return activate(node, pane);
+  const target = findGroupOf(node, anchor);
+  if (!target) return openPane(node, pane);
+  return normalize(
+    mapGroups(node, (g) => (g.id === target.id ? split("column", [g, group([pane])], [1 - share, share]) : g)),
+  );
+}
+
+/** Shows a pane, or closes it if it is the active tab of its group. */
+export function togglePane(node: LayoutNode, pane: PaneId, show: (n: LayoutNode) => LayoutNode = (n) => openPane(n, pane)): LayoutNode {
+  return findGroupOf(node, pane)?.active === pane ? closePane(node, pane) : show(node);
 }
 
 /** Moves a pane to a group ("center"), or to a new group at one side of that group. */

@@ -37,10 +37,10 @@ export function ServerMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        aria-label="Servers"
+        aria-label={running > 0 ? `Servers: ${running} running` : "Servers"}
+        title={running > 0 ? `Servers: ${running} running` : "Servers"}
       >
         <Server size={15} aria-hidden />
-        <span className="btn-label">Servers</span>
         {running > 0 && <span className="tab-badge running" title={`${running} running`}>{running}</span>}
         <ChevronDown size={13} aria-hidden />
       </button>

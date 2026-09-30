@@ -331,6 +331,16 @@ export function Workspace({
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 900px)").matches);
   // The tab that the user selected on a narrow window. A layout change from elsewhere (a pane opens) replaces it.
   const [narrowTab, setNarrowTab] = useState<{ pane: PaneId; layout: LayoutNode } | null>(null);
+  // The pane that became active last, for example after a shortcut. A narrow window shows it.
+  const [opened, setOpened] = useState<PaneId | null>(null);
+  const previous = useRef(layout);
+
+  useEffect(() => {
+    const before = new Set(groups(previous.current).map((g) => g.active));
+    previous.current = layout;
+    const pane = groups(layout).map((g) => g.active).find((p) => !before.has(p));
+    if (pane) setOpened(pane);
+  }, [layout]);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 900px)");
@@ -343,7 +353,10 @@ export function Workspace({
     const all = groups(layout);
     const tabs = all.flatMap((g) => g.tabs);
     const focused = all.find((g) => g.tabs.includes("chat") && g.active !== "chat") ?? all[all.length - 1];
-    const chosen = narrowTab && narrowTab.layout === layout && tabs.includes(narrowTab.pane) ? narrowTab.pane : focused.active;
+    const chosen =
+      narrowTab && narrowTab.layout === layout && tabs.includes(narrowTab.pane) ? narrowTab.pane
+      : opened && tabs.includes(opened) ? opened
+      : focused.active;
     const single: Group = { type: "group", id: "narrow", tabs, active: chosen };
     return (
       <div className="workspace">

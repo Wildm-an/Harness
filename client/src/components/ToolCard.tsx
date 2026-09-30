@@ -99,7 +99,7 @@ export const ToolCard = memo(function ToolCard({
           {filePath && openPath && (
             <button type="button" className="btn btn-small tool-review" onClick={() => openPath(filePath, typeof input?.offset === "number" ? input.offset : undefined)}>
               <FileText size={14} aria-hidden />
-              Open in the editor
+              Open in Files
             </button>
           )}
           {item.diff && (

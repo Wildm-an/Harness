@@ -59,6 +59,7 @@ from .servers import ServerManager
 from .session import Session
 from .skills import Skill, discover_skills
 from .storage import Storage
+from .terminal import TerminalError, TerminalHost
 
 log = logging.getLogger("harness.daemon")
 
@@ -324,6 +325,7 @@ class LiveSession:
         self.mcp: McpManager | None = None
         self.plugins: PluginHost | None = None  # make_agent loads them.
         self.files_token: str | None = None
+        self.terminal: TerminalHost | None = None  # The shell of the terminal pane.
 
     @property
     def id(self) -> str | None:
@@ -332,6 +334,11 @@ class LiveSession:
     @property
     def running(self) -> bool:
         return self.turn is not None and not self.turn.done()
+
+    @property
+    def keep_open(self) -> bool:
+        """A session in the background stays open while its turn runs or its shell runs."""
+        return self.running or (self.terminal is not None and self.terminal.alive)
 
     async def send(self, message: dict[str, Any]) -> None:
         """Send an event of this session, with its session_id. Only the current session sends to the client."""
@@ -371,7 +378,11 @@ class LiveSession:
         self.pending.clear()
 
     async def close(self) -> None:
-        """Stop the MCP servers, the agent browser, the servers, and the plugins of the session, and end its file URLs."""
+        """Stop the shell, the MCP servers, the agent browser, the servers, and the plugins of the
+        session, and end its file URLs."""
+        if self.terminal is not None:
+            self.terminal.close()
+            self.terminal = None
         if self.plugins is not None:
             host, self.plugins = self.plugins, None
             await host.dispose()
@@ -403,6 +414,8 @@ class LiveSession:
         session.agent.enable_preview(self.preview)
         self.files_token = secrets.token_urlsafe(24)
         FILE_ROOTS[self.files_token] = session.cwd
+        self.terminal = TerminalHost(session.cwd, self.send,
+                                     on_exit=lambda: asyncio.ensure_future(self.conn.close_if_done(self)))
         # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
         host = self.plugins
         self.mcp = McpManager(session.cwd, self.send, session.agent.set_mcp_tools,
@@ -528,7 +541,8 @@ class Connection:
                     continue
                 try:
                     await fn(self, msg)
-                except (ProtocolError, ConfigError, PathError, HostError, HubError, CookbookError, InstallError) as e:
+                except (ProtocolError, ConfigError, PathError, HostError, HubError, CookbookError, InstallError,
+                        TerminalError) as e:
                     await self.error(str(e), ref=kind)
                 except Exception as e:  # noqa: BLE001 - report the error and keep the connection.
                     log.exception("Handler %s failed", kind)
@@ -557,10 +571,15 @@ class Connection:
         return self.current
 
     async def leave_current(self) -> None:
-        """The client goes away from the current session. A session with a running turn stays open."""
+        """The client goes away from the current session. A session with a running turn or shell stays open."""
         live, self.current = self.current, None
         self.watched.clear()
-        if live is not None and not live.running:
+        if live is not None and not live.keep_open:
+            await self.close_live(live)
+
+    async def close_if_done(self, live: LiveSession) -> None:
+        """Close a session in the background when its turn and its shell have stopped."""
+        if live is not self.current and not live.keep_open:
             await self.close_live(live)
 
     async def close_live(self, live: LiveSession) -> None:
@@ -763,8 +782,7 @@ class Connection:
             if live.turn is asyncio.current_task():
                 live.turn = None  # The session is idle now. A new prompt can start.
             await self.send_running()
-            if live is not self.current:
-                await self.close_live(live)
+            await self.close_if_done(live)
 
     def skills(self, live: LiveSession | None = None) -> dict[str, Skill]:
         """The skills now on disk. The user can add a skill during a session."""
@@ -918,6 +936,51 @@ async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_session_leave(conn: Connection, msg: dict[str, Any]) -> None:
     """The client shows the start screen. A running turn of the session continues in the background."""
     await conn.leave_current()
+
+
+# -- the terminal pane ------------------------------------------------------------------------------
+
+
+def _term_size(msg: dict[str, Any]) -> tuple[int, int]:
+    cols, rows = msg.get("cols"), msg.get("rows")
+    if not isinstance(cols, int) or not isinstance(rows, int) or not (2 <= cols <= 1000 and 1 <= rows <= 500):
+        raise ProtocolError("'cols' and 'rows' must be the size of the terminal.")
+    return cols, rows
+
+
+def _terminal(conn: Connection) -> TerminalHost:
+    live = conn.require_live()
+    assert live.terminal is not None
+    return live.terminal
+
+
+@handler("term.open")
+async def on_term_open(conn: Connection, msg: dict[str, Any]) -> None:
+    """Show the shell of the session: the running shell with its last output, or a new shell.
+
+    "since": the number of the last output that the client has for this shell (0: none). The reply
+    has only the output after it, or all the kept output with "reset": true.
+    """
+    live = conn.require_live()
+    host = _terminal(conn)
+    cols, rows = _term_size(msg)
+    since = msg.get("since") if isinstance(msg.get("since"), int) else 0
+    shell = live.session.agent.settings.get("terminal_shell") if live.session else None
+    terminal, new = host.open(cols, rows, shell if isinstance(shell, str) and shell else None)
+    replay, seq, reset = terminal.replay(0 if new or msg.get("id") != terminal.id else since)
+    await live.send({"type": "term.opened", "id": terminal.id, "new": new, "replay": replay, "seq": seq,
+                     "reset": reset})
+
+
+@handler("term.input")
+async def on_term_input(conn: Connection, msg: dict[str, Any]) -> None:
+    _terminal(conn).get(_text_arg(msg, "id")).write(_text_arg(msg, "data"))
+
+
+@handler("term.resize")
+async def on_term_resize(conn: Connection, msg: dict[str, Any]) -> None:
+    cols, rows = _term_size(msg)
+    _terminal(conn).get(_text_arg(msg, "id")).resize(cols, rows)
 
 
 MAX_SESSION_LIST = 500

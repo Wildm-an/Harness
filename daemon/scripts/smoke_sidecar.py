@@ -91,6 +91,35 @@ asyncio.run(main())
 """
 
 
+TERMINAL_CHECK = """
+import asyncio, os
+from pathlib import Path
+from harness_daemon.terminal import TerminalHost
+
+async def main():
+    seen = []
+    done = asyncio.Event()
+
+    async def emit(msg):
+        if msg["type"] == "term.output":
+            seen.append(msg["data"])
+        elif msg["type"] == "term.exit":
+            done.set()
+
+    host = TerminalHost(Path.cwd(), emit)
+    term, _ = host.open(80, 24, "cmd.exe" if os.name == "nt" else "/bin/sh")
+    term.write("echo pty-%s\\r\\nexit\\r\\n" % "ok")
+    try:
+        await asyncio.wait_for(done.wait(), 20)
+    except asyncio.TimeoutError:
+        pass
+    host.close()
+    print("terminal", "pty-ok" in "".join(seen))
+
+asyncio.run(main())
+"""
+
+
 def run_script(exe: str, env: dict[str, str], source: str) -> str:
     result = subprocess.run([exe, "--python-stdin"], input=source, capture_output=True, text=True,
                             env=env, timeout=REPLY_TIMEOUT)
@@ -131,6 +160,9 @@ def main() -> None:
             out = run_script(exe, env, PLUGIN_HOST_CHECK)
             check("host True" in out, "the plugin host is in the bundle")
             check("runtime 0." in out, f"the plugin host starts ({' '.join(out.split()[-4:])})")
+
+            out = run_script(exe, env, TERMINAL_CHECK)
+            check("terminal True" in out, f"the terminal runs a shell ({out.strip()[-80:]})")
 
             proc.stdin.close()
             try:
