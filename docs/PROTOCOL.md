@@ -47,6 +47,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `term.close` | `id` | The user closed a tab of the terminal pane. The daemon stops its shell. |
 | `side.ask` | `id`, `question`, `history` (optional) | A side chat question (Ctrl+;). The model sees the full session (the system prompt, the messages, and the tools) and the earlier side chat messages in `history` (`role`: `user` or `assistant`, `content`). Nothing is added to the session. It can run during a turn. The answer comes as `side.token`, then `side.done` or `side.error`. |
 | `side.cancel` | `id` | Stops the answer of a side chat question. |
+| `user_settings.get` | | The user settings of the daemon (`~/.harness/settings.json`), for the General page of the Settings dialog. It needs no session. The reply is `user_settings`. |
+| `user_settings.set` | `values` | Changes user settings: `permission_mode`, `prompt_suggestions`, `auto_verify`, `max_tool_calls` (1 to 500), `bash_timeout` (1 to 3600 seconds), `terminal_shell` (null removes it). The open sessions use the new values at once. The reply is `user_settings`. |
 | `tasks.list` | | The background tasks of the session: the commands that the agent runs with `bash` and `run_in_background`. The reply is `tasks`. |
 | `task.get` | `id` | One background task with its output. The reply is `task`. |
 | `task.stop` | `id` | Stops a background task and its child processes. |
@@ -136,6 +138,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `tasks` | `items` | The background tasks of the session: `id`, `command`, `description`, `status` (`running`, `done`, `failed`, or `stopped`), `started_at`, `ended_at`, `returncode`. The daemon also sends it when a task starts or ends. |
 | `task` | the fields of an item of `tasks`, `output`, `dropped` | Reply to `task.get`. `output` is the kept output (the last 256 K characters). `dropped` is the number of earlier characters that are not kept. |
 | `keep_awake` | `on`, `active` | Reply to `session.keep_awake`. `active` is true while the computer stays awake. `session.ready` has the switch in `keep_awake`. |
+| `user_settings` | `values`, `path`, `version` | The user settings, the path of the settings file, and the version of the daemon. |
 | `session.title` | `id`, `title` | The model made a short title from the first prompt of the session `id`. It replaces the first line of the prompt, which is the title until then. The daemon sends it also for a session in the background. |
 | `session.updated` | `id`, `title`, `pinned` | Reply to `session.update`. |
 | `session.deleted` | `id` | Reply to `session.delete`. |

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSideChatShortcut, isSidebarShortcut, navShortcut, shortcutPane } from "./shortcuts";
+import { isNewSessionShortcut, isSideChatShortcut, isSidebarShortcut, navShortcut, shortcutPane } from "./shortcuts";
 import { chatHasFullHeight, defaultLayout, findGroupOf, group, movePane, normalize, togglePane, type LayoutNode } from "./model";
 
 const key = (code: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean; key?: string } = {}) => ({
@@ -104,6 +104,16 @@ describe("the back and forward keys", () => {
     expect(navShortcut(key("ArrowLeft", { key: "ArrowLeft" }))).toBeNull();
     expect(navShortcut(key("ArrowLeft", { alt: true, ctrl: true, key: "ArrowLeft" }))).toBeNull();
     expect(navShortcut(key("ArrowRight", { alt: true, shift: true, key: "ArrowRight" }))).toBeNull();
+  });
+});
+
+describe("the new session key", () => {
+  it("is Ctrl+N or Cmd+N, with no other modifier", () => {
+    const key = (k: Partial<KeyboardEvent>) => ({ code: "KeyN", key: "n", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...k });
+    expect(isNewSessionShortcut(key({ ctrlKey: true }))).toBe(true);
+    expect(isNewSessionShortcut(key({ metaKey: true }))).toBe(true);
+    expect(isNewSessionShortcut(key({}))).toBe(false);
+    expect(isNewSessionShortcut(key({ ctrlKey: true, shiftKey: true }))).toBe(false);
   });
 });
 

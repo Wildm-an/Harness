@@ -27,6 +27,15 @@ export function shortcutLabel(pane: PaneId): string {
   return PANE_SHORTCUTS.find((s) => s.pane === pane)?.label ?? "";
 }
 
+/** The key that starts a new session, as in Claude. */
+export const NEW_SESSION_SHORTCUT = "Ctrl+N";
+
+/** Ctrl+N (Cmd+N on macOS) shows the start screen for a new session. */
+export function isNewSessionShortcut(e: KeyInfo): boolean {
+  if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
+  return e.code === "KeyN" || e.key.toLowerCase() === "n";
+}
+
 /** The key that shows or hides the side chat, as in Claude. */
 export const SIDE_CHAT_SHORTCUT = "Ctrl+;";
 

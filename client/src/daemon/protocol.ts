@@ -105,7 +105,16 @@ export interface ClientSettings {
   permission_mode: PermissionMode;
 }
 
-/** A / menu item: a built-in command or a skill. */
+/** The user settings of the daemon (~/.harness/settings.json): the General page of the Settings dialog. */
+export interface UserSettings {
+  permission_mode: PermissionMode;
+  prompt_suggestions: boolean;
+  auto_verify: boolean;
+  max_tool_calls: number;
+  bash_timeout: number; // Seconds.
+  terminal_shell: string | null;
+}
+
 /** A background task: a command that the agent runs with bash and run_in_background. */
 export interface TaskItem {
   id: string;
@@ -122,6 +131,7 @@ export interface TaskDetail extends TaskItem {
   dropped: number; // Characters of output that are not kept.
 }
 
+/** A / menu item: a built-in command or a skill. */
 export interface CommandItem {
   name: string;
   description: string;
@@ -477,6 +487,8 @@ export type ClientMessage =
   | { type: "task.get"; id: string }
   | { type: "task.stop"; id: string }
   | { type: "session.keep_awake"; on: boolean } // Only for this session. The daemon does not save it.
+  | { type: "user_settings.get" } // It needs no session.
+  | { type: "user_settings.set"; values: Partial<UserSettings> } // null removes the terminal shell.
   | { type: "term.input"; id: string; data: string }
   | { type: "term.resize"; id: string; cols: number; rows: number }
   | { type: "session.list"; cwd?: string; limit?: number }
@@ -615,6 +627,7 @@ export type DaemonMessage =
   | { type: "tasks"; items: TaskItem[] } // The background tasks of the session, after each start and end.
   | ({ type: "task" } & TaskDetail)
   | { type: "keep_awake"; on: boolean; active: boolean } // active: the computer stays awake now.
+  | { type: "user_settings"; values: UserSettings; path: string; version: string }
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)

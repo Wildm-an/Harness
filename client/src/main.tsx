@@ -8,6 +8,9 @@ import "@fontsource/jetbrains-mono/500.css";
 import "./styles.css";
 import App from "./App";
 import { Tooltips } from "./components/Tooltips";
+import { initTheme } from "./lib/theme";
+
+initTheme(); // Before the first paint: no flash of the other theme.
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

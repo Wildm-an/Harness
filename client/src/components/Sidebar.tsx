@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Boxes, Cable, ChevronRight, Plus, Puzzle, type LucideIcon } from "lucide-react";
+import { ChevronRight, Plus, Puzzle, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
 import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
@@ -74,17 +74,19 @@ function loadExpanded(): Record<string, boolean> {
   }
 }
 
-function NavButton({ icon: Icon, label, active, disabled, onClick }: {
+function NavButton({ icon: Icon, label, active, disabled, shortcut, onClick }: {
   icon: LucideIcon;
   label: string;
   active: boolean;
   disabled?: boolean;
+  shortcut?: string; // For the hover tip, for example "Ctrl+N".
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       className={`side-item${active ? " active" : ""}`}
+      title={shortcut ? `${label} (${shortcut})` : undefined}
       onClick={onClick}
       disabled={disabled}
       aria-current={active ? "page" : undefined}
@@ -194,12 +196,12 @@ export function Sidebar({
   screen,
   status,
   connection,
+  settings,
   onNewSession,
   onNewSessionIn,
   actions,
-  onLocalModels,
   onPlugins,
-  onConnections,
+  newSessionKey,
   head,
   tools = [],
 }: {
@@ -211,12 +213,12 @@ export function Sidebar({
   screen: string;
   status: ConnectionStatus;
   connection: React.ReactNode; // The computer button at the bottom.
+  settings: React.ReactNode; // The Settings button, on the right of the computer button.
   onNewSession: () => void;
   onNewSessionIn: (group: ProjectGroup) => void;
   actions: SessionActions; // Open, pin, mark as unread, rename, and delete a session.
-  onLocalModels: () => void;
   onPlugins: () => void;
-  onConnections: () => void;
+  newSessionKey?: string; // "Ctrl+N".
   head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
   tools?: SessionTool[]; // The pane buttons of the open session. Empty on the other screens.
 }) {
@@ -248,10 +250,8 @@ export function Sidebar({
       </div>
 
       <div className="side-actions">
-        <NavButton icon={Plus} label="New session" active={screen === "start"} disabled={!open} onClick={onNewSession} />
-        <NavButton icon={Boxes} label="Local Models" active={screen === "cookbook"} disabled={!open} onClick={onLocalModels} />
+        <NavButton icon={Plus} label="New session" active={screen === "start"} disabled={!open} shortcut={newSessionKey} onClick={onNewSession} />
         <NavButton icon={Puzzle} label="Plugins" active={screen === "plugins"} disabled={!open} onClick={onPlugins} />
-        <NavButton icon={Cable} label="Connections" active={screen === "providers"} disabled={!open} onClick={onConnections} />
         {/* The panes of the open session, in an accordion as the "More" row of Claude. */}
         {tools.length > 0 && (
           <>
@@ -323,7 +323,10 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="side-foot">{connection}</div>
+      <div className="side-foot">
+        {connection}
+        {settings}
+      </div>
     </nav>
   );
 }

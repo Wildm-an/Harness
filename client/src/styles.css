@@ -65,47 +65,46 @@
   --z-tooltip: 60;
 }
 
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    color-scheme: light;
-    --bg: #faf9f5;
-    --sidebar: #f3f1ea;
-    --surface: #ffffff;
-    --surface-2: #f0eee6;
-    --surface-sunken: #f3f1ea;
-    --hover: rgba(31, 30, 29, 0.05);
-    --border: #e3e0d6;
-    --border-strong: #cdc9bc;
-    --text: #1f1e1d;
-    --text-muted: #5f5d57;
-    --accent: #b8532f;
-    --accent-hover: #9c4526;
-    --accent-fill: #c6613f;
-    --accent-fill-hover: #ae5230;
-    --accent-text: #ffffff;
-    --accent-soft: rgba(198, 97, 63, 0.1);
-    --success: #2f7d32;
-    --success-soft: rgba(47, 125, 50, 0.1);
-    --danger: #b42318;
-    --danger-soft: rgba(180, 35, 24, 0.08);
-    --warning: #9a5b00;
-    --warning-soft: rgba(154, 91, 0, 0.08);
-    --info: #2463a8;
-    --focus: #2463a8;
-    --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
-    --violet: #7a4fc0;
-    --teal: #1f7f78;
-    --backdrop: rgba(31, 30, 29, 0.35);
-    --shadow: 0 12px 32px rgba(31, 30, 29, 0.12);
-    --shadow-lg: 0 24px 64px rgba(31, 30, 29, 0.18);
-    --diff-add-bg: #e3f1df;
-    --diff-add-text: #1e5a22;
-    --diff-del-bg: #fbe4e1;
-    --diff-del-text: #7f1d14;
-    --diff-add-word: #b5dcae;
-    --diff-del-word: #f3b7ae;
-    --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(95, 93, 87, 0.07) 6px 12px);
-  }
+/* The light theme. lib/theme.ts sets data-theme from the Appearance setting or the system. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf9f5;
+  --sidebar: #f3f1ea;
+  --surface: #ffffff;
+  --surface-2: #f0eee6;
+  --surface-sunken: #f3f1ea;
+  --hover: rgba(31, 30, 29, 0.05);
+  --border: #e3e0d6;
+  --border-strong: #cdc9bc;
+  --text: #1f1e1d;
+  --text-muted: #5f5d57;
+  --accent: #b8532f;
+  --accent-hover: #9c4526;
+  --accent-fill: #c6613f;
+  --accent-fill-hover: #ae5230;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(198, 97, 63, 0.1);
+  --success: #2f7d32;
+  --success-soft: rgba(47, 125, 50, 0.1);
+  --danger: #b42318;
+  --danger-soft: rgba(180, 35, 24, 0.08);
+  --warning: #9a5b00;
+  --warning-soft: rgba(154, 91, 0, 0.08);
+  --info: #2463a8;
+  --focus: #2463a8;
+  --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
+  --violet: #7a4fc0;
+  --teal: #1f7f78;
+  --backdrop: rgba(31, 30, 29, 0.35);
+  --shadow: 0 12px 32px rgba(31, 30, 29, 0.12);
+  --shadow-lg: 0 24px 64px rgba(31, 30, 29, 0.18);
+  --diff-add-bg: #e3f1df;
+  --diff-add-text: #1e5a22;
+  --diff-del-bg: #fbe4e1;
+  --diff-del-text: #7f1d14;
+  --diff-add-word: #b5dcae;
+  --diff-del-word: #f3b7ae;
+  --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(95, 93, 87, 0.07) 6px 12px);
 }
 
 *,
@@ -921,10 +920,8 @@ textarea:focus-visible {
 }
 
 /* The logo is white. Make it black on the light theme. */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .title-logo {
-    filter: invert(1);
-  }
+:root[data-theme="light"] .title-logo {
+  filter: invert(1);
 }
 
 .topbar-title {
@@ -4206,6 +4203,7 @@ select {
 }
 
 .msg-user {
+  font-size: var(--chat-font-size, 15px);
   align-self: flex-end;
   max-width: 80%;
   margin-top: 12px;
@@ -4220,7 +4218,7 @@ select {
 
 .msg-assistant {
   padding: 0 8px;
-  font-size: 15px;
+  font-size: var(--chat-font-size, 15px);
   line-height: 1.65;
 }
 
@@ -6084,4 +6082,321 @@ mark.word-del {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ---------- the Settings dialog (Ctrl+,): a list of pages on the left, the page on the right ---------- */
+
+/* The Settings button on the right of the computer button, at the bottom of the sidebar. */
+.side-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.side-foot > .conn {
+  flex: 1;
+  min-width: 0;
+}
+
+.icon-btn.side-settings {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  color: var(--text-muted);
+}
+
+.icon-btn.side-settings:hover,
+.icon-btn.side-settings.active {
+  color: var(--text);
+}
+
+.settings-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1000px, 100%);
+  height: min(760px, 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl, 16px);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 16px 8px 24px;
+  flex: none;
+}
+
+.settings-head h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.settings-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.settings-nav {
+  flex: none;
+  width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px 16px;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  font: 500 13.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
+}
+
+.settings-nav-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.settings-nav-item.active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 4px 24px 24px 12px;
+}
+
+/* A screen in the dialog (Local Models, Connections, Computers): no full-screen space or card. */
+.settings-embed {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-embed .panel {
+  max-width: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.settings-embed .panel-head h1 {
+  font-size: 16px;
+}
+
+/* The General page. */
+
+.settings-page {
+  max-width: 720px;
+}
+
+.settings-page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.settings-page-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-status {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.settings-section {
+  margin: 24px 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-note {
+  margin: 4px 0;
+}
+
+.setting-row,
+.setting-block {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.setting-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-text label,
+.setting-label {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.setting-help {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.setting-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.setting-control select {
+  min-width: 190px;
+  cursor: pointer;
+}
+
+.setting-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.setting-number input {
+  width: 72px;
+  min-height: 32px;
+  text-align: right;
+}
+
+.setting-unit {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+input.setting-text-input {
+  width: 220px;
+  min-height: 32px;
+  font-size: 12.5px;
+}
+
+.setting-control .switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.appearance-choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.appearance-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 76px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  font: 500 13px var(--font-sans);
+  cursor: pointer;
+  transition: border-color var(--duration) var(--ease-out), color var(--duration) var(--ease-out), background var(--duration) var(--ease-out);
+}
+
+.appearance-choice:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.appearance-choice.active {
+  border-color: var(--text-muted);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.appearance-choice:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.shortcut-list {
+  margin: 0;
+}
+
+.shortcut-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.shortcut-row dt {
+  color: var(--text);
+}
+
+.shortcut-row dd {
+  margin: 0;
+}
+
+.settings-version {
+  margin: 20px 0 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+@media (max-width: 720px) {
+  .settings-main {
+    flex-direction: column;
+  }
+
+  .settings-nav {
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 0 12px 8px;
+  }
+
+  .settings-body {
+    padding: 4px 16px 16px;
+  }
+
+  .setting-row {
+    flex-wrap: wrap;
+  }
 }

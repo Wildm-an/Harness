@@ -13,6 +13,7 @@ import type { DaemonConnection } from "../daemon/connection";
 import type { ClientMessage } from "../daemon/protocol";
 import { PaneHeader } from "../layout/Workspace";
 import { WindowTabs } from "../layout/WindowTabs";
+import { onThemeChange } from "../lib/theme";
 
 const MAX_TABS = 8; // The daemon allows 8 shells for each session.
 
@@ -201,11 +202,9 @@ export function TerminalPane({
       }, 60);
     });
     observer.observe(host);
-    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
-    const retheme = () => {
+    const offTheme = onThemeChange(() => {
       for (const k of s.tabs) k.term.options.theme = terminalTheme();
-    };
-    scheme.addEventListener("change", retheme);
+    });
 
     // Open the shells after the next frame: then the pane is visible, and a shell starts at the
     // correct size. The focus goes into the active terminal.
@@ -219,7 +218,7 @@ export function TerminalPane({
       inputs.forEach((i) => i.dispose());
       observer.disconnect();
       window.clearTimeout(timer);
-      scheme.removeEventListener("change", retheme);
+      offTheme();
       for (const k of s.tabs) k.element.remove(); // Keep the terminals for the next time the pane opens.
     };
   }, [conn, tabs, tabs?.tabs.length]);

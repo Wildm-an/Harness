@@ -1,6 +1,7 @@
 // Monaco setup. The app bundles Monaco: it loads nothing from a CDN, so it works offline and
 // inside the Content Security Policy of the desktop app.
 
+import { currentTheme, onThemeChange } from "./theme";
 import * as monaco from "monaco-editor";
 import { loader } from "@monaco-editor/react";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
@@ -74,9 +75,11 @@ loader.config({ monaco });
 export { monaco };
 
 export function monacoTheme(): string {
-  const light = window.matchMedia?.("(prefers-color-scheme: light)").matches;
-  return light ? "harness-light" : "harness-dark";
+  return currentTheme() === "light" ? "harness-light" : "harness-dark";
 }
+
+// The Monaco theme is global: a change of the Appearance setting changes all the editors at once.
+onThemeChange(() => monaco.editor.setTheme(monacoTheme()));
 
 /** The Monaco language for a file path. */
 export function languageFor(path: string): string | undefined {

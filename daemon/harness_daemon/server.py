@@ -2051,6 +2051,68 @@ async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
     await _send_settings(conn, session)
 
 
+# The settings of the General page of the Settings dialog. They are user settings: all the projects
+# of the daemon use them, and a project settings file can change them for one project.
+USER_SETTINGS: dict[str, tuple[type, ...]] = {
+    "permission_mode": (str,),
+    "prompt_suggestions": (bool,),
+    "auto_verify": (bool,),
+    "max_tool_calls": (int,),
+    "bash_timeout": (int,),
+    "terminal_shell": (str, type(None)),
+}
+USER_INT_LIMITS = {"max_tool_calls": (1, 500), "bash_timeout": (1, 3600)}
+
+
+def _user_settings_path() -> Path:
+    return harness_home() / "settings.json"
+
+
+async def _send_user_settings(conn: Connection) -> None:
+    values = load_settings(None)
+    await conn.send({"type": "user_settings", "path": str(_user_settings_path()), "version": __version__,
+                     "values": {k: values.get(k) for k in USER_SETTINGS}})
+
+
+@handler("user_settings.get")
+async def on_user_settings_get(conn: Connection, msg: dict[str, Any]) -> None:
+    """The user settings for the General page. It needs no session."""
+    await _send_user_settings(conn)
+
+
+@handler("user_settings.set")
+async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """Change user settings, for example {"values": {"prompt_suggestions": false}}. Null removes a
+    text setting. The open sessions use the new values at once."""
+    changes = msg.get("values")
+    if not isinstance(changes, dict) or not changes:
+        raise ProtocolError(f"'values' must be an object with one or more of: {', '.join(USER_SETTINGS)}.")
+    for key, value in changes.items():
+        kinds = USER_SETTINGS.get(key)
+        if kinds is None:
+            raise ProtocolError(f"Unknown setting: {key}. The settings are: {', '.join(USER_SETTINGS)}.")
+        if isinstance(value, bool) and bool not in kinds or not isinstance(value, kinds):
+            raise ProtocolError(f"The type of '{key}' must be {' or '.join('null' if k is type(None) else k.__name__ for k in kinds)}.")
+        if key == "permission_mode" and value not in MODES:
+            raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+        if key in USER_INT_LIMITS:
+            low, high = USER_INT_LIMITS[key]
+            if not low <= value <= high:
+                raise ProtocolError(f"'{key}' must be from {low} to {high}.")
+    path = _user_settings_path()
+    data = read_json(path, {})
+    for key, value in changes.items():
+        if value is None or (isinstance(value, str) and not value.strip()):
+            data.pop(key, None)
+        else:
+            data[key] = value.strip() if isinstance(value, str) else value
+    write_json(path, data)
+    for live in conn.live.values():
+        if live.session is not None:
+            live.session.agent.reload_settings(load_settings(live.session.cwd))
+    await _send_user_settings(conn)
+
+
 @handler("skills.list")
 async def on_skills_list(conn: Connection, msg: dict[str, Any]) -> None:
     """The contents of the / menu: the built-in commands, then the user-invocable skills.

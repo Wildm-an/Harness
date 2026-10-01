@@ -938,7 +938,9 @@ export function CookbookScreen({
   onSaveToken,
   onUseModel,
   onReturn,
+  embedded = false,
 }: {
+  embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
   api: CookbookApi;
   hasSession: boolean;
   tokenSaved: boolean;
@@ -961,7 +963,7 @@ export function CookbookScreen({
   }, [api.ready?.key]);
 
   return (
-    <div className="start-screen cookbook-screen">
+    <div className={embedded ? "settings-embed cookbook-screen" : "start-screen cookbook-screen"}>
       <section className="panel cookbook" aria-labelledby="cookbook-title">
         <div className="panel-head">
           <h1 id="cookbook-title">
@@ -978,9 +980,11 @@ export function CookbookScreen({
             </select>
           </label>
           <span className="spacer" />
-          <button type="button" className="btn btn-ghost" onClick={onReturn}>
-            {hasSession ? "Back to the session" : "Back"}
-          </button>
+          {!embedded && (
+            <button type="button" className="btn btn-ghost" onClick={onReturn}>
+              {hasSession ? "Back to the session" : "Back"}
+            </button>
+          )}
         </div>
         <HardwareBar api={api} />
         <div className="cb-tabs" role="tablist" aria-label="Cookbook">

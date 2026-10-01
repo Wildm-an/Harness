@@ -497,7 +497,9 @@ export function ProvidersScreen({
   onTest,
   onUse,
   onReturn,
+  embedded = false,
 }: {
+  embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
   items: ProviderItem[] | null; // null: loading.
   path: string;
   host: string | null; // The daemon computer.
@@ -542,13 +544,15 @@ export function ProvidersScreen({
   };
 
   return (
-    <div className="start-screen">
+    <div className={embedded ? "settings-embed" : "start-screen"}>
       <section className="panel connections providers" aria-labelledby="providers-title">
         <div className="panel-head">
           <h1 id="providers-title">Connections</h1>
-          <button type="button" className="btn btn-ghost" onClick={onReturn}>
-            {hasSession ? "Back to the session" : "Back"}
-          </button>
+          {!embedded && (
+            <button type="button" className="btn btn-ghost" onClick={onReturn}>
+              {hasSession ? "Back to the session" : "Back"}
+            </button>
+          )}
         </div>
         <p className="help providers-intro">
           The model endpoints of the daemon{host ? <> on <span className="mono">{host}</span></> : null}. They are in{" "}

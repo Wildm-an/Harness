@@ -12,6 +12,7 @@ import {
   LoaderCircle,
   MessageSquare,
   MessagesSquare,
+  Settings as SettingsIcon,
   ListChecks,
   Monitor,
   PanelLeft,
@@ -72,6 +73,8 @@ import {
   SIDEBAR_SHORTCUT,
   isSidebarShortcut,
   isSideChatShortcut,
+  isNewSessionShortcut,
+  NEW_SESSION_SHORTCUT,
   navShortcut,
   shortcutLabel,
   shortcutPane,
@@ -80,6 +83,7 @@ import { emptyHistory, placeOf, samePlace, step, visit, type NavHistory, type Pl
 import { TerminalPane } from "./components/TerminalPane";
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
+import { GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { TasksPane } from "./components/TasksPane";
 import { WorkingLine } from "./components/WorkingLine";
 import { SlashIcon } from "./components/SlashIcon";
@@ -92,7 +96,7 @@ import { BrowserPane, clearBrowserData } from "./browser/BrowserPane";
 import { ServerMenu } from "./servers/ServerMenu";
 import { ServersPane } from "./servers/ServersPane";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ClientMessage, ServerItem, TaskDetail, TaskItem } from "./daemon/protocol";
+import type { AgentFrame, ClientMessage, ServerItem, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath } from "./editor/paths";
@@ -120,7 +124,7 @@ import {
   setLastConnectionId,
   type Connection,
 } from "./lib/connections";
-import { forwardCloseAll, forwardOpen, isTauri, pickFolder, revealInExplorer } from "./lib/tauri";
+import { appVersionOf, forwardCloseAll, forwardOpen, isTauri, openLocalPath, pickFolder, revealInExplorer } from "./lib/tauri";
 import { FolderMenu } from "./components/FolderMenu";
 import { QueuedPrompts } from "./components/QueuedPrompts";
 import type { SessionActions } from "./components/SessionRow";
@@ -290,19 +294,85 @@ export default function App() {
   const projectWait = useRef<{ resolve: (id: string) => void; reject: (e: Error) => void } | null>(null);
 
   /** Opens the Providers screen. Uses only refs and state setters: the message handler calls it too. */
-  const showProviders = useCallback(() => {
-    setScreen((s) => {
-      if (s !== "providers") returnScreen.current = s === "chat" || s === "start" ? s : "start";
-      return "providers";
-    });
-    setProviderError(null);
-    setProviderTest(null);
-    try {
-      conn.send({ type: "providers.list" });
-    } catch {
-      // Not connected. The screen shows the last list.
-    }
+  // The Settings dialog (Ctrl+,): General, Local Models, Connections, and Computers.
+  const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  const [userSettingsInfo, setUserSettingsInfo] = useState<{ path: string; version: string } | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (isTauri()) void appVersionOf().then(setAppVersion, () => undefined);
+  }, []);
+  useEffect(
+    () =>
+      conn.onMessage((msg) => {
+        if (msg.type === "user_settings") {
+          setUserSettings(msg.values);
+          setUserSettingsInfo({ path: msg.path, version: msg.version });
+        } else if (msg.type === "error" && msg.ref === "user_settings.set") {
+          setSettingsError(msg.message);
+          try {
+            conn.send({ type: "user_settings.get" }); // Show the saved values again.
+          } catch {
+            // Not connected.
+          }
+        }
+      }),
+    [conn],
+  );
+
+  /** Opens the Settings dialog at a page, and asks the daemon for the data of the page. */
+  const openSettings = useCallback(
+    (page: SettingsPage) => {
+      setSettingsPage(page);
+      setSettingsError(null);
+      try {
+        if (page === "general") conn.send({ type: "user_settings.get" });
+        if (page === "connections") {
+          setProviderError(null);
+          setProviderTest(null);
+          conn.send({ type: "providers.list" });
+        }
+      } catch {
+        // Not connected. The page shows the last data.
+      }
+    },
+    [conn],
+  );
+
+  // Ctrl+N shows the start screen for a new session, on any screen. In the terminal, Ctrl+N goes to the shell.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isNewSessionShortcut(e)) return;
+      if (e.target instanceof Element && e.target.closest(".terminal-pane")) return;
+      e.preventDefault(); // Also stops the new browser window of the webview.
+      e.stopPropagation();
+      if (e.repeat || conn.status !== "open") return;
+      setSettingsPage(null);
+      showStartRef.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [conn]);
+
+  // Ctrl+, opens the Settings dialog on any screen, and closes it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isSettingsShortcut(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      if (settingsPage) setSettingsPage(null);
+      else openSettings("general");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [settingsPage, openSettings]);
+
+  const showProviders = useCallback(() => {
+    openSettings("connections");
+  }, [openSettings]);
+
 
   const [hfTokenSaved, setHfTokenSaved] = useState(false);
   // The MCP servers of the session (the MCP panel).
@@ -311,12 +381,7 @@ export default function App() {
   const [pendingEdit, setPendingEdit] = useState<{ path: string; key: number } | null>(null); // A file for the editor.
 
   /** Opens the Cookbook screen (SPEC.md section 7). */
-  const showCookbook = useCallback(() => {
-    setScreen((s) => {
-      if (s !== "cookbook") returnScreen.current = s === "chat" || s === "start" ? s : "start";
-      return "cookbook";
-    });
-  }, []);
+  const showCookbook = useCallback(() => openSettings("models"), [openSettings]);
 
   // The Plugins screen (docs/PLUGINS.md).
   const [plugins, setPlugins] = useState<PluginsStatus | null>(null);
@@ -767,7 +832,7 @@ export default function App() {
     }
   };
 
-  const openConnections = () => setScreen("connections");
+  const openConnections = () => openSettings("computers");
 
   /** The native dialog for this computer. The daemon folder picker for a remote daemon. */
   const browseFolder = (currentPath: string): Promise<string | null> => {
@@ -934,6 +999,7 @@ export default function App() {
 
   /** A model from a connection test: the model of the session, or the model of the start screen. */
   const selectProviderModel = (spec: string) => {
+    setSettingsPage(null);
     if (sessionRef.current) {
       sendSafely({ type: "command", name: "model", args: spec });
       setScreen("chat");
@@ -943,7 +1009,7 @@ export default function App() {
     }
   };
 
-  const cookbook = useCookbook(conn, screen === "cookbook" && status === "open");
+  const cookbook = useCookbook(conn, settingsPage === "models" && status === "open");
 
   /** Saves or removes the Hugging Face token: the keychain of this computer, and the memory of the daemon. */
   const saveHfTokenValue = async (token: string | null) => {
@@ -987,6 +1053,7 @@ export default function App() {
     const label = s.kind === "prompt" ? (s.display ?? s.text) : `/${s.name}${s.args ? ` ${s.args}` : ""}`;
     const item = { id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, submission: s, label };
     setQueues((q) => ({ ...q, [session.id]: [...(q[session.id] ?? []), item] }));
+    if (busySend() === "interrupt") sendNow(item.id); // Settings > General: stop the turn and send.
     return true;
   };
 
@@ -1805,9 +1872,8 @@ export default function App() {
             onNewSession={fromSidebar(newSession)}
             onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
             actions={sessionActions}
-            onLocalModels={fromSidebar(showCookbook)}
             onPlugins={fromSidebar(showPlugins)}
-            onConnections={fromSidebar(showProviders)}
+            newSessionKey={NEW_SESSION_SHORTCUT}
             head={titleNav}
             tools={sessionTools}
             connection={
@@ -1823,6 +1889,17 @@ export default function App() {
                   <span className="conn-name">{current?.name ?? "No connection"}</span>
                   <span className="conn-host">{hello ? `${statusText} · ${hello.hostname}` : statusText}</span>
                 </span>
+              </button>
+            }
+            settings={
+              <button
+                type="button"
+                className={`icon-btn ghost side-settings${settingsPage ? " active" : ""}`}
+                onClick={() => (settingsPage ? setSettingsPage(null) : openSettings("general"))}
+                aria-label={`Settings (${SETTINGS_SHORTCUT})`}
+                title={`Settings (${SETTINGS_SHORTCUT})`}
+              >
+                <SettingsIcon size={16} aria-hidden />
               </button>
             }
           />
@@ -1949,16 +2026,6 @@ export default function App() {
             onFindFiles={(query, cwd) => sendSafely({ type: "fs.find", query, cwd })}
           />
         )}
-        {screen === "cookbook" && (
-          <CookbookScreen
-            api={cookbook}
-            hasSession={session !== null}
-            tokenSaved={hfTokenSaved}
-            onSaveToken={(token) => void saveHfTokenValue(token)}
-            onUseModel={selectProviderModel}
-            onReturn={() => setScreen(session ? "chat" : "start")}
-          />
-        )}
         {screen === "plugins" && (
           <PluginsScreen
             status={plugins}
@@ -1990,21 +2057,77 @@ export default function App() {
             onReturn={() => setScreen(session ? "chat" : "start")}
           />
         )}
-        {screen === "providers" && (
-          <ProvidersScreen
-            items={providers?.items ?? null}
-            path={providers?.path ?? ""}
-            host={hello?.hostname ?? null}
-            error={providerError}
-            test={providerTest}
-            hasSession={session !== null}
-            onSave={saveProvider}
-            onDelete={deleteProvider}
-            onEnable={(name, enabled) => sendSafely({ type: "providers.enable", name, enabled })}
-            onTest={testProvider}
-            onUse={selectProviderModel}
-            onReturn={() => setScreen(session ? "chat" : "start")}
-          />
+        {settingsPage && (
+          <SettingsDialog
+            page={settingsPage}
+            onPage={openSettings}
+            onClose={() => setSettingsPage(null)}
+            configPath={userSettingsInfo?.path ?? null}
+            onOpenConfig={
+              userSettingsInfo && isTauri() && current?.kind === "local"
+                ? () => void openLocalPath(userSettingsInfo.path).catch((e) => setSettingsError(errorText(e)))
+                : null
+            }
+          >
+            {settingsPage === "general" && (
+              <GeneralSettings
+                values={status === "open" ? userSettings : null}
+                connected={status === "open"}
+                appVersion={appVersion}
+                daemonVersion={userSettingsInfo?.version ?? null}
+                error={settingsError}
+                onSet={(values) => {
+                  setSettingsError(null);
+                  sendSafely({ type: "user_settings.set", values });
+                }}
+              />
+            )}
+            {settingsPage === "models" && (
+              <CookbookScreen
+                embedded
+                api={cookbook}
+                hasSession={session !== null}
+                tokenSaved={hfTokenSaved}
+                onSaveToken={(token) => void saveHfTokenValue(token)}
+                onUseModel={selectProviderModel}
+                onReturn={() => setSettingsPage(null)}
+              />
+            )}
+            {settingsPage === "connections" && (
+              <ProvidersScreen
+                embedded
+                items={providers?.items ?? null}
+                path={providers?.path ?? ""}
+                host={hello?.hostname ?? null}
+                error={providerError}
+                test={providerTest}
+                hasSession={session !== null}
+                onSave={saveProvider}
+                onDelete={deleteProvider}
+                onEnable={(name, enabled) => sendSafely({ type: "providers.enable", name, enabled })}
+                onTest={testProvider}
+                onUse={selectProviderModel}
+                onReturn={() => setSettingsPage(null)}
+              />
+            )}
+            {settingsPage === "computers" && (
+              <ConnectionsScreen
+                embedded
+                connections={connections}
+                currentId={status === "open" ? (current?.id ?? null) : null}
+                connectingId={connectingId}
+                error={connError}
+                tokenIds={tokenIds}
+                canReturn={false}
+                hasSession={session !== null}
+                onConnect={(c) => void connectTo(c)}
+                onSave={saveConnection}
+                onDelete={(c) => void deleteConnection(c)}
+                onTest={testConnection}
+                onReturn={() => setSettingsPage(null)}
+              />
+            )}
+          </SettingsDialog>
         )}
         {picker && (
           <FolderPicker

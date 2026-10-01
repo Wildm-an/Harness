@@ -491,3 +491,21 @@ def test_move_a_session_to_another_folder(daemon, project, fake_model, tmp_path)
     c.send({"type": "session.move", "session_id": first["session_id"], "cwd": str(tmp_path / "missing")})
     assert "does not exist" in c.until("error")[0]["message"]
     c.close()
+
+
+def test_user_settings_need_no_session(daemon, harness_home, project, fake_model):
+    c = Client(daemon)
+    c.send({"type": "user_settings.get"})
+    got = c.until("user_settings")[0]
+    assert got["values"]["prompt_suggestions"] is True and got["path"].endswith("settings.json")
+    c.send({"type": "user_settings.set", "values": {"prompt_suggestions": False, "max_tool_calls": 80,
+                                                     "terminal_shell": "pwsh.exe"}})
+    got = c.until("user_settings")[0]["values"]
+    assert (got["prompt_suggestions"], got["max_tool_calls"], got["terminal_shell"]) == (False, 80, "pwsh.exe")
+    c.send({"type": "user_settings.set", "values": {"terminal_shell": None}})
+    assert c.until("user_settings")[0]["values"]["terminal_shell"] is None
+    c.send({"type": "user_settings.set", "values": {"max_tool_calls": True}})
+    assert "must be int" in c.until("error")[0]["message"]
+    c.send({"type": "user_settings.set", "values": {"bash_timeout": 0}})
+    assert "from 1 to 3600" in c.until("error")[0]["message"]
+    c.close()

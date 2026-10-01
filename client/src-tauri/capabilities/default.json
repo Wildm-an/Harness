@@ -1,7 +1,27 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the app webview only. The Browser pane webview (label browser) gets no permissions.",
-  "webviews": ["main"],
-  "permissions": ["core:default", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-internal-toggle-maximize", "core:window:allow-start-dragging", "core:window:allow-close", "dialog:allow-open", "opener:allow-open-url", "opener:allow-reveal-item-in-dir"]
+  "description": "Permissions for the app webview only. The Browser pane webviews (labels browser-<tab>) get no permissions. The app can open only the settings file of the daemon with a local app.",
+  "webviews": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "dialog:allow-open",
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$HOME/.harness/settings.json"
+        }
+      ]
+    }
+  ]
 }

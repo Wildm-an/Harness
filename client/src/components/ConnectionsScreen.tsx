@@ -283,7 +283,9 @@ export function ConnectionsScreen({
   onDelete,
   onTest,
   onReturn,
+  embedded = false,
 }: {
+  embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
   connections: Connection[];
   currentId: string | null; // The connection that is open now.
   connectingId: string | null;
@@ -304,11 +306,11 @@ export function ConnectionsScreen({
     setEditing({ connection: { id: newConnectionId(), name: "", kind: "direct", host: "", port: 8765 }, isNew: true });
 
   return (
-    <div className="start-screen">
+    <div className={embedded ? "settings-embed" : "start-screen"}>
       <section className="panel connections" aria-labelledby="connections-title">
         <div className="panel-head">
           <h1 id="connections-title">Computers</h1>
-          {canReturn && (
+          {canReturn && !embedded && (
             <button type="button" className="btn btn-ghost" onClick={onReturn}>
               {hasSession ? "Back to the session" : "Back"}
             </button>

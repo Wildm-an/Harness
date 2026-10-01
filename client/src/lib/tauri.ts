@@ -28,6 +28,18 @@ export async function revealInExplorer(path: string): Promise<void> {
   await revealItemInDir(path);
 }
 
+/** Opens a file of this computer in its default app, for example the settings file in an editor. */
+export async function openLocalPath(path: string): Promise<void> {
+  const { openPath } = await import("@tauri-apps/plugin-opener");
+  await openPath(path);
+}
+
+/** The version of the desktop app. */
+export async function appVersionOf(): Promise<string> {
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
 /** Opens an http or https URL in the system browser. */
 export async function openExternal(url: string): Promise<void> {
   if (isTauri()) {
