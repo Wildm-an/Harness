@@ -83,6 +83,8 @@ import { emptyHistory, placeOf, samePlace, step, visit, type NavHistory, type Pl
 import { TerminalPane } from "./components/TerminalPane";
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
+import { UpdateToast } from "./components/UpdateToast";
+import { availableVersion, checkOnLaunch, useUpdateState } from "./lib/updater";
 import { GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { TasksPane } from "./components/TasksPane";
 import { WorkingLine } from "./components/WorkingLine";
@@ -302,7 +304,9 @@ export default function App() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
     if (isTauri()) void appVersionOf().then(setAppVersion, () => undefined);
+    checkOnLaunch(); // A quick look for a new version, a few seconds after the start.
   }, []);
+  const newVersion = availableVersion(useUpdateState());
   useEffect(
     () =>
       conn.onMessage((msg) => {
@@ -1896,10 +1900,11 @@ export default function App() {
                 type="button"
                 className={`icon-btn ghost side-settings${settingsPage ? " active" : ""}`}
                 onClick={() => (settingsPage ? setSettingsPage(null) : openSettings("general"))}
-                aria-label={`Settings (${SETTINGS_SHORTCUT})`}
-                title={`Settings (${SETTINGS_SHORTCUT})`}
+                aria-label={newVersion ? `Settings (${SETTINGS_SHORTCUT}). Version ${newVersion} is available.` : `Settings (${SETTINGS_SHORTCUT})`}
+                title={newVersion ? `Settings (${SETTINGS_SHORTCUT}): version ${newVersion} is available` : `Settings (${SETTINGS_SHORTCUT})`}
               >
                 <SettingsIcon size={16} aria-hidden />
+                {newVersion && <span className="update-dot" aria-hidden />}
               </button>
             }
           />
@@ -2057,6 +2062,7 @@ export default function App() {
             onReturn={() => setScreen(session ? "chat" : "start")}
           />
         )}
+        {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("general")} />}
         {settingsPage && (
           <SettingsDialog
             page={settingsPage}

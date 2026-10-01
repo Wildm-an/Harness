@@ -6400,3 +6400,131 @@ input.setting-text-input {
     flex-wrap: wrap;
   }
 }
+
+/* ---------- app updates: the dot, the banner of Settings > General, and the popup ---------- */
+
+/* A new version: an accent dot on the Settings button and on the General page of the dialog. */
+.icon-btn.side-settings {
+  position: relative;
+}
+
+.update-dot,
+.settings-nav-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 2px var(--sidebar);
+}
+
+.update-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+}
+
+.settings-nav-dot {
+  margin-left: auto;
+  box-shadow: none;
+}
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-fill);
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+}
+
+.update-banner-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.update-banner-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+/* The popup at the bottom left, above the computer button of the sidebar. */
+.update-toast {
+  position: fixed;
+  left: 12px;
+  bottom: 64px;
+  z-index: calc(var(--z-overlay) + 5);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(340px, calc(100vw - 24px));
+  padding: 12px 8px 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: update-toast-in 220ms var(--ease-out);
+}
+
+@keyframes update-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-toast {
+    animation: none;
+  }
+}
+
+.update-toast-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.update-toast-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.update-toast-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.update-toast-body {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.update-toast-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.icon-btn.update-toast-close {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}

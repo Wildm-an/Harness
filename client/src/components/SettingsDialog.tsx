@@ -3,7 +3,7 @@
 // the screens that the sidebar opened before.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Boxes, Cable, FileCog, Monitor, Moon, Settings, Sun, X, type LucideIcon } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Settings, Sun, X, type LucideIcon } from "lucide-react";
 import type { PermissionMode, UserSettings } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
@@ -18,7 +18,7 @@ import {
 } from "../lib/theme";
 import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
-import { checkForUpdate, installUpdate, updateErrorText, type UpdateState } from "../lib/updater";
+import { availableVersion, checkForUpdate, installUpdate, useUpdateState } from "../lib/updater";
 
 export type SettingsPage = "general" | "models" | "connections" | "computers";
 
@@ -62,6 +62,7 @@ export function SettingsDialog({
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(document.activeElement);
+  const update = availableVersion(useUpdateState());
   useOverlay(true);
 
   // The focus goes into the dialog, and back to the button that opened it when the dialog closes.
@@ -119,6 +120,9 @@ export function SettingsDialog({
                 >
                   <Icon size={16} aria-hidden />
                   {p.label}
+                  {p.id === "general" && update && (
+                    <span className="settings-nav-dot" role="img" aria-label={`Version ${update} is available`} />
+                  )}
                 </button>
               );
             })}
@@ -267,6 +271,7 @@ export function GeneralSettings({
           {error}
         </p>
       )}
+      {isTauri() && <UpdateBanner appVersion={appVersion} />}
 
       <div className="setting-block">
         <span className="setting-label">Appearance</span>
@@ -403,29 +408,36 @@ function TextField({ id, value, placeholder, disabled, onSave }: {
   );
 }
 
-/** Check for a new version of the app, and install it. */
+/** The update at the top of the General page, while a new version is available or installs. */
+function UpdateBanner({ appVersion }: { appVersion: string | null }) {
+  const state = useUpdateState();
+  const version = availableVersion(state);
+  if (!version) return null;
+  return (
+    <div className="update-banner" role="status">
+      <ArrowUpCircle size={18} aria-hidden className="update-banner-icon" />
+      <div className="update-banner-text">
+        <span className="update-banner-title">Harness {version} is available</span>
+        <span className="setting-help">
+          {state.kind === "installing"
+            ? `Installing${state.percent !== null ? `: ${state.percent}%` : "…"} The app starts again when the update is installed.`
+            : appVersion
+              ? `You have version ${appVersion}. The app closes for the install, and then starts again.`
+              : "The app closes for the install, and then starts again."}
+        </span>
+      </div>
+      {state.kind === "available" && (
+        <button type="button" className="btn btn-primary btn-small" onClick={() => void installUpdate()}>
+          Install and restart
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Check for a new version of the app, and install it. The app also checks once when it starts. */
 function UpdatesRow() {
-  const [state, setState] = useState<UpdateState>({ kind: "idle" });
-
-  const check = async () => {
-    setState({ kind: "checking" });
-    try {
-      const update = await checkForUpdate();
-      setState(update ? { kind: "available", update } : { kind: "none" });
-    } catch (e) {
-      setState({ kind: "error", message: updateErrorText(e) });
-    }
-  };
-
-  const install = async (update: NonNullable<Extract<UpdateState, { kind: "available" }>["update"]>) => {
-    setState({ kind: "installing", percent: null });
-    try {
-      await installUpdate(update, (percent) => setState({ kind: "installing", percent }));
-    } catch (e) {
-      setState({ kind: "error", message: `The update did not install: ${e instanceof Error ? e.message : String(e)}` });
-    }
-  };
-
+  const state = useUpdateState();
   const help =
     state.kind === "checking"
       ? "Looking for a new version…"
@@ -435,21 +447,21 @@ function UpdatesRow() {
           ? `Version ${state.update.version} is available.`
           : state.kind === "installing"
             ? `Installing${state.percent !== null ? `: ${state.percent}%` : "…"} The app starts again when the update is installed.`
-            : "Look for a new version of the app.";
+            : "The app looks for a new version each time it starts.";
 
   return (
     <>
       <h3 className="settings-section">Updates</h3>
       <Row label="App updates" help={help}>
         {state.kind === "available" ? (
-          <button type="button" className="btn btn-primary btn-small" onClick={() => void install(state.update)}>
+          <button type="button" className="btn btn-primary btn-small" onClick={() => void installUpdate()}>
             Install and restart
           </button>
         ) : (
           <button
             type="button"
             className="btn btn-small"
-            onClick={() => void check()}
+            onClick={() => void checkForUpdate()}
             disabled={state.kind === "checking" || state.kind === "installing"}
           >
             Check for updates
