@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, Plus, Puzzle, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
 import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
@@ -23,6 +23,8 @@ export interface SessionTool {
 const SHOWN_SESSIONS = 8;
 const EXPANDED_PREF = "sidebar.expanded";
 const MORE_PREF = "sidebar.more"; // "1": the "More" accordion is open.
+const ORDER_PREF = "sidebar.order"; // The project keys, in the order of the user.
+const PROJECT_DRAG = "application/x-harness-project";
 
 /** A key to compare folder paths: "/" separators, no trailing "/", and no case on Windows paths. */
 export function pathKey(path: string): string {
@@ -61,8 +63,45 @@ export function groupByProject(sessions: SessionSummary[], projects: ProjectItem
     }
     group.sessions.push(s);
   }
-  const latest = (g: ProjectGroup) => g.sessions[0]?.updated_at ?? -1;
   return [...groups.values()].sort((a, b) => latest(b) - latest(a) || a.name.localeCompare(b.name));
+}
+
+const latest = (g: ProjectGroup) => g.sessions[0]?.updated_at ?? -1;
+
+/**
+ * Puts the groups in the order of the user (a list of keys). A new session does not move a project.
+ * A group that is not in the order is first, newest first: for example, the folder of a new session.
+ */
+export function orderGroups(groups: ProjectGroup[], order: string[]): ProjectGroup[] {
+  const rank = new Map(order.map((key, i) => [key, i]));
+  const added = groups.filter((g) => !rank.has(g.key));
+  const known = groups.filter((g) => rank.has(g.key)).sort((a, b) => rank.get(a.key)! - rank.get(b.key)!);
+  return [...added, ...known];
+}
+
+/** The order after a drag: `key` moves before or after `target`. The other keys keep their order. */
+export function moveKey(order: string[], key: string, target: string, after: boolean): string[] {
+  if (key === target) return order;
+  const next = order.filter((k) => k !== key);
+  const at = next.indexOf(target);
+  if (at < 0) return order;
+  next.splice(after ? at + 1 : at, 0, key);
+  return next;
+}
+
+/** The order to save: the shown keys, then the keys of folders that are not shown now (for example, on another computer). */
+export function mergeOrder(shown: string[], order: string[]): string[] {
+  const keys = new Set(shown);
+  return [...shown, ...order.filter((k) => !keys.has(k))];
+}
+
+function loadOrder(): string[] {
+  try {
+    const value = JSON.parse(loadPref(ORDER_PREF, "[]"));
+    return Array.isArray(value) ? value.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function loadExpanded(): Record<string, boolean> {
@@ -121,7 +160,13 @@ function ToolButton({ tool, disabled }: { tool: SessionTool; disabled: boolean }
   );
 }
 
-function ProjectSection({ group, open, activeId, running, unread, disabled, onToggle, actions, onNewSession }: {
+/** Where a dragged project goes: before or after the project with this key. */
+interface DropSpot {
+  key: string;
+  after: boolean;
+}
+
+function ProjectSection({ group, open, activeId, running, unread, disabled, onToggle, actions, onNewSession, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: {
   group: ProjectGroup;
   open: boolean;
   activeId: string | null;
@@ -131,19 +176,56 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
   onToggle: () => void;
   actions: SessionActions;
   onNewSession: () => void;
+  dragging: boolean; // The user drags this project.
+  drop: "before" | "after" | null; // The line that shows where the dragged project goes.
+  onDragStart: () => void;
+  onDragOver: (after: boolean) => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+  onMove: (step: -1 | 1) => void; // Alt+Up and Alt+Down move the project with the keyboard.
 }) {
   const [all, setAll] = useState(false);
   const shown = all ? group.sessions : group.sessions.slice(0, SHOWN_SESSIONS);
   const listId = `side-project-${group.key.replace(/[^a-z0-9]/gi, "-")}`;
+  const isProjectDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(PROJECT_DRAG);
   return (
-    <li className={`side-project${open ? " open" : ""}`}>
-      <div className="side-project-head">
+    <li
+      className={`side-project${open ? " open" : ""}${dragging ? " dragging" : ""}${drop ? ` drop-${drop}` : ""}`}
+      onDragOver={(e) => {
+        if (!isProjectDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        const r = e.currentTarget.getBoundingClientRect();
+        onDragOver(e.clientY > r.top + r.height / 2);
+      }}
+      onDrop={(e) => {
+        if (!isProjectDrag(e)) return;
+        e.preventDefault();
+        onDrop();
+      }}
+    >
+      <div
+        className="side-project-head"
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(PROJECT_DRAG, group.key);
+          e.dataTransfer.effectAllowed = "move";
+          onDragStart();
+        }}
+        onDragEnd={onDragEnd}
+      >
         <button
           type="button"
           className="side-project-toggle"
           onClick={onToggle}
+          onKeyDown={(e) => {
+            if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+            e.preventDefault();
+            onMove(e.key === "ArrowUp" ? -1 : 1);
+          }}
           aria-expanded={open}
           aria-controls={listId}
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
           title={group.path}
         >
           <span className="side-project-name">{group.name}</span>
@@ -231,14 +313,48 @@ export function Sidebar({
   const open = status === "open";
   // Pinned sessions are in their own list at the top, as in Claude.
   const pinned = sessions.filter((s) => s.pinned);
-  const groups = groupByProject(sessions.filter((s) => !s.pinned), projects);
+  const [order, setOrder] = useState(loadOrder);
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
+  const byRecency = groupByProject(sessions.filter((s) => !s.pinned), projects);
+  const groups = orderGroups(byRecency, order);
   const runningById = new Map(running.map((r) => [r.session_id, r]));
   const activeKey = groups.find((g) => g.sessions.some((s) => s.id === activeId))?.key;
+  const newestKey = byRecency[0]?.key;
+
+  // A folder that is not in the order yet goes into it at its first view. Then a new session does not move it.
+  const shownKeys = groups.map((g) => g.key);
+  const shownJoined = shownKeys.join("\n");
+  useEffect(() => {
+    if (shownKeys.every((k) => order.includes(k))) return;
+    const next = mergeOrder(shownKeys, order);
+    setOrder(next);
+    savePref(ORDER_PREF, JSON.stringify(next));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shownJoined holds the shown keys.
+  }, [shownJoined, order]);
+
+  const saveOrder = (next: string[]) => {
+    setOrder(next);
+    savePref(ORDER_PREF, JSON.stringify(next));
+  };
+  const endDrag = () => {
+    setDragKey(null);
+    setDropSpot(null);
+  };
+  const dropOn = (target: string) => {
+    if (dragKey && dropSpot?.key === target) saveOrder(moveKey(mergeOrder(shownKeys, order), dragKey, target, dropSpot.after));
+    endDrag();
+  };
+  const moveBy = (key: string, step: -1 | 1) => {
+    const at = shownKeys.indexOf(key);
+    const target = shownKeys[at + step];
+    if (target) saveOrder(moveKey(mergeOrder(shownKeys, order), key, target, step === 1));
+  };
 
   // A project that the user did not open or close: open for the active session and the newest project.
-  const isOpen = (g: ProjectGroup, index: number) => expanded[g.key] ?? (g.key === activeKey || index === 0);
-  const toggle = (g: ProjectGroup, index: number) => {
-    const next = { ...expanded, [g.key]: !isOpen(g, index) };
+  const isOpen = (g: ProjectGroup) => expanded[g.key] ?? (g.key === activeKey || g.key === newestKey);
+  const toggle = (g: ProjectGroup) => {
+    const next = { ...expanded, [g.key]: !isOpen(g) };
     setExpanded(next);
     savePref(EXPANDED_PREF, JSON.stringify(next));
   };
@@ -305,18 +421,27 @@ export function Sidebar({
           <p className="side-empty">{open ? "No projects yet. Start a session to add one." : "Connect to a computer to see its projects."}</p>
         ) : (
           <ul className="side-projects">
-            {groups.map((g, i) => (
+            {groups.map((g) => (
               <ProjectSection
                 key={g.key}
                 group={g}
-                open={isOpen(g, i)}
+                open={isOpen(g)}
                 activeId={activeId}
                 running={runningById}
                 unread={unread}
                 disabled={!open}
-                onToggle={() => toggle(g, i)}
+                onToggle={() => toggle(g)}
                 actions={actions}
                 onNewSession={() => onNewSessionIn(g)}
+                dragging={g.key === dragKey}
+                drop={dragKey && dragKey !== g.key && dropSpot?.key === g.key ? (dropSpot.after ? "after" : "before") : null}
+                onDragStart={() => setDragKey(g.key)}
+                onDragOver={(after) => {
+                  if (dropSpot?.key !== g.key || dropSpot.after !== after) setDropSpot({ key: g.key, after });
+                }}
+                onDrop={() => dropOn(g.key)}
+                onDragEnd={endDrag}
+                onMove={(step) => moveBy(g.key, step)}
               />
             ))}
           </ul>

@@ -411,13 +411,41 @@ textarea:focus-visible {
 
 /* the sidebar */
 
+/* The density of the sidebar (Settings > General), with the values of the Claude desktop sidebar.
+   Compact is the default. The spaces come from the row height and the control size. */
 .sidebar {
+  --side-row-h: 26px;
+  --side-row-font: 13px;
+  --side-group-font: 12px;
+  --side-group-pt: 12px;
+  --side-icon: 16px;
+  --side-ctl: 20px;
+  --side-radius: 6px;
+  /* The columns, as in Claude: the row is 8px from the sidebar edge. An icon or a status ring is
+     centered in a leading slot. The text starts after the slot. A label lines up with the icons. */
+  --side-row-px: 2px;
+  --side-slot: 24px;
+  --side-row-gap: 4px;
+  --side-label-x: calc(var(--side-row-px) + (var(--side-slot) - var(--side-icon)) / 2);
+  --side-text-x: calc(var(--side-row-px) + var(--side-slot) + var(--side-row-gap));
   display: flex;
   flex-direction: column;
   flex: none;
   width: var(--sidebar-width);
   border-right: 1px solid var(--border);
   background: var(--sidebar);
+}
+
+:root[data-density="comfortable"] .sidebar {
+  --side-row-h: 32px;
+  --side-row-font: 14px;
+  --side-group-font: 13px;
+  --side-group-pt: 16px;
+  --side-icon: 20px;
+  --side-ctl: 24px;
+  --side-radius: 8px;
+  --side-slot: 28px;
+  --side-row-gap: 8px;
 }
 
 .side-head {
@@ -432,22 +460,21 @@ textarea:focus-visible {
 .side-actions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px 8px 8px;
+  padding: 4px 8px 0; /* The group label above a list has the space (--side-group-pt). */
 }
 
 .side-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: calc((var(--side-slot) - var(--side-icon)) / 2 + var(--side-row-gap));
   width: 100%;
-  min-height: 34px;
-  padding: 0 10px;
+  min-height: var(--side-row-h);
+  padding: 0 8px 0 var(--side-label-x);
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--side-radius);
   background: transparent;
   color: var(--text);
-  font: 500 13.5px var(--font-sans);
+  font: 500 var(--side-row-font) var(--font-sans);
   text-align: left;
   cursor: pointer;
   transition: background var(--duration) var(--ease-out);
@@ -455,6 +482,8 @@ textarea:focus-visible {
 
 .side-item > svg {
   flex: none;
+  width: var(--side-icon);
+  height: var(--side-icon);
   color: var(--text-muted);
 }
 
@@ -485,13 +514,19 @@ textarea:focus-visible {
 .side-more-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
 .side-more-list .side-item > svg,
 .side-more-list .side-item > .glyph-icon {
   flex: none;
   color: var(--text-muted);
+}
+
+/* The "/" icon sets its size inline. In the sidebar it takes the icon size of the density. */
+.side-item > .glyph-icon {
+  width: var(--side-icon) !important;
+  height: var(--side-icon) !important;
+  font-size: calc(var(--side-icon) * 1.05) !important;
 }
 
 .side-item-end {
@@ -534,15 +569,16 @@ textarea:focus-visible {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 8px 12px;
+  padding: 0 8px 12px;
 }
 
 .side-label {
   margin: 0;
-  padding: 6px 10px 4px;
+  padding: var(--side-group-pt) var(--side-label-x) 4px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--side-group-font);
   font-weight: 500;
+  line-height: 16px;
 }
 
 /* The project tree: a row for each project folder, and its sessions under it. */
@@ -553,15 +589,40 @@ textarea:focus-visible {
   list-style: none;
 }
 
-.side-project + .side-project {
-  margin-top: 2px;
+.side-project {
+  position: relative;
+}
+
+/* Drag a project to move it. A line shows where it goes. */
+.side-project.dragging {
+  opacity: 0.5;
+}
+
+.side-project.drop-before::before,
+.side-project.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.side-project.drop-before::before {
+  top: -2px;
+}
+
+.side-project.drop-after::after {
+  bottom: -2px;
 }
 
 .side-project-head {
   position: relative;
   display: flex;
   align-items: center;
-  border-radius: var(--radius);
+  border-radius: var(--side-radius);
   transition: background var(--duration) var(--ease-out);
 }
 
@@ -576,13 +637,13 @@ textarea:focus-visible {
   gap: 6px;
   flex: 1;
   min-width: 0;
-  min-height: 34px;
-  padding: 0 4px 0 10px;
+  min-height: var(--side-row-h);
+  padding: 0 4px 0 var(--side-label-x);
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--side-radius);
   background: transparent;
   color: var(--text);
-  font: 500 13.5px var(--font-sans);
+  font: 500 var(--side-row-font) var(--font-sans);
   text-align: left;
   cursor: pointer;
 }
@@ -612,9 +673,9 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 28px;
-  height: 28px;
-  margin-right: 3px;
+  width: var(--side-ctl);
+  height: var(--side-ctl);
+  margin-right: calc((var(--side-row-h) - var(--side-ctl)) / 2);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -645,21 +706,20 @@ textarea:focus-visible {
 }
 
 .side-project-sessions {
-  margin: 2px 0 6px;
+  margin: 0 0 6px;
 }
 
 .side-session {
   display: flex;
   align-items: center;
-  gap: 8px;
   width: 100%;
-  min-height: 32px;
-  padding: 0 10px 0 14px; /* The status dot is centered between the row edge and the title (36px). */
+  min-height: var(--side-row-h);
+  padding: 0 8px 0 var(--side-row-px);
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--side-radius);
   background: transparent;
   color: var(--text);
-  font: 13.5px var(--font-sans);
+  font: var(--side-row-font) var(--font-sans);
   text-align: left;
   cursor: pointer;
   transition: background var(--duration) var(--ease-out);
@@ -673,7 +733,8 @@ textarea:focus-visible {
   box-sizing: border-box;
   width: 8px;
   height: 8px;
-  margin-right: 6px; /* With the 8px gap: 14px to the title, the same as the row padding. */
+  /* Centered in the leading slot. The title starts at --side-text-x, as the text of the nav rows. */
+  margin: 0 calc((var(--side-slot) - 8px) / 2 + var(--side-row-gap)) 0 calc((var(--side-slot) - 8px) / 2);
   border: 1.5px solid var(--text-muted);
   border-radius: 50%;
 }
@@ -704,10 +765,10 @@ textarea:focus-visible {
 .side-more {
   display: block;
   width: 100%;
-  min-height: 28px;
-  padding: 0 10px 0 36px;
+  min-height: var(--side-row-h);
+  padding: 0 8px 0 var(--side-text-x);
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--side-radius);
   background: transparent;
   color: var(--text-muted);
   font: 12.5px var(--font-sans);
@@ -721,13 +782,13 @@ textarea:focus-visible {
 }
 
 .side-empty {
-  margin: 8px 10px;
+  margin: 8px var(--side-label-x);
   color: var(--text-muted);
   font-size: 12.5px;
 }
 
 .side-project-sessions .side-empty {
-  margin: 4px 10px 6px 36px;
+  margin: 4px 8px 6px var(--side-text-x);
 }
 
 .side-foot {
@@ -5595,18 +5656,18 @@ mark.word-del {
 .side-session-row:hover .side-session,
 .side-session-row:focus-within .side-session,
 .side-session-row.menu-open .side-session {
-  padding-right: 36px;
+  padding-right: calc(var(--side-row-h) + 4px);
 }
 
 .side-session-more {
   position: absolute;
   top: 50%;
-  right: 6px;
+  right: calc((var(--side-row-h) - var(--side-ctl)) / 2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--side-ctl);
+  height: var(--side-ctl);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -5636,6 +5697,7 @@ mark.word-del {
 .side-session-rename {
   flex: 1;
   min-width: 0;
+  margin-left: -7px; /* The text stays in the title column: 6px padding and a 1px border. */
   padding: 2px 6px;
   border: 1px solid var(--focus);
   border-radius: var(--radius-sm);
@@ -5691,7 +5753,7 @@ mark.word-del {
 }
 
 .side-pinned {
-  margin: 0 0 8px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -6273,6 +6335,11 @@ mark.word-del {
 .setting-help {
   color: var(--text-muted);
   font-size: 12.5px;
+}
+
+.setting-block > .setting-help {
+  display: block;
+  margin-top: 2px;
 }
 
 .setting-control {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { folderName, groupByProject, pathKey, sessionState } from "./Sidebar";
+import { folderName, groupByProject, mergeOrder, moveKey, orderGroups, pathKey, sessionState } from "./Sidebar";
 
 const session = (id: string, cwd: string, updated: number): SessionSummary => ({
   id, cwd, provider: "demo", model: "scripted", title: id, created_at: updated, updated_at: updated,
@@ -24,6 +24,31 @@ describe("the sidebar projects", () => {
     const groups = groupByProject([session("x", "/home/me/x", 5)], [project("p2", "Empty", "/home/me/empty"), project("p3", "A", "/home/me/a")]);
     expect(groups.map((g) => g.name)).toEqual(["x", "A", "Empty"]);
     expect(groups[2].sessions).toEqual([]);
+  });
+
+  it("keeps the order of the user when a new session starts", () => {
+    const projects = [project("p1", "A", "/a"), project("p2", "B", "/b")];
+    const order = ["/a", "/b"];
+    const before = orderGroups(groupByProject([session("a1", "/a", 1), session("b1", "/b", 2)], projects), order);
+    expect(before.map((g) => g.name)).toEqual(["A", "B"]);
+    // A new session in B: B stays second, and the new session is at the top of B.
+    const after = orderGroups(groupByProject([session("a1", "/a", 1), session("b1", "/b", 2), session("b2", "/b", 3)], projects), order);
+    expect(after.map((g) => [g.name, g.sessions.map((s) => s.id)])).toEqual([["A", ["a1"]], ["B", ["b2", "b1"]]]);
+  });
+
+  it("puts a folder that is not in the order first", () => {
+    const groups = groupByProject([session("a1", "/a", 1), session("n1", "/new", 5)], []);
+    expect(orderGroups(groups, ["/a"]).map((g) => g.key)).toEqual(["/new", "/a"]);
+  });
+
+  it("moves a project before or after another project", () => {
+    expect(moveKey(["a", "b", "c"], "c", "a", false)).toEqual(["c", "a", "b"]);
+    expect(moveKey(["a", "b", "c"], "a", "b", true)).toEqual(["b", "a", "c"]);
+    expect(moveKey(["a", "b", "c"], "b", "b", true)).toEqual(["a", "b", "c"]);
+  });
+
+  it("keeps the order of folders that are not shown", () => {
+    expect(mergeOrder(["b", "a"], ["a", "x", "b"])).toEqual(["b", "a", "x"]);
   });
 
   it("compares POSIX paths with case", () => {

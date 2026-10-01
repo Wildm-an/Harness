@@ -3,7 +3,7 @@
 // the screens that the sidebar opened before.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Settings, Sun, X, type LucideIcon } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Rows2, Rows4, Settings, Sun, X, type LucideIcon } from "lucide-react";
 import type { PermissionMode, UserSettings } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
@@ -12,9 +12,12 @@ import {
   CHAT_FONT_MIN,
   appearance as savedAppearance,
   chatFontSize,
+  density as savedDensity,
   setAppearance,
   setChatFontSize,
+  setDensity,
   type Appearance,
+  type Density,
 } from "../lib/theme";
 import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
@@ -234,6 +237,7 @@ export function GeneralSettings({
   onSet: (changes: Partial<UserSettings>) => void;
 }) {
   const [look, setLook] = useState<Appearance>(savedAppearance);
+  const [dense, setDense] = useState<Density>(savedDensity);
   const [fontSize, setFontSize] = useState(chatFontSize);
   const [busy, setBusy] = useState<BusySend>(busySend);
   const off = !connected || values === null;
@@ -284,6 +288,34 @@ export function GeneralSettings({
             ] as [Appearance, string, LucideIcon][]
           ).map(([id, label, Icon]) => (
             <button key={id} type="button" role="radio" aria-checked={look === id} className={`appearance-choice${look === id ? " active" : ""}`} onClick={() => choose(id)}>
+              <Icon size={16} aria-hidden />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="setting-block">
+        <span className="setting-label">Density</span>
+        <span className="setting-help">The height of the rows and the size of the text in the sidebar.</span>
+        <div className="appearance-choices" role="radiogroup" aria-label="Density">
+          {(
+            [
+              ["compact", "Compact", Rows4],
+              ["comfortable", "Comfortable", Rows2],
+            ] as [Density, string, LucideIcon][]
+          ).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={dense === id}
+              className={`appearance-choice${dense === id ? " active" : ""}`}
+              onClick={() => {
+                setDense(id);
+                setDensity(id);
+              }}
+            >
               <Icon size={16} aria-hidden />
               {label}
             </button>

@@ -1,6 +1,7 @@
 // The appearance of the app (Settings > General): Light, Dark, or System. The app always sets
 // data-theme on the root element to "light" or "dark", and the CSS reads only that attribute.
-// "System" follows the system setting while the app runs. The font size of the chat is here too.
+// "System" follows the system setting while the app runs. The font size of the chat and the
+// density of the sidebar are here too.
 
 import { loadPref, savePref } from "./prefs";
 
@@ -56,9 +57,24 @@ export function setChatFontSize(px: number): void {
   document.documentElement.style.setProperty("--chat-font-size", `${n}px`);
 }
 
-/** Set the theme and the chat font size before the first paint, and follow the system theme. */
+// The density of the sidebar, as in Claude: "compact" (the default) or "comfortable". The app sets
+// data-density on the root element, and the CSS reads it.
+export type Density = "compact" | "comfortable";
+const DENSITY_PREF = "density";
+
+export function density(): Density {
+  return loadPref(DENSITY_PREF, "compact") === "comfortable" ? "comfortable" : "compact";
+}
+
+export function setDensity(value: Density): void {
+  savePref(DENSITY_PREF, value);
+  document.documentElement.dataset.density = value;
+}
+
+/** Set the theme, the chat font size, and the density before the first paint, and follow the system theme. */
 export function initTheme(): void {
   apply();
   document.documentElement.style.setProperty("--chat-font-size", `${chatFontSize()}px`);
+  document.documentElement.dataset.density = density();
   system()?.addEventListener("change", apply);
 }
