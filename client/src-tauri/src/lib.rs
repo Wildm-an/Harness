@@ -138,6 +138,13 @@ pub fn run() {
         .manage(Tunnels::default())
         .manage(Forwards::default())
         .setup(|app| {
+            // The updater (Settings > General > Updates) and the restart after an update. The
+            // update address and the release key are in tauri.conf.json (docs/RELEASE.md).
+            #[cfg(desktop)]
+            {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
             if let Some(window) = app.get_window("main") {
                 window.show()?;
             }

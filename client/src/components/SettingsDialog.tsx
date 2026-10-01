@@ -17,6 +17,8 @@ import {
   type Appearance,
 } from "../lib/theme";
 import { MODES } from "./ModeMenu";
+import { isTauri } from "../lib/tauri";
+import { checkForUpdate, installUpdate, updateErrorText, type UpdateState } from "../lib/updater";
 
 export type SettingsPage = "general" | "models" | "connections" | "computers";
 
@@ -363,6 +365,8 @@ export function GeneralSettings({
         ))}
       </dl>
 
+      {isTauri() && <UpdatesRow />}
+
       <p className="settings-version">
         {appVersion && <>App version {appVersion}</>}
         {appVersion && daemonVersion && " · "}
@@ -396,5 +400,67 @@ function TextField({ id, value, placeholder, disabled, onSave }: {
       onBlur={save}
       onKeyDown={(e) => e.key === "Enter" && save()}
     />
+  );
+}
+
+/** Check for a new version of the app, and install it. */
+function UpdatesRow() {
+  const [state, setState] = useState<UpdateState>({ kind: "idle" });
+
+  const check = async () => {
+    setState({ kind: "checking" });
+    try {
+      const update = await checkForUpdate();
+      setState(update ? { kind: "available", update } : { kind: "none" });
+    } catch (e) {
+      setState({ kind: "error", message: updateErrorText(e) });
+    }
+  };
+
+  const install = async (update: NonNullable<Extract<UpdateState, { kind: "available" }>["update"]>) => {
+    setState({ kind: "installing", percent: null });
+    try {
+      await installUpdate(update, (percent) => setState({ kind: "installing", percent }));
+    } catch (e) {
+      setState({ kind: "error", message: `The update did not install: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  };
+
+  const help =
+    state.kind === "checking"
+      ? "Looking for a new version…"
+      : state.kind === "none"
+        ? "This is the newest version."
+        : state.kind === "available"
+          ? `Version ${state.update.version} is available.`
+          : state.kind === "installing"
+            ? `Installing${state.percent !== null ? `: ${state.percent}%` : "…"} The app starts again when the update is installed.`
+            : "Look for a new version of the app.";
+
+  return (
+    <>
+      <h3 className="settings-section">Updates</h3>
+      <Row label="App updates" help={help}>
+        {state.kind === "available" ? (
+          <button type="button" className="btn btn-primary btn-small" onClick={() => void install(state.update)}>
+            Install and restart
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={() => void check()}
+            disabled={state.kind === "checking" || state.kind === "installing"}
+          >
+            Check for updates
+          </button>
+        )}
+      </Row>
+      {state.kind === "error" && (
+        <p className="form-error" role="alert">
+          {state.message}
+        </p>
+      )}
+    </>
   );
 }

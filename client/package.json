@@ -1,7 +1,7 @@
 {
   "name": "harness-client",
   "private": true,
-  "version": "0.1.19",
+  "version": "0.1.20",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,7 @@
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "tauri": "tauri",
-    "package": "tauri build --config src-tauri/tauri.bundle.json",
+    "package": "node scripts/package.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -19,6 +19,8 @@
     "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2.5.5",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.13.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "diff": "^9.0.0",

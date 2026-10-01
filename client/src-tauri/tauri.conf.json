@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Harness",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "identifier": "dev.harness.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -61,6 +61,15 @@
         "depends": [
           "dbus-libs"
         ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDMjgwQkJFNkRDRDcwQjEKUldTeGNNMXR2Z3NvckxtYTBEdFdEZTNMcUhpUnFxaXBUZHAzeitOSW5yb09wVDB5c004Q2IyTXQK",
+      "endpoints": [],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

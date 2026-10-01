@@ -22,6 +22,8 @@
           "path": "$HOME/.harness/settings.json"
         }
       ]
-    }
+    },
+    "updater:default",
+    "process:allow-restart"
   ]
 }

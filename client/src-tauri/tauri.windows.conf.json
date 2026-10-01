@@ -14,5 +14,10 @@
         "visible": false
       }
     ]
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ]
   }
 }
