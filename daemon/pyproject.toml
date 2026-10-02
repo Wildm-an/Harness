@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harness-daemon"
-version = "0.1.30"
+version = "0.1.31"
 description = "Agent daemon for the coding harness: agent loop, tools, sessions, and the WebSocket protocol."
 license = { text = "MIT" }
 requires-python = ">=3.11"
