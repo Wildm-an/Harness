@@ -90,11 +90,11 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `mcp.restart` | `name` (optional) | Reads the MCP configuration again and connects again: one server, or all servers with no name. Not during a turn. |
 | `mcp.init` | — | Creates `.harness/mcp.json` of the project from a template, if it does not exist. |
 | `plugins.list` | — | Asks for the plugins. It works with no session. See [PLUGINS.md](PLUGINS.md). |
-| `plugins.install` | `source`, `kind` (optional), `replace` (optional), `approved_builds` (optional), `use_mirror` (optional) | Installs a bundle. `kind` is `harness` (the default: a folder or a git URL) or `deepseek` (an npm name, a git address, a URL, or a local path). `replace` updates an installed Harness bundle. `approved_builds` holds the build-script keys that the user allowed for a DeepSeek install. `use_mirror: true` installs a DeepSeek package from the mirror registry (send it only after the user agrees). Not during a turn. |
-| `plugins.remove` | `name`, `kind` (optional) | Deletes an installed bundle. Not during a turn. |
-| `plugins.set_bundle` | `name`, `enabled`, `kind` (optional) | Turns a bundle on or off. Not during a turn. |
-| `plugins.set_plugin` | `id`, `enabled`, `kind` (optional) | Turns one plugin row on or off. Not during a turn. |
-| `plugins.reload` | — | Loads the plugins of the session again. A running DeepSeek plugin host starts again. Not during a turn. |
+| `plugins.install` | `source`, `replace` (optional) | Installs a bundle from a folder or a git URL. `replace` updates an installed bundle. Not during a turn. |
+| `plugins.remove` | `name` | Deletes an installed bundle. Not during a turn. |
+| `plugins.set_bundle` | `name`, `enabled` | Turns a bundle on or off. Not during a turn. |
+| `plugins.set_plugin` | `id`, `enabled` | Turns one plugin row on or off. Not during a turn. |
+| `plugins.reload` | — | Loads the plugins of the session again. Not during a turn. |
 | `cookbook.hosts` | — | Asks for the Cookbook hosts and the public SSH key. |
 | `cookbook.host.save` | `name`, `ssh`, `python`, `llama_server`, `previous` (optional) | Adds or changes a host in `~/.harness/hosts.json`. For `local`, only `llama_server`. |
 | `cookbook.host.delete` | `name` | Deletes a remote host. |
@@ -172,7 +172,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `settings` | `auto_verify`, `permission_mode` | Reply to `settings.get` and `settings.set`. |
 | `mcp` | `items`, `problems`, `paths` | The MCP servers of the session. The daemon sends it when a server state or a tool list changes, and as the reply to `mcp.list`. Each item has `name`, `scope` (`plugin`, `user`, or `project`), `transport`, `target` (the command or the URL), `state` (`starting`, `connected`, `failed`, `disabled`, or `stopped`), `error`, `server_name`, `tools` (`name`, `agent_name`, `description`), and `log` (the last output lines of a failed server). `problems` holds the configuration errors and warnings. |
 | `mcp.init` | `path`, `created` | Reply to `mcp.init`. `path` is relative to the project. |
-| `plugins` | `loaded`, `bundles`, `orphans`, `warnings`, `paths`, `counts`, `installed` (optional), `removed` (optional) | Reply to the `plugins.*` messages. `loaded` is true when the plugins of a session are loaded. Each bundle has `name`, `version`, `description`, `icon` (a data URL), `dir`, `enabled`, `source`, `problem`, and `rows`. Each row has `id`, `name`, `bundle`, `state` (`active`, `disabled`, `failed`, `pending`, or `idle` with no session), `error`, `disabled`, `config`, `layer`, `overrides`, `inject`, `provide`, `tools`, and `commands`. `orphans` holds the rows of bundles that are not installed. `deepseek` holds the DeepSeek plugins: `available`, `reason` (when not available), `running`, `runtime`, `node`, `home`, `user_patch`, `bundles` (`name`, `version`, `description`, `dir`, `enabled`, `problem`, `client`, `icon`, `rows`), `orphans`, and `warnings`. A DeepSeek row has `id`, `name`, `disabled`, `state` (`active`, `disabled`, `pending`, `failed`, or `disposed`), and `error`. `installed_kind` is `harness` or `deepseek`. |
+| `plugins` | `loaded`, `bundles`, `orphans`, `warnings`, `paths`, `counts`, `installed` (optional), `removed` (optional) | Reply to the `plugins.*` messages. `loaded` is true when the plugins of a session are loaded. Each bundle has `name`, `version`, `description`, `icon` (a data URL), `dir`, `enabled`, `source`, `problem`, and `rows`. Each row has `id`, `name`, `bundle`, `state` (`active`, `disabled`, `failed`, `pending`, or `idle` with no session), `error`, `disabled`, `config`, `layer`, `overrides`, `inject`, `provide`, `tools`, and `commands`. `orphans` holds the rows of bundles that are not installed. |
 | `cookbook.hosts` | `items`, `public_key`, `key_path` | Reply to the `cookbook.host*` and `cookbook.ssh_key` messages. Each item has `name`, `ssh`, `remote`, `python`, `llama_server`, and `label`. `public_key` is null if there is no key. |
 | `hardware` | `host`, `info` | `info` has `hostname`, `platform`, `gpus` (`name`, `vendor`, `vram_total`, `vram_used`), `ram_total`, `cpu_cores`, `python`, `huggingface_hub`, `llama_server`, `tmux`, and `hf_cache`. Sizes are in bytes. |
 | `hf.token` | `set` | Reply to `hf.token`. |
@@ -228,7 +228,6 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `tool.start`, `tool.result`, `fs.changed` | `agent` | The skill name, when a skill with `context: fork` runs the tool in a subagent. |
 
 | `error` | `ref` | The `type` of the client message that caused the error, if known. |
-| `error` | `data` | Details for the client, if any. A DeepSeek install that needs build scripts has `data.pending_builds` (the keys that pnpm printed). A DeepSeek install that cannot reach the npm registry has `data.mirror` (the address of the mirror registry). Both also have `data.source` and `data.use_mirror`: send the install again with them. |
 
 | `fs.tree` | `path`, `items` | `fs.list` returns one folder level. Each item has `name`, `path`, and `type` (`file` or `dir`). The list does not include files that `.gitignore` excludes. |
 

@@ -44,20 +44,10 @@ class Skill:
     argument_hint: str = ""
     context: str | None = None  # "fork": run in a subagent with a new context.
     extra: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
-    # A skill of a DeepSeek plugin has its text in memory and no SKILL.md file.
-    content: str | None = field(default=None, hash=False, compare=False)
-    resource_dir: Path | None = field(default=None, hash=False, compare=False)
 
     @property
     def dir(self) -> Path:
-        if self.content is not None:
-            return self.resource_dir or self.path.parent
         return self.path.parent
-
-    @property
-    def has_files(self) -> bool:
-        """True if the skill is a folder on disk."""
-        return self.content is None or self.resource_dir is not None
 
     @property
     def model_invocable(self) -> bool:
@@ -68,8 +58,6 @@ class Skill:
         return f"{self.source} ({self.origin})"
 
     def body(self) -> str:
-        if self.content is not None:
-            return self.content.strip()[:MAX_BODY_CHARS]
         _, body = split_frontmatter(self.path.read_text(encoding="utf-8", errors="replace"))
         return body.strip()[:MAX_BODY_CHARS]
 
@@ -217,14 +205,9 @@ def skill_roots(cwd: Path | None, plugin_roots: list[tuple[Path, str]] | None = 
     return roots
 
 
-def discover_skills(cwd: Path | None, plugin_roots: list[tuple[Path, str]] | None = None,
-                    plugin_skills: dict[str, Skill] | None = None) -> dict[str, Skill]:
-    """The skills of all folders.
-
-    ``plugin_roots``: the skill folders of the plugins, with the plugin names. ``plugin_skills``:
-    the skills of DeepSeek plugins, which have no folder. A skill in a folder wins over them.
-    """
-    skills: dict[str, Skill] = dict(plugin_skills or {})
+def discover_skills(cwd: Path | None, plugin_roots: list[tuple[Path, str]] | None = None) -> dict[str, Skill]:
+    """The skills of all folders. ``plugin_roots``: the skill folders of the plugins, with the plugin names."""
+    skills: dict[str, Skill] = {}
     seen: set[Path] = set()
     for root, source, origin in skill_roots(cwd, plugin_roots):
         if not root.is_dir():
@@ -292,8 +275,6 @@ def substitute(body: str, args: str, skill_dir: Path, project_dir: Path) -> str:
 def render_skill(skill: Skill, args: str, project_dir: Path) -> str:
     """The skill text for the model: a header with the folder, then the body."""
     body = substitute(skill.body(), args, skill.dir, project_dir)
-    if not skill.has_files:
-        return body
     return (
         f"Base folder of the skill {skill.name}: {skill.dir}\n"
         "Read the reference files in this folder only when the instructions tell you to.\n\n"

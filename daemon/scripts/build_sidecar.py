@@ -5,11 +5,10 @@
 
 Steps:
 
-1. npm installs the packages of the plugin host (plugin-host/), which go into the bundle.
-2. PyInstaller makes the folder build/sidecar/dist/harness-daemon/ from packaging/harness-daemon.spec
+1. PyInstaller makes the folder build/sidecar/dist/harness-daemon/ from packaging/harness-daemon.spec
    (onedir: the executable and its _internal folder).
-3. The script runs the smoke test (scripts/smoke_sidecar.py). --no-smoke skips it.
-4. The script copies the folder to client/src-tauri/binaries/harness-daemon/. The installers put it
+2. The script runs the smoke test (scripts/smoke_sidecar.py). --no-smoke skips it.
+3. The script copies the folder to client/src-tauri/binaries/harness-daemon/. The installers put it
    in the resource folder of the app (bundle.resources in tauri.bundle.json).
 
 PyInstaller cannot cross-compile. Build on each operating system and CPU type.
@@ -26,7 +25,6 @@ import sys
 from pathlib import Path
 
 DAEMON = Path(__file__).resolve().parent.parent
-PLUGIN_HOST = DAEMON.parent / "plugin-host"
 CLIENT_BINARIES = DAEMON.parent / "client" / "src-tauri" / "binaries"
 SPEC = DAEMON / "packaging" / "harness-daemon.spec"
 DIST = DAEMON / "build" / "sidecar" / "dist"
@@ -49,12 +47,6 @@ def main() -> None:
         import PyInstaller  # noqa: F401
     except ImportError:
         sys.exit('PyInstaller is not installed. Run: pip install -e ".[package]"')
-
-    npm = shutil.which("npm")
-    if npm is None:
-        sys.exit("npm is not installed. The plugin host (plugin-host/) needs it for its packages.")
-    # --ignore-scripts: the packages need no build step, and pnpm is plain JavaScript.
-    subprocess.run([npm, "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=PLUGIN_HOST, check=True)
 
     subprocess.run([sys.executable, "-m", "PyInstaller", str(SPEC), "--noconfirm", "--clean",
                     "--distpath", str(DIST), "--workpath", str(WORK)], cwd=DAEMON / "packaging", check=True)

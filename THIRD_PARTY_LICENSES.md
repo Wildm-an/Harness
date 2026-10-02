@@ -2,6 +2,7 @@
 
 This file lists the third-party components in the Harness installers and their licenses.
 The audit date is 2026-10-02. The audit applies to version 0.1.31.
+Version 0.1.32 removed the DeepSeek plugin host and its npm packages. This file does not list them.
 
 The purpose of the audit is the application to SignPath Foundation for free code signing.
 SignPath Foundation requires an OSI-approved license for all components.
@@ -13,7 +14,6 @@ The audit used only local data and package metadata:
 
 - Rust: `cargo tree -e normal --target <triple> --format "{p}|{l}"` for six targets (Windows, macOS, and Linux, each on x86_64 and aarch64). The command reads the `license` field of each crate. It does not include dev-dependencies or build-dependencies. It includes proc-macro crates, which run at compile time only.
 - Frontend: the `client/package-lock.json` entries without `"dev": true`, and the `license` field in `client/node_modules/**/package.json`.
-- Plugin host: the same method for `plugin-host`. The audit also read the packages inside `pnpm/dist/node_modules`.
 - Python sidecar: the closure of the `dependencies` in `daemon/pyproject.toml`, with `importlib.metadata` in `daemon/.venv` (Python 3.11.9, Windows). The audit used the `License-Expression`, `License`, and classifier fields. It also read the CycloneDX SBOM files in the wheels that contain compiled Rust code.
 - Bundled binaries: the built sidecar folder `client/src-tauri/binaries/harness-daemon/`, `daemon/packaging/harness-daemon.spec`, `daemon/scripts/build_sidecar.py`, `client/src-tauri/tauri.conf.json`, `client/src-tauri/tauri.bundle.json`, and `client/src-tauri/nsis/installer.nsi`.
 
@@ -26,9 +26,8 @@ This file is not legal advice.
 |---|---|---|
 | Rust crates (all six targets) | 423 (283 on Windows x86_64) | All OSI-approved. 5 crates are MPL-2.0 (weak copyleft). |
 | Frontend npm packages | 123 | All OSI-approved. 2 fonts are OFL-1.1. |
-| Plugin host npm packages | 31 (plus 26 packages inside `pnpm`) | All OSI-approved. |
 | Python packages in the sidecar | 50 | All OSI-approved. 2 packages are MPL-2.0. |
-| Runtimes and other binaries | See sections 4, 5, and 6 | Two Microsoft runtime DLLs are proprietary system libraries. Some items use public domain or bzip2 terms. |
+| Runtimes and other binaries | See sections 3, 4, and 5 | Two Microsoft runtime DLLs are proprietary system libraries. Some items use public domain or bzip2 terms. |
 
 No component has a missing license, "UNLICENSED", "SEE LICENSE IN", BSL, SSPL, Elastic, or Commons Clause terms.
 No component has a commercial dual license.
@@ -92,41 +91,7 @@ Notes:
 - The bundle contains the IBM Plex Sans and JetBrains Mono web fonts from `@fontsource`. Both fonts use the SIL Open Font License 1.1. OFL-1.1 is OSI-approved.
 - The icons come from `lucide-react` (ISC).
 
-## 3. Plugin host npm packages (`plugin-host`)
-
-`build_sidecar.py` runs `npm ci --omit=dev`. The PyInstaller spec then copies `plugin-host/node_modules` into the sidecar.
-The audit found 31 production packages.
-
-| License | Count | Packages |
-|---|---|---|
-| MIT | 29 | @deepseek-ai/cordis 4.0.4, @deepseek-ai/cordis-plugin-include 1.0.9, @deepseek-ai/cordis-plugin-loader 1.0.5, @deepseek-ai/cosmokit 1.8.5, @deepseek-ai/dsh-agent 0.2.0-rc.2, @deepseek-ai/dsh-attachment 0.2.0-rc.2, @deepseek-ai/dsh-brand 0.2.0-rc.2, @deepseek-ai/dsh-commands 0.2.0-rc.2, @deepseek-ai/dsh-invariants 0.2.0-rc.2, @deepseek-ai/dsh-llm 0.2.0-rc.2, @deepseek-ai/dsh-ptc-runtime 0.2.0-rc.2, @deepseek-ai/dsh-sandbox 0.2.0-rc.2, @deepseek-ai/dsh-sandbox-policy 0.2.0-rc.2, @deepseek-ai/dsh-scope 0.2.0-rc.2, @deepseek-ai/dsh-session 0.2.0-rc.2, @deepseek-ai/dsh-session-projection 0.2.0-rc.2, @deepseek-ai/dsh-skill 0.2.0-rc.2, @deepseek-ai/dsh-system-prompt 0.2.0-rc.2, @deepseek-ai/dsh-timeout 0.2.0-rc.2, @deepseek-ai/dsh-tools 0.2.0-rc.2, @deepseek-ai/dsh-typert-protocol 0.2.0-rc.2, @deepseek-ai/dsh-user-approval 0.2.0-rc.2, @deepseek-ai/dsh-util-crypto 0.2.0-rc.2, @deepseek-ai/dsh-util-values 0.2.0-rc.2, @deepseek-ai/schemastery 3.18.4, @standard-schema/spec 1.1.0, js-yaml 4.3.2, pnpm 11.28.2, zod 4.6.5 |
-| ISC | 1 | semver 7.8.5 |
-| Python-2.0 | 1 | argparse 2.0.1 |
-
-All 26 `@deepseek-ai/*` packages have `"license": "MIT"` in `package.json`. Each package also has a LICENSE file with the MIT text.
-The `cordis`, `cosmokit`, and `schemastery` packages show "Copyright (c) 2021-present Shigma". The `dsh-*` packages show "Copyright (c) 2026 DeepSeek".
-`argparse 2.0.1` uses the Python-2.0 license. Python-2.0 is OSI-approved.
-
-The `pnpm 11.28.2` package (MIT) contains its own `dist/node_modules` folder with 26 packages:
-
-| License | Count | Packages |
-|---|---|---|
-| MIT | 13 | @reflink/reflink 0.1.19, @reflink/reflink-darwin-arm64 0.1.19, @reflink/reflink-darwin-x64 0.1.19, @reflink/reflink-win32-arm64-msvc 0.1.19, @reflink/reflink-win32-x64-msvc 0.1.19, env-paths 2.2.1, fdir 6.5.0, minizlib 3.1.0, node-gyp 12.3.0, picomatch 4.0.7, tinyglobby 0.2.17, undici 6.28.1, v8-compile-cache 2.4.0 |
-| ISC | 7 | @isaacs/fs-minipass 4.0.1, abbrev 4.0.0, graceful-fs 4.2.11, nopt 9.0.0, proc-log 6.1.0, semver 7.8.5, which 6.0.1 |
-| BlueOak-1.0.0 | 5 | chownr 3.0.0, isexe 4.0.0, minipass 7.1.3, tar 7.5.22, yallist 5.0.0 |
-| Apache-2.0 | 1 | exponential-backoff 3.1.3 |
-
-Other files in `pnpm`:
-
-- `dist/pnpm.mjs` is one 15 MB bundle. It has no list of the inlined packages. The strings "BUSL-1.1" and "Elastic License 2.0" in it are entries of the SPDX license list data, not license terms.
-- `dist/node_modules/node-gyp` contains `gyp` (BSD-3-Clause, Google).
-- `dist/node_modules/@reflink/*` contains native `.node` files. The package license is MIT.
-- `dist/vendor/fastlist-0.3.0-x64.exe` and `fastlist-0.3.0-x86.exe` have no license file in the package. See "Licenses to review".
-
-The plugin host uses `pnpm` at run time to install plugins (`plugin-host/src/profile.mjs`).
-BlueOak-1.0.0 is OSI-approved.
-
-## 4. Python packages in the sidecar (`daemon`)
+## 3. Python packages in the sidecar (`daemon`)
 
 The closure of the runtime `dependencies` in `daemon/pyproject.toml` has 50 distributions on Windows. The `dev` and `package` extras are not in the closure.
 On macOS and Linux, `pywin32`, `pywinpty`, and `colorama` are not in the closure.
@@ -170,7 +135,7 @@ Notes:
 | winpty (`winpty.dll`, `winpty-agent.exe`) | MIT | Yes | From `pywinpty`. |
 | `OpenConsole.exe`, `conpty.dll` | MIT | Yes | From Microsoft Terminal, through `pywinpty`. |
 
-## 5. Playwright driver in the sidecar
+## 4. Playwright driver in the sidecar
 
 The PyInstaller spec calls `collect_data_files("playwright")`. This copies the Playwright driver into `_internal/playwright/driver`.
 
@@ -186,9 +151,9 @@ Chromium is not in the installer.
 The spec does not collect a browser, and `harness_daemon/frozen.py` sets `PLAYWRIGHT_BROWSERS_PATH` to the cache folder of the user.
 The user starts the download with `harness-daemon --install-browser` (`frozen.install_browser()`).
 
-The Python package `playwright 1.63.0` is Apache-2.0 (see section 4).
+The Python package `playwright 1.63.0` is Apache-2.0 (see section 3).
 
-## 6. Installer and other bundled files
+## 5. Installer and other bundled files
 
 | Component | License | OSI-approved | Note |
 |---|---|---|---|
@@ -216,13 +181,11 @@ These items are not OSI-approved, have no license file, or have copyleft terms.
 | 3 | Monaco and TypeScript language data (`html.worker`, `css.worker`, `ts.worker`) | `monaco-editor 0.57.0` | WHATWG text under CC-BY-4.0, W3C text under the W3C license | The CC-BY-4.0 part is not an OSI license. It is documentation text inside the data, not code. | Accept. |
 | 4 | SQLite (`sqlite3.dll`) | From the CPython 3.11.9 Windows build | Public domain dedication | Public domain is not an OSI license. SQLite is part of the standard Python distribution. | Accept. Ask SignPath only if they question it. |
 | 5 | bzip2 (in `_bz2.pyd`) | From the CPython 3.11.9 Windows build | bzip2-1.0.6 (a BSD style license) | The license is permissive, but it is not on the OSI list. It is part of the standard Python distribution. | Accept. Ask SignPath only if they question it. |
-| 6 | `fastlist-0.3.0-x64.exe`, `fastlist-0.3.0-x86.exe` (inside `pnpm/dist/vendor`) | 0.3.0 | No license file in the package. The upstream project states MIT. | A binary with no license text in the package. | Accept, because `pnpm` is MIT. Add the upstream MIT text to the notices. |
-| 7 | `pnpm/dist/pnpm.mjs` | `pnpm 11.28.2` | MIT. The bundle has no list of its inlined packages. | The licenses of the inlined packages are not visible in the file. | Accept. `pnpm` publishes it as MIT. |
-| 8 | `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors`, `option-ext` (Rust) | 0.37.0, 0.7.1, 0.3.5, 0.38.0, 0.2.0 | MPL-2.0 | OSI-approved, weak copyleft at the file level. A change to these files must be published under MPL-2.0. Harness does not change them. The first four come through `tauri-utils` (`dom_query`). | Accept. |
-| 9 | `certifi` (Python) | 2026.7.22 | MPL-2.0 | OSI-approved, weak copyleft at the file level. The package is the CA certificate file. Harness does not change it. | Accept. |
-| 10 | `tqdm` (Python) | 4.70.1 | MPL-2.0 AND MIT | OSI-approved, weak copyleft at the file level. Harness does not change it. | Accept. |
-| 11 | `colored`, `option-ext` (Rust crates inside `hf_xet.pyd`) | 3.1.1, 0.2.0 | MPL-2.0 | OSI-approved, weak copyleft at the file level. | Accept. |
-| 12 | `dompurify` (frontend) | 3.4.15 | MPL-2.0 OR Apache-2.0 | A choice with a copyleft option. | Accept under Apache-2.0. |
-| 13 | PyInstaller bootloader (`harness-daemon.exe`) | 6.22.3 | GPL-2.0-or-later with the Bootloader Exception | OSI-approved copyleft. The exception removes the GPL conditions for the combined program. | Accept. |
-| 14 | `pywin32` (Python) | 312 | Metadata says `PSF`. The license file is BSD-3-Clause style. | The metadata and the license file do not agree. Both are permissive. | Accept. Use BSD-3-Clause in the notices. |
-| 15 | WebKitGTK, GTK, GLib and other system libraries (Linux AppImage only) | From the build machine | LGPL-2.0 or LGPL-2.1 | OSI-approved copyleft. They are system libraries. They are not in the Windows installer. | Accept. SignPath signs the Windows installer only. |
+| 6 | `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors`, `option-ext` (Rust) | 0.37.0, 0.7.1, 0.3.5, 0.38.0, 0.2.0 | MPL-2.0 | OSI-approved, weak copyleft at the file level. A change to these files must be published under MPL-2.0. Harness does not change them. The first four come through `tauri-utils` (`dom_query`). | Accept. |
+| 7 | `certifi` (Python) | 2026.7.22 | MPL-2.0 | OSI-approved, weak copyleft at the file level. The package is the CA certificate file. Harness does not change it. | Accept. |
+| 8 | `tqdm` (Python) | 4.70.1 | MPL-2.0 AND MIT | OSI-approved, weak copyleft at the file level. Harness does not change it. | Accept. |
+| 9 | `colored`, `option-ext` (Rust crates inside `hf_xet.pyd`) | 3.1.1, 0.2.0 | MPL-2.0 | OSI-approved, weak copyleft at the file level. | Accept. |
+| 10 | `dompurify` (frontend) | 3.4.15 | MPL-2.0 OR Apache-2.0 | A choice with a copyleft option. | Accept under Apache-2.0. |
+| 11 | PyInstaller bootloader (`harness-daemon.exe`) | 6.22.3 | GPL-2.0-or-later with the Bootloader Exception | OSI-approved copyleft. The exception removes the GPL conditions for the combined program. | Accept. |
+| 12 | `pywin32` (Python) | 312 | Metadata says `PSF`. The license file is BSD-3-Clause style. | The metadata and the license file do not agree. Both are permissive. | Accept. Use BSD-3-Clause in the notices. |
+| 13 | WebKitGTK, GTK, GLib and other system libraries (Linux AppImage only) | From the build machine | LGPL-2.0 or LGPL-2.1 | OSI-approved copyleft. They are system libraries. They are not in the Windows installer. | Accept. SignPath signs the Windows installer only. |

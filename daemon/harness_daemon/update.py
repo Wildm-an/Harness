@@ -20,12 +20,10 @@ import tempfile
 from pathlib import Path
 
 from . import frozen
-from .config import harness_home
 
 WHEEL_NAME = re.compile(r"^harness_daemon-[0-9][\w.+]*-py3-none-any\.whl$")
 PIP_TIMEOUT = 600  # Seconds. pip can download new dependencies.
 WAIT_PID_ENV = "HARNESS_WAIT_PID"  # The new process waits for the port of this old process.
-PLUGIN_HOST_FILE = "plugin-host-path"  # The plugin host folder of a source install, for after the update.
 
 # The arguments of the daemon. None: this daemon cannot update itself.
 _argv: list[str] | None = None
@@ -46,22 +44,10 @@ def refusal() -> str | None:
     return None
 
 
-def plugin_host_hint() -> Path:
-    return harness_home() / PLUGIN_HOST_FILE
-
-
 async def install(filename: str, data: bytes) -> None:
     """Install the wheel with pip. Raises RuntimeError with the end of the pip output on an error."""
     if not WHEEL_NAME.match(filename):
         raise RuntimeError(f"Not a wheel of the daemon: {filename}")
-    # A source install finds the DeepSeek plugin host in the repository. After a wheel install the
-    # daemon is in site-packages, so keep the folder for dsh.host_dir.
-    from .plugins.dsh import host_dir
-
-    found = host_dir()
-    if found is not None:
-        plugin_host_hint().parent.mkdir(parents=True, exist_ok=True)
-        plugin_host_hint().write_text(str(found), encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="harness-update-") as folder:
         wheel = Path(folder) / filename
         wheel.write_bytes(data)

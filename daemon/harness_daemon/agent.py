@@ -107,7 +107,7 @@ class Agent:
         self.settings = settings if settings is not None else load_settings(self.cwd)
         self.skills: dict[str, Skill] = dict(skills or {})
         if read_roots is None:
-            read_roots = tuple(s.dir for s in self.skills.values() if s.has_files)
+            read_roots = tuple(s.dir for s in self.skills.values())
         self.ctx = ToolContext(cwd=self.cwd, settings=self.settings, shell=detect_shell(self.settings.get("shell")),
                                read_roots=read_roots)
         tool_list = list(tools if tools is not None else default_tools())
@@ -132,8 +132,6 @@ class Agent:
         self.streamed: list[str] = []  # The reply text that streams now. It is not in the history yet.
         self.turn_number = 0
         self.in_turn = False
-        # User messages from plugins (DeepSeek agent.steer) that wait for the next step.
-        self.pending_steer: list[str] = []
         # User messages from the client (the "steer" message) that wait for the next step: (id, text, display).
         self.user_steer: list[tuple[str, str, str | None]] = []
         # The user message of the work now: the prompt of the turn, or the last steer message.
@@ -201,8 +199,6 @@ class Agent:
             self.tools.pop(name, None)
         self.plugins = host
         self.hooks = host.hooks if host is not None else Hooks()
-        if host is not None and host.dsh is not None and host.dsh.agent is None:
-            host.dsh.agent = self  # The main agent of the session, not a subagent of a skill.
         # A built-in tool, an MCP tool, or a preview tool wins over a plugin tool with the same name.
         added = [t for t in (host.tools() if host is not None else []) if t.name not in self.tools]
         self.tools.update({t.name: t for t in added})
@@ -217,7 +213,7 @@ class Agent:
     def set_skills(self, skills: dict[str, Skill]) -> None:
         """Replace the skills, for example after a change of the plugins."""
         self.skills = dict(skills)
-        self.ctx.read_roots = tuple(s.dir for s in self.skills.values() if s.has_files)
+        self.ctx.read_roots = tuple(s.dir for s in self.skills.values())
         self.tools.pop(SkillTool.name, None)
         if any(s.model_invocable for s in self.skills.values()):
             tool = SkillTool(self.skills, self._activate_skill, self.run_fork)
@@ -383,7 +379,6 @@ class Agent:
             while True:
                 streamed.clear()
                 step += 1
-                new_messages += self._take_pending_steer()
                 new_messages += await self._take_user_steer()
                 if self.hooks.has("step.before"):
                     event = await self.hooks.emit("step.before", StepEvent(
@@ -531,10 +526,6 @@ class Agent:
         left, self.user_steer = self.user_steer, []
         if left:
             await self.emit({"type": "steer.returned", "ids": [steer_id for steer_id, _, _ in left]})
-
-    def _take_pending_steer(self) -> list[dict[str, Any]]:
-        texts, self.pending_steer = self.pending_steer, []
-        return [self._add_steered(t) for t in texts]
 
     def _add_steered(self, text: str) -> dict[str, Any]:
         """Add a user message from a plugin. The client shows it as a notice."""

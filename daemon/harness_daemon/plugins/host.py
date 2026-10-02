@@ -34,7 +34,6 @@ from typing import Any, Callable
 from ..config import ConfigError, harness_home
 from ..providers import register_plugin_provider
 from ..tools.base import Approval, Tool, ToolContext, ToolError, ToolResult
-from .dsh import BRIDGE, DshError, DshSession
 from .install import Installed, bundle_layers, installed_bundles
 from .manifest import Bundle, icon_data
 from .patch import Layer, Row, compose, project_patch_path, read_patch_file, user_patch_path
@@ -557,26 +556,15 @@ class PluginHost:
         self._providers: list[str] = []
         self._services: dict[str, Any] = {}
         self._loaded = False
-        self.dsh: DshSession | None = None  # The DeepSeek plugins of the session (dsh.py).
 
     # -- what the session reads ----------------------------------------------------------------------
 
     def tools(self) -> list[Tool]:
-        """The Python plugin tools, then the DeepSeek plugin tools. A Python tool wins over a DeepSeek tool."""
-        tools = list(self._tools.values())
-        if self.dsh is not None:
-            tools += [t for t in self.dsh.tools if t.name not in self._tools]
-        return tools
+        return list(self._tools.values())
 
     def commands(self) -> dict[str, Command]:
-        """The / commands of the plugins. A Python plugin command wins over a DeepSeek command."""
-        commands = dict(self.dsh.commands) if self.dsh is not None else {}
-        commands.update(self._commands)
-        return commands
-
-    def dsh_skills(self) -> dict[str, Any]:
-        """The skills of the DeepSeek plugins. They have no folder on disk."""
-        return dict(self.dsh.skills) if self.dsh is not None else {}
+        """The / commands of the plugins."""
+        return dict(self._commands)
 
     def skill_roots(self) -> list[tuple[Path, str]]:
         return list(self._skill_roots)
@@ -591,8 +579,6 @@ class PluginHost:
                 continue
             if isinstance(value, str) and value.strip():
                 texts.append(value.strip())
-        if self.dsh is not None and self.dsh.prompt.strip():
-            texts.append(self.dsh.prompt.strip())
         return texts
 
     def mcp_servers(self) -> dict[str, dict[str, Any]]:
@@ -646,22 +632,6 @@ class PluginHost:
             state.module = module
             state.ctx = Context(self, row, installed.bundle, state.provide)  # type: ignore[arg-type]
         await self._activate()
-        await self._load_dsh()
-
-    async def _load_dsh(self) -> None:
-        """Open a session in the DeepSeek plugin host, if a DeepSeek bundle is installed. An error is a warning."""
-        if self.cwd is None or not BRIDGE.wanted():
-            return
-        session = DshSession(BRIDGE, self.cwd)
-        session.hooks = self.hooks  # The DeepSeek event handlers go on the bus of this host.
-        try:
-            await session.open()
-        except DshError as e:
-            self.warnings.append(f"The DeepSeek plugins did not load: {e}")
-            log.warning("The DeepSeek plugins did not load: %s", e)
-            return
-        self.dsh = session
-        self.warnings.extend(session.warnings)
 
     def scan(self) -> None:
         """Compose the rows, but run no plugin code. For the Plugins screen when no session is open."""
@@ -709,9 +679,6 @@ class PluginHost:
             if state.ctx is not None:
                 state.ctx.dispose()
                 state.ctx = None
-        if self.dsh is not None:
-            session, self.dsh = self.dsh, None
-            await session.close()
         self._loaded = False
 
     # -- the Plugins screen ------------------------------------------------------------------------------

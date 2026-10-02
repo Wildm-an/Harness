@@ -134,7 +134,7 @@ When the remote daemon has another version than the app, the app shows a warning
 - The daemon refuses the update while a turn runs.
 - Only a daemon that runs with Python can update this way. The daemon of the desktop app updates with the app.
 - A daemon that runs as a service (for example systemd) can stop with the old process: then let the service manager start it again, or update by hand.
-- A daemon from a source folder moves to `site-packages`. It keeps the path of the DeepSeek plugin host in `~/.harness/plugin-host-path`.
+- A daemon from a source folder moves to `site-packages`.
 - A daemon older than 0.1.30 has no update: update it by hand one time.
 
 ## Test

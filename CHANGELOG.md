@@ -3,6 +3,23 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.32 (not released yet)
+
+### Plugins
+
+- Harness no longer runs plugins made for DeepSeek Harness (npm bundles). The Plugins screen shows
+  only Harness plugins. Harness plugins (`plugin.json` bundles) work as before.
+- At start, the daemon deletes the data of the DeepSeek plugins: the folder `~/.harness/dsh` and the
+  file `~/.harness/plugin-host-path`.
+- The installers are smaller: they no longer contain the Node plugin host and its packages.
+
+### Settings and privacy
+
+- Settings > General > Updates has "Check for updates at start". It is on by default. When it is
+  off, the app looks for a new version only when you click "Check for updates".
+- "Show PR status" in the sidebar filter is now off by default.
+- The file `docs/PRIVACY.md` in the repository lists each network connection of the app.
+
 ## 0.1.30 (2026-10-02)
 
 ### Chat

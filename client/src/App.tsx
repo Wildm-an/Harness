@@ -51,7 +51,7 @@ import {
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
 import { McpPanel } from "./components/McpPanel";
-import { PluginsScreen, type PendingInstall } from "./components/PluginsScreen";
+import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { FolderPicker } from "./components/FolderPicker";
@@ -427,7 +427,6 @@ export default function App() {
   const [plugins, setPlugins] = useState<PluginsStatus | null>(null);
   const [pluginError, setPluginError] = useState<string | null>(null);
   const [pluginBusy, setPluginBusy] = useState(false);
-  const [pendingInstall, setPendingInstall] = useState<PendingInstall | null>(null); // A DeepSeek install that waits for approval.
 
   /** Opens the Plugins page of the Settings dialog. The message handler calls it too. */
   const showPlugins = useCallback(() => openSettings("plugins"), [openSettings]);
@@ -637,7 +636,6 @@ export default function App() {
           setPlugins(status);
           setPluginBusy(false);
           setPluginError(null);
-          if (status.installed) setPendingInstall(null);
           // The plugins can add / commands and skills. The / menu needs the new list.
           if (status.loaded) conn.send({ type: "skills.list" });
           return;
@@ -674,13 +672,6 @@ export default function App() {
           if (msg.ref?.startsWith("plugins.")) {
             setPluginBusy(false);
             setPluginError(msg.message);
-            const data = msg.data;
-            const waits = msg.ref === "plugins.install" && data?.source && (data.pending_builds?.length || data.mirror);
-            setPendingInstall(
-              waits && data?.source
-                ? { source: data.source, keys: data.pending_builds ?? [], mirror: data.mirror, useMirror: data.use_mirror === true }
-                : null,
-            );
             return;
           }
           if (msg.ref === "projects.save" || msg.ref === "projects.delete") {
@@ -2339,31 +2330,17 @@ export default function App() {
                 status={plugins}
                 error={pluginError}
                 busy={pluginBusy}
-                pendingInstall={pendingInstall}
                 hasSession={session !== null}
-                onInstall={(source, replace, kind, options) => {
+                onInstall={(source, replace) => {
                   setPluginError(null);
-                  setPendingInstall(null);
-                  const msg = {
-                    type: "plugins.install" as const,
-                    source,
-                    replace,
-                    kind,
-                    ...(options?.approvedBuilds ? { approved_builds: options.approvedBuilds } : {}),
-                    ...(options?.useMirror ? { use_mirror: true } : {}),
-                  };
-                  if (sendSafely(msg)) setPluginBusy(true);
+                  if (sendSafely({ type: "plugins.install", source, replace })) setPluginBusy(true);
                 }}
-                onRemove={(name, kind) => {
+                onRemove={(name) => {
                   setPluginError(null);
-                  if (sendSafely({ type: "plugins.remove", name, kind })) setPluginBusy(true);
+                  if (sendSafely({ type: "plugins.remove", name })) setPluginBusy(true);
                 }}
-                onSetBundle={(name, enabled, kind) => sendSafely({ type: "plugins.set_bundle", name, enabled, kind })}
-                onSetPlugin={(id, enabled, kind) => sendSafely({ type: "plugins.set_plugin", id, enabled, kind })}
-                onDismissPending={() => {
-                  setPendingInstall(null);
-                  setPluginError(null);
-                }}
+                onSetBundle={(name, enabled) => sendSafely({ type: "plugins.set_bundle", name, enabled })}
+                onSetPlugin={(id, enabled) => sendSafely({ type: "plugins.set_plugin", id, enabled })}
                 onReload={() => {
                   setPluginError(null);
                   if (sendSafely({ type: "plugins.reload" })) setPluginBusy(true);

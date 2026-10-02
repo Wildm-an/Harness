@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
@@ -25,6 +26,8 @@ from typing import Any
 from ..config import ConfigError, harness_home, read_json, write_json
 from .manifest import Bundle, compatibility_problem, read_manifest
 from .patch import Layer, read_patch_file, user_patch_path, write_patch_file
+
+log = logging.getLogger(__name__)
 
 STATE_FILE = "plugins.json"
 IGNORED = shutil.ignore_patterns(".git", "__pycache__", "node_modules", ".venv", "*.pyc")
@@ -234,3 +237,20 @@ def remove_tree(path: Path) -> None:
         func(target)
     if path.exists():
         shutil.rmtree(path, onerror=on_error)
+
+
+# The data of the DeepSeek Harness plugins. Version 0.1.32 removed them.
+OLD_DEEPSEEK_DATA = ("dsh", "plugin-host-path")
+
+
+def remove_old_deepseek_data() -> None:
+    """Delete the DeepSeek plugin profile (~/.harness/dsh) and the plugin host hint, if they exist."""
+    for name in OLD_DEEPSEEK_DATA:
+        path = harness_home() / name
+        try:
+            if path.is_dir():
+                remove_tree(path)
+            elif path.exists():
+                path.unlink()
+        except OSError as e:
+            log.warning("Could not delete the old DeepSeek plugin data %s: %s", path, e)

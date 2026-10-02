@@ -144,72 +144,12 @@ When you turn a row on or off in the Plugins screen, Harness writes `disabled` t
 - Remove deletes the bundle folder, its state, and the user-layer overrides of its rows.
 - After a change, the plugins of the open session load again. A changed plugin file has an effect when you select "Load the plugins again", or in the next session.
 
-## DeepSeek Harness plugins
-
-Harness also runs plugins made for DeepSeek Harness, without changes. These plugins are npm bundles: a `package.json` with `dsh.bundle.patch`, and JavaScript modules for the Cordis framework. The plan and its phases are in [plugin-host/spike/REPORT.md](../plugin-host/spike/REPORT.md).
-
-### How it works
-
-- A Node process, the **plugin host** ([plugin-host/](../plugin-host)), loads the bundles. It uses the Node of the Playwright driver, so users do not install Node.
-- The host loads the real DeepSeek service packages: `tools`, `commands`, `systemPrompt`, `skills`, and `llm`. Thus a plugin gets the same API and behavior as in DeepSeek Harness 0.2.0-rc.2.
-- The daemon talks to the host with JSON-RPC on stdin and stdout. One host serves all sessions. Each session is one agent in the host.
-- In a session, the tools, `/` commands, skills, and prompt sections of the DeepSeek plugins are next to the Harness plugins. The daemon reads them again before each turn.
-- The host starts when a session opens and a DeepSeek bundle is installed. Its log is `~/.harness/logs/plugin-host.log`.
-
-### Install
-
-1. Open the Plugins screen, and select **DeepSeek**.
-2. Type an npm name (for example `dsh-plugin-guide`), a git address, a URL of a `.tgz` file, or a local folder.
-3. Select **Install**.
-
-The host installs the bundle with pnpm 11 into `~/.harness/dsh/`, with the DeepSeek profile settings. If the npm registry cannot be reached, it tries `https://registry.npmmirror.com/`.
-
-- **Version gate:** a bundle that declares `@deepseek-ai/dsh*` peers for another DeepSeek Harness version does not install, the same as in DeepSeek Harness.
-- **Build scripts:** pnpm does not run the build scripts of a package. If a package needs them, the Plugins screen lists them. Select **Allow the scripts and install** to run them. The approval is in `~/.harness/dsh/pnpm-workspace.yaml`.
-- **Turn off:** the bundle switch changes the bundle list in `~/.harness/dsh/package.json`. The row switch writes `disabled` into `~/.harness/dsh/cordis.patch.yml`.
-
-### Rules
-
-- A DeepSeek tool needs your approval for each call, as an MCP tool does. The rule is the tool name, for example `greet`.
-- A Harness tool wins over a DeepSeek tool with the same name. A Harness plugin command wins over a DeepSeek command.
-- A skill in a folder wins over a DeepSeek skill with the same name.
-
-### Agent and tool events (phase 2)
-
-Each Harness session is one agent in the real DeepSeek `agents` service. The daemon sends the events of the Harness loop to the DeepSeek plugins, with the scope of that agent. It sends an event only when a plugin listens to it.
-
-| DeepSeek event | When | What a plugin can do |
-|---|---|---|
-| `agent/created`, `agent/disposed` | A session opens or closes | Read the agent. |
-| `agent/status`, `agent/inbox/inserted`, `agent/inbox/claimed` | A turn starts or ends | Read the state and the prompt. |
-| `agent/pre-step` | Before each model call | Change the new user messages. "reject" ends the turn as `blocked`. |
-| `agent/request` | Before each model call | Change the provider, model, temperature, max tokens, and stop list. |
-| `agent/request-error` | A model call fails | "retry" calls the model again. |
-| `agent/assistant-stream` | Each chunk of the reply | Read the `start`, `chunk`, and `end` frames. |
-| `agent/turn-stopping` | The turn is about to end | `agent.steer(text)` adds a message, and the turn continues. |
-| `agent/error` | The turn ends with an error | Read it. |
-| `tools/pre-execute` | Before each Harness tool call | "deny", "cancel", or "ask" (the permission card, also if a rule allows the call). |
-| `tools/post-execute` | After each Harness tool call | Replace the output, "block" it, or add user messages (`additionalContexts`). |
-| `tools/result` | After each tool call | Read the final result. |
-| `approval/request` | A plugin asks about a DeepSeek tool | Answer first. With no answer, the user sees the permission card. |
-
-DeepSeek tools get their `tools/*` events in the host, through the DeepSeek tool pipeline. A plugin that asks about a DeepSeek tool shows a second permission card, after the Harness approval of the tool.
-
-`agent.steer()` outside `agent/turn-stopping` adds the message to the next step of the session. If no turn runs, the message waits for the next turn.
-
-### Limits of this version (phase 2)
-
-- The host has the core services and the `agents` and `approval` services. A plugin that needs another service (for example `webServer` or `fs`) waits, and the Plugins screen names the missing services. Later phases add more services.
-- `session/event` and `llm/stream` do not reach DeepSeek plugins yet.
-- LLM adapters of DeepSeek plugins do not show as providers yet.
-- The UI half of a bundle does not load.
-- A remote daemon that runs from source needs `npm install` in `plugin-host/`.
-
 ## Security
 
-Plugin code runs in the daemon process or in the plugin host process. It has the same rights as the daemon. It is not in a sandbox. Install only plugins that you trust.
+Plugin code runs in the daemon process. It has the same rights as the daemon. It is not in a sandbox. Install only plugins that you trust.
 
 ## Limits
 
 - The sidecar is a frozen PyInstaller build. A plugin cannot install packages with pip. A plugin can use its own files, the Python standard library modules in the sidecar, and the packages of the daemon, for example `httpx` and `yaml`. With a daemon from source, all installed packages are available.
 - These features of DeepSeek Harness are not in this version: plugin UI panels in the client, groups of rows, `!!js` expressions in patch files, profiles, and an agent tool that manages plugins.
+- Harness does not run plugins made for DeepSeek Harness (npm bundles). Version 0.1.32 removed that support.

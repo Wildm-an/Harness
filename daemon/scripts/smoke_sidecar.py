@@ -76,21 +76,6 @@ async def talk(port: int, token: str) -> None:
                 check(False, f"hardware detection: {msg.get('message')}")
 
 
-PLUGIN_HOST_CHECK = """
-import asyncio
-from harness_daemon.plugins.dsh import BRIDGE, host_dir
-
-print("host", host_dir() is not None)
-
-async def main():
-    await BRIDGE.ensure()
-    print("runtime", BRIDGE.state.get("runtime"), "node", BRIDGE.state.get("node"))
-    await BRIDGE.stop()
-
-asyncio.run(main())
-"""
-
-
 TERMINAL_CHECK = """
 import asyncio, os
 from pathlib import Path
@@ -156,10 +141,6 @@ def main() -> None:
                 print("SKIP Chromium is not installed (harness-daemon --install-browser)")
             else:
                 check(False, f"Chromium start: {out.strip()}")
-
-            out = run_script(exe, env, PLUGIN_HOST_CHECK)
-            check("host True" in out, "the plugin host is in the bundle")
-            check("runtime 0." in out, f"the plugin host starts ({' '.join(out.split()[-4:])})")
 
             out = run_script(exe, env, TERMINAL_CHECK)
             check("terminal True" in out, f"the terminal runs a shell ({out.strip()[-80:]})")

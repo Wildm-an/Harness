@@ -30,8 +30,8 @@ from .config import ConfigError, harness_home, load_settings, project_settings_p
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, MODES, PermissionRules
 from .plugins import Invocation, PluginHost, Prompt, run_command
-from .plugins.dsh import BRIDGE as DSH, INSTALL_TIMEOUT as DSH_INSTALL_TIMEOUT, DshError
-from .plugins.install import InstallError, install as install_plugin, remove as remove_plugin, set_bundle_enabled
+from .plugins.install import (InstallError, install as install_plugin, remove as remove_plugin, remove_old_deepseek_data,
+                              set_bundle_enabled)
 from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
 from . import provider_config
@@ -127,6 +127,7 @@ class ProtocolError(Exception):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await asyncio.to_thread(remove_old_deepseek_data)
     yield
     TUNNELS.close_all()  # Close the SSH tunnels to model endpoints.
     stop_all_servers()
@@ -141,7 +142,6 @@ def stop_all_servers() -> None:
     COOKBOOK.stop_all()  # The downloads can continue after the next start. Served models keep running.
     for manager in list(MCPS):
         manager.close_now()
-    DSH.stop_now()  # The DeepSeek plugin host.
 
 
 def create_app(token: str, storage: Storage | None = None) -> FastAPI:
@@ -721,7 +721,7 @@ class Connection:
             agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=live.send,
                           approver=live.approve, settings=settings, history=history,
                           summary=summary, context_length=context.length,
-                          skills=discover_skills(cwd, plugins.skill_roots(), plugins.dsh_skills()),
+                          skills=discover_skills(cwd, plugins.skill_roots()),
                           image_input=images, context_source=context.source, plugins=plugins)
         except BaseException:
             await plugins.dispose()
@@ -816,9 +816,7 @@ class Connection:
                 stored[sid] = (row, self.storage.load_messages(sid))
         expanded = await asyncio.to_thread(expand_references, text, session.cwd, stored.get)
         await live.wait_for_mcp()
-        await self.refresh_dsh(live)
         # "/name" skills in the typed text (not in the referenced files): add their instructions.
-        # Read the skills after refresh_dsh, so that the skills of a DeepSeek plugin are current.
         if live.tasks is not None:
             notes = live.tasks.take_ended_notes()
             if notes:
@@ -915,25 +913,7 @@ class Connection:
         live = live or self.current
         session = live.session if live is not None else None
         host = live.plugins if live is not None else None
-        return discover_skills(session.cwd if session else None,
-                               host.skill_roots() if host is not None else None,
-                               host.dsh_skills() if host is not None else None)
-
-    async def refresh_dsh(self, live: LiveSession) -> None:
-        """Before a turn: read the DeepSeek plugin tools, commands, skills, and prompt text again.
-
-        A DeepSeek plugin can change them at any time, and a prompt section can be a function.
-        """
-        session, host = live.session, live.plugins
-        if session is None or host is None or host.dsh is None:
-            return
-        try:
-            await host.dsh.refresh()
-        except DshError as e:
-            log.warning("The DeepSeek plugins did not refresh: %s", e)
-            return
-        session.agent.set_plugins(host)
-        session.agent.set_skills(self.skills(live))
+        return discover_skills(session.cwd if session else None, host.skill_roots() if host is not None else None)
 
     async def start_plugins(self, folder: Path) -> PluginHost:
         """The plugins of a project with no session, for the / menu of the start screen.
@@ -994,7 +974,6 @@ class Connection:
         assert session is not None
         session.set_title_from(f"/{skill.name} {args}")
         await live.wait_for_mcp()
-        await self.refresh_dsh(live)
         try:
             await session.agent.run_skill(skill, args)
         finally:
@@ -1450,10 +1429,6 @@ async def on_mcp_init(conn: Connection, msg: dict[str, Any]) -> None:
 
 
 # -- plugins (docs/PLUGINS.md) -----------------------------------------------------------------------
-#
-# Two kinds of plugins share the Plugins screen: Harness plugins (Python, plugins/host.py) and
-# DeepSeek Harness plugins (npm bundles in the Node plugin host, plugins/dsh.py). A message about
-# a DeepSeek plugin has "kind": "deepseek".
 
 
 async def _send_plugins(conn: Connection, **extra: Any) -> None:
@@ -1462,12 +1437,7 @@ async def _send_plugins(conn: Connection, **extra: Any) -> None:
     if host is None:
         host = PluginHost(None)
         host.scan()
-    try:
-        deepseek = await DSH.describe()
-    except DshError as e:
-        deepseek = {"available": True, "running": False, "error": str(e), "bundles": [], "orphans": [], "warnings": []}
-    await conn.send({"type": "plugins", "loaded": conn.plugins is not None, **host.describe(), "deepseek": deepseek,
-                     **extra})
+    await conn.send({"type": "plugins", "loaded": conn.plugins is not None, **host.describe(), **extra})
 
 
 async def _plugins_changed(conn: Connection, **extra: Any) -> None:
@@ -1475,21 +1445,13 @@ async def _plugins_changed(conn: Connection, **extra: Any) -> None:
     await _send_plugins(conn, **extra)
 
 
-def _plugin_changes_allowed(conn: Connection) -> None:
+def _plugin_changes_allowed(conn: Connection, msg: dict[str, Any]) -> None:
+    # Version 0.1.32 removed the DeepSeek Harness plugins. An older client can still send their kind.
+    if msg.get("kind") not in (None, "harness"):
+        raise ProtocolError("Harness supports only Harness plugins. DeepSeek Harness plugins are not supported.")
     # The plugins load again after a change. A running turn must not lose its tools.
     if conn.session is not None:
         conn.require_idle()
-
-
-def _plugin_kind(msg: dict[str, Any]) -> str:
-    kind = msg.get("kind") or "harness"
-    if kind not in ("harness", "deepseek"):
-        raise ProtocolError("'kind' must be \"harness\" or \"deepseek\".")
-    return kind
-
-
-def _dsh_error(e: DshError) -> ProtocolError:
-    return ProtocolError(str(e))
 
 
 @handler("plugins.list")
@@ -1499,60 +1461,25 @@ async def on_plugins_list(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("plugins.reload")
 async def on_plugins_reload(conn: Connection, msg: dict[str, Any]) -> None:
-    """Load the plugins of the session again, for example after a change to a plugin file.
-
-    A running DeepSeek plugin host starts again, because Node keeps the old module code.
-    """
-    _plugin_changes_allowed(conn)
-    if DSH.running:
-        try:
-            await DSH.restart()
-        except DshError as e:
-            raise _dsh_error(e) from None
+    """Load the plugins of the session again, for example after a change to a plugin file."""
+    _plugin_changes_allowed(conn, msg)
     await _plugins_changed(conn)
 
 
 @handler("plugins.install")
 async def on_plugins_install(conn: Connection, msg: dict[str, Any]) -> None:
-    """Install a bundle. A git clone or a registry download can be slow, so the work runs as a task.
+    """Install a bundle: {"source": <folder or git URL>, "replace"?: bool}.
 
-    Harness: {"source": <folder or git URL>, "replace"?: bool}.
-    DeepSeek: {"kind": "deepseek", "source": <npm name, git address, URL, or local path>,
-    "approved_builds"?: [<keys that pnpm printed>], "use_mirror"?: bool}. If the install needs build
-    scripts, the error has "data": {"pending_builds": [...]}, and the client can send the install again
-    with them. If the npm registry cannot be reached, the error has "data": {"mirror": <address>}, and
-    the client can ask the user and send the install again with "use_mirror": true.
+    A git clone can be slow, so the work runs as a task.
     """
     source = _text_arg(msg, "source")
-    kind = _plugin_kind(msg)
     replace = bool(msg.get("replace"))
-    approved = msg.get("approved_builds") or []
-    if not isinstance(approved, list) or not all(isinstance(k, str) for k in approved):
-        raise ProtocolError("'approved_builds' must be a list of strings.")
-    use_mirror = msg.get("use_mirror") is True
-    _plugin_changes_allowed(conn)
+    _plugin_changes_allowed(conn, msg)
 
     async def run() -> None:
         try:
-            if kind == "deepseek":
-                result = await DSH.request("plugins.install",
-                                           {"spec": source, "approvedBuilds": approved, "useMirror": use_mirror},
-                                           timeout=DSH_INSTALL_TIMEOUT)
-                await DSH.restart()  # The new package code loads in a new process.
-                await _plugins_changed(conn, installed=result.get("name"), installed_kind="deepseek")
-            else:
-                item = await asyncio.to_thread(install_plugin, source, replace)
-                await _plugins_changed(conn, installed=item.name, installed_kind="harness")
-        except DshError as e:
-            data = e.data if isinstance(e.data, dict) else {}
-            details: dict[str, Any] = {}
-            if data.get("pendingBuilds"):
-                details["pending_builds"] = data["pendingBuilds"]
-            if data.get("mirror"):
-                details["mirror"] = data["mirror"]
-            if details:  # The client sends the install again: with the same source and registry.
-                details.update(source=source, use_mirror=use_mirror)
-            await conn.error(str(e), ref="plugins.install", data=details or None)
+            item = await asyncio.to_thread(install_plugin, source, replace)
+            await _plugins_changed(conn, installed=item.name)
         except (InstallError, ConfigError, ProtocolError) as e:
             await conn.error(str(e), ref="plugins.install")
         except Exception as e:  # noqa: BLE001
@@ -1565,66 +1492,35 @@ async def on_plugins_install(conn: Connection, msg: dict[str, Any]) -> None:
 @handler("plugins.remove")
 async def on_plugins_remove(conn: Connection, msg: dict[str, Any]) -> None:
     name = _text_arg(msg, "name")
-    kind = _plugin_kind(msg)
-    _plugin_changes_allowed(conn)
+    _plugin_changes_allowed(conn, msg)
     if conn.plugins is not None:
         await conn.plugins.dispose()  # Stop the plugin code before its files go.
-    if kind == "deepseek":
-        try:
-            await DSH.request("plugins.remove", {"name": name}, timeout=DSH_INSTALL_TIMEOUT)
-            await DSH.restart()
-        except DshError as e:
-            await conn.reload_plugins()
-            raise _dsh_error(e) from None
-    else:
-        await asyncio.to_thread(remove_plugin, name)
+    await asyncio.to_thread(remove_plugin, name)
     await _plugins_changed(conn, removed=name)
 
 
 @handler("plugins.set_bundle")
 async def on_plugins_set_bundle(conn: Connection, msg: dict[str, Any]) -> None:
-    """Turn a bundle on or off: {"name", "enabled", "kind"?}.
-
-    Harness bundles: the state is in ~/.harness/plugins.json. DeepSeek bundles: the bundle list of
-    the profile, ~/.harness/dsh/package.json.
-    """
+    """Turn a bundle on or off: {"name", "enabled"}. The state is in ~/.harness/plugins.json."""
     name = _text_arg(msg, "name")
     if not isinstance(msg.get("enabled"), bool):
         raise ProtocolError("'enabled' must be true or false.")
-    kind = _plugin_kind(msg)
-    _plugin_changes_allowed(conn)
-    if kind == "deepseek":
-        try:
-            await DSH.request("plugins.set_bundle", {"name": name, "enabled": msg["enabled"]})
-        except DshError as e:
-            raise _dsh_error(e) from None
-    else:
-        set_bundle_enabled(name, msg["enabled"])
+    _plugin_changes_allowed(conn, msg)
+    set_bundle_enabled(name, msg["enabled"])
     await _plugins_changed(conn)
 
 
 @handler("plugins.set_plugin")
 async def on_plugins_set_plugin(conn: Connection, msg: dict[str, Any]) -> None:
-    """Turn one plugin row on or off: {"id", "enabled", "kind"?}.
-
-    Harness rows: the value goes to a patch layer (patch.py). DeepSeek rows: the user layer of the
-    profile, ~/.harness/dsh/cordis.patch.yml.
-    """
+    """Turn one plugin row on or off: {"id", "enabled"}. The value goes to a patch layer (patch.py)."""
     row_id = _text_arg(msg, "id")
     if not isinstance(msg.get("enabled"), bool):
         raise ProtocolError("'enabled' must be true or false.")
-    kind = _plugin_kind(msg)
-    _plugin_changes_allowed(conn)
-    if kind == "deepseek":
-        try:
-            await DSH.request("plugins.set_row", {"id": row_id, "enabled": msg["enabled"]})
-        except DshError as e:
-            raise _dsh_error(e) from None
-    else:
-        try:
-            set_row_disabled(row_id, not msg["enabled"], conn.session.cwd if conn.session else None)
-        except ValueError as e:
-            raise ProtocolError(str(e)) from None
+    _plugin_changes_allowed(conn, msg)
+    try:
+        set_row_disabled(row_id, not msg["enabled"], conn.session.cwd if conn.session else None)
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
     await _plugins_changed(conn)
 
 
@@ -2283,7 +2179,7 @@ async def on_skills_list(conn: Connection, msg: dict[str, Any]) -> None:
     else:
         host = await conn.start_plugins(folder)
         plugin_commands = host.commands()
-        found = await asyncio.to_thread(discover_skills, folder, host.skill_roots(), host.dsh_skills())
+        found = await asyncio.to_thread(discover_skills, folder, host.skill_roots())
     commands = [{"name": c.name, "description": c.description, "argument-hint": c.argument_hint,
                  "source": f"plugin ({c.plugin})", "builtin": False}
                 for c in plugin_commands.values() if c.name not in BUILTIN_COMMANDS]
@@ -2303,12 +2199,12 @@ async def on_skills_get(conn: Connection, msg: dict[str, Any]) -> None:
         p.relative_to(skill.dir).as_posix()
         for p in skill.dir.rglob("*")
         if p.is_file() and "__pycache__" not in p.parts
-    )[:200] if skill.has_files else []
+    )[:200]
     await conn.send({
         "type": "skill",
         **skill.summary(),
         "allowed-tools": list(skill.allowed_tools),
-        "content": skill.content if skill.content is not None else skill.path.read_text(encoding="utf-8", errors="replace"),
+        "content": skill.path.read_text(encoding="utf-8", errors="replace"),
         "files": files,
     })
 

@@ -1,5 +1,0 @@
-- insert:
-    - id: community
-      name: community-dsh
-      config:
-        suffix: "!"

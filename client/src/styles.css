@@ -2035,32 +2035,6 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.plugin-install .segmented {
-  flex: none;
-}
-
-.plugin-builds > div {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.plugin-builds p,
-.plugin-builds ul {
-  margin: 0;
-}
-
-.plugin-builds ul {
-  padding-left: 18px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.plugin-builds .form-actions {
-  justify-content: flex-end;
-}
-
 .plugin-rows {
   list-style: none;
   margin: 8px 0 0;

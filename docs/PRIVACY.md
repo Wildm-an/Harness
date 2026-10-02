@@ -40,10 +40,7 @@ Harness connects to these services only after you add them or turn them on:
   name of the repository and the branch to GitHub. This setting is off by default.
 - **The Cookbook.** The Local Models screen searches huggingface.co when you open it. Model details
   and downloads use huggingface.co. Harness sends your Hugging Face token only if you save one.
-- **Plugins.** A plugin install from a git address clones the repository. A DeepSeek plugin install
-  from a package name uses the npm registry of your npm settings. If the npm registry cannot be
-  reached, Harness asks before it uses the mirror `https://registry.npmmirror.com/`. A third party runs
-  the mirror.
+- **Plugins.** A plugin install from a git address clones the repository.
 - **The agent browser.** The agent browser opens the servers of the project. It opens other sites
   only after you allow them. Chromium downloads only when you run `harness-daemon --install-browser`.
 - **The Browser pane, the terminal, and the agent tools.** These open the addresses and run the
@@ -58,12 +55,12 @@ The daemon listens only on `127.0.0.1` (your own computer). A daemon that you st
 
 ## Privacy policies of third-party services
 
-- GitHub (the update check, the downloads, `gh`, and the npm registry):
+- GitHub (the update check, the downloads, and `gh`):
   https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement
 - Hugging Face: https://huggingface.co/privacy
 - OpenAI: https://openai.com/policies/privacy-policy/
 - OpenRouter: https://openrouter.ai/privacy
 - Microsoft (WebView2 and the Chromium download of Playwright): https://privacy.microsoft.com/privacystatement
 
-For other model providers, MCP servers, git hosts, and the npm mirror, read the policy of the service
+For other model providers, MCP servers, and git hosts, read the policy of the service
 that you use.
