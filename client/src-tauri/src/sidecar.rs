@@ -7,8 +7,10 @@
 //!
 //! The daemon command:
 //! 1. `HARNESS_DAEMON` environment variable: a path to a daemon executable.
-//! 2. The bundled sidecar: `harness-daemon` next to the app executable. The installers put it
-//!    there (`bundle.externalBin` in `tauri.bundle.json`).
+//! 2. The bundled sidecar: `harness-daemon/harness-daemon` in the resource folder of the app. The
+//!    installers put the folder there (`bundle.resources` in `tauri.bundle.json`). It is a PyInstaller
+//!    "onedir" folder: a onefile executable unpacked all its files at each start (about 4 seconds).
+//!    The onefile `harness-daemon` next to the app executable (0.1.26 and before) is the fallback.
 //! 3. Development layout: `<repo>/daemon/.venv` with `python -m harness_daemon`.
 //!
 //! The development daemon writes its log to the terminal. The other daemons write it to
@@ -43,9 +45,17 @@ struct Running {
 #[derive(Clone, Default)]
 pub struct Sidecar {
     inner: Arc<Mutex<Option<Running>>>,
+    resource_dir: Arc<Mutex<Option<PathBuf>>>, // The resource folder of the app: it has the bundled daemon.
 }
 
 impl Sidecar {
+    /// The resource folder of the app (`app.path().resource_dir()`). Call it before `ensure`.
+    pub fn set_resource_dir(&self, dir: Option<PathBuf>) {
+        if let Ok(mut guard) = self.resource_dir.lock() {
+            *guard = dir;
+        }
+    }
+
     /// Returns the running daemon, or starts a new daemon. Blocks until the daemon is ready.
     pub fn ensure(&self) -> Result<DaemonInfo, String> {
         let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
@@ -55,7 +65,8 @@ impl Sidecar {
             }
         }
         *guard = None;
-        let running = spawn_daemon()?;
+        let resource_dir = self.resource_dir.lock().ok().and_then(|dir| dir.clone());
+        let running = spawn_daemon(resource_dir.as_deref())?;
         let info = running.info.clone();
         *guard = Some(running);
         Ok(info)
@@ -85,11 +96,11 @@ fn random_token() -> Result<String, String> {
 }
 
 /// The daemon command, and true if the daemon log goes to the terminal.
-fn daemon_command() -> Result<(Command, bool), String> {
+fn daemon_command(resource_dir: Option<&Path>) -> Result<(Command, bool), String> {
     if let Ok(path) = std::env::var("HARNESS_DAEMON") {
         return Ok((Command::new(path), false));
     }
-    if let Some(sidecar) = bundled_sidecar() {
+    if let Some(sidecar) = bundled_sidecar(resource_dir) {
         let mut cmd = Command::new(sidecar);
         // The daemon gets the project folder in each session. Its own folder does not matter.
         if let Some(home) = home_dir() {
@@ -114,8 +125,15 @@ fn daemon_command() -> Result<(Command, bool), String> {
     Ok((cmd, true))
 }
 
-/// The sidecar that the installer put next to the app executable (Contents/MacOS on macOS).
-fn bundled_sidecar() -> Option<PathBuf> {
+/// The sidecar that the installer put in the resource folder: `harness-daemon/harness-daemon`. Else the
+/// onefile sidecar of an older install, next to the app executable (Contents/MacOS on macOS).
+fn bundled_sidecar(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = resource_dir {
+        let path = dir.join("harness-daemon").join(SIDECAR_NAME);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
     let exe = std::env::current_exe().ok()?;
     let path = exe.parent()?.join(SIDECAR_NAME);
     path.is_file().then_some(path)
@@ -144,9 +162,9 @@ fn open_log(logs: &Path) -> std::io::Result<(File, PathBuf)> {
     Ok((File::create(&path)?, path))
 }
 
-fn spawn_daemon() -> Result<Running, String> {
+fn spawn_daemon(resource_dir: Option<&Path>) -> Result<Running, String> {
     let token = random_token()?;
-    let (mut cmd, log_to_terminal) = daemon_command()?;
+    let (mut cmd, log_to_terminal) = daemon_command(resource_dir)?;
     cmd.args(["--host", "127.0.0.1", "--port", "0", "--exit-on-stdin-eof"])
         .env("HARNESS_TOKEN", &token)
         .stdin(Stdio::piped())

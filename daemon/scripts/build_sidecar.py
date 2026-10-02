@@ -6,10 +6,11 @@
 Steps:
 
 1. npm installs the packages of the plugin host (plugin-host/), which go into the bundle.
-2. PyInstaller makes one executable from packaging/harness-daemon.spec.
+2. PyInstaller makes the folder build/sidecar/dist/harness-daemon/ from packaging/harness-daemon.spec
+   (onedir: the executable and its _internal folder).
 3. The script runs the smoke test (scripts/smoke_sidecar.py). --no-smoke skips it.
-4. The script copies the executable to client/src-tauri/binaries/harness-daemon-<target triple>,
-   the name that Tauri expects for bundle.externalBin.
+4. The script copies the folder to client/src-tauri/binaries/harness-daemon/. The installers put it
+   in the resource folder of the app (bundle.resources in tauri.bundle.json).
 
 PyInstaller cannot cross-compile. Build on each operating system and CPU type.
 The venv needs the "package" extra: pip install -e ".[package]".
@@ -33,21 +34,14 @@ WORK = DAEMON / "build" / "sidecar" / "work"
 EXE_SUFFIX = ".exe" if os.name == "nt" else ""
 
 
-def host_triple() -> str:
-    """The Rust target triple of this computer, for example x86_64-pc-windows-msvc."""
-    try:
-        out = subprocess.run(["rustc", "-vV"], capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError) as e:
-        sys.exit(f"rustc was not found ({e}). Install Rust, or give the triple with --target.")
-    for line in out.splitlines():
-        if line.startswith("host:"):
-            return line.split(":", 1)[1].strip()
-    sys.exit("rustc -vV did not show the host triple. Give the triple with --target.")
+def folder_size(folder: Path) -> tuple[int, int]:
+    """The number of files and the bytes in a folder."""
+    files = [p for p in folder.rglob("*") if p.is_file()]
+    return len(files), sum(p.stat().st_size for p in files)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--target", help="The Rust target triple for the file name. Default: the rustc host.")
     parser.add_argument("--no-smoke", action="store_true", help="Do not run the smoke test.")
     args = parser.parse_args()
 
@@ -55,7 +49,6 @@ def main() -> None:
         import PyInstaller  # noqa: F401
     except ImportError:
         sys.exit('PyInstaller is not installed. Run: pip install -e ".[package]"')
-    triple = args.target or host_triple()
 
     npm = shutil.which("npm")
     if npm is None:
@@ -65,17 +58,25 @@ def main() -> None:
 
     subprocess.run([sys.executable, "-m", "PyInstaller", str(SPEC), "--noconfirm", "--clean",
                     "--distpath", str(DIST), "--workpath", str(WORK)], cwd=DAEMON / "packaging", check=True)
-    built = DIST / f"harness-daemon{EXE_SUFFIX}"
+    folder = DIST / "harness-daemon"
+    built = folder / f"harness-daemon{EXE_SUFFIX}"
     if not built.is_file():
         sys.exit(f"PyInstaller did not make {built}.")
-    print(f"Built {built} ({built.stat().st_size / 1e6:.0f} MB)", flush=True)
+    count, size = folder_size(folder)
+    print(f"Built {folder} ({count} files, {size / 1e6:.0f} MB)", flush=True)
 
     if not args.no_smoke:
         subprocess.run([sys.executable, str(DAEMON / "scripts" / "smoke_sidecar.py"), str(built)], check=True)
 
     CLIENT_BINARIES.mkdir(parents=True, exist_ok=True)
-    target = CLIENT_BINARIES / f"harness-daemon-{triple}{EXE_SUFFIX}"
-    shutil.copy2(built, target)
+    # The onefile sidecar of the versions before 0.1.27 (bundle.externalBin). The installers do not use it now.
+    for old in CLIENT_BINARIES.glob(f"harness-daemon-*{EXE_SUFFIX}"):
+        if old.is_file():
+            old.unlink()
+    target = CLIENT_BINARIES / "harness-daemon"
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(folder, target)
     print(f"Copied the sidecar to {target}")
 
 

@@ -1,7 +1,9 @@
 # PyInstaller spec for the daemon sidecar (SPEC.md section 10, phase 13).
 #
-# Build with scripts/build_sidecar.py. The result is one executable:
-# build/sidecar/dist/harness-daemon (.exe on Windows).
+# Build with scripts/build_sidecar.py. The result is a folder (PyInstaller "onedir"):
+# build/sidecar/dist/harness-daemon/, with the executable harness-daemon (.exe on Windows) and the
+# _internal folder. A onefile executable unpacks all its files to a temporary folder at each start,
+# which took about 4 seconds of the 7 seconds before the daemon was ready.
 
 import os
 import sys
@@ -57,10 +59,18 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    [],
+    exclude_binaries=True,  # onedir: the binaries and the data files go in the folder (COLLECT).
+    name="harness-daemon",
+    console=True,  # The client starts it with no window (CREATE_NO_WINDOW on Windows).
+    upx=False,
+    strip=False,
+)
+coll = COLLECT(
+    exe,
     a.binaries,
     a.datas,
     name="harness-daemon",
-    console=True,  # The client starts it with no window (CREATE_NO_WINDOW on Windows).
     upx=False,
     strip=False,
 )

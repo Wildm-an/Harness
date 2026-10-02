@@ -64,7 +64,7 @@ def repair_environment() -> None:
         elif name in os.environ and sys.platform != "win32":
             del os.environ[name]
     # A frozen Playwright looks for Chromium in the bundle (PLAYWRIGHT_BROWSERS_PATH=0). The bundle
-    # has no Chromium, and a onefile bundle is a new temporary folder at each start. Use the cache
+    # has no Chromium, and the installer replaces the bundle folder at each update. Use the cache
     # of the user, the same folder as "python -m playwright install".
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", playwright_cache())
     if sys.platform in ("darwin", "linux"):

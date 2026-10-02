@@ -150,6 +150,7 @@ pub fn run() {
             }
             // Start the daemon early, so that it is ready when the UI asks for it.
             let sidecar = app.state::<Sidecar>().inner().clone();
+            sidecar.set_resource_dir(app.path().resource_dir().ok());
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(e) = sidecar.ensure() {
                     eprintln!("[harness] {e}");

@@ -97,7 +97,7 @@ The installers of the desktop app include the daemon as one executable (PyInstal
 .venv/Scripts/python scripts/build_sidecar.py
 ```
 
-The script builds `build/sidecar/dist/harness-daemon`, runs the smoke test (`scripts/smoke_sidecar.py`), and copies the file to `client/src-tauri/binaries/harness-daemon-<target triple>`. Then build the installers. See [../client/README.md](../client/README.md).
+The script builds the folder `build/sidecar/dist/harness-daemon/` (PyInstaller "onedir": the executable and its `_internal` folder), runs the smoke test (`scripts/smoke_sidecar.py`), and copies the folder to `client/src-tauri/binaries/harness-daemon/`. The installers put it in the resource folder of the app (`bundle.resources` in `tauri.bundle.json`). A onefile executable is not used: it unpacked all its files at each start, about 4 seconds. Then build the installers. See [../client/README.md](../client/README.md).
 
 The packaged daemon has no `python` command:
 

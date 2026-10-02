@@ -30,14 +30,17 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field, replace
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 import asyncio
 
 import httpx
-import openai
-from openai import AsyncOpenAI
+
+# The openai package loads at the first model request, not when the daemon starts: its import takes
+# about 1 second, and the client waits for the daemon at each start of the app.
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 from .config import ConfigError, harness_home, read_json
 from .tunnels import TUNNELS, SshTarget, TunnelError, parse_ssh
@@ -540,6 +543,8 @@ class ModelClient:
         except TunnelError as e:
             raise ModelError(str(e)) from e
         if self._client is None or current.base_url != self._base_url:
+            from openai import AsyncOpenAI
+
             self._base_url = current.base_url
             self._client = AsyncOpenAI(
                 base_url=current.base_url,
@@ -556,6 +561,8 @@ class ModelClient:
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
                      _retry_tunnel: bool = True, options: dict[str, Any] | None = None) -> ModelResponse:
         """Stream one completion. ``options``: ``temperature``, ``max_tokens``, and ``stop``, from plugins."""
+        import openai  # Loaded by _openai() already: this import only gives the name.
+
         client = await self._openai()
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
         for key in ("temperature", "max_tokens", "stop"):

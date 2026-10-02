@@ -42,7 +42,7 @@ The installers include the daemon sidecar. Build them on each operating system, 
    npm run package
    ```
 
-`npm run package` is `tauri build` with `src-tauri/tauri.bundle.json`, which adds the sidecar (`bundle.externalBin`). The development config does not name the sidecar, so `npm run tauri dev` works without it. The installers are in `src-tauri/target/release/bundle/`:
+`npm run package` is `tauri build` with `src-tauri/tauri.bundle.json`, which adds the sidecar folder `src-tauri/binaries/harness-daemon/` (`bundle.resources`). The development config does not name the sidecar, so `npm run tauri dev` works without it. The installers are in `src-tauri/target/release/bundle/`:
 
 | Operating system | Installers |
 |---|---|

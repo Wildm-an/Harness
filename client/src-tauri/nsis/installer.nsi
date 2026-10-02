@@ -1245,6 +1245,12 @@ Section Install
   File "${MAINBINARYSRCPATH}"
   !insertmacro HarnessItemDone
 
+  ; Harness: the daemon is the folder $INSTDIR\harness-daemon (a PyInstaller "onedir" folder, in the
+  ; resources). Remove the folder of the previous version, so that no old file stays in it, and the
+  ; onefile daemon of 0.1.26 and before (77 MB).
+  RMDir /r "$INSTDIR\harness-daemon"
+  Delete "$INSTDIR\harness-daemon.exe"
+
   ; Copy resources
   {{#each resources_dirs}}
     CreateDirectory "$INSTDIR\\{{this}}"
