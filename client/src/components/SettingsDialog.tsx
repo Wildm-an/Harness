@@ -22,7 +22,7 @@ import {
 import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
 import { compareVersions } from "../lib/version";
-import { availableVersion, checkForUpdate, installUpdate, useUpdateState } from "../lib/updater";
+import { availableVersion, checkAtStart, checkForUpdate, installUpdate, setCheckAtStart, useUpdateState } from "../lib/updater";
 
 export type SettingsPage = "general" | "plugins" | "models" | "connections" | "computers" | "changelog";
 
@@ -503,9 +503,10 @@ function UpdateBanner({ appVersion }: { appVersion: string | null }) {
   );
 }
 
-/** Check for a new version of the app, and install it. The app also checks once when it starts. */
+/** Check for a new version of the app, and install it. The app also checks once when it starts, if the setting is on. */
 function UpdatesRow() {
   const state = useUpdateState();
+  const [atStart, setAtStart] = useState(checkAtStart);
   const help =
     state.kind === "checking"
       ? "Looking for a new version…"
@@ -515,7 +516,9 @@ function UpdatesRow() {
           ? `Version ${state.update.version} is available.`
           : state.kind === "installing"
             ? `Installing${state.percent !== null ? `: ${state.percent}%` : "…"} The app starts again when the update is installed.`
-            : "The app looks for a new version each time it starts.";
+            : atStart
+              ? "The app looks for a new version each time it starts."
+              : "The app looks for a new version only when you click the button.";
 
   return (
     <>
@@ -535,6 +538,16 @@ function UpdatesRow() {
             Check for updates
           </button>
         )}
+      </Row>
+      <Row label="Check for updates at start" help="The app asks github.com for the newest version number. The request has no data about your projects.">
+        <Switch
+          checked={atStart}
+          label="Check for updates at start"
+          onChange={(on) => {
+            setAtStart(on);
+            setCheckAtStart(on);
+          }}
+        />
       </Row>
       {state.kind === "error" && (
         <p className="form-error" role="alert">

@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 // code catches it.
 let check: () => Promise<unknown> = async () => null;
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: () => check() }));
+vi.mock("./tauri", () => ({ isTauri: () => true }));
 
-const { availableVersion, checkForUpdate, getUpdateState } = await import("./updater");
+const { availableVersion, checkAtStart, checkForUpdate, checkOnLaunch, getUpdateState, setCheckAtStart } = await import(
+  "./updater"
+);
 
 describe("the update check", () => {
   it("finds a new version", async () => {
@@ -46,5 +49,37 @@ describe("the update check", () => {
     await checkForUpdate(true);
     expect(getUpdateState()).toEqual({ kind: "none" });
     expect(availableVersion(getUpdateState())).toBeNull();
+  });
+});
+
+describe("the check at start", () => {
+  it("is on by default, and the setting turns it off", async () => {
+    // The tests run in Node: a window with a small localStorage.
+    const items = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+    });
+    vi.stubGlobal("window", globalThis);
+    expect(checkAtStart()).toBe(true);
+    setCheckAtStart(false);
+    expect(checkAtStart()).toBe(false);
+
+    vi.useFakeTimers();
+    let calls = 0;
+    check = async () => {
+      calls += 1;
+      return null;
+    };
+    checkOnLaunch();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toBe(0);
+
+    setCheckAtStart(true);
+    checkOnLaunch();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toBe(1);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 });

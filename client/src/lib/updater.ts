@@ -1,11 +1,13 @@
 // App updates with tauri-plugin-updater (docs/RELEASE.md). The update address goes in
 // tauri.conf.json when the public repository exists. Until then, a check gives a clear message.
 //
-// The app checks once, a few seconds after it starts (checkOnLaunch). The state is shared: the dot
-// on the Settings button, the popup at the bottom left, and Settings > General > Updates read it.
+// The app checks once, a few seconds after it starts (checkOnLaunch), if the setting "Check for updates
+// at start" is on (the default). The state is shared: the dot on the Settings button, the popup at the
+// bottom left, and Settings > General > Updates read it.
 
 import { useSyncExternalStore } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
+import { loadPref, savePref } from "./prefs";
 import { isTauri } from "./tauri";
 
 export type UpdateState =
@@ -17,6 +19,16 @@ export type UpdateState =
   | { kind: "error"; message: string };
 
 const LAUNCH_DELAY_MS = 4000; // The app and the daemon start first.
+const CHECK_AT_START_PREF = "updates.check_at_start";
+
+/** True if the app looks for a new version when it starts. The default is on. */
+export function checkAtStart(): boolean {
+  return loadPref(CHECK_AT_START_PREF, "on") !== "off";
+}
+
+export function setCheckAtStart(on: boolean): void {
+  savePref(CHECK_AT_START_PREF, on ? "on" : "off");
+}
 
 let state: UpdateState = { kind: "idle" };
 const listeners = new Set<() => void>();
@@ -75,9 +87,9 @@ export async function checkForUpdate(quiet = false): Promise<void> {
 
 let launched = false;
 
-/** The quick check after the app starts. It runs once, and only in the desktop app. */
+/** The quick check after the app starts. It runs once, only in the desktop app, and only if the setting is on. */
 export function checkOnLaunch(): void {
-  if (launched || !isTauri()) return;
+  if (launched || !isTauri() || !checkAtStart()) return;
   launched = true;
   window.setTimeout(() => void checkForUpdate(true), LAUNCH_DELAY_MS);
 }
