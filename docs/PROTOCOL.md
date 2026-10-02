@@ -90,7 +90,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `mcp.restart` | `name` (optional) | Reads the MCP configuration again and connects again: one server, or all servers with no name. Not during a turn. |
 | `mcp.init` | — | Creates `.harness/mcp.json` of the project from a template, if it does not exist. |
 | `plugins.list` | — | Asks for the plugins. It works with no session. See [PLUGINS.md](PLUGINS.md). |
-| `plugins.install` | `source`, `kind` (optional), `replace` (optional), `approved_builds` (optional) | Installs a bundle. `kind` is `harness` (the default: a folder or a git URL) or `deepseek` (an npm name, a git address, a URL, or a local path). `replace` updates an installed Harness bundle. `approved_builds` holds the build-script keys that the user allowed for a DeepSeek install. Not during a turn. |
+| `plugins.install` | `source`, `kind` (optional), `replace` (optional), `approved_builds` (optional), `use_mirror` (optional) | Installs a bundle. `kind` is `harness` (the default: a folder or a git URL) or `deepseek` (an npm name, a git address, a URL, or a local path). `replace` updates an installed Harness bundle. `approved_builds` holds the build-script keys that the user allowed for a DeepSeek install. `use_mirror: true` installs a DeepSeek package from the mirror registry (send it only after the user agrees). Not during a turn. |
 | `plugins.remove` | `name`, `kind` (optional) | Deletes an installed bundle. Not during a turn. |
 | `plugins.set_bundle` | `name`, `enabled`, `kind` (optional) | Turns a bundle on or off. Not during a turn. |
 | `plugins.set_plugin` | `id`, `enabled`, `kind` (optional) | Turns one plugin row on or off. Not during a turn. |
@@ -228,7 +228,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `tool.start`, `tool.result`, `fs.changed` | `agent` | The skill name, when a skill with `context: fork` runs the tool in a subagent. |
 
 | `error` | `ref` | The `type` of the client message that caused the error, if known. |
-| `error` | `data` | Details for the client, if any. A DeepSeek install that needs build scripts has `data.pending_builds` (the keys that pnpm printed) and `data.source`. |
+| `error` | `data` | Details for the client, if any. A DeepSeek install that needs build scripts has `data.pending_builds` (the keys that pnpm printed). A DeepSeek install that cannot reach the npm registry has `data.mirror` (the address of the mirror registry). Both also have `data.source` and `data.use_mirror`: send the install again with them. |
 
 | `fs.tree` | `path`, `items` | `fs.list` returns one folder level. Each item has `name`, `path`, and `type` (`file` or `dir`). The list does not include files that `.gitignore` excludes. |
 

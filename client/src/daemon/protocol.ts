@@ -549,7 +549,7 @@ export type ClientMessage =
   | { type: "mcp.init" }
   | { type: "plugins.list" }
   | { type: "plugins.reload" }
-  | { type: "plugins.install"; source: string; replace?: boolean; kind?: PluginKind; approved_builds?: string[] }
+  | { type: "plugins.install"; source: string; replace?: boolean; kind?: PluginKind; approved_builds?: string[]; use_mirror?: boolean }
   | { type: "plugins.remove"; name: string; kind?: PluginKind }
   | { type: "plugins.set_bundle"; name: string; enabled: boolean; kind?: PluginKind }
   | { type: "plugins.set_plugin"; id: string; enabled: boolean; kind?: PluginKind }
@@ -731,4 +731,4 @@ export type DaemonMessage =
     }
   | { type: "skills"; items: CommandItem[] }
   | ({ type: "skill" } & SkillDetail)
-  | { type: "error"; message: string; ref?: string; data?: { pending_builds?: string[]; source?: string } };
+  | { type: "error"; message: string; ref?: string; data?: { pending_builds?: string[]; mirror?: string; source?: string; use_mirror?: boolean } };

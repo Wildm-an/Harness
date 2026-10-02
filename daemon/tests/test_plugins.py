@@ -11,6 +11,7 @@ import yaml
 
 from harness_daemon.plugins import PluginHost, Prompt, ToolCall
 from harness_daemon.plugins.install import InstallError, installed_bundles, install, remove, set_bundle_enabled
+from harness_daemon.plugins.dsh import DshError
 from harness_daemon.plugins.manifest import version_matches
 from harness_daemon.plugins.patch import Layer, compose, project_patch_path, set_row_disabled, user_patch_path
 from harness_daemon.providers import PLUGIN_PROVIDERS, load_providers
@@ -318,4 +319,33 @@ def test_python_plugins_get_the_loop_events(daemon, harness_home, project, fake_
     assert first["messages"][-1] == {"role": "user", "content": "[step] Hi"} and first["temperature"] == 0.5
     assert second["messages"][-1] == {"role": "user", "content": "glob done"}
     assert third["messages"][-1] == {"role": "user", "content": "one more"}
+    c.close()
+
+
+def test_a_deepseek_install_asks_before_the_mirror(daemon, monkeypatch):  # noqa: F811
+    from harness_daemon import server
+
+    mirror = "https://registry.npmmirror.com/"
+    calls: list[dict] = []
+
+    async def request(method, params, timeout=None):
+        calls.append(params)
+        if not params.get("useMirror"):
+            raise DshError("The npm registry cannot be reached.", data={"mirror": mirror})
+        raise DshError("The mirror failed too.")
+
+    monkeypatch.setattr(server.DSH, "request", request)
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "plugins.install", "kind": "deepseek", "source": "dsh-plugin-guide"})
+    error = c.until("error")[0]
+    assert error["ref"] == "plugins.install"
+    assert error["data"] == {"mirror": mirror, "source": "dsh-plugin-guide", "use_mirror": False}
+    assert calls == [{"spec": "dsh-plugin-guide", "approvedBuilds": [], "useMirror": False}]
+
+    # The user agrees: the client sends the install again with use_mirror.
+    c.send({"type": "plugins.install", "kind": "deepseek", "source": "dsh-plugin-guide", "use_mirror": True})
+    error = c.until("error")[0]
+    assert error["message"] == "The mirror failed too." and error.get("data") is None
+    assert calls[1]["useMirror"] is True
     c.close()

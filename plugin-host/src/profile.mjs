@@ -26,6 +26,8 @@ const OUTPUT_LIMIT = 16384;
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_ICON_BYTES = 256 * 1024;
 const ICON_TYPES = { ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+// The mirror registry, when the npm registry cannot be reached. A third party runs it, so the
+// install uses it only after the user agrees (install with useMirror).
 export const FALLBACK_REGISTRY = "https://registry.npmmirror.com/";
 
 /** The runtime version that the DeepSeek peer gate uses: the version of the bundled service packages. */
@@ -271,8 +273,11 @@ export class Profile {
     });
   }
 
-  /** Read the manifest of a package before the install, when possible. */
-  async inspect(spec, signal) {
+  /**
+   * Read the manifest of a package before the install, when possible. If the registry cannot be
+   * reached, throws ProfileError with data.mirror. With useMirror, the lookup uses the mirror.
+   */
+  async inspect(spec, signal, useMirror = false) {
     const kind = specKind(spec);
     if (kind === "local") {
       const path = resolve(spec.replace(/^file:/, ""));
@@ -281,32 +286,35 @@ export class Profile {
       return { kind, spec: `file:${path}`, pkg: null }; // A .tgz file: the check runs after the install.
     }
     if (kind !== "registry") return { kind, spec, pkg: null };
-    for (const registry of [null, FALLBACK_REGISTRY]) {
-      const args = ["view", spec, "name", "version", "description", "peerDependencies", "dsh", "--json", ...(registry ? ["--registry", registry] : [])];
-      const { code, output } = await this.pnpm(args, { signal, timeoutMs: 60_000 });
-      if (code === 0) {
-        const text = output.slice(output.indexOf("{"));
-        try {
-          return { kind, spec, pkg: JSON.parse(text), registry };
-        } catch {
-          throw new ProfileError(`pnpm view gave output that is not JSON for ${spec}.`);
-        }
-      }
-      if (!/ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|network/i.test(output) || registry) {
-        throw new ProfileError(`The package ${spec} is not in the registry, or the lookup failed: ${lastLines(output)}`);
+    const registry = useMirror ? FALLBACK_REGISTRY : null;
+    const args = ["view", spec, "name", "version", "description", "peerDependencies", "dsh", "--json", ...(registry ? ["--registry", registry] : [])];
+    const { code, output } = await this.pnpm(args, { signal, timeoutMs: 60_000 });
+    if (code === 0) {
+      const text = output.slice(output.indexOf("{"));
+      try {
+        return { kind, spec, pkg: JSON.parse(text), registry };
+      } catch {
+        throw new ProfileError(`pnpm view gave output that is not JSON for ${spec}.`);
       }
     }
-    throw new ProfileError(`The registry cannot be reached for ${spec}.`);
+    if (!registry && /ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|network/i.test(output)) {
+      throw new ProfileError(
+        `The npm registry cannot be reached for ${spec}. You can install from the mirror ${FALLBACK_REGISTRY} instead. A third party runs the mirror.`,
+        { mirror: FALLBACK_REGISTRY },
+      );
+    }
+    throw new ProfileError(`The package ${spec} is not in the registry, or the lookup failed: ${lastLines(output)}`);
   }
 
   /**
    * Install a bundle: a registry name, a git address, a tarball URL, or a local folder or .tgz file.
    * Checks the bundle and the peer gate. A failure restores package.json and pnpm-lock.yaml.
-   * @returns {{name, version}} or throws ProfileError with data.pendingBuilds.
+   * useMirror: install from FALLBACK_REGISTRY. Use it only after the user agrees (data.mirror).
+   * @returns {{name, version}} or throws ProfileError with data.pendingBuilds or data.mirror.
    */
-  async install(spec, { approvedBuilds = [], signal } = {}) {
+  async install(spec, { approvedBuilds = [], useMirror = false, signal } = {}) {
     this.ensure();
-    const inspected = await this.inspect(spec.trim(), signal);
+    const inspected = await this.inspect(spec.trim(), signal, useMirror);
     if (inspected.pkg) checkBundle(inspected.pkg);
     this.allowBuilds(approvedBuilds);
     const lockPath = join(this.home, "pnpm-lock.yaml");

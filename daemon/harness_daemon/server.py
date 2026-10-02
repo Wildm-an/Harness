@@ -1518,8 +1518,10 @@ async def on_plugins_install(conn: Connection, msg: dict[str, Any]) -> None:
 
     Harness: {"source": <folder or git URL>, "replace"?: bool}.
     DeepSeek: {"kind": "deepseek", "source": <npm name, git address, URL, or local path>,
-    "approved_builds"?: [<keys that pnpm printed>]}. If the install needs build scripts, the error
-    has "data": {"pending_builds": [...]}, and the client can send the install again with them.
+    "approved_builds"?: [<keys that pnpm printed>], "use_mirror"?: bool}. If the install needs build
+    scripts, the error has "data": {"pending_builds": [...]}, and the client can send the install again
+    with them. If the npm registry cannot be reached, the error has "data": {"mirror": <address>}, and
+    the client can ask the user and send the install again with "use_mirror": true.
     """
     source = _text_arg(msg, "source")
     kind = _plugin_kind(msg)
@@ -1527,12 +1529,14 @@ async def on_plugins_install(conn: Connection, msg: dict[str, Any]) -> None:
     approved = msg.get("approved_builds") or []
     if not isinstance(approved, list) or not all(isinstance(k, str) for k in approved):
         raise ProtocolError("'approved_builds' must be a list of strings.")
+    use_mirror = msg.get("use_mirror") is True
     _plugin_changes_allowed(conn)
 
     async def run() -> None:
         try:
             if kind == "deepseek":
-                result = await DSH.request("plugins.install", {"spec": source, "approvedBuilds": approved},
+                result = await DSH.request("plugins.install",
+                                           {"spec": source, "approvedBuilds": approved, "useMirror": use_mirror},
                                            timeout=DSH_INSTALL_TIMEOUT)
                 await DSH.restart()  # The new package code loads in a new process.
                 await _plugins_changed(conn, installed=result.get("name"), installed_kind="deepseek")
@@ -1541,9 +1545,14 @@ async def on_plugins_install(conn: Connection, msg: dict[str, Any]) -> None:
                 await _plugins_changed(conn, installed=item.name, installed_kind="harness")
         except DshError as e:
             data = e.data if isinstance(e.data, dict) else {}
-            pending = data.get("pendingBuilds")
-            await conn.error(str(e), ref="plugins.install",
-                             data={"pending_builds": pending, "source": source} if pending else None)
+            details: dict[str, Any] = {}
+            if data.get("pendingBuilds"):
+                details["pending_builds"] = data["pendingBuilds"]
+            if data.get("mirror"):
+                details["mirror"] = data["mirror"]
+            if details:  # The client sends the install again: with the same source and registry.
+                details.update(source=source, use_mirror=use_mirror)
+            await conn.error(str(e), ref="plugins.install", data=details or None)
         except (InstallError, ConfigError, ProtocolError) as e:
             await conn.error(str(e), ref="plugins.install")
         except Exception as e:  # noqa: BLE001

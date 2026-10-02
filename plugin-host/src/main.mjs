@@ -91,7 +91,9 @@ rpc.on("event.dispatch", (p, signal) => runtime.dispatch(need(p, "agentId"), nee
 rpc.on("event.emit", (p) => runtime.emit(need(p, "agentId"), need(p, "name"), p.payload ?? {}));
 
 // Package operations. A changed package needs a new host process: the daemon restarts it.
-rpc.on("plugins.install", (p, signal) => wrap(() => profile.install(need(p, "spec"), { approvedBuilds: Array.isArray(p.approvedBuilds) ? p.approvedBuilds : [], signal })));
+rpc.on("plugins.install", (p, signal) =>
+  wrap(() => profile.install(need(p, "spec"), { approvedBuilds: Array.isArray(p.approvedBuilds) ? p.approvedBuilds : [], useMirror: p.useMirror === true, signal })),
+);
 rpc.on("plugins.remove", (p, signal) => wrap(() => profile.remove(need(p, "name"), { signal })));
 rpc.on("plugins.set_bundle", (p) =>
   wrap(async () => {

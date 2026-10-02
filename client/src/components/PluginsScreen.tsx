@@ -11,10 +11,21 @@ const STATE_TEXT: Record<PluginRow["state"], string> = {
   pending: "Waiting",
 };
 
-/** An install that waits for approval of build scripts. */
-export interface PendingBuilds {
+/**
+ * A DeepSeek install that waits for the user: build scripts to approve (keys), or the mirror registry
+ * to use because the npm registry cannot be reached (mirror). useMirror: the install uses the mirror.
+ */
+export interface PendingInstall {
   source: string;
   keys: string[];
+  mirror?: string;
+  useMirror: boolean;
+}
+
+/** The options of an install that the user approved. */
+export interface InstallOptions {
+  approvedBuilds?: string[];
+  useMirror?: boolean;
 }
 
 /** True if the text is a git source, the same test as the daemon (plugins/install.py). */
@@ -183,7 +194,7 @@ export function PluginsScreen({
   status,
   error,
   busy,
-  pendingBuilds,
+  pendingInstall,
   hasSession,
   onInstall,
   onRemove,
@@ -191,22 +202,22 @@ export function PluginsScreen({
   onSetPlugin,
   onReload,
   onBrowse,
-  onDismissBuilds,
+  onDismissPending,
   onReturn,
 }: {
   embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
   status: PluginsStatus | null;
   error: string | null;
   busy: boolean;
-  pendingBuilds: PendingBuilds | null;
+  pendingInstall: PendingInstall | null;
   hasSession: boolean;
-  onInstall: (source: string, replace: boolean, kind: PluginKind, approvedBuilds?: string[]) => void;
+  onInstall: (source: string, replace: boolean, kind: PluginKind, options?: InstallOptions) => void;
   onRemove: (name: string, kind: PluginKind) => void;
   onSetBundle: (name: string, enabled: boolean, kind: PluginKind) => void;
   onSetPlugin: (id: string, enabled: boolean, kind: PluginKind) => void;
   onReload: () => void;
   onBrowse: (initial?: string) => Promise<string | null>;
-  onDismissBuilds: () => void;
+  onDismissPending: () => void;
   onReturn: () => void;
 }) {
   const [source, setSource] = useState("");
@@ -272,7 +283,34 @@ export function PluginsScreen({
           </button>
         </form>
 
-        {pendingBuilds && (
+        {pendingInstall?.mirror && (
+          <div className="notice-bar warn plugin-builds" role="alert">
+            <ShieldAlert size={14} aria-hidden />
+            <div>
+              <p>
+                The npm registry cannot be reached. You can install from the mirror registry instead. A third party runs the
+                mirror, and it gets the name of the package.
+              </p>
+              <ul className="mono">
+                <li>{pendingInstall.mirror}</li>
+              </ul>
+              <div className="form-actions">
+                <button type="button" className="btn btn-ghost btn-small" onClick={onDismissPending} disabled={busy}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-small"
+                  onClick={() => onInstall(pendingInstall.source, false, "deepseek", { useMirror: true })}
+                  disabled={busy}
+                >
+                  Use the mirror and install
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {pendingInstall && pendingInstall.keys.length > 0 && (
           <div className="notice-bar warn plugin-builds" role="alert">
             <ShieldAlert size={14} aria-hidden />
             <div>
@@ -281,18 +319,20 @@ export function PluginsScreen({
                 rights.
               </p>
               <ul className="mono">
-                {pendingBuilds.keys.map((k) => (
+                {pendingInstall.keys.map((k) => (
                   <li key={k}>{k}</li>
                 ))}
               </ul>
               <div className="form-actions">
-                <button type="button" className="btn btn-ghost btn-small" onClick={onDismissBuilds} disabled={busy}>
+                <button type="button" className="btn btn-ghost btn-small" onClick={onDismissPending} disabled={busy}>
                   Cancel
                 </button>
                 <button
                   type="button"
                   className="btn btn-primary btn-small"
-                  onClick={() => onInstall(pendingBuilds.source, false, "deepseek", pendingBuilds.keys)}
+                  onClick={() =>
+                    onInstall(pendingInstall.source, false, "deepseek", { approvedBuilds: pendingInstall.keys, useMirror: pendingInstall.useMirror })
+                  }
                   disabled={busy}
                 >
                   Allow the scripts and install
@@ -301,7 +341,7 @@ export function PluginsScreen({
             </div>
           </div>
         )}
-        {error && !pendingBuilds && (
+        {error && !pendingInstall && (
           <p className="form-error" role="alert">
             {error}
           </p>
