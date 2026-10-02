@@ -13,6 +13,22 @@ a new version, installs it, and starts the app again.
 - With the release key, the build also signs the installer. The signature file is next to the
   installer, with the extension `.sig`.
 
+## Versions and the archive
+
+Each version that is installed or shared gets a git tag and a stored copy of its installer.
+
+1. Commit the version change. Then tag the commit: `git tag -a v0.1.25 -m "Harness 0.1.25"`.
+2. Copy the installer and its `.sig` file to `%USERPROFILE%\Harness releases\<version>\`.
+3. Keep the last 3 versions in the archive. Delete the older version folders.
+4. Delete the older installers in `client/src-tauri/target/release/bundle/nsis/`. That folder is
+   build output: `cargo clean` deletes it.
+
+Why: a git commit cannot rebuild an exact copy of an old installer, because the sidecar build uses
+the Python and Node versions of the build computer. The stored copy lets you install an older
+version again, for example to go back from a version with a problem. Do not commit installers to
+git: they are about 90 MB each. When the public repository exists, the GitHub releases are the
+archive (see below).
+
 ## The release key
 
 The updater accepts only an update with a correct signature.
