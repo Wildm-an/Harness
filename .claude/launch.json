@@ -7,6 +7,21 @@
       "runtimeArgs": ["--prefix", "client", "run", "dev"],
       "port": 1420,
       "url": "http://127.0.0.1:1420"
+    },
+    {
+      "name": "demo-model",
+      "runtimeExecutable": "daemon/.venv/Scripts/python.exe",
+      "runtimeArgs": ["daemon/scripts/demo_model.py", "--port", "11500"],
+      "port": 11500
+    },
+    {
+      "name": "demo-daemon",
+      "runtimeExecutable": "daemon/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, runpy, sys; os.environ['HARNESS_HOME'] = os.path.abspath('.harness/demo-home'); sys.argv = ['harness_daemon', '--port', '8765']; runpy.run_module('harness_daemon', run_name='__main__')"
+      ],
+      "port": 8765
     }
   ]
 }
