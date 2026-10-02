@@ -52,6 +52,8 @@ export function availableVersion(s: UpdateState): string | null {
 export function updateErrorText(e: unknown): string {
   const text = e instanceof Error ? e.message : String(e);
   if (/endpoint/i.test(text)) return "This build has no update address yet. Updates start with the first public release.";
+  // The update address answers 404 until the first release is published on GitHub.
+  if (/valid release JSON/i.test(text)) return "No published release was found yet. Check again after the next release.";
   return `The update check failed: ${text}`;
 }
 

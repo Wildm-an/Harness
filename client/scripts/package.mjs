@@ -26,12 +26,13 @@ if (wheel.status !== 0) {
 
 const env = { ...process.env };
 const args = ["tauri", "build", "--config", "src-tauri/tauri.bundle.json"];
+// The release key has no password. In CI, the key comes from a secret: GitHub accepts no empty secret.
+env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ??= "";
 
 if (!env.TAURI_SIGNING_PRIVATE_KEY) {
   const keyFile = env.HARNESS_UPDATER_KEY || join(homedir(), ".tauri", "harness-updater.key");
   if (existsSync(keyFile)) {
     env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(keyFile, "utf8").trim();
-    env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ??= "";
     console.log(`Signing the update files with ${keyFile}.`);
   } else {
     console.log("No release key: the build makes the installer with no update files.");

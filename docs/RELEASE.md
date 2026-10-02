@@ -43,28 +43,45 @@ The updater accepts only an update with a correct signature.
   `HARNESS_UPDATER_KEY`, or from `~/.tauri/harness-updater.key`. With no key, the build makes the
   installer with no signature.
 
-## Start the updates (when the public repository exists)
+## Releases on GitHub and the updates
 
-1. Put the update address in `plugins.updater.endpoints` of `client/src-tauri/tauri.conf.json`,
-   for example `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`.
-2. For each release, raise the version (see the update steps of the project), and build with
-   `npm run package`.
-3. Make a release in the repository. Attach the installer, and a `latest.json` file:
+The repository is https://github.com/Wildm-an/Harness. The installed apps read
+`https://github.com/Wildm-an/Harness/releases/latest/download/latest.json`
+(`plugins.updater.endpoints` in `client/src-tauri/tauri.conf.json`).
 
-   ```json
-   {
-     "version": "0.2.0",
-     "notes": "The changes of this version.",
-     "pub_date": "2026-10-01T12:00:00Z",
-     "platforms": {
-       "windows-x86_64": {
-         "signature": "<the text of Harness_0.2.0_x64-setup.exe.sig>",
-         "url": "https://github.com/<owner>/<repo>/releases/download/v0.2.0/Harness_0.2.0_x64-setup.exe"
-       }
-     }
-   }
-   ```
+The setup (done one time):
 
-4. The installed apps find the new version with "Check for updates".
+- The repository secret `TAURI_SIGNING_PRIVATE_KEY` (Settings > Secrets and variables > Actions) is
+  the text of `~/.tauri/harness-updater.key`. The key has no password: the workflow sets an empty
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (GitHub accepts no empty secret).
 
-Until step 1, "Check for updates" tells the user that the build has no update address.
+For each release:
+
+1. Raise the version (see the update steps of the project), and commit.
+2. Tag the commit (`git tag -a v0.2.0 -m "Harness 0.2.0"`), and push the commit and the tag:
+   `git push origin master v0.2.0`. Push one tag at a time: each tag starts a build of all platforms.
+3. The workflow `.github/workflows/release.yml` builds and signs the installers, makes `latest.json`
+   (`.github/scripts/latest_json.py`), and makes a draft release with all the files.
+4. Check the draft release, and click "Publish release". `releases/latest` does not show drafts, so
+   the installed apps find the new version only after this step.
+5. The installed apps find the new version at launch, and with "Check for updates".
+
+`latest.json` has the version, the date, and the URL and the signature of each platform:
+
+```json
+{
+  "version": "0.2.0",
+  "notes": "See https://github.com/Wildm-an/Harness/releases/tag/v0.2.0",
+  "pub_date": "2026-10-01T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "<the text of Harness_0.2.0_x64-setup.exe.sig>",
+      "url": "https://github.com/Wildm-an/Harness/releases/download/v0.2.0/Harness_0.2.0_x64-setup.exe"
+    }
+  }
+}
+```
+
+A version that was installed before the update address existed (0.1.30 and before) cannot find
+updates: install the first release with the address by hand. Until the first release is published,
+"Check for updates" tells the user that no published release was found.

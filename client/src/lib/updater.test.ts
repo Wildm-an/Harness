@@ -32,6 +32,15 @@ describe("the update check", () => {
     expect(state.kind === "error" && state.message).toContain("no update address yet");
   });
 
+  it("explains that no release is published yet", async () => {
+    check = async () => {
+      throw new Error("Could not fetch a valid release JSON from the remote");
+    };
+    await checkForUpdate();
+    const state = getUpdateState();
+    expect(state.kind === "error" && state.message).toContain("No published release");
+  });
+
   it("knows the newest version", async () => {
     check = async () => null;
     await checkForUpdate(true);
