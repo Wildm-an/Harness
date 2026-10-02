@@ -5,8 +5,11 @@
 ; - One click: the first page has an Install button. There is no page for the folder, and no page
 ;   for an installed version: the install goes over it. The finish page asks for a desktop
 ;   shortcut and to launch the app now.
-; - The installer and the uninstaller are black, with the logo in the middle, and the install page
-;   shows the loading bar under the logo.
+; - The installer and the uninstaller have the color of the Harness sidebar, with the logo in the
+;   middle. The title bar has the same color, with no title and no icon. The install page shows the
+;   loading bar under the logo, with no buttons.
+; - The buttons are text with a highlight on hover (the HarnessUI plugin, nsis/plugin).
+; - No copyright or license text at the bottom.
 ; After an update of the Tauri CLI, compare this file with the new template.
 
 Unicode true
@@ -89,7 +92,7 @@ Var WixMode
 Var OldMainBinaryName
 
 Name "${PRODUCTNAME}"
-BrandingText "${COPYRIGHT}"
+BrandingText " " ; Harness: no copyright or license text at the bottom.
 OutFile "${OUTFILE}"
 
 ; We don't actually use this value as default install path,
@@ -177,9 +180,11 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
 
 
-; ---------- Harness: a black installer with the logo in the middle ----------
+; ---------- Harness: an installer with the color of the sidebar, and the logo in the middle ----------
 ;
-; - All pages are black, with light text, dark buttons, and a dark title bar.
+; - All pages have the color of the Harness sidebar (#1f1e1d), with light text. The title bar has
+;   the same color, with no title and no icon: only the window buttons show.
+; - The buttons are text. They show a highlight when the pointer is on them (the HarnessUI plugin).
 ; - The welcome page and the finish page show the logo in the middle, and the text under it.
 ; - The other pages show the logo and the name in the middle of the header.
 ; - The install page shows the logo in the middle, the loading bar under it, and then the status:
@@ -187,15 +192,23 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ;   copy of a file), "Items remaining: 2", and the folder.
 ; The images are in nsis/brand (make_images.py), one for each display scale of Windows.
 
-!define HARNESS_BG 0x000000
-!define HARNESS_TEXT 0xF5F5F5
-!define HARNESS_MUTED 0xA3A3A3
-!define HARNESS_FIELD 0x1A1A1A
-!define MUI_BGCOLOR 000000
-!define MUI_TEXTCOLOR F5F5F5
+; The colors of the dark theme of Harness (client/src/styles.css): --sidebar, --text, --text-muted,
+; --surface, --hover on the sidebar, and --surface-2.
+!define HARNESS_BG 0x1F1E1D
+!define HARNESS_BG_COLORREF 0x001D1E1F ; The same color for Windows APIs: 0x00BBGGRR.
+!define HARNESS_TEXT 0xFAF9F5
+!define HARNESS_MUTED 0xA8A59C
+!define HARNESS_FIELD 0x30302E
+!define HARNESS_HOVER 0x2C2B2A
+!define HARNESS_PRESSED 0x3A3A37
+!define MUI_BGCOLOR 1F1E1D
+!define MUI_TEXTCOLOR FAF9F5
 !define MUI_CUSTOMFUNCTION_GUIINIT HarnessGuiInit
 !define MUI_CUSTOMFUNCTION_UNGUIINIT un.HarnessGuiInit
 !searchreplace HARNESS_BRAND "${HEADERIMAGE}" "header.bmp" "brand"
+; The HarnessUI plugin is in nsis/plugins (nsis/plugin/build.cmd builds it).
+!searchreplace HARNESS_PLUGINS "${HEADERIMAGE}" "header.bmp" "plugins\x86-unicode"
+!addplugindir "${HARNESS_PLUGINS}"
 !define HARNESS_ITEMS 0 ; The files of the install. HarnessItemDone counts them when the script compiles.
 
 Var HarnessPage
@@ -255,6 +268,58 @@ Function ${UN}HarnessWidth
   System::Free $9
 FunctionEnd
 
+; On the dark page, the lines under the header and above the buttons are not needed, and the
+; header shows the logo in place of the title of the page. MUI shows these controls again when a
+; page shows, so each page calls this function.
+Function ${UN}HarnessHideLines
+  GetDlgItem $0 $HWNDPARENT 1035 ; The line above the buttons, on a page with a header.
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 1036 ; The line under the header.
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 1045 ; The line above the buttons, on the welcome page and the finish page.
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 1037 ; The title of the page, for example "Installing".
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 1038 ; The text under it, for example "Please wait while Harness is being installed."
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 1039 ; The header image of MUI.
+  ShowWindow $0 ${SW_HIDE}
+FunctionEnd
+
+; The last button of a page (Finish, Close): Next (1) goes to the place of Cancel (2), at the far
+; right. Cancel is hidden on these pages.
+Function ${UN}HarnessNextFarRight
+  GetDlgItem $1 $HWNDPARENT 1
+  GetDlgItem $2 $HWNDPARENT 2
+  System::Call "*(i, i, i, i) p .r9"
+  System::Call "user32::GetWindowRect(p r2, p r9)"
+  System::Call "user32::MapWindowPoints(p 0, p $HWNDPARENT, p r9, i 2)"
+  System::Call "*$9(i .r3, i .r4, i .r5, i .r6)"
+  System::Free $9
+  IntOp $5 $5 - $3
+  IntOp $6 $6 - $4
+  System::Call "user32::SetWindowPos(p r1, p 0, i r3, i r4, i r5, i r6, i 0x14)" ; SWP_NOZORDER | SWP_NOACTIVATE
+  ShowWindow $1 ${SW_SHOW}
+FunctionEnd
+
+; Hide or show the buttons at the bottom: Next (1), Cancel (2), and Back (3).
+Function ${UN}HarnessHideButtons
+  GetDlgItem $0 $HWNDPARENT 1
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 2
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $HWNDPARENT 3
+  ShowWindow $0 ${SW_HIDE}
+FunctionEnd
+
+; After an error, the user must be able to close the window: show Next ("Close") and Cancel.
+Function ${UN}HarnessShowCloseButtons
+  GetDlgItem $0 $HWNDPARENT 1
+  ShowWindow $0 ${SW_SHOW}
+  GetDlgItem $0 $HWNDPARENT 2
+  ShowWindow $0 ${SW_SHOW}
+FunctionEnd
+
 ; In: $R9 a window, and its child controls: they get the dark colors.
 Function ${UN}HarnessDark
   SetCtlColors $R9 ${HARNESS_TEXT} ${HARNESS_BG}
@@ -277,7 +342,7 @@ Function ${UN}HarnessDark
     SetCtlColors $R8 ${HARNESS_TEXT} ${HARNESS_BG}
     Goto next
   push:
-    System::Call 'uxtheme::SetWindowTheme(p R8, w "DarkMode_Explorer", p 0)'
+    HarnessUI::TextButton $R8
     Goto next
   edit:
     System::Call 'uxtheme::SetWindowTheme(p R8, w "DarkMode_Explorer", p 0)'
@@ -290,7 +355,7 @@ Function ${UN}HarnessDark
     ; With no theme, the bar colors apply: the accent color of the app on dark gray.
     System::Call 'uxtheme::SetWindowTheme(p R8, w "", w "")'
     SendMessage $R8 0x409 0 0x003F61C6 ; PBM_SETBARCOLOR: RGB(198, 97, 63)
-    SendMessage $R8 0x2001 0 0x00262626 ; PBM_SETBKCOLOR: RGB(38, 38, 38)
+    SendMessage $R8 0x2001 0 0x002E3030 ; PBM_SETBKCOLOR: RGB(48, 48, 46), --surface
     Goto next
   done:
 FunctionEnd
@@ -371,21 +436,30 @@ Function ${UN}HarnessGuiInit
   !insertmacro HarnessBrandFile 175
   !insertmacro HarnessBrandFile 200
   Call ${UN}HarnessScale
+  HarnessUI::Colors ${HARNESS_BG} ${HARNESS_TEXT} ${HARNESS_MUTED} ${HARNESS_HOVER} ${HARNESS_PRESSED}
 
-  ; A dark title bar (DWMWA_USE_IMMERSIVE_DARK_MODE, Windows 10 2004 and later).
+  ; The title bar: dark (DWMWA_USE_IMMERSIVE_DARK_MODE, Windows 10 2004 and later), with the color
+  ; of the page (DWMWA_CAPTION_COLOR and DWMWA_TEXT_COLOR, Windows 11), and no title and no icon
+  ; (WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON). The window buttons stay: the window can close.
   System::Call "*(i 1) p .r9"
   System::Call "dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 20, p r9, i 4)"
+  System::Free $9
+  System::Call "*(i ${HARNESS_BG_COLORREF}) p .r9"
+  System::Call "dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 35, p r9, i 4)"
+  System::Call "dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 36, p r9, i 4)"
+  System::Free $9
+  System::Call "*(i 3, i 3) p .r9"
+  System::Call "uxtheme::SetWindowThemeAttribute(p $HWNDPARENT, i 1, p r9, i 8)"
   System::Free $9
 
   StrCpy $R9 $HWNDPARENT
   Call ${UN}HarnessDark
-  GetDlgItem $0 $HWNDPARENT 1028 ; The text at the bottom left.
-  SetCtlColors $0 ${HARNESS_MUTED} ${HARNESS_BG}
-  ; On black, the lines under the header and above the buttons are not needed.
-  GetDlgItem $0 $HWNDPARENT 1035
+  ; No text at the bottom left: the copyright and the license are in the app.
+  GetDlgItem $0 $HWNDPARENT 1028
   ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1036
+  GetDlgItem $0 $HWNDPARENT 1256
   ShowWindow $0 ${SW_HIDE}
+  Call ${UN}HarnessHideLines
 
   ; The header: the logo and the name in the middle, in place of the title of the page.
   GetDlgItem $0 $HWNDPARENT 1037
@@ -409,6 +483,7 @@ Function ${UN}HarnessInnerShow
   StrCpy $R9 $HarnessPage
   Call ${UN}HarnessDark
   ShowWindow $HarnessHeader ${SW_SHOW}
+  Call ${UN}HarnessHideLines
 FunctionEnd
 
 ; The progress page: the logo in the middle, the loading bar under it, and the status in the middle.
@@ -416,6 +491,9 @@ FunctionEnd
 Function ${UN}HarnessProgressPage
   FindWindow $HarnessPage "#32770" "" $HWNDPARENT
   ShowWindow $HarnessHeader ${SW_HIDE} ; The page shows the logo itself.
+  ; No buttons while the files install: Next, Cancel, and Back.
+  Call ${UN}HarnessHideButtons
+  Call ${UN}HarnessHideLines
   GetDlgItem $0 $HarnessPage 1016 ; The list of details, and its button: the page shows its own details.
   ShowWindow $0 ${SW_HIDE}
   GetDlgItem $0 $HarnessPage 1027
@@ -464,6 +542,7 @@ FunctionEnd
 ; In: $R9 the page, $R1 the title, $R2 the text.
 Function HarnessBigPage
   StrCpy $HarnessPage $R9
+  Call HarnessHideLines
   Push $R1
   Push $R2
   StrCpy $R5 "logo"
@@ -532,8 +611,8 @@ FunctionEnd
 ; 1. Welcome Page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW HarnessWelcomeShow
-!define MUI_WELCOMEPAGE_TITLE "Install ${PRODUCTNAME} ${VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "Click Install. ${PRODUCTNAME} installs for your user account. To use another folder, click Change."
+!define MUI_WELCOMEPAGE_TITLE "${PRODUCTNAME}"
+!define MUI_WELCOMEPAGE_TEXT "Version ${VERSION}" ; Harness: the name under the logo, and the version under the name.
 !insertmacro MUI_PAGE_WELCOME
 
 ; 2. License Page (if defined)
@@ -811,12 +890,18 @@ Function HarnessWelcomeShow
   StrCpy $R1 $mui.WelcomePage.Title
   StrCpy $R2 $mui.WelcomePage.Text
   Call HarnessBigPage
+  ; The version: one muted line under the name.
+  StrCpy $0 $mui.WelcomePage.Text
+  StrCpy $R1 162
+  StrCpy $R2 0
+  StrCpy $R3 18
+  Call HarnessCenter
 
-  ; The install location, and the button to change it: a row in the middle, under the text.
+  ; The install location, and the button to change it: a row in the middle, under the title.
   ${NSD_CreateLabel} 0 0 1 1 "Install location"
   Pop $HarnessDirLabel
   StrCpy $0 $HarnessDirLabel
-  StrCpy $R1 218
+  StrCpy $R1 200
   StrCpy $R2 380
   StrCpy $R3 16
   Call HarnessCenter
@@ -833,7 +918,7 @@ Function HarnessWelcomeShow
   Call HarnessPx
   IntOp $R0 $8 - $0
   IntOp $R0 $R0 / 2
-  StrCpy $0 236
+  StrCpy $0 218
   Call HarnessPx
   StrCpy $R1 $0
   StrCpy $0 300
@@ -855,6 +940,7 @@ Function HarnessWelcomeShow
   Call HarnessDark
   SetCtlColors $HarnessDirText ${HARNESS_TEXT} ${HARNESS_FIELD} ; A read-only field gets the color of a label.
   SetCtlColors $HarnessDirLabel ${HARNESS_MUTED} ${HARNESS_BG}
+  SetCtlColors $mui.WelcomePage.Text ${HARNESS_MUTED} ${HARNESS_BG}
   ; One click: the button of this page starts the install.
   GetDlgItem $0 $HWNDPARENT 1
   SendMessage $0 ${WM_SETTEXT} 0 "STR:Install"
@@ -879,11 +965,13 @@ Function HarnessFinishShow
   Call HarnessCenter
   StrCpy $R9 $mui.FinishPage
   Call HarnessDark
-  ; The app is installed: there is nothing to go back to or to cancel.
+  ; The app is installed: there is nothing to go back to or to cancel. The install page hid
+  ; Finish (button 1): show it again, at the far right.
   GetDlgItem $0 $HWNDPARENT 3
   ShowWindow $0 ${SW_HIDE}
   GetDlgItem $0 $HWNDPARENT 2
   ShowWindow $0 ${SW_HIDE}
+  Call HarnessNextFarRight
 FunctionEnd
 
 ; The "Change" button of the first page: choose another install folder.
@@ -1261,6 +1349,15 @@ Function HarnessItemsTotal
   Call HarnessShowRemaining
 FunctionEnd
 
+; Harness: the install page has no buttons. After an error, show the buttons that close the window.
+Function .onInstFailed
+  Call HarnessShowCloseButtons
+FunctionEnd
+
+Function un.onUninstFailed
+  Call un.HarnessShowCloseButtons
+FunctionEnd
+
 Function .onInstSuccess
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
@@ -1412,6 +1509,10 @@ Section Uninstall
   ${If} $PassiveMode = 1
   ${OrIf} $UpdateMode = 1
     SetAutoClose true
+  ${Else}
+    ; Harness: the uninstaller has no finish page. Show "Close" (button 1) at the far right: the
+    ; progress page hid it.
+    Call un.HarnessNextFarRight
   ${EndIf}
 SectionEnd
 

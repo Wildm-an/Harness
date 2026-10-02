@@ -2,7 +2,7 @@
 
     python client/src-tauri/nsis/make_images.py
 
-The installer is black, with the logo in the middle (installer.nsi):
+The installer has the color of the Harness sidebar, with the logo in the middle (installer.nsi):
 
 - brand/logo-<scale>.bmp: the {H} logo, 80 px at 100 % display scale. The welcome page, the
   finish page, and the install page show it in the middle.
@@ -25,8 +25,8 @@ BRAND = HERE / "brand"
 ICON = HERE.parent / "icons" / "icon.png"  # The white {H} on a transparent background.
 FONTS = Path("C:/Windows/Fonts")
 
-BLACK = (0, 0, 0)
-TEXT = (245, 245, 245)
+BG = (31, 30, 29)  # The sidebar of Harness (--sidebar in styles.css, #1f1e1d).
+TEXT = (250, 249, 245)  # --text, #faf9f5.
 SCALES = (100, 125, 150, 175, 200)
 LOGO_PX = 80
 HEADER_W, HEADER_H = 150, 40
@@ -38,14 +38,14 @@ def mark(size: int) -> Image.Image:
 
 def logo(scale: int) -> Image.Image:
     size = LOGO_PX * scale // 100
-    img = Image.new("RGBA", (size, size), BLACK + (255,))
+    img = Image.new("RGBA", (size, size), BG + (255,))
     img.alpha_composite(mark(size))
     return img
 
 
 def header(scale: int) -> Image.Image:
     w, h = HEADER_W * scale // 100, HEADER_H * scale // 100
-    img = Image.new("RGBA", (w, h), BLACK + (255,))
+    img = Image.new("RGBA", (w, h), BG + (255,))
     m = mark(h)
     name = ImageFont.truetype(str(FONTS / "segoeuib.ttf"), int(h * 0.45))
     text_w = ImageDraw.Draw(img).textlength("Harness", font=name)
@@ -66,5 +66,5 @@ if __name__ == "__main__":
     for scale in SCALES:
         save(logo(scale), BRAND / f"logo-{scale}.bmp")
         save(header(scale), BRAND / f"header-{scale}.bmp")
-    save(Image.new("RGB", (150, 57), BLACK), HERE / "header.bmp")
-    save(Image.new("RGB", (164, 314), BLACK), HERE / "sidebar.bmp")
+    save(Image.new("RGB", (150, 57), BG), HERE / "header.bmp")
+    save(Image.new("RGB", (164, 314), BG), HERE / "sidebar.bmp")

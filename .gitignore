@@ -19,3 +19,6 @@ client/src-tauri/target/
 
 # The daemon sidecar for the installers (daemon/scripts/build_sidecar.py)
 client/src-tauri/binaries/
+
+# The object files of the HarnessUI NSIS plugin (client/src-tauri/nsis/plugin/build.cmd)
+client/src-tauri/nsis/plugin/obj/
