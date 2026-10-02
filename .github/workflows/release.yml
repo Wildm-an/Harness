@@ -130,6 +130,27 @@ jobs:
           npm test
           npm run typecheck
 
+      # The installer uses the HarnessUI NSIS plugin. Build it from its source, not from the committed
+      # DLL. The NSIS zip is the one that Tauri downloads (the same address and SHA-1).
+      - name: Build the NSIS plugin
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\nsis-3.11.zip"
+          Invoke-WebRequest https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA1).Hash -ne "EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D") {
+            throw "The NSIS zip has the wrong SHA-1."
+          }
+          Expand-Archive $zip "$env:RUNNER_TEMP\nsis"
+          $api = Get-ChildItem "$env:RUNNER_TEMP\nsis" -Recurse -Directory -Filter Plugin |
+            Where-Object { Test-Path "$($_.FullName)\nsis\pluginapi.h" } | Select-Object -First 1
+          if (-not $api) { throw "The NSIS zip has no Examples\Plugin folder." }
+          $env:NSIS_PLUGIN_API = $api.FullName
+          $dll = "client\src-tauri\nsis\plugins\x86-unicode\HarnessUI.dll"
+          Remove-Item $dll
+          cmd /c client\src-tauri\nsis\plugin\build.cmd
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dll)) { throw "The NSIS plugin did not build." }
+
       - name: Build the installers
         working-directory: client
         env:
