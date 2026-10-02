@@ -14,6 +14,7 @@ from typing import Any
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "max_tool_calls": 250,
+    "limit_tool_calls": True,  # False: no tool call limit. A turn ends only when the model stops, or the user stops it.
     "bash_timeout": 120,
     "bash_max_timeout": 600,
     "max_output_chars": 20000,

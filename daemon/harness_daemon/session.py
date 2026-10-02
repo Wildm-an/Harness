@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .agent import Agent
 from .storage import Storage
 
@@ -16,6 +18,7 @@ class Session:
         self.title = title
         self._saved = len(agent.history)  # The number of history messages in storage.
         agent.on_compact = self.on_compact
+        agent.on_checkpoint = lambda message_id, path, content: storage.add_checkpoint(self.id, message_id, path, content)
 
     @property
     def cwd(self):
@@ -46,3 +49,40 @@ class Session:
         self.agent.clear()
         self.storage.clear_context(self.id)
         self._saved = 0
+
+    def user_index(self, message_id: str) -> int:
+        """The history index of a user message. ValueError if a summary replaced it, or it does not exist."""
+        for i, m in enumerate(self.agent.history):
+            if m.get("role") == "user" and m.get("id") == message_id:
+                return i
+        raise ValueError("This message is not in the context. A summary replaced it, or /clear removed it.")
+
+    def message_ids_from(self, index: int) -> list[str]:
+        return [m["id"] for m in self.agent.history[index:] if m.get("role") == "user" and m.get("id")]
+
+    def rewind(self, message_id: str, conversation: bool, code: bool) -> tuple[str, list[Path]]:
+        """Go back to the time before a user message. Return the text of the message, and the restored files.
+
+        ``code``: the files that the edit and write tools changed after the message get their old content.
+        Changes of bash commands are not restored. ``conversation``: the message and the messages after it go away.
+        """
+        index = self.user_index(message_id)
+        message = self.agent.history[index]
+        later = self.message_ids_from(index)
+        restored: list[Path] = []
+        if code:
+            for rel, content in self.storage.first_checkpoints(self.id, later).items():
+                path = Path(self.cwd) / rel
+                if content is None:
+                    path.unlink(missing_ok=True)  # The agent made the file.
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                restored.append(path)
+        if conversation:
+            self.persist()
+            self.storage.truncate_context(self.id, index)
+            self.storage.delete_checkpoints(self.id, later)
+            self.agent.rewind(index)
+            self._saved = index
+        return message.get("display") or message.get("content") or "", restored

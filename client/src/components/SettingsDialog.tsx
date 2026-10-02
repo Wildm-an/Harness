@@ -3,7 +3,7 @@
 // Computers are the screens that the sidebar opened before.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Puzzle, Rows2, Rows4, Settings, Sun, X, type LucideIcon } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Puzzle, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import type { PermissionMode, UserSettings } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
@@ -21,9 +21,10 @@ import {
 } from "../lib/theme";
 import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
+import { compareVersions } from "../lib/version";
 import { availableVersion, checkForUpdate, installUpdate, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "plugins" | "models" | "connections" | "computers";
+export type SettingsPage = "general" | "plugins" | "models" | "connections" | "computers" | "changelog";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
@@ -31,6 +32,7 @@ const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "connections", label: "Connections", icon: Cable },
   { id: "computers", label: "Computers", icon: Monitor },
+  { id: "changelog", label: "Changelog", icon: ScrollText },
 ];
 
 export const SETTINGS_SHORTCUT = "Ctrl+,";
@@ -41,12 +43,17 @@ export function isSettingsShortcut(e: Pick<KeyboardEvent, "code" | "key" | "ctrl
   return e.code === "Comma" || e.key === ",";
 }
 
-// What Enter does while the agent works: put the message in the queue, or stop the turn and send it.
-export type BusySend = "queue" | "interrupt";
+// What Enter does while the agent works: put the message in the queue, stop the turn and send it,
+// or give it to the agent at its next step (steer).
+export type BusySend = "queue" | "interrupt" | "steer";
 const BUSY_SEND_PREF = "busySend";
 
+function toBusySend(value: string): BusySend {
+  return value === "interrupt" || value === "steer" ? value : "queue";
+}
+
 export function busySend(): BusySend {
-  return loadPref(BUSY_SEND_PREF, "queue") === "interrupt" ? "interrupt" : "queue";
+  return toBusySend(loadPref(BUSY_SEND_PREF, "queue"));
 }
 
 export function SettingsDialog({
@@ -212,6 +219,7 @@ function NumberField({ id, value, min, max, unit, disabled, onSave }: {
 const SHORTCUTS: [string, string][] = [
   ["New session", "Ctrl+N"],
   ["Settings", "Ctrl+,"],
+  ["Search the sessions", "Ctrl+K"],
   ["Side chat", "Ctrl+;"],
   ["Show or hide the sidebar", "Ctrl+B"],
   ["Terminal", "Ctrl+`"],
@@ -342,18 +350,19 @@ export function GeneralSettings({
         />
       </Row>
 
-      <Row label="Send while the agent works" help="What Enter and the send button do during a turn." htmlFor="setting-busy-send">
+      <Row label="Send while the agent works" help="Queue: send after the turn. Interrupt: stop the turn and send. Steer: the agent reads it at its next step." htmlFor="setting-busy-send">
         <select
           id="setting-busy-send"
           value={busy}
           onChange={(e) => {
-            const next = e.target.value === "interrupt" ? "interrupt" : "queue";
+            const next = toBusySend(e.target.value);
             setBusy(next);
             savePref(BUSY_SEND_PREF, next);
           }}
         >
-          <option value="queue">Queue the message</option>
-          <option value="interrupt">Stop the turn and send</option>
+          <option value="queue">Queue</option>
+          <option value="interrupt">Interrupt</option>
+          <option value="steer">Steer</option>
         </select>
       </Row>
 
@@ -384,7 +393,23 @@ export function GeneralSettings({
       </Row>
 
       <Row label="Tool calls in a turn" help="The agent stops after this many tool calls, and asks to continue." htmlFor="setting-tool-calls">
-        <NumberField id="setting-tool-calls" value={values?.max_tool_calls ?? 250} min={1} max={500} disabled={off} onSave={(n) => set({ max_tool_calls: n })} />
+        <NumberField
+          id="setting-tool-calls"
+          value={values?.max_tool_calls ?? 250}
+          min={1}
+          max={500}
+          disabled={off || values?.limit_tool_calls === false}
+          onSave={(n) => set({ max_tool_calls: n })}
+        />
+      </Row>
+
+      <Row label="Limit tool calls" help="Off: the agent works until it stops, or until you stop it. A loop can then run for a long time.">
+        <Switch
+          checked={values?.limit_tool_calls !== false}
+          label="Limit tool calls"
+          disabled={off}
+          onChange={(on) => set({ limit_tool_calls: on })}
+        />
       </Row>
 
       <Row label="Command timeout" help="The default time limit of a command of the agent." htmlFor="setting-bash-timeout">
@@ -413,6 +438,12 @@ export function GeneralSettings({
         {appVersion && <>App version {appVersion}</>}
         {appVersion && daemonVersion && " · "}
         {daemonVersion && <>Daemon version {daemonVersion}</>}
+        {appVersion && daemonVersion && compareVersions(appVersion, daemonVersion) !== 0 && (
+          <span className="settings-version-warn">
+            {" "}
+            <TriangleAlert size={12} aria-hidden /> The versions are different.
+          </span>
+        )}
       </p>
     </div>
   );

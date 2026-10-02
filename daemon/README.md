@@ -123,6 +123,20 @@ The same daemon runs on a remote computer. The desktop client connects to it fro
 
 The providers, the skills, and the sessions of a remote daemon are the ones on the remote computer.
 
+### Update a remote daemon
+
+When the remote daemon has another version than the app, the app shows a warning at the bottom left. For an older daemon, the warning has **Update daemon**:
+
+1. The app sends the wheel of the daemon of its own version (the installer has it in `daemon-wheel/`).
+2. The daemon installs it into its own Python: `python -m pip install --upgrade <wheel>`. pip can download new dependencies.
+3. The daemon starts a new daemon with the same arguments, then stops. The new daemon waits until the port is free. The token stays the same, so the app connects again by itself.
+
+- The daemon refuses the update while a turn runs.
+- Only a daemon that runs with Python can update this way. The daemon of the desktop app updates with the app.
+- A daemon that runs as a service (for example systemd) can stop with the old process: then let the service manager start it again, or update by hand.
+- A daemon from a source folder moves to `site-packages`. It keeps the path of the DeepSeek plugin host in `~/.harness/plugin-host-path`.
+- A daemon older than 0.1.30 has no update: update it by hand one time.
+
 ## Test
 
 ```bash
@@ -178,6 +192,7 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 | Key | Default | Function |
 |---|---|---|
 | `max_tool_calls` | `250` | The maximum number of tool calls in one turn. |
+| `limit_tool_calls` | `true` | `false` turns off the tool call limit: a turn ends only when the model stops, or the user stops it. |
 | `bash_timeout` | `120` | The default `bash` timeout, in seconds. |
 | `bash_max_timeout` | `600` | The maximum `bash` timeout that the model can request. |
 | `max_output_chars` | `20000` | Tool output above this length is truncated. |

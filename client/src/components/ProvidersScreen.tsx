@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Check,
+  Copy,
   Cpu,
+  Eye,
+  EyeOff,
   KeyRound,
   LoaderCircle,
   Plug,
@@ -166,6 +169,7 @@ function ProviderForm({
   onDelete,
   onTest,
   onUse,
+  loadKey,
 }: {
   initial: ProviderItem | null; // null: a new provider.
   names: string[];
@@ -177,6 +181,7 @@ function ProviderForm({
   onDelete: (name: string) => void;
   onTest: (fields: ProviderFields, newKey: string | null) => void;
   onUse: (spec: string) => void;
+  loadKey: (provider: string) => Promise<string | null>; // The saved key in the keychain.
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? "");
@@ -187,6 +192,33 @@ function ProviderForm({
     !initial ? "keychain" : initial.key.source === "env" ? "env" : initial.key.source === "none" ? "none" : "keychain",
   );
   const [typedKey, setTypedKey] = useState("");
+  const [savedKey, setSavedKey] = useState<string | null>(null); // The key in the keychain. The field shows it, masked.
+  const [showKey, setShowKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (initial?.key.source !== "client") return;
+    let live = true;
+    loadKey(initial.name)
+      .then((key) => {
+        if (!live || !key) return;
+        setSavedKey(key);
+        setTypedKey((t) => t || key);
+      })
+      .catch(() => {
+        // No keychain access: the field stays empty, and an empty field keeps the saved key.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  // A new key only if the user changed the field. The saved key stays in the keychain.
+  const newKeyText = typedKey.trim() && typedKey.trim() !== savedKey ? typedKey.trim() : "";
+  const copyKey = () => {
+    void navigator.clipboard.writeText(typedKey.trim()).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
   const [env, setEnv] = useState(initial?.key.env ?? "");
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -209,7 +241,7 @@ function ProviderForm({
     if (!/^https?:\/\/[^\s/]+/.test(baseUrl.trim())) found.url = "Enter a URL that starts with http:// or https://.";
     if (context.trim() && !(Number(context) > 0 && Number.isInteger(Number(context)))) found.context = "Enter a positive whole number.";
     if (withKey) {
-      const mode = keyModeFor(tab, typedKey, env, initial?.key ?? null);
+      const mode = keyModeFor(tab, newKeyText, env, initial?.key ?? null);
       if (mode.error) found.key = mode.error;
     }
     setProblems(found);
@@ -219,8 +251,8 @@ function ProviderForm({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!check(true)) return;
-    const mode = keyModeFor(tab, typedKey, env, initial?.key ?? null);
-    onSave({ fields: fields(), key: mode.key, apiKeyEnv: tab === "env" ? env.trim() : undefined, newKey: tab === "keychain" && typedKey.trim() ? typedKey.trim() : null });
+    const mode = keyModeFor(tab, newKeyText, env, initial?.key ?? null);
+    onSave({ fields: fields(), key: mode.key, apiKeyEnv: tab === "env" ? env.trim() : undefined, newKey: tab === "keychain" && newKeyText ? newKeyText : null });
   };
 
   const applyPreset = (p: (typeof PRESETS)[number]) => {
@@ -340,17 +372,41 @@ function ProviderForm({
             <label htmlFor="pf-key" className="sr-only">
               API key
             </label>
-            <input
-              id="pf-key"
-              className="mono"
-              type="password"
-              autoComplete="off"
-              value={typedKey}
-              onChange={(e) => setTypedKey(e.target.value)}
-              placeholder={hasClientKey || plainText ? "Leave empty to keep the saved key" : "sk-..."}
-              aria-invalid={!!problems.key}
-              aria-describedby={describedBy("key") ?? "pf-key-help"}
-            />
+            <div className="key-field">
+              <input
+                id="pf-key"
+                className="mono"
+                type={showKey ? "text" : "password"}
+                autoComplete="off"
+                spellCheck={false}
+                value={typedKey}
+                onChange={(e) => setTypedKey(e.target.value)}
+                placeholder={hasClientKey || plainText ? "Leave empty to keep the saved key" : "sk-..."}
+                aria-invalid={!!problems.key}
+                aria-describedby={describedBy("key") ?? "pf-key-help"}
+              />
+              <button
+                type="button"
+                className="icon-btn ghost key-field-btn"
+                onClick={() => setShowKey((v) => !v)}
+                disabled={!typedKey}
+                aria-pressed={showKey}
+                aria-label={showKey ? "Hide the key" : "Show the key"}
+                title={showKey ? "Hide the key" : "Show the key"}
+              >
+                {showKey ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
+              </button>
+              <button
+                type="button"
+                className="icon-btn ghost key-field-btn"
+                onClick={copyKey}
+                disabled={!typedKey.trim()}
+                aria-label="Copy the key"
+                title={copied ? "Copied" : "Copy the key"}
+              >
+                {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
+              </button>
+            </div>
             {fieldError("key") || (
               <p id="pf-key-help" className="help">
                 {isTauri()
@@ -504,6 +560,7 @@ export function ProvidersScreen({
   onTest,
   onUse,
   onReturn,
+  loadKey,
   embedded = false,
 }: {
   embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
@@ -519,6 +576,7 @@ export function ProvidersScreen({
   onTest: (fields: ProviderFields, newKey: string | null, ref: string) => void;
   onUse: (spec: string) => void;
   onReturn: () => void;
+  loadKey: (provider: string) => Promise<string | null>; // The saved key of a provider, from the keychain.
 }) {
   const [editing, setEditing] = useState<{ item: ProviderItem | null; key: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -634,6 +692,7 @@ export function ProvidersScreen({
           onDelete={(name) => void run(() => onDelete(name))}
           onTest={(fields, newKey) => onTest(fields, newKey, formRef)}
           onUse={onUse}
+          loadKey={loadKey}
         />
       )}
     </div>

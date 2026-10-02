@@ -36,6 +36,15 @@ export function isNewSessionShortcut(e: KeyInfo): boolean {
   return e.code === "KeyN" || e.key.toLowerCase() === "n";
 }
 
+/** The key that opens the session search, as in Claude. */
+export const SEARCH_SHORTCUT = "Ctrl+K";
+
+/** Ctrl+K (Cmd+K on macOS) opens the session search. */
+export function isSearchShortcut(e: KeyInfo): boolean {
+  if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
+  return e.code === "KeyK" || e.key.toLowerCase() === "k";
+}
+
 /** The key that shows or hides the side chat, as in Claude. */
 export const SIDE_CHAT_SHORTCUT = "Ctrl+;";
 

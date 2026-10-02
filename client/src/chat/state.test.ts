@@ -29,6 +29,23 @@ describe("chatReducer", () => {
     expect(s.usage).toEqual(usage);
   });
 
+  it("shows a steer message where the agent took it", () => {
+    const s = run(
+      { type: "token", text: "Working." },
+      { type: "steer.taken", id: "q1", text: "use tabs" },
+      { type: "token", text: "OK, tabs." },
+    );
+    expect(s.items.map((i) => i.kind)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(s.items[1]).toMatchObject({ streaming: false });
+    expect(s.items[2]).toMatchObject({ text: "use tabs", messageId: "q1" });
+    expect(s.running).toBe(true);
+  });
+
+  it("keeps the id and the time of a stored user message", () => {
+    const [item] = historyToItems([{ role: "user", content: "hi", id: "u1", ts: 1700000000 }]);
+    expect(item).toMatchObject({ kind: "user", messageId: "u1", ts: 1700000000000 });
+  });
+
   it("updates only the newest running card when ids repeat", () => {
     const s = run(
       { type: "tool.start", id: "c1", name: "read", input: {} },

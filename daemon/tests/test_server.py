@@ -180,6 +180,28 @@ def test_interrupt(daemon, project, fake_model):
     c.close()
 
 
+def test_steer_through_the_protocol(daemon, project, fake_model):
+    (project / ".harness").mkdir()
+    (project / ".harness" / "settings.json").write_text(json.dumps({"allow": ["bash(sleep 2)"]}))
+    fake_model.script(
+        {"tool_calls": [{"name": "bash", "arguments": {"command": "sleep 2"}}]},
+        {"text": "OK."},
+    )
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "steer", "id": "early", "text": "no turn yet"})
+    assert c.until("steer.returned")[0]["ids"] == ["early"]
+    c.send({"type": "prompt", "text": "wait"})
+    c.until("tool.start")
+    c.send({"type": "steer", "id": "s1", "text": "Then say OK.", "display": "say OK"})
+    end, seen = c.until("turn.end")
+    assert end["stop_reason"] == "end"
+    taken = next(m for m in seen if m["type"] == "steer.taken")
+    assert (taken["id"], taken["text"]) == ("s1", "say OK")
+    assert fake_model.requests[-1]["messages"][-1] == {"role": "user", "content": "Then say OK."}
+    c.close()
+
+
 def test_return_to_a_session_with_a_running_turn(daemon, project, fake_model):
     fake_model.script(
         {"tool_calls": [{"name": "edit", "arguments": {"path": "hello.py", "old_string": "'hello'", "new_string": "'hey'"}}]},
@@ -458,10 +480,13 @@ def test_rename_pin_and_delete_a_session(daemon, project, fake_model):
     assert before["pinned"] is False
     c.send({"type": "session.update", "session_id": first["session_id"], "title": "  My task  ", "pinned": True})
     updated = c.until("session.updated")[0]
-    assert updated == {"type": "session.updated", "id": first["session_id"], "title": "My task", "pinned": True}
+    assert updated == {"type": "session.updated", "id": first["session_id"], "title": "My task", "pinned": True,
+                       "archived": False}
+    c.send({"type": "session.update", "session_id": first["session_id"], "archived": True})
+    assert c.until("session.updated")[0]["archived"] is True
     c.send({"type": "session.list"})
     after = c.until("sessions")[0]["items"][0]
-    assert after["title"] == "My task" and after["pinned"] is True
+    assert after["title"] == "My task" and after["pinned"] is True and after["archived"] is True
     assert after["updated_at"] == before["updated_at"]  # A rename does not change the age.
     c.send({"type": "session.update", "session_id": first["session_id"], "title": " "})
     assert "empty" in c.until("error")[0]["message"]
@@ -508,4 +533,73 @@ def test_user_settings_need_no_session(daemon, harness_home, project, fake_model
     assert "must be int" in c.until("error")[0]["message"]
     c.send({"type": "user_settings.set", "values": {"bash_timeout": 0}})
     assert "from 1 to 3600" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_rewind_and_fork(daemon, project, fake_model):
+    (project / ".harness").mkdir()
+    (project / ".harness" / "settings.json").write_text(json.dumps({"allow": ["edit", "write"]}))
+    original = (project / "hello.py").read_text()
+    fake_model.script(
+        {"tool_calls": [{"name": "edit", "arguments": {"path": "hello.py", "old_string": "'hello'", "new_string": "'hey'"}}]},
+        {"text": "Edited."},
+        {"tool_calls": [{"name": "write", "arguments": {"path": "new.txt", "content": "new"}}]},
+        {"text": "Written."},
+    )
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "change hello", "id": "p1"})
+    c.until("turn.end")
+    c.send({"type": "prompt", "text": "make a file", "id": "p2"})
+    c.until("turn.end")
+    assert "'hey'" in (project / "hello.py").read_text() and (project / "new.txt").exists()
+
+    # A fork has the conversation before the message, and the message text goes to the prompt box.
+    c.send({"type": "session.fork", "id": "p2"})
+    ready = c.until("session.ready")[0]
+    assert [m["content"] for m in ready["history"] if m["role"] == "user"] == ["change hello"]
+    assert c.until("prompt.fill")[0]["text"] == "make a file"
+    assert (project / "new.txt").exists()  # A fork does not change files.
+
+    # Rewind in the fork to p1: the code and the conversation go back to the start.
+    c.send({"type": "session.rewind", "id": "p1", "conversation": True, "code": True})
+    ready = c.until("session.ready")[0]
+    assert ready["history"] == []
+    assert c.until("prompt.fill")[0]["text"] == "change hello"
+    assert (project / "hello.py").read_text() == original
+    assert (project / "new.txt").exists()  # new.txt came after the fork point.
+
+    # The first session: rewind only the code of p2. The conversation stays.
+    first = ready["session_id"]
+    c.send({"type": "session.list"})
+    sessions = c.until("sessions")[0]["items"]
+    source = next(s["id"] for s in sessions if s["id"] != first)
+    c.send({"type": "session.resume", "session_id": source})
+    c.until("session.ready")
+    c.send({"type": "session.rewind", "id": "p2", "conversation": False, "code": True})
+    notice = c.until("notice")[0]
+    assert "1 file restored" in notice["text"]
+    assert not (project / "new.txt").exists()
+    c.send({"type": "session.rewind", "id": "missing", "conversation": True})
+    assert "not in the context" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_ping(daemon):
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "ping"})
+    assert c.until("pong")[0]["type"] == "pong"
+    c.close()
+
+
+def test_update_refused_without_enable(daemon):
+    from harness_daemon import update
+
+    update.enable([], sidecar=True)
+    c = Client(daemon)
+    ok = c.until("auth.ok")[0]
+    assert ok["updatable"] is False
+    c.send({"type": "daemon.update", "filename": "harness_daemon-9.9.9-py3-none-any.whl", "data": ""})
+    assert "cannot update itself" in c.until("error")[0]["message"]
     c.close()

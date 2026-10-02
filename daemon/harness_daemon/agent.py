@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -59,7 +60,13 @@ SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 
 # Fields of stored messages that only the client uses. The model does not get them.
 # The model gets the "image" of a tool result in a separate message. See Agent.messages.
-CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image")
+CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts")
+
+# Called before the first change of a file in the turn of a user message: (message id, path, content or None).
+OnCheckpoint = Callable[[str, str, "bytes | None"], None]
+
+# The tools that change files. A checkpoint keeps the file content before the change.
+FILE_TOOLS = ("edit", "write")
 
 IMAGE_MESSAGE = "The image from the {tool} tool call:"
 
@@ -127,6 +134,11 @@ class Agent:
         self.in_turn = False
         # User messages from plugins (DeepSeek agent.steer) that wait for the next step.
         self.pending_steer: list[str] = []
+        # User messages from the client (the "steer" message) that wait for the next step: (id, text, display).
+        self.user_steer: list[tuple[str, str, str | None]] = []
+        # The user message of the work now: the prompt of the turn, or the last steer message.
+        self.message_id: str | None = None
+        self.on_checkpoint: OnCheckpoint | None = None  # The session stores the checkpoints.
         self._step_contexts: list[str] = []  # tool.after contexts: user messages after the tool results.
         self._cancel_turn = False  # A tool.before handler cancelled a call: the turn stops.
         self._rebuild_prompt()
@@ -330,7 +342,8 @@ class Agent:
     def tool_schemas(self) -> list[dict[str, Any]]:
         return [t.schema(self.ctx) for t in self.tools.values()]
 
-    async def run_turn(self, text: str, *, display: str | None = None, allow: tuple[str, ...] = ()) -> str:
+    async def run_turn(self, text: str, *, display: str | None = None, allow: tuple[str, ...] = (),
+                       message_id: str | None = None) -> str:
         """Run one user turn. Return the stop reason.
 
         ``display`` is the text that the client shows for the user message, for example
@@ -340,10 +353,9 @@ class Agent:
         Stop reasons: ``end``, ``max_tool_calls``, ``denied``, ``interrupted``, ``error``.
         """
         text = (await self.hooks.emit("turn.start", TurnEvent(text, self.cwd))).text
-        message: dict[str, Any] = {"role": "user", "content": text}
-        if display is not None:
-            message["display"] = display
+        message = user_message(text, display, message_id)
         self.history.append(message)
+        self.message_id = message["id"]
         self.gate.turn_allow = list(allow)
         self.turn_number += 1
         turn = self.turn_number
@@ -372,6 +384,7 @@ class Agent:
                 streamed.clear()
                 step += 1
                 new_messages += self._take_pending_steer()
+                new_messages += await self._take_user_steer()
                 if self.hooks.has("step.before"):
                     event = await self.hooks.emit("step.before", StepEvent(
                         turn, step, [str(m.get("content") or "") for m in new_messages], self.cwd))
@@ -406,6 +419,8 @@ class Agent:
                     total = response.usage["prompt_tokens"] + response.usage.get("completion_tokens", 0)
                     self._known_tokens = (total, len(self.history))
                 if not response.tool_calls:
+                    if self.user_steer:
+                        continue  # The user steered the turn during this step: the model reads the message.
                     # turn.stopping handlers can add messages: then the turn continues.
                     if self.hooks.has("turn.stopping") and continuations < MAX_STEER_CONTINUATIONS:
                         stopping = await self.hooks.emit("turn.stopping", TurnStoppingEvent(turn, self.cwd))
@@ -418,7 +433,7 @@ class Agent:
                 open_calls = list(response.tool_calls)
                 while open_calls:
                     call = open_calls[0]
-                    if calls_used >= max_calls:
+                    if calls_used >= max_calls and self.settings.get("limit_tool_calls", True) is not False:
                         stop = "max_tool_calls"
                         self._close_open_calls(
                             open_calls,
@@ -462,11 +477,60 @@ class Agent:
 
         self.in_turn = False
         self._step_contexts = []
+        await self._return_user_steer()
         await self.hooks.emit("turn.end", TurnEvent(text, self.cwd, stop))
         await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
         return stop
 
     # -- plugin events of the loop ----------------------------------------------------------------
+
+    def _checkpoint(self, args: dict[str, Any]) -> None:
+        """Keep the content of the file before an edit or write tool changes it."""
+        if self.on_checkpoint is None or self.message_id is None:
+            return
+        try:
+            path = self.ctx.resolve(args.get("path"))
+        except ToolError:
+            return  # The tool gives the error.
+        try:
+            content: bytes | None = path.read_bytes()
+        except FileNotFoundError:
+            content = None
+        except OSError:
+            return
+        self.on_checkpoint(self.message_id, relpath(self.cwd, path), content)
+
+    def rewind(self, index: int) -> None:
+        """Remove the history from ``index``: a user message and all after it."""
+        self.history = self.history[:index]
+        self._known_tokens = None
+
+    def steer(self, steer_id: str, text: str, display: str | None = None) -> bool:
+        """Add a user message to the running turn. The model reads it at the next step.
+
+        Return False if no turn runs: the client then sends the message as a prompt.
+        """
+        if not self.in_turn:
+            return False
+        self.user_steer.append((steer_id, text, display))
+        return True
+
+    async def _take_user_steer(self) -> list[dict[str, Any]]:
+        taken, self.user_steer = self.user_steer, []
+        messages: list[dict[str, Any]] = []
+        for steer_id, text, display in taken:
+            message = user_message(text, display, steer_id)
+            self.history.append(message)
+            self.message_id = steer_id
+            messages.append(message)
+            await self.emit({"type": "steer.taken", "id": steer_id, "text": display or text})
+        return messages
+
+    async def _return_user_steer(self) -> None:
+        """The turn ended before the next step. The client sends the messages as prompts."""
+        left, self.user_steer = self.user_steer, []
+        if left:
+            await self.emit({"type": "steer.returned", "ids": [steer_id for steer_id, _, _ in left]})
 
     def _take_pending_steer(self) -> list[dict[str, Any]]:
         texts, self.pending_steer = self.pending_steer, []
@@ -704,6 +768,8 @@ class Agent:
                 return ToolResult(allowed, is_error=True)
             if not allowed:
                 return _DENIED_RESULT
+            if name in FILE_TOOLS:
+                self._checkpoint(args)
             call.result = await tool.run(args, self.ctx)
         except ToolError as e:
             call.result = ToolResult(str(e), is_error=True)
@@ -718,6 +784,16 @@ class Agent:
 
 
 _DENIED_RESULT = ToolResult(DENIED, is_error=True)
+
+
+def user_message(text: str, display: str | None, message_id: str | None) -> dict[str, Any]:
+    """A user message of the history. The id and the time are for the client: rewind and fork use the id."""
+    message: dict[str, Any] = {"role": "user", "content": text}
+    if display is not None:
+        message["display"] = display
+    message["id"] = message_id or uuid.uuid4().hex
+    message["ts"] = time.time()
+    return message
 
 PLAN_MODE_NOTE = """
 

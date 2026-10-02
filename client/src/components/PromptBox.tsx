@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CornerDownLeft, FileText, Folder, LoaderCircle, MessageSquare, Square } from "lucide-react";
 import type { CommandItem } from "../daemon/protocol";
+import { busySend, type BusySend } from "./SettingsDialog";
 import {
   filterSessions,
   insertMention,
@@ -13,6 +14,13 @@ import {
 } from "./mentions";
 
 // "display" is the text that the user sees, if it is not "text": the names of sessions in place of their ids.
+// The hint in the box during a turn: what Enter does (Settings > General).
+const BUSY_HINTS: Record<BusySend, string> = {
+  queue: "Type a message to queue it.",
+  interrupt: "Type a message to stop the turn and send it.",
+  steer: "Type a message to steer the agent.",
+};
+
 export type Submission = { kind: "prompt"; text: string; display?: string } | { kind: "command"; name: string; args: string };
 
 /** Splits "/name args" into a command. Other text is a prompt. */
@@ -106,7 +114,8 @@ export function PromptBox({
   sessions?: MentionSession[]; // Other sessions for the "@" menu, newest first.
   fileMatches?: { query: string; items: string[] } | null; // The last fs.found reply.
   onFindFiles?: (query: string) => void; // Asks the daemon for the files that match an "@" query.
-  insert?: { text: string; key: number } | null; // Text to add, for example "@src/app.py:10-25" from the editor.
+  // Text to add, for example "@src/app.py:10-25" from the editor. replace: the text replaces the box text (a rewind).
+  insert?: { text: string; key: number; replace?: boolean } | null;
   below?: React.ReactNode; // A row under the box, on the right: the model menu.
   running: boolean;
   disabled: boolean;
@@ -197,7 +206,7 @@ export function PromptBox({
 
   useEffect(() => {
     if (!insert) return;
-    const next = `${text}${text && !/\s$/.test(text) ? " " : ""}${insert.text} `;
+    const next = insert.replace ? insert.text : `${text}${text && !/\s$/.test(text) ? " " : ""}${insert.text} `;
     pendingCaret.current = next.length;
     change(next);
     area.current?.focus();
@@ -438,7 +447,7 @@ export function PromptBox({
             disabled={disabled}
             placeholder={
               running
-                ? "Type a message to queue it. Esc interrupts the agent."
+                ? `${BUSY_HINTS[busySend()]} Esc interrupts the agent.`
                 : suggestion
                   ? suggestion
                   : (placeholder ?? "Ask the agent. Type / for commands and skills, @ for files.")

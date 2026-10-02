@@ -20,7 +20,7 @@ export interface HistoryToolCall {
 }
 
 export type HistoryMessage =
-  | { role: "user"; content: string; display?: string } // display: the text that the user typed, for example "/review src".
+  | { role: "user"; content: string; display?: string; id?: string; ts?: number } // ts: epoch seconds. // display: the text that the user typed, for example "/review src".
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string };
@@ -111,6 +111,7 @@ export interface UserSettings {
   prompt_suggestions: boolean;
   auto_verify: boolean;
   max_tool_calls: number;
+  limit_tool_calls?: boolean; // false: no tool call limit.
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
 }
@@ -203,6 +204,14 @@ export interface SessionSummary {
   created_at: number;
   updated_at: number;
   pinned?: boolean; // The sidebar shows it in the Pinned list.
+  archived?: boolean; // The sidebar shows it only with the "Archived" or "All" status filter.
+}
+
+/** The pull request of the branch of a project folder. branch is null outside a git repository. */
+export interface PrStatus {
+  path: string;
+  branch: string | null;
+  pr: { number: number; state: "open" | "draft" | "merged" | "closed"; url: string | null; title: string | null } | null;
 }
 
 /** A saved project: a folder on the daemon computer. The agent keeps its files in this folder. */
@@ -471,7 +480,9 @@ export type ClientMessage =
   | { type: "session.new"; cwd: string; model: string; provider?: string; permission_mode?: PermissionMode }
   | { type: "session.resume"; session_id: string }
   | { type: "session.leave" } // The start screen. A running turn of the session continues.
-  | { type: "session.update"; session_id: string; title?: string; pinned?: boolean } // Rename or pin.
+  | { type: "session.update"; session_id: string; title?: string; pinned?: boolean; archived?: boolean } // Rename, pin, or archive.
+  // The branch and the pull request of project folders, for the sidebar. The reply is "pr_status".
+  | { type: "git.pr_status"; paths: string[] }
   | { type: "session.delete"; session_id: string }
   | { type: "session.move"; session_id: string; cwd: string } // Change the folder. The history stays.
   // The terminal pane: the shell of the session.
@@ -497,10 +508,19 @@ export type ClientMessage =
   | { type: "projects.list" }
   | { type: "projects.save"; id?: string; name: string; path: string; create?: boolean }
   | { type: "projects.delete"; id: string }
-  | { type: "prompt"; text: string; display?: string } // display: the text that the user sees.
+  | { type: "prompt"; text: string; display?: string; id?: string } // display: the text that the user sees. id: for rewind and fork.
+  // Go back to the time before a user message: remove it and all after it, and/or restore the files that the agent changed.
+  | { type: "session.rewind"; id: string; conversation: boolean; code: boolean }
+  // A new session with the conversation before a user message.
+  | { type: "session.fork"; id: string }
   | { type: "command"; name: string; args: string }
   | { type: "permission.reply"; request_id: string; decision: Decision }
   | { type: "interrupt" }
+  | { type: "ping" } // The reply is "pong". The client checks that the connection is alive.
+  // Install the wheel of the daemon of the app (base64), then restart. Only for a remote daemon.
+  | { type: "daemon.update"; filename: string; data: string }
+  // A message for the running turn. The agent reads it at its next step. id: the queue item of the client.
+  | { type: "steer"; id: string; text: string; display?: string }
   | { type: "skills.list"; cwd?: string } // cwd: the start screen, which has no session.
   | { type: "skills.get"; name: string }
   | { type: "fs.dirs"; path?: string; hidden?: boolean }
@@ -555,7 +575,9 @@ export type ClientMessage =
   | ({ type: "settings.set" } & Partial<ClientSettings>);
 
 export type DaemonMessage =
-  | { type: "auth.ok"; version: string; host: HostInfo }
+  | { type: "auth.ok"; version: string; host: HostInfo; updatable?: boolean } // updatable: "daemon.update" works.
+  // The progress of "daemon.update". After "restarting", the connection closes, and the app connects again.
+  | { type: "daemon.update"; state: "installing" | "restarting" | "error"; message?: string }
   | ({ type: "fs.dirs" } & DirListing)
   | {
       type: "servers";
@@ -614,7 +636,8 @@ export type DaemonMessage =
       turn_tokens?: number; // The output tokens of the running turn so far.
     }
   | { type: "session.title"; id: string; title: string } // The model made the title from the first prompt.
-  | { type: "session.updated"; id: string; title: string | null; pinned: boolean }
+  | { type: "session.updated"; id: string; title: string | null; pinned: boolean; archived?: boolean }
+  | { type: "pr_status"; items: PrStatus[] }
   | { type: "session.deleted"; id: string }
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
   // replay: the last output of a running shell. seq: the number of its last output.
@@ -678,8 +701,15 @@ export type DaemonMessage =
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
+  // A steer message went into the history. text: the text that the user sees.
+  | { type: "steer.taken"; id: string; text: string }
+  // The turn ended before the next step, or no turn ran: the client sends these messages as prompts.
+  | { type: "steer.returned"; ids: string[] }
   // After a turn: the next prompt that the model predicts. The prompt box shows it. Tab puts it in the box.
   | { type: "prompt.suggestion"; text: string }
+  // After a rewind or a fork: the text of the user message. It replaces the text in the prompt box.
+  | { type: "prompt.fill"; text: string }
+  | { type: "pong" }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string } // For example, a plugin added a message.
   // The token counts of the turn so far, after each model reply.
   | { type: "turn.usage"; prompt_tokens: number; completion_tokens: number; last_prompt_tokens: number }

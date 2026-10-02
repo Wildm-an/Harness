@@ -1,7 +1,7 @@
 import { memo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { openExternal } from "../lib/tauri";
+import { openLink } from "../lib/openLink";
 import { parsePathRef, useOpenPath } from "../lib/openPath";
 
 /** Inline code. A file path such as `src/app.py:42` opens the file in the Files pane. */
@@ -25,13 +25,13 @@ function Code({ className, children }: { className?: string; children?: ReactNod
 }
 
 const components: Components = {
-  // Open links in the system browser. Do not let a link replace the app page.
+  // Open links in the system browser, or in the Browser pane. Do not let a link replace the app page.
   a: ({ href, children }) => (
     <a
       href={href}
       onClick={(e) => {
         e.preventDefault();
-        if (href && /^https?:\/\//i.test(href)) void openExternal(href);
+        if (href && /^https?:\/\//i.test(href)) openLink(href);
       }}
     >
       {children}

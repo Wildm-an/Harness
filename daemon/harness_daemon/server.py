@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import getpass
 import hmac
 import json
@@ -56,6 +58,8 @@ from .tunnels import TUNNELS, TunnelError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
+from .prstatus import pr_status
+from . import update
 from .session import Session
 from .keepawake import AWAKE
 from .sidechat import NO_TOOLS_REPLY, clean_side_history, side_messages
@@ -164,7 +168,8 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
                 pass
             return
         conn = Connection(websocket, app.state.storage)
-        await conn.send({"type": "auth.ok", "version": __version__, "host": host_info()})
+        await conn.send({"type": "auth.ok", "version": __version__, "host": host_info(),
+                         "updatable": update.refusal() is None})
         await conn.run()
 
     @app.websocket("/forward")
@@ -794,7 +799,8 @@ class Connection:
             "turn_tokens": live.turn_tokens if running else 0,
         })
 
-    async def run_turn(self, live: LiveSession, text: str, display: str | None = None) -> None:
+    async def run_turn(self, live: LiveSession, text: str, display: str | None = None,
+                       message_id: str | None = None) -> None:
         """Run a prompt. ``display`` is the text that the user sees, if it is not ``text``: the client
         shows a session reference with its name, and sends it with its id."""
         session = live.session
@@ -830,7 +836,8 @@ class Connection:
                 expanded = f"{expanded}\n\n{block}"
         try:
             shown = display or text
-            stop = await session.agent.run_turn(expanded, display=shown if expanded != shown else None, allow=allow)
+            stop = await session.agent.run_turn(expanded, display=shown if expanded != shown else None, allow=allow,
+                                                message_id=message_id)
         finally:
             session.persist()
         if stop == "end":
@@ -1111,7 +1118,7 @@ MAX_TITLE = 120
 
 @handler("session.update")
 async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
-    """Rename or pin a session: {"session_id", "title"?, "pinned"?}. The age of the session stays."""
+    """Rename, pin, or archive a session: {"session_id", "title"?, "pinned"?, "archived"?}. The age of the session stays."""
     session_id = _text_arg(msg, "session_id")
     if conn.storage.get_session(session_id) is None:
         raise ProtocolError(f"Unknown session: {session_id}")
@@ -1125,14 +1132,19 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
         if not isinstance(msg["pinned"], bool):
             raise ProtocolError("'pinned' must be true or false.")
         fields["pinned"] = int(msg["pinned"])
+    if "archived" in msg:
+        if not isinstance(msg["archived"], bool):
+            raise ProtocolError("'archived' must be true or false.")
+        fields["archived"] = int(msg["archived"])
     if not fields:
-        raise ProtocolError("Give 'title' or 'pinned'.")
+        raise ProtocolError("Give 'title', 'pinned', or 'archived'.")
     conn.storage.update_session(session_id, touch=False, **fields)
     live = conn.live.get(session_id)
     if live is not None and live.session is not None and "title" in fields:
         live.session.title = fields["title"]
     row = conn.storage.get_session(session_id)
-    await conn.send({"type": "session.updated", "id": session_id, "title": row["title"], "pinned": bool(row["pinned"])})
+    await conn.send({"type": "session.updated", "id": session_id, "title": row["title"], "pinned": bool(row["pinned"]),
+                     "archived": bool(row["archived"])})
 
 
 @handler("session.delete")
@@ -1327,9 +1339,30 @@ async def on_session_list(conn: Connection, msg: dict[str, Any]) -> None:
     await conn.send({"type": "sessions", "items": items, "cwd": cwd if isinstance(cwd, str) else None})
 
 
+@handler("git.pr_status")
+async def on_git_pr_status(conn: Connection, msg: dict[str, Any]) -> None:
+    """The branch and the pull request of project folders: {"paths"}. The reply is "pr_status".
+
+    It runs as a task: gh can be slow, and the connection stays free for other messages.
+    """
+    paths = [p for p in _str_list(msg, "paths") if p.strip()][:MAX_PR_PATHS]
+
+    async def work() -> None:
+        try:
+            items = await pr_status(paths)
+        except Exception as e:  # noqa: BLE001 - the sidebar shows no status.
+            log.exception("PR status failed")
+            await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.pr_status")
+            return
+        await conn.send({"type": "pr_status", "items": items})
+
+    asyncio.create_task(work())
+
+
 # -- projects: saved project folders (the start screen) -----------------------------------
 
 MAX_PROJECT_NAME = 80
+MAX_PR_PATHS = 100
 
 
 async def _send_projects(conn: Connection, saved: str | None = None) -> None:
@@ -1790,7 +1823,80 @@ async def on_prompt(conn: Connection, msg: dict[str, Any]) -> None:
         raise ProtocolError("The prompt is empty.")
     display = msg.get("display")
     shown = display.strip() if isinstance(display, str) and display.strip() else None
-    await conn.start_turn(lambda live: conn.run_turn(live, text, shown))
+    message_id = msg.get("id") if isinstance(msg.get("id"), str) and msg.get("id") else None
+    await conn.start_turn(lambda live: conn.run_turn(live, text, shown, message_id))
+
+
+@handler("steer")
+async def on_steer(conn: Connection, msg: dict[str, Any]) -> None:
+    """A user message for the running turn. The model reads it at the next step, and the turn continues."""
+    session = conn.require_session()
+    steer_id = _text_arg(msg, "id")
+    text = _text_arg(msg, "text")
+    if not text.strip():
+        raise ProtocolError("The message is empty.")
+    display = msg.get("display")
+    shown = display.strip() if isinstance(display, str) and display.strip() else None
+    if not session.agent.steer(steer_id, text, shown):
+        await conn.require_live().send({"type": "steer.returned", "ids": [steer_id]})  # No turn runs.
+
+
+@handler("session.rewind")
+async def on_session_rewind(conn: Connection, msg: dict[str, Any]) -> None:
+    """Go back to the time before a user message: {"id", "conversation": bool, "code": bool}.
+
+    With "conversation", the message and all after it go away, and the client gets the message text
+    for the prompt box. With "code", the files that the agent changed after the message get their old content.
+    """
+    session = conn.require_session()
+    conn.require_idle()
+    message_id = _text_arg(msg, "id")
+    conversation = msg.get("conversation") is not False
+    code = msg.get("code") is True
+    if not conversation and not code:
+        raise ProtocolError("Rewind needs 'conversation', 'code', or both.")
+    try:
+        text, restored = session.rewind(message_id, conversation, code)
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
+    live = conn.require_live()
+    for path in restored:
+        await live.send({"type": "fs.changed", "path": relpath(session.cwd, path), "hash": file_hash(path), "by": "agent"})
+    if conversation:
+        await conn.send_ready([])
+        await live.send({"type": "prompt.fill", "text": text})
+    if code:
+        count = len(restored)
+        files = "No files changed" if count == 0 else f"{count} {'file' if count == 1 else 'files'} restored"
+        await live.send({"type": "notice", "level": "info", "text": f"Rewind: {files}. Changes of commands are not restored."})
+
+
+@handler("session.fork")
+async def on_session_fork(conn: Connection, msg: dict[str, Any]) -> None:
+    """A new session with the conversation before a user message. The client gets the message text for the prompt box."""
+    source = conn.require_session()
+    message_id = _text_arg(msg, "id")
+    try:
+        index = source.user_index(message_id)
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
+    message = source.agent.history[index]
+    history = json.loads(json.dumps(source.agent.history[:index]))
+    summary = source.agent.summary
+    client = source.agent.client
+    live = LiveSession(conn)
+    agent, warnings = await conn.make_agent(live, source.cwd, client.provider.name, client.model, history, summary)
+    session_id = conn.storage.create_session(str(source.cwd), agent.client.provider.name, agent.client.model)
+    conn.storage.append_messages(session_id, history)
+    title = f"{source.title} (fork)" if source.title else None
+    conn.storage.update_session(session_id, summary=summary, title=title)
+    copied = [m["id"] for m in history if m.get("role") == "user" and m.get("id")]
+    conn.storage.copy_checkpoints(source.id, session_id, copied)
+    conn.storage.touch_project(str(source.cwd))
+    live.session = Session(conn.storage, session_id, agent, title=title)
+    await conn.open_session(live)
+    await conn.send_ready(warnings)
+    await live.send({"type": "prompt.fill", "text": message.get("display") or message.get("content") or ""})
 
 
 @handler("interrupt")
@@ -2011,6 +2117,43 @@ async def _send_settings(conn: Connection, session: Session) -> None:
     await conn.send({"type": "settings", **values})
 
 
+@handler("daemon.update")
+async def on_daemon_update(conn: Connection, msg: dict[str, Any]) -> None:
+    """Install a new version of the daemon: {"filename", "data" (base64 of the wheel)}. Then restart.
+
+    Replies are "daemon.update" with "state": "installing", "restarting", or "error" (with "message").
+    """
+    reason = update.refusal()
+    if reason:
+        raise ProtocolError(reason)
+    if any(live.running for live in conn.live.values()):
+        raise ProtocolError("A turn is running. Wait for the end of the turn, or stop it, then update.")
+    filename = _text_arg(msg, "filename")
+    try:
+        data = base64.b64decode(_text_arg(msg, "data"), validate=True)
+    except (ValueError, binascii.Error):
+        raise ProtocolError("'data' must be base64.") from None
+
+    async def work() -> None:
+        await conn.send({"type": "daemon.update", "state": "installing"})
+        try:
+            await update.install(filename, data)
+        except (RuntimeError, OSError) as e:
+            await conn.send({"type": "daemon.update", "state": "error", "message": str(e)})
+            return
+        await conn.send({"type": "daemon.update", "state": "restarting"})
+        await asyncio.sleep(0.3)  # The reply goes out before the process stops.
+        update.restart()
+
+    asyncio.create_task(work())
+
+
+@handler("ping")
+async def on_ping(conn: Connection, msg: dict[str, Any]) -> None:
+    """The client checks that the connection is alive, for example after the computer wakes."""
+    await conn.send({"type": "pong"})
+
+
 @handler("context.get")
 async def on_context_get(conn: Connection, msg: dict[str, Any]) -> None:
     """The context breakdown of the session: the size of each part of the next request."""
@@ -2059,6 +2202,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "prompt_suggestions": (bool,),
     "auto_verify": (bool,),
     "max_tool_calls": (int,),
+    "limit_tool_calls": (bool,),
     "bash_timeout": (int,),
     "terminal_shell": (str, type(None)),
 }

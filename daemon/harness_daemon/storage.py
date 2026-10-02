@@ -21,13 +21,23 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at REAL NOT NULL,
     context_start INTEGER NOT NULL DEFAULT 0,
     summary TEXT,
-    pinned INTEGER NOT NULL DEFAULT 0
+    pinned INTEGER NOT NULL DEFAULT 0,
+    archived INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     seq INTEGER NOT NULL,
     data TEXT NOT NULL,
     PRIMARY KEY (session_id, seq)
+);
+-- The content of a file before the agent changed it in the turn of a user message. Rewind uses it.
+-- content is NULL if the file did not exist. The rowid gives the order.
+CREATE TABLE IF NOT EXISTS checkpoints (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    content BLOB,
+    UNIQUE (session_id, message_id, path)
 );
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
@@ -64,6 +74,8 @@ class Storage:
             self.db.execute("ALTER TABLE sessions ADD COLUMN summary TEXT")
         if "pinned" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        if "archived" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         # The first start with the projects table: add the folders of the stored sessions.
         if self.db.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
             rows = self.db.execute("SELECT cwd, MIN(created_at), MAX(updated_at) FROM sessions GROUP BY cwd").fetchall()
@@ -152,12 +164,13 @@ class Storage:
         return dict(row) if row else None
 
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        sql = "SELECT id, cwd, provider, model, title, created_at, updated_at, pinned FROM sessions"
+        sql = "SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived FROM sessions"
         params: tuple = ()
         sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
         for r in rows:
             r["pinned"] = bool(r["pinned"])
+            r["archived"] = bool(r["archived"])
         if cwd:  # Compare as paths: case-insensitive on Windows.
             key = path_key(cwd)
             rows = [r for r in rows if path_key(r["cwd"]) == key]
@@ -166,7 +179,7 @@ class Storage:
     def update_session(self, session_id: str, touch: bool = True, **fields: Any) -> None:
         """Change fields of a session. ``touch``: the session is newer (for example after a prompt).
         A rename or a pin does not change the age of the session."""
-        allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "cwd"}
+        allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "archived", "cwd"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if touch:
             fields["updated_at"] = time.time()
@@ -179,6 +192,7 @@ class Storage:
     def delete_session(self, session_id: str) -> None:
         """Delete a session and its messages. It cannot be undone."""
         self.db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        self.db.execute("DELETE FROM checkpoints WHERE session_id = ?", (session_id,))
         self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self.db.commit()
 
@@ -207,6 +221,60 @@ class Storage:
             (session_id, session["context_start"]),
         )
         return [json.loads(r[0]) for r in rows]
+
+    def truncate_context(self, session_id: str, keep: int) -> None:
+        """Delete the messages of the current context after the first ``keep`` messages (a rewind)."""
+        session = self.get_session(session_id)
+        if session is None:
+            return
+        self.db.execute(
+            "DELETE FROM messages WHERE session_id = ? AND seq >= ?", (session_id, session["context_start"] + keep)
+        )
+        self.db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (time.time(), session_id))
+        self.db.commit()
+
+    # -- checkpoints ------------------------------------------------------------------
+
+    def add_checkpoint(self, session_id: str, message_id: str, path: str, content: bytes | None) -> None:
+        """Keep the content of a file before its first change in the turn of a message."""
+        self.db.execute(
+            "INSERT OR IGNORE INTO checkpoints (session_id, message_id, path, content) VALUES (?, ?, ?, ?)",
+            (session_id, message_id, path, content),
+        )
+        self.db.commit()
+
+    def first_checkpoints(self, session_id: str, message_ids: list[str]) -> dict[str, bytes | None]:
+        """For each file that changed in the turns of these messages: the content before the first change."""
+        if not message_ids:
+            return {}
+        marks = ",".join("?" * len(message_ids))
+        rows = self.db.execute(
+            f"SELECT path, content FROM checkpoints WHERE session_id = ? AND message_id IN ({marks}) ORDER BY rowid",
+            (session_id, *message_ids),
+        )
+        first: dict[str, bytes | None] = {}
+        for path, content in rows:
+            first.setdefault(path, content)
+        return first
+
+    def delete_checkpoints(self, session_id: str, message_ids: list[str]) -> None:
+        if not message_ids:
+            return
+        marks = ",".join("?" * len(message_ids))
+        self.db.execute(f"DELETE FROM checkpoints WHERE session_id = ? AND message_id IN ({marks})", (session_id, *message_ids))
+        self.db.commit()
+
+    def copy_checkpoints(self, source: str, target: str, message_ids: list[str]) -> None:
+        """A fork keeps the checkpoints of the messages that it copies."""
+        if not message_ids:
+            return
+        marks = ",".join("?" * len(message_ids))
+        self.db.execute(
+            f"INSERT OR IGNORE INTO checkpoints (session_id, message_id, path, content) "
+            f"SELECT ?, message_id, path, content FROM checkpoints WHERE session_id = ? AND message_id IN ({marks}) ORDER BY rowid",
+            (target, source, *message_ids),
+        )
+        self.db.commit()
 
     def clear_context(self, session_id: str) -> None:
         self.update_session(session_id, context_start=self.next_seq(session_id), summary=None)

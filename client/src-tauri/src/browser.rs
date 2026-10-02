@@ -5,7 +5,8 @@
 //!   commands (the capability grants the commands only to the "main" webview).
 //! - The browser has its own data folder: a clear of its cookies and storage does not clear the
 //!   settings of the app. All tabs share it.
-//! - Only http, https, and about: URLs load.
+//! - Only http, https, about:, and file: URLs load. A file: page is a local HTML file that the user
+//!   opened with "Open HTML file".
 //! - Each page load and each title change goes to the app as a "browser-event". A link that
 //!   opens a new window goes to the app as a "browser-new-tab": the pane opens it in a new tab.
 
@@ -46,7 +47,7 @@ struct NewTab {
 fn parse_url(url: &str) -> Result<Url, String> {
     let parsed = Url::parse(url).map_err(|e| format!("Not a valid address: {e}"))?;
     match parsed.scheme() {
-        "http" | "https" | "about" => Ok(parsed),
+        "http" | "https" | "about" | "file" => Ok(parsed),
         other => Err(format!("The browser does not open {other}: addresses.")),
     }
 }
@@ -68,7 +69,10 @@ fn require(app: &AppHandle, id: &str) -> Result<tauri::Webview, String> {
 }
 
 /// Shows a URL in a tab. Makes the webview of the tab on the first call.
-pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds) -> Result<(), String> {
+///
+/// ``fresh``: clear the cookies and storage of all tabs before the page loads. The app sets it for
+/// the first tab after a start when "Keep cookies" is "Until quit".
+pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds, fresh: bool) -> Result<(), String> {
     let target = parse_url(url)?;
     let _guard = CREATE.lock().map_err(|e| e.to_string())?;
     if let Some(view) = webview(app, id)? {
@@ -79,8 +83,10 @@ pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds) -> Result<(), 
     let window = app.get_window("main").ok_or("The main window is missing.")?;
     let (loads, titles, windows) = (app.clone(), app.clone(), app.clone());
     let (load_id, title_id, window_id) = (id.to_string(), id.to_string(), id.to_string());
-    let mut builder = WebviewBuilder::new(label(id)?, WebviewUrl::External(target))
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "about"))
+    // A fresh webview starts on a blank page: the clear runs before the page of the tab loads.
+    let first = if fresh { Url::parse("about:blank").map_err(|e| e.to_string())? } else { target.clone() };
+    let mut builder = WebviewBuilder::new(label(id)?, WebviewUrl::External(first))
+        .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "about" | "file"))
         .on_page_load(move |_view, payload| {
             let event = BrowserEvent {
                 id: load_id.clone(),
@@ -104,14 +110,74 @@ pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds) -> Result<(), 
     if let Ok(dir) = app.path().app_local_data_dir() {
         builder = builder.data_directory(dir.join("browser-profile"));
     }
-    window
+    let view = window
         .add_child(
             builder,
             LogicalPosition::new(bounds.x, bounds.y),
             LogicalSize::new(bounds.width.max(1.0), bounds.height.max(1.0)),
         )
         .map_err(|e| format!("Cannot open the browser: {e}"))?;
+    if fresh {
+        view.clear_all_browsing_data().map_err(|e| e.to_string())?;
+        view.navigate(target).map_err(|e| e.to_string())?;
+    }
     Ok(())
+}
+
+/// Starts a PNG screenshot of the visible part of a tab. The receiver gets the image bytes.
+#[cfg(windows)]
+pub fn screenshot(app: &AppHandle, id: &str) -> Result<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>, String> {
+    use webview2_com::CapturePreviewCompletedHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG;
+    use windows::Win32::System::Com::IStream;
+    use windows::Win32::UI::Shell::SHCreateMemStream;
+
+    let view = require(app, id)?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    view.with_webview(move |platform| {
+        let failed = tx.clone();
+        // The capture is asynchronous: the handler runs later on the same thread, with the stream full.
+        let start = || -> windows::core::Result<()> {
+            unsafe {
+                let core = platform.controller().CoreWebView2()?;
+                let stream: IStream = SHCreateMemStream(None).ok_or_else(|| windows::core::Error::from_thread())?;
+                let filled = stream.clone();
+                let handler = CapturePreviewCompletedHandler::create(Box::new(move |result| {
+                    let bytes = result.and_then(|()| read_stream(&filled)).map_err(|e| e.to_string());
+                    let _ = tx.send(bytes);
+                    Ok(())
+                }));
+                core.CapturePreview(COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, &stream, &handler)
+            }
+        };
+        if let Err(e) = start() {
+            let _ = failed.send(Err(format!("Cannot take the screenshot: {e}")));
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(rx)
+}
+
+#[cfg(windows)]
+unsafe fn read_stream(stream: &windows::Win32::System::Com::IStream) -> windows::core::Result<Vec<u8>> {
+    use windows::Win32::System::Com::STREAM_SEEK_SET;
+    stream.Seek(0, STREAM_SEEK_SET, None)?;
+    let mut bytes = Vec::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let mut read = 0u32;
+        stream.Read(buffer.as_mut_ptr().cast(), buffer.len() as u32, Some(&mut read)).ok()?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..read as usize]);
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+pub fn screenshot(_app: &AppHandle, _id: &str) -> Result<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>, String> {
+    Err("Screenshots of the Browser pane work only on Windows now.".to_string())
 }
 
 pub fn set_bounds(app: &AppHandle, id: &str, bounds: Bounds) -> Result<(), String> {

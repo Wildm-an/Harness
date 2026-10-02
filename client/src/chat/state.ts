@@ -5,7 +5,7 @@ import type { Decision, DaemonMessage, HistoryMessage, PermissionRequest, StopRe
 export type ToolStatus = "running" | "done" | "error";
 
 export type ChatItem =
-  | { kind: "user"; id: string; text: string }
+  | { kind: "user"; id: string; text: string; messageId?: string; ts?: number } // messageId: the daemon id, for rewind and fork. ts: epoch ms.
   | { kind: "assistant"; id: string; text: string; streaming: boolean }
   | {
       kind: "tool";
@@ -56,7 +56,7 @@ export const emptyChat: ChatState = { items: [], running: false, usage: null, co
 
 export type ChatAction =
   | { type: "daemon"; msg: DaemonMessage }
-  | { type: "user"; text: string; startsTurn: boolean }
+  | { type: "user"; text: string; startsTurn: boolean; messageId?: string }
   | { type: "disconnected" }
   | { type: "decide"; requestId: string; decision: Decision }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string }
@@ -127,7 +127,7 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const msg of history) {
     if (msg.role === "user") {
-      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content });
+      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined });
     } else if (msg.role === "assistant") {
       if (msg.content) items.push({ kind: "assistant", id: nextId("assistant"), text: msg.content, streaming: false });
       for (const call of msg.tool_calls ?? []) {
@@ -220,6 +220,8 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         context: { ...state.context, tokens: msg.context_tokens, length: msg.context_length },
       };
     }
+    case "steer.taken":
+      return { ...state, items: [...endStreaming(state.items), { kind: "user", id: nextId("user"), text: msg.text, messageId: msg.id, ts: Date.now() }] };
     case "error":
       return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: "error", text: msg.message }] };
     case "notice":
@@ -249,7 +251,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...state,
         running: state.running || action.startsTurn,
         turn: state.turn ?? (action.startsTurn ? { startedAt: Date.now(), tokens: 0 } : null),
-        items: [...state.items, { kind: "user", id: nextId("user"), text: action.text }],
+        items: [...state.items, { kind: "user", id: nextId("user"), text: action.text, messageId: action.messageId, ts: Date.now() }],
       };
     case "disconnected":
       return {

@@ -15,11 +15,30 @@ export async function localDaemonInfo(restart = false): Promise<DaemonInfo> {
   return invoke<DaemonInfo>(restart ? "restart_daemon" : "daemon_info");
 }
 
+/** The wheel of the daemon of this app version (base64), for "Update daemon". */
+export async function daemonWheel(): Promise<{ filename: string; data: string }> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<{ filename: string; data: string }>("daemon_wheel");
+}
+
 /** Shows the folder dialog. Returns null if the user cancels. */
 export async function pickFolder(): Promise<string | null> {
   const { open } = await import("@tauri-apps/plugin-dialog");
   const result = await open({ directory: true, multiple: false });
   return typeof result === "string" ? result : null;
+}
+
+/** Shows the file dialog for one file. Returns null if the user cancels. */
+export async function pickFile(filters: { name: string; extensions: string[] }[]): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({ directory: false, multiple: false, filters });
+  return typeof result === "string" ? result : null;
+}
+
+/** Shows the save dialog. Returns null if the user cancels. */
+export async function pickSavePath(defaultPath: string, filters: { name: string; extensions: string[] }[]): Promise<string | null> {
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  return (await save({ defaultPath, filters })) ?? null;
 }
 
 /** Shows a folder or a file in Explorer (Finder on macOS). Only for the daemon on this computer. */
@@ -120,9 +139,15 @@ export interface BrowserEvent {
 
 /** The webviews of the Browser pane: one for each tab. Each call does nothing outside the desktop app. */
 export const browserView = {
-  async open(id: string, url: string, bounds: Bounds) {
+  /** fresh: clear the cookies and storage of all tabs before the page loads ("Keep cookies: Until quit"). */
+  async open(id: string, url: string, bounds: Bounds, fresh = false) {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_open", { id, url, bounds });
+    await invoke("browser_open", { id, url, bounds, fresh });
+  },
+  /** Saves a PNG screenshot of the visible part of a tab. */
+  async screenshot(id: string, path: string) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_screenshot", { id, path });
   },
   async bounds(id: string, bounds: Bounds) {
     const { invoke } = await import("@tauri-apps/api/core");

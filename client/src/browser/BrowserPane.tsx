@@ -6,6 +6,7 @@ import {
   Check,
   Bug,
   ChevronDown,
+  ChevronRight,
   EllipsisVertical,
   Globe,
   LoaderCircle,
@@ -20,7 +21,8 @@ import { PaneActions, PaneHeader } from "../layout/Workspace";
 import { WindowTabs } from "../layout/WindowTabs";
 import { useOverlay, useOverlayOpen } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
-import { browserView, isTauri, type Bounds } from "../lib/tauri";
+import { linksInPane, setLinksInPane } from "../lib/openLink";
+import { browserView, isTauri, openExternal, pickFile, pickSavePath, type Bounds } from "../lib/tauri";
 
 type Device = "desktop" | "tablet" | "phone";
 
@@ -33,11 +35,11 @@ const DEVICES: Record<Device, { label: string; icon: typeof Monitor; size?: { wi
 
 const MAX_TABS = 12;
 
-/** Adds "http://" to an address with no scheme. Keeps "about:blank". */
+/** Adds "http://" to an address with no scheme. Keeps "about:blank" and file: addresses. */
 export function normalizeAddress(text: string): string {
   const t = text.trim();
   if (!t) return "about:blank";
-  if (/^(https?:|about:)/i.test(t)) return t;
+  if (/^(https?:|about:|file:)/i.test(t)) return t;
   if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(t)) return `http://${t}`;
   return `https://${t}`;
 }
@@ -50,6 +52,30 @@ export function deviceBounds(area: Bounds, device: Device): Bounds {
   const height = Math.min(size.height, area.height);
   return { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height };
 }
+
+/** The file: URL of a path of this computer, for "Open HTML file". */
+export function fileUrl(path: string): string {
+  const p = path.replace(/\\/g, "/");
+  return `file://${p.startsWith("/") ? "" : "/"}${encodeURI(p)}`;
+}
+
+/** How long the browser keeps its cookies and storage. */
+export type KeepCookies = "always" | "quit" | "server";
+const KEEP_COOKIES: Record<KeepCookies, string> = {
+  always: "Always",
+  quit: "Until quit",
+  server: "Until a server restarts",
+};
+
+/** The "Keep cookies" choice. The old switch "Keep cookies when a server restarts: off" is "server". */
+export function keepCookies(): KeepCookies {
+  const value = loadPref("browserKeepCookies", "");
+  if (value === "always" || value === "quit" || value === "server") return value;
+  return loadPref("browserKeepData", "true") === "false" ? "server" : "always";
+}
+
+// "Until quit": the first webview after a start of the app clears the old cookies and storage.
+let clearedThisRun = false;
 
 export interface BrowserTab {
   id: string; // Also the label of its webview: "browser-<id>".
@@ -92,6 +118,48 @@ export async function clearBrowserData(): Promise<void> {
   if (id) await browserView.clearData(id);
 }
 
+/** A row of the More menu that opens a list of choices on its left side. */
+function SubMenu<T extends string>({ label, value, choices, open, onOpen, onPick }: {
+  label: string;
+  value: T;
+  choices: Record<T, string>;
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  onPick: (value: T) => void;
+}) {
+  return (
+    <div className="browser-submenu" onMouseEnter={() => onOpen(true)} onMouseLeave={() => onOpen(false)}>
+      <button
+        type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => onOpen(!open)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            e.preventDefault();
+            onOpen(true);
+          }
+        }}
+      >
+        <span className="side-filter-label">{label}</span>
+        <span className="side-filter-value">{choices[value]}</span>
+        <ChevronRight size={14} aria-hidden />
+      </button>
+      {open && (
+        <div className="menu browser-submenu-list" role="menu" aria-label={label}>
+          {(Object.keys(choices) as T[]).map((c) => (
+            <button key={c} type="button" role="menuitemradio" aria-checked={value === c} onClick={() => onPick(c)}>
+              <span className="side-filter-label">{choices[c]}</span>
+              {value === c && <Check size={14} aria-hidden />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Menu({ children, label, icon }: { children: (close: () => void) => React.ReactNode; label: string; icon: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -124,6 +192,10 @@ export function BrowserPane({
   onOpenAgentPage,
   onError,
   onEmpty,
+  onShowLogs,
+  autoVerify,
+  onAutoVerify,
+  onManageSites,
 }: {
   request: { url: string; key: number } | null; // A navigation request from the app.
   servers: ServerItem[];
@@ -132,6 +204,10 @@ export function BrowserPane({
   onOpenAgentPage: (url: string) => void;
   onError: (message: string) => void;
   onEmpty: () => void; // The user closed the last tab: close the pane.
+  onShowLogs: () => void; // Open the Servers pane, with the output of the dev servers.
+  autoVerify: boolean | null; // The "check the app after UI changes" setting of the project. null: no session.
+  onAutoVerify: (on: boolean) => void;
+  onManageSites: () => void; // The sites that the agent browser can open with no question.
 }) {
   const tauri = isTauri();
   const area = useRef<HTMLDivElement>(null);
@@ -142,7 +218,9 @@ export function BrowserPane({
   const [view, setView] = useState<"page" | "agent">("page");
   const [unseen, setUnseen] = useState(false); // A new agent frame came while the user looks at the page.
   const [device, setDevice] = useState<Device>(() => (loadPref("browserDevice", "desktop") as Device) || "desktop");
-  const [keepData, setKeepData] = useState(() => loadPref("browserKeepData", "true") !== "false");
+  const [keep, setKeep] = useState<KeepCookies>(keepCookies);
+  const [inPane, setInPane] = useState(linksInPane);
+  const [sub, setSub] = useState<"viewport" | "cookies" | null>(null); // The open list of the More menu.
   const overlay = useOverlayOpen();
   const lastSync = useRef(new Map<string, string>()); // The last bounds and visibility of each webview.
   const selectOnFocus = useRef(false);
@@ -265,7 +343,9 @@ export function BrowserPane({
         lastSync.current.set(tab.id, key);
         if (show && bounds && tab.url && !opened.has(tab.id)) {
           opened.add(tab.id);
-          void browserView.open(tab.id, tab.url, bounds).catch((e) => {
+          const fresh = keep === "quit" && !clearedThisRun;
+          clearedThisRun = true;
+          void browserView.open(tab.id, tab.url, bounds, fresh).catch((e) => {
             opened.delete(tab.id);
             onError(e instanceof Error ? e.message : String(e));
           });
@@ -286,7 +366,7 @@ export function BrowserPane({
       window.removeEventListener("resize", sync);
       window.clearInterval(timer);
     };
-  }, [tauri, measure, overlay, tabs, active.id, view, onError]);
+  }, [tauri, measure, overlay, tabs, active.id, view, onError, keep]);
 
   // Hide the webviews when the pane closes. They stay open for the next time.
   useEffect(
@@ -331,29 +411,119 @@ export function BrowserPane({
       </PaneHeader>
       <PaneActions>
         <Menu label="More" icon={<EllipsisVertical size={15} aria-hidden />}>
-          {(close) => (
-            <>
-              <button type="button" role="menuitem" disabled={!tauri || !opened.has(active.id)} onClick={() => { close(); void browserView.devtools(active.id); }}>
-                <Bug size={14} aria-hidden /> Open the developer tools
-              </button>
-              <button
-                type="button"
-                role="menuitemcheckbox"
-                aria-checked={keepData}
-                onClick={() => {
-                  const next = !keepData;
-                  setKeepData(next);
-                  savePref("browserKeepData", String(next));
-                }}
-              >
-                <span className="menu-check" aria-hidden>{keepData ? "✓" : ""}</span>
-                Keep cookies and storage when a server restarts
-              </button>
-              <button type="button" role="menuitem" disabled={!tauri || !opened.has(active.id)} onClick={() => { close(); void browserView.clearData(active.id); }}>
-                <span className="menu-check" aria-hidden /> Clear cookies and storage now
-              </button>
-            </>
-          )}
+          {(close) => {
+            const page = active.url && active.url !== "about:blank" ? active.url : null;
+            const live = tauri && opened.has(active.id);
+            const run = (action: () => void | Promise<void>) => {
+              close();
+              setSub(null);
+              void Promise.resolve(action()).catch((e) => onError(e instanceof Error ? e.message : String(e)));
+            };
+            return (
+              <>
+                <button type="button" role="menuitem" disabled={!page || page.startsWith("file:")} onClick={() => run(() => openExternal(page!))}>
+                  Open in your browser
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!live || !page}
+                  onClick={() =>
+                    run(async () => {
+                      const name = `${(tabLabel(active).replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "page").slice(0, 60)}.png`;
+                      const path = await pickSavePath(name, [{ name: "PNG image", extensions: ["png"] }]);
+                      if (path) await browserView.screenshot(active.id, path);
+                    })
+                  }
+                >
+                  Save screenshot
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!tauri}
+                  onClick={() =>
+                    run(async () => {
+                      const path = await pickFile([{ name: "HTML file", extensions: ["html", "htm"] }]);
+                      if (!path) return;
+                      setView("page");
+                      const target = active.url ? addTab() : active;
+                      if (target) await go(target.id, fileUrl(path));
+                    })
+                  }
+                >
+                  Open HTML file…
+                </button>
+                <div className="menu-sep" role="separator" />
+                <SubMenu
+                  label="Viewport"
+                  value={device}
+                  choices={{ desktop: "Responsive", phone: "Mobile", tablet: "Tablet" }}
+                  open={sub === "viewport"}
+                  onOpen={(o) => setSub(o ? "viewport" : null)}
+                  onPick={(d) => {
+                    setDevice(d);
+                    savePref("browserDevice", d);
+                    setSub(null);
+                    close();
+                  }}
+                />
+                <button type="button" role="menuitem" onMouseEnter={() => setSub(null)} onClick={() => run(onShowLogs)}>
+                  Show dev server logs
+                </button>
+                <div className="menu-sep" role="separator" />
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={inPane}
+                  onMouseEnter={() => setSub(null)}
+                  onClick={() => {
+                    setInPane(!inPane);
+                    setLinksInPane(!inPane);
+                  }}
+                >
+                  <span className="side-filter-label">Open links in built-in browser</span>
+                  {inPane && <Check size={14} aria-hidden />}
+                </button>
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={!!autoVerify}
+                  disabled={autoVerify === null}
+                  title={autoVerify === null ? "Open a session first: the setting is for each project." : undefined}
+                  onMouseEnter={() => setSub(null)}
+                  onClick={() => onAutoVerify(!autoVerify)}
+                >
+                  <span className="side-filter-label">Auto-verify changes</span>
+                  {autoVerify && <Check size={14} aria-hidden />}
+                </button>
+                <button type="button" role="menuitem" disabled={autoVerify === null} onMouseEnter={() => setSub(null)} onClick={() => run(onManageSites)}>
+                  Manage allowed sites…
+                </button>
+                <div className="menu-sep" role="separator" />
+                <p className="menu-heading">Cookies</p>
+                <SubMenu
+                  label="Keep cookies"
+                  value={keep}
+                  choices={KEEP_COOKIES}
+                  open={sub === "cookies"}
+                  onOpen={(o) => setSub(o ? "cookies" : null)}
+                  onPick={(k) => {
+                    setKeep(k);
+                    savePref("browserKeepCookies", k);
+                    setSub(null);
+                  }}
+                />
+                <button type="button" role="menuitem" className="danger" disabled={!live} onMouseEnter={() => setSub(null)} onClick={() => run(() => browserView.clearData(active.id))}>
+                  Clear browsing data
+                </button>
+                <div className="menu-sep" role="separator" />
+                <button type="button" role="menuitem" disabled={!live} onMouseEnter={() => setSub(null)} onClick={() => run(() => browserView.devtools(active.id))}>
+                  <Bug size={14} aria-hidden /> Open the developer tools
+                </button>
+              </>
+            );
+          }}
         </Menu>
       </PaneActions>
       <form

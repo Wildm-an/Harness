@@ -1449,27 +1449,6 @@ textarea:focus-visible {
 .ctx-buffer { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); }
 .context-bar > .ctx-free { box-shadow: none; }
 
-/* The mode color: bypass is a warning, plan is blue, accept edits is green, auto is the accent. */
-.prompt-below .prompt-chip.mode-auto > svg,
-.mode-item.mode-auto > svg {
-  color: var(--accent);
-}
-
-.prompt-below .prompt-chip.mode-bypassPermissions,
-.mode-item.mode-bypassPermissions > svg {
-  color: var(--warning);
-}
-
-.prompt-below .prompt-chip.mode-plan > svg,
-.mode-item.mode-plan > svg {
-  color: var(--info);
-}
-
-.prompt-below .prompt-chip.mode-acceptEdits > svg,
-.mode-item.mode-acceptEdits > svg {
-  color: var(--success);
-}
-
 /* The model of a session is text, not a pill. The text is brighter on hover and when the menu is open. */
 .prompt-below .prompt-chip {
   min-height: 24px;
@@ -4447,7 +4426,7 @@ select {
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--chat-font-size, 14px); /* The tool rows follow the chat font size, as the messages do. */
   text-align: left;
   cursor: pointer;
   transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
@@ -4656,7 +4635,7 @@ select {
   gap: 8px;
   padding: 12px 14px 10px;
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: calc(var(--chat-font-size, 14px) - 0.5px);
 }
 
 .permission-head > svg {
@@ -4794,7 +4773,7 @@ select {
   gap: 8px;
   padding: 8px 12px;
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: calc(var(--chat-font-size, 14px) - 1px);
   white-space: pre-wrap;
 }
 
@@ -4831,7 +4810,7 @@ select {
   align-items: center;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: calc(var(--chat-font-size, 14px) - 1px);
 }
 
 .summary-title {
@@ -5877,57 +5856,79 @@ mark.word-del {
   min-width: 200px;
 }
 
-/* ---------- the queued messages above the prompt box ---------- */
+/* ---------- the row under a user message: time, Copy, Rewind, Fork, or Send now ---------- */
 
-.queued {
+.msg-user-wrap {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 0 0 8px;
-  padding: 0;
-  list-style: none;
+  align-items: flex-end;
 }
 
-.queued-item {
+.msg-user-wrap .msg-user {
+  max-width: 80%;
+}
+
+.msg-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 4px 0 12px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-lg);
+  gap: 2px;
+  min-height: 26px;
+  margin-top: 2px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12.5px;
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease-out);
 }
 
-.queued-icon {
-  flex: none;
+/* The row shows on hover, on keyboard focus, and while the rewind menu is open. */
+.msg-user-wrap:hover .msg-actions,
+.msg-user-wrap:focus-within .msg-actions,
+.msg-user-wrap.menu-open .msg-actions {
+  opacity: 1;
 }
 
-.queued-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.msg-time {
+  margin-right: 6px;
+  cursor: default;
 }
 
-.queued-next {
-  flex: none;
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.queued-send {
-  flex: none;
-  gap: 5px;
-}
-
-.queued-remove {
-  flex: none;
+.msg-action {
   width: 26px;
   height: 26px;
+  color: var(--text-muted);
+}
+
+.msg-action:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.msg-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* "Send now" and "Remove" of a queued message: plain muted text, as in Claude. */
+.msg-text-btn {
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.msg-text-btn:hover,
+.msg-text-btn:focus-visible {
+  color: var(--text);
+}
+
+.rewind-menu {
+  position: relative;
+}
+
+.menu.rewind-dropdown {
+  min-width: 270px;
 }
 
 /* A text character as an icon, for example the "/" of skills. */
@@ -6686,4 +6687,315 @@ input.setting-text-input {
   flex: none;
   width: 26px;
   height: 26px;
+}
+
+/* The API key field of a provider: the masked key, and the Show and Copy buttons in the field. */
+.key-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.key-field input {
+  padding-right: 72px;
+}
+
+.key-field .key-field-btn {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+}
+
+.key-field .key-field-btn:nth-of-type(1) {
+  right: 36px;
+}
+
+.key-field .key-field-btn:nth-of-type(2) {
+  right: 4px;
+}
+
+.key-field .key-field-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---------- the sidebar list head: the label, Search (Ctrl+K), and the filter menu ---------- */
+
+.side-label-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.side-label-row .side-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-label-btn {
+  width: 24px;
+  height: 24px;
+  margin-top: calc(var(--side-group-pt) - 4px);
+  color: var(--text-muted);
+}
+
+.menu.side-filter-menu {
+  position: fixed;
+  right: auto;
+  min-width: 240px;
+}
+
+.side-filter-sub {
+  position: relative;
+}
+
+.side-filter-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-filter-value {
+  color: var(--text-muted);
+}
+
+.menu button[role="menuitem"][aria-expanded="true"] {
+  background: var(--surface-2);
+}
+
+.menu.side-filter-submenu {
+  top: -5px;
+  left: calc(100% + 4px);
+  right: auto;
+  min-width: 170px;
+}
+
+/* The pull request of the project branch, next to the project name. */
+.side-pr {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.side-pr-open {
+  color: var(--success);
+}
+
+.side-pr-merged {
+  color: var(--accent);
+}
+
+.side-pr-closed {
+  color: var(--danger);
+}
+
+.side-flat {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---------- the session search (Ctrl+K) ---------- */
+
+.session-search-backdrop {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.modal.session-search {
+  max-width: 560px;
+  max-height: 60vh;
+}
+
+.session-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.session-search-box input {
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  box-shadow: none;
+}
+
+.session-search-box input:focus,
+.session-search-box input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.session-search-list {
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.session-search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.session-search-item.selected {
+  background: var(--surface-2);
+}
+
+.session-search-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-search-meta {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-search-empty {
+  margin: 0;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* The parent folder after a project name that another project also has: "app · work". */
+.side-project-hint,
+.project-hint {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* A right-click menu: fixed in the window, at the mouse. The sidebar list scrolls and would cut it. */
+.menu.point-menu {
+  position: fixed;
+  right: auto;
+  min-width: 0;
+}
+
+/* The More menu of the Browser pane, as in Claude. The lists of Viewport and Keep cookies open on
+   the left: the pane is often at the right edge of the window. */
+.browser-menu > .menu {
+  min-width: 260px;
+}
+
+.browser-submenu {
+  position: relative;
+}
+
+.menu.browser-submenu-list {
+  top: -5px;
+  right: calc(100% + 4px);
+  left: auto;
+  min-width: 190px;
+}
+
+/* The allowed sites of the agent browser. */
+.modal.allowed-sites {
+  max-width: 480px;
+}
+
+.allowed-sites-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+
+.allowed-sites-body .help {
+  margin: 0;
+}
+
+.allowed-sites-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.allowed-sites-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 4px 0 12px;
+  font-size: 13px;
+}
+
+.allowed-sites-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.allowed-sites-add {
+  display: flex;
+  gap: 8px;
+}
+
+/* The popups at the bottom left: the app update, the daemon version, and the daemon update. They
+   stack upward, so they do not cover each other. */
+.toast-stack {
+  position: fixed;
+  left: 12px;
+  bottom: 64px;
+  z-index: calc(var(--z-overlay) + 5);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast-stack:empty {
+  display: none;
+}
+
+.toast-stack > .update-toast {
+  position: static;
+  pointer-events: auto;
+}
+
+.daemon-update-error .update-toast-icon,
+.version-warning .update-toast-icon,
+.settings-version-warn {
+  color: var(--warning);
+}
+
+.settings-version-warn svg {
+  vertical-align: -1px;
+}
+
+.daemon-update-done .update-toast-icon {
+  color: var(--success);
+}
+
+.daemon-update-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

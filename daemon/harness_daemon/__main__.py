@@ -32,11 +32,12 @@ import secrets
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 
 import uvicorn
 
-from . import __version__, frozen
+from . import __version__, frozen, update
 from .config import harness_home
 from .server import create_app, stop_all_servers
 from .tunnels import TUNNELS
@@ -105,9 +106,8 @@ def main(argv: list[str] | None = None) -> None:
     if not _is_loopback(args.host):
         print(f"Warning: the daemon listens on {args.host}. Do not expose this port to the internet.", file=sys.stderr)
 
-    family = socket.AF_INET6 if ":" in args.host else socket.AF_INET
-    sock = socket.socket(family, socket.SOCK_STREAM)
-    sock.bind((args.host, args.port))
+    update.enable(argv, sidecar=args.exit_on_stdin_eof)
+    sock = _bind(args.host, args.port, wait=bool(os.environ.pop(update.WAIT_PID_ENV, None)))
     sock.listen(64)
     port = sock.getsockname()[1]
 
@@ -122,6 +122,22 @@ def main(argv: list[str] | None = None) -> None:
     if args.exit_on_stdin_eof:
         threading.Thread(target=_exit_on_stdin_eof, args=(server,), daemon=True).start()
     asyncio.run(server.serve(sockets=[sock]))
+
+
+def _bind(host: str, port: int, wait: bool) -> socket.socket:
+    """Bind the port. After an update, the old daemon can still have the port for a short time."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    deadline = time.monotonic() + (30 if wait else 0)
+    while True:
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            sock.bind((host, port))
+            return sock
+        except OSError:
+            sock.close()
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
 
 
 def _hard_exit() -> None:

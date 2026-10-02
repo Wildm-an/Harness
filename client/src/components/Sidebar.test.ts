@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { folderName, groupByProject, mergeOrder, moveKey, orderGroups, pathKey, sessionState } from "./Sidebar";
+import { filterStatus, folderName, groupByProject, mergeOrder, moveKey, orderGroups, pathKey, sessionState, sortSessions } from "./Sidebar";
+import { searchSessions } from "./SessionSearch";
 
 const session = (id: string, cwd: string, updated: number): SessionSummary => ({
   id, cwd, provider: "demo", model: "scripted", title: id, created_at: updated, updated_at: updated,
@@ -70,5 +71,31 @@ describe("the session state", () => {
     expect(sessionState(undefined, true)).toEqual({ kind: "unread", label: "Unread response" });
     // A new turn in a session with an unread response shows Running.
     expect(sessionState({ session_id: "a", waiting: false }, true).kind).toBe("running");
+  });
+});
+
+describe("sidebar view", () => {
+  const s = (id: string, updated: number, created: number, extra: Partial<SessionSummary> = {}): SessionSummary => ({
+    id, cwd: "C:/work/app", provider: "p", model: "m", title: id, created_at: created, updated_at: updated, ...extra,
+  });
+  const list = [s("a", 30, 1), s("b", 20, 3, { archived: true }), s("c", 10, 2)];
+
+  it("filters by status", () => {
+    expect(filterStatus(list, "active").map((x) => x.id)).toEqual(["a", "c"]);
+    expect(filterStatus(list, "archived").map((x) => x.id)).toEqual(["b"]);
+    expect(filterStatus(list, "all")).toHaveLength(3);
+  });
+
+  it("sorts by the last activity or the creation time", () => {
+    expect(sortSessions(list, "activity").map((x) => x.id)).toEqual(["a", "b", "c"]);
+    expect(sortSessions(list, "created").map((x) => x.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("searches the names and the folders with all words", () => {
+    const named = [s("x", 2, 1, { title: "Fix the login" }), s("y", 1, 1, { title: "Add tests", cwd: "C:/work/login-page" })];
+    expect(searchSessions(named, "login").map((x) => x.id)).toEqual(["x", "y"]);
+    expect(searchSessions(named, "fix login").map((x) => x.id)).toEqual(["x"]);
+    expect(searchSessions(named, "nothing")).toEqual([]);
+    expect(searchSessions(named, "  ")).toHaveLength(2);
   });
 });

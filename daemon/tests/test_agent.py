@@ -95,6 +95,14 @@ def test_max_tool_calls(harness_home, project, fake_model):
     assert "limit of 2 tool calls" in agent.history[-1]["content"]
 
 
+def test_no_tool_call_limit(harness_home, project, fake_model):
+    call = {"name": "read", "arguments": {"path": "hello.py"}}
+    fake_model.script({"tool_calls": [call]}, {"tool_calls": [call, call]}, {"text": "Done."})
+    agent, events, _ = make_agent(project, max_tool_calls=2, limit_tool_calls=False)
+    assert asyncio.run(agent.run_turn("loop")) == "end"
+    assert types(events).count("tool.start") == 3
+
+
 def test_bad_arguments_and_unknown_tool_go_back_to_the_model(harness_home, project, fake_model):
     fake_model.script(
         {"tool_calls": [{"name": "read", "arguments": "{not json"}, {"name": "write_file", "arguments": {}}]},
@@ -162,3 +170,59 @@ def test_tool_support_check(harness_home, fake_model):
     assert asyncio.run(check_tool_support(provider, model)) is True
     fake_model.capabilities = ["completion"]
     assert asyncio.run(check_tool_support(provider, model)) is False
+
+
+def steer_on(agent, event_type, text, steer_id="s1"):
+    """Steer the turn once, at the first event of the type."""
+    emit = agent.emit
+    done = []
+
+    async def wrapper(event):
+        await emit(event)
+        if event["type"] == event_type and not done:
+            done.append(True)
+            assert agent.steer(steer_id, text)
+
+    agent.emit = wrapper
+
+
+def test_steer_goes_to_the_next_step(harness_home, project, fake_model):
+    fake_model.script(
+        {"tool_calls": [{"name": "read", "arguments": {"path": "hello.py"}}]},
+        {"text": "Done, and in French."},
+    )
+    agent, events, _ = make_agent(project)
+    steer_on(agent, "tool.start", "Reply in French.")
+    assert asyncio.run(agent.run_turn("read hello.py")) == "end"
+    second = fake_model.requests[1]["messages"]
+    assert second[-2]["role"] == "tool" and second[-1] == {"role": "user", "content": "Reply in French."}
+    taken = next(e for e in events if e["type"] == "steer.taken")
+    assert taken == {"type": "steer.taken", "id": "s1", "text": "Reply in French."}
+    assert "steer.returned" not in types(events)
+
+
+def test_steer_during_the_last_step_continues_the_turn(harness_home, project, fake_model):
+    fake_model.script({"text": "Done."}, {"text": "Also checked the tests."})
+    agent, events, _ = make_agent(project)
+    steer_on(agent, "token", "Check the tests too.")
+    assert asyncio.run(agent.run_turn("go")) == "end"
+    assert len(fake_model.requests) == 2
+    assert fake_model.requests[1]["messages"][-1] == {"role": "user", "content": "Check the tests too."}
+
+
+def test_steer_returns_when_the_turn_stops_first(harness_home, project, fake_model):
+    call = {"name": "read", "arguments": {"path": "hello.py"}}
+    fake_model.script({"tool_calls": [call, call]})
+    agent, events, _ = make_agent(project, max_tool_calls=1)
+    steer_on(agent, "tool.start", "Stop reading.")
+    assert asyncio.run(agent.run_turn("loop")) == "max_tool_calls"
+    returned = next(e for e in events if e["type"] == "steer.returned")
+    assert returned["ids"] == ["s1"]
+    assert types(events).index("steer.returned") < types(events).index("turn.end")
+    assert all(m.get("content") != "Stop reading." for m in agent.history)
+
+
+def test_steer_with_no_turn(harness_home, project, fake_model):
+    agent, _, _ = make_agent(project)
+    assert agent.steer("s1", "hello") is False
+    assert agent.user_steer == []

@@ -18,6 +18,7 @@ import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
 import { loadPref, savePref } from "../lib/prefs";
 import { PromptBox, type Submission } from "./PromptBox";
+import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
 
 // The start screen shows this many recent sessions. "Show more" shows the rest.
@@ -179,6 +180,8 @@ function ProjectMenu({
     action();
   };
 
+  const hint = selected && projects ? (parentHints(projects.map((p) => ({ key: p.id, name: p.name, path: p.path }))).get(selected.id) ?? null) : null;
+
   if (projects !== null && projects.length === 0) {
     return (
       <button type="button" className="prompt-chip" onClick={onAdd}>
@@ -200,7 +203,10 @@ function ProjectMenu({
         disabled={projects === null}
       >
         {projects === null ? <LoaderCircle size={13} className="spin" aria-hidden /> : <Folder size={13} aria-hidden />}
-        <span className="prompt-chip-text">{selected?.name ?? "Loading the projects"}</span>
+        <span className="prompt-chip-text">
+          {selected?.name ?? "Loading the projects"}
+          {selected && hint && <span className="project-hint"> · {hint}</span>}
+        </span>
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && projects && (
@@ -391,6 +397,7 @@ export function SessionStart({
           below={
             <>
               <div className="prompt-below-left">
+                <ModeMenu mode={mode} onChange={setMode} up={false} />
                 <ProjectMenu
                   projects={projects}
                   selected={selected}
@@ -399,7 +406,6 @@ export function SessionStart({
                   onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
                   onDelete={onDeleteProject}
                 />
-                <ModeMenu mode={mode} onChange={setMode} up={false} />
               </div>
               <ModelMenu
                 value={model}

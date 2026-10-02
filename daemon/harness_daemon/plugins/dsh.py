@@ -63,6 +63,10 @@ def host_dir() -> Path | None:
     if getattr(sys, "frozen", False):
         candidates.append(Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "plugin-host")
     candidates.append(Path(__file__).resolve().parents[3] / "plugin-host")
+    # A daemon that "Update daemon" moved from a source folder to site-packages (update.py).
+    hint = harness_home() / "plugin-host-path"
+    if hint.is_file():
+        candidates.append(Path(hint.read_text(encoding="utf-8").strip()))
     for path in candidates:
         if (path / "src" / "main.mjs").is_file() and (path / "node_modules" / "@deepseek-ai" / "cordis").is_dir():
             return path

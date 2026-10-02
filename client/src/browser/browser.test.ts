@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deviceBounds, normalizeAddress } from "./BrowserPane";
+import { deviceBounds, fileUrl, normalizeAddress } from "./BrowserPane";
+import { ruleForSite, siteOfRule } from "../components/AllowedSites";
 
 describe("browser address", () => {
   it("adds a scheme to an address", () => {
@@ -25,5 +26,21 @@ describe("device bounds", () => {
   it("shrinks a device that is larger than the pane", () => {
     const b = deviceBounds({ x: 0, y: 0, width: 600, height: 500 }, "tablet");
     expect(b).toEqual({ x: 0, y: 0, width: 600, height: 500 });
+  });
+});
+
+describe("the More menu helpers", () => {
+  it("makes a file URL from a path", () => {
+    expect(fileUrl(String.raw`C:\My site\index.html`)).toBe("file:///C:/My%20site/index.html");
+    expect(fileUrl("/home/me/page.html")).toBe("file:///home/me/page.html");
+    expect(normalizeAddress("file:///C:/a.html")).toBe("file:///C:/a.html");
+  });
+
+  it("reads and writes the allowed site rules", () => {
+    expect(ruleForSite("example.com")).toBe("preview_navigate(https://example.com/*)");
+    expect(ruleForSite("http://Docs.Example.com:8080/a/b")).toBe("preview_navigate(http://docs.example.com:8080/*)");
+    expect(ruleForSite("not a site")).toBeNull();
+    expect(siteOfRule("preview_navigate(https://example.com/*)")).toBe("https://example.com");
+    expect(siteOfRule("bash(npm test)")).toBeNull();
   });
 });

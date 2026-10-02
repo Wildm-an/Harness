@@ -2,13 +2,14 @@
 // The menu has the keys of Claude: P (pin), U (mark as unread), R (rename), and D (delete).
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { EllipsisVertical, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
+import { Archive, ArchiveRestore, EllipsisVertical, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
 import type { RunningSession, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 
 export interface SessionActions {
   onResume: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void;
+  onArchive: (id: string, archived: boolean) => void;
   onMarkUnread: (id: string, unread: boolean) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -32,13 +33,14 @@ export function sessionState(running: RunningSession | undefined, unread: boolea
 
 const MENU_WIDTH = 210;
 
-type MenuAction = "pin" | "unread" | "rename" | "delete";
-const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", d: "delete" };
+type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete";
+const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete" };
 
-function SessionMenu({ session, unread, anchor, onAction, onClose }: {
+function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
   session: SessionSummary;
   unread: boolean;
   anchor: HTMLElement;
+  at: { x: number; y: number } | null; // A right click: the menu opens at the mouse, not under the ⋮ button.
   onAction: (action: MenuAction) => void;
   onClose: () => void;
 }) {
@@ -49,11 +51,16 @@ function SessionMenu({ session, unread, anchor, onAction, onClose }: {
 
   // The sidebar list scrolls: the menu has a fixed position under the ⋮ button, in the window.
   useLayoutEffect(() => {
-    const r = anchor.getBoundingClientRect();
     const height = ref.current?.offsetHeight ?? 180;
+    if (at) {
+      const top = at.y + height > window.innerHeight - 8 ? Math.max(8, at.y - height) : at.y;
+      setPos({ top, left: Math.max(8, Math.min(at.x, window.innerWidth - MENU_WIDTH - 8)) });
+      return;
+    }
+    const r = anchor.getBoundingClientRect();
     const top = r.bottom + 4 + height > window.innerHeight ? Math.max(8, r.top - 4 - height) : r.bottom + 4;
     setPos({ top, left: Math.max(8, Math.min(r.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)) });
-  }, [anchor, confirm]);
+  }, [anchor, at, confirm]);
 
   const close = useRef(onClose);
   close.current = onClose;
@@ -137,6 +144,7 @@ function SessionMenu({ session, unread, anchor, onAction, onClose }: {
           {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
           <div className="menu-sep" role="separator" />
           {item("rename", "Rename", "R", Pencil)}
+          {item("archive", session.archived ? "Unarchive" : "Archive", "A", session.archived ? ArchiveRestore : Archive)}
           <div className="menu-sep" role="separator" />
           {item("delete", "Delete", "D", Trash2, true)}
         </>
@@ -153,7 +161,8 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
   disabled: boolean;
   actions: SessionActions;
 }) {
-  const [menu, setMenu] = useState(false);
+  // The open menu: under the ⋮ button ("button"), or at the mouse after a right click.
+  const [menu, setMenu] = useState<false | "button" | { x: number; y: number }>(false);
   const [renaming, setRenaming] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
   const title = session.title ?? "Untitled session";
@@ -163,6 +172,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
     if (action === "pin") actions.onPin(session.id, !session.pinned);
     else if (action === "unread") actions.onMarkUnread(session.id, !unread);
     else if (action === "rename") setRenaming(true);
+    else if (action === "archive") actions.onArchive(session.id, !session.archived);
     else actions.onDelete(session.id);
   };
 
@@ -173,7 +183,15 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
   };
 
   return (
-    <li className={`side-session-row${menu ? " menu-open" : ""}`}>
+    <li
+      className={`side-session-row${menu ? " menu-open" : ""}`}
+      onContextMenu={(e) => {
+        if (renaming || disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
       {renaming ? (
         <div className={`side-session renaming${active ? " active" : ""}`}>
           <span className={`side-session-status ${state.kind}`} aria-hidden />
@@ -210,16 +228,23 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
           className="side-session-more"
           aria-label={`Actions for ${title}`}
           aria-haspopup="menu"
-          aria-expanded={menu}
+          aria-expanded={menu !== false}
           title="More actions"
           disabled={disabled}
-          onClick={() => setMenu((v) => !v)}
+          onClick={() => setMenu((v) => (v ? false : "button"))}
         >
           <EllipsisVertical size={14} aria-hidden />
         </button>
       )}
       {menu && moreRef.current && (
-        <SessionMenu session={session} unread={unread} anchor={moreRef.current} onAction={act} onClose={() => setMenu(false)} />
+        <SessionMenu
+          session={session}
+          unread={unread}
+          anchor={moreRef.current}
+          at={typeof menu === "object" ? menu : null}
+          onAction={act}
+          onClose={() => setMenu(false)}
+        />
       )}
     </li>
   );

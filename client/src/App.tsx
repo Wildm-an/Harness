@@ -35,6 +35,7 @@ import type {
   ProviderItem,
   PermissionMode,
   RunningSession,
+  PrStatus,
   SessionSummary,
   SkillDetail,
 } from "./daemon/protocol";
@@ -74,7 +75,9 @@ import {
   isSidebarShortcut,
   isSideChatShortcut,
   isNewSessionShortcut,
+  isSearchShortcut,
   NEW_SESSION_SHORTCUT,
+  SEARCH_SHORTCUT,
   navShortcut,
   shortcutLabel,
   shortcutPane,
@@ -94,7 +97,9 @@ import { SIDEBAR_DEFAULT, SidebarResizer, clampSidebar } from "./components/Side
 import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
-import { BrowserPane, clearBrowserData } from "./browser/BrowserPane";
+import { BrowserPane, clearBrowserData, keepCookies } from "./browser/BrowserPane";
+import { AllowedSites } from "./components/AllowedSites";
+import { setPaneOpener } from "./lib/openLink";
 import { ServerMenu } from "./servers/ServerMenu";
 import { ServersPane } from "./servers/ServersPane";
 import { useServers } from "./servers/useServers";
@@ -105,7 +110,11 @@ import { normalizePath } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
-import { MessageList } from "./components/MessageList";
+import { MessageList, type QueuedItem, type RewindOptions } from "./components/MessageList";
+import { SessionSearch } from "./components/SessionSearch";
+import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
+import { compareVersions } from "./lib/version";
+import { ChangelogPage } from "./components/ChangelogPage";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
@@ -126,9 +135,8 @@ import {
   setLastConnectionId,
   type Connection,
 } from "./lib/connections";
-import { appVersionOf, forwardCloseAll, forwardOpen, isTauri, openLocalPath, pickFolder, revealInExplorer } from "./lib/tauri";
+import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openLocalPath, pickFolder, revealInExplorer } from "./lib/tauri";
 import { FolderMenu } from "./components/FolderMenu";
-import { QueuedPrompts } from "./components/QueuedPrompts";
 import type { SessionActions } from "./components/SessionRow";
 
 type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins";
@@ -205,9 +213,10 @@ interface ActiveSession {
 }
 
 /** The daemon message of a prompt or a command, and the user message that the chat shows. */
-function submissionMessage(s: Submission): { message: ClientMessage; shown: string; startsTurn: boolean } {
+function submissionMessage(s: Submission): { message: ClientMessage; shown: string; startsTurn: boolean; messageId?: string } {
   if (s.kind === "prompt") {
-    return { message: { type: "prompt", text: s.text, ...(s.display ? { display: s.display } : {}) }, shown: s.display ?? s.text, startsTurn: true };
+    const id = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; // Rewind and fork find the message by this id.
+    return { message: { type: "prompt", text: s.text, id, ...(s.display ? { display: s.display } : {}) }, shown: s.display ?? s.text, startsTurn: true, messageId: id };
   }
   // /compact runs like a turn: the daemon ends it with turn.end.
   return {
@@ -216,6 +225,12 @@ function submissionMessage(s: Submission): { message: ClientMessage; shown: stri
     startsTurn: s.name === "compact",
   };
 }
+
+/** The longest wait between two automatic reconnect tries. */
+const RECONNECT_MAX_MS = 30_000;
+/** The wake check: a timer ticks each WAKE_TICK_MS. A gap above WAKE_GAP_MS shows a sleep of the computer. */
+const WAKE_TICK_MS = 10_000;
+const WAKE_GAP_MS = 45_000;
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -242,10 +257,12 @@ export default function App() {
   // The stored sessions of one folder (cwd), or of all folders (cwd null).
   const [sessions, setSessions] = useState<{ cwd: string | null; items: SessionSummary[] }>({ cwd: null, items: [] });
   const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
+  const [prStatus, setPrStatus] = useState<Map<string, PrStatus>>(() => new Map()); // By pathKey of the folder.
+  const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
   // The sessions with a turn that ended while the user was in another session (a blue dot in the sidebar).
   // The messages that wait for the running turn, for each session. The next one goes when the turn ends.
-  const [queues, setQueues] = useState<Record<string, { id: string; submission: Submission; label: string }[]>>({});
+  const [queues, setQueues] = useState<Record<string, QueuedItem[]>>({});
   const showStartRef = useRef<() => void>(() => undefined);
   const [unreadSessions, setUnreadSessions] = useState<Set<string>>(() => new Set());
   const lastRunning = useRef<RunningSession[]>([]);
@@ -266,7 +283,7 @@ export default function App() {
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
   const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
-  const [promptInsert, setPromptInsert] = useState<{ text: string; key: number } | null>(null);
+  const [promptInsert, setPromptInsert] = useState<{ text: string; key: number; replace?: boolean } | null>(null);
   const [browserRequest, setBrowserRequest] = useState<{ url: string; key: number } | null>(null);
   const [previewServer, setPreviewServer] = useState<string | null>(null); // /preview waits for this server.
   const [filesToken, setFilesToken] = useState<string | null>(null);
@@ -301,6 +318,9 @@ export default function App() {
   const [userSettingsInfo, setUserSettingsInfo] = useState<{ path: string; version: string } | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [daemonVersion, setDaemonVersion] = useState<string | null>(null); // From auth.ok of the connection.
+  const [daemonUpdatable, setDaemonUpdatable] = useState(false); // The daemon can install an update from the app.
+  const [remoteUpdate, setRemoteUpdate] = useState<DaemonUpdate | null>(null); // "Update daemon" in progress.
   useEffect(() => {
     if (isTauri()) void appVersionOf().then(setAppVersion, () => undefined);
     checkOnLaunch(); // A quick look for a new version, a few seconds after the start.
@@ -361,6 +381,19 @@ export default function App() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [conn]);
+
+  // Ctrl+K opens the session search on any screen, and closes it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isSearchShortcut(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      setSearchOpen((v) => !v);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // Ctrl+, opens the Settings dialog on any screen, and closes it.
   useEffect(() => {
@@ -476,13 +509,20 @@ export default function App() {
             const first = submissionMessage(firstPrompt.current);
             firstPrompt.current = null;
             conn.send(first.message);
-            dispatch({ type: "user", text: first.shown, startsTurn: first.startsTurn });
+            dispatch({ type: "user", text: first.shown, startsTurn: first.startsTurn, messageId: first.messageId });
           }
           return;
         }
         case "session.title":
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
+          return;
+        case "daemon.update":
+          setRemoteUpdate((u) => (u ? { ...u, phase: msg.state, message: msg.message } : u));
+          return;
+        case "prompt.fill":
+          // A rewind or a fork: the message goes back to the prompt box, so the user can change it.
+          setPromptInsert((p) => ({ text: msg.text, key: (p?.key ?? 0) + 1, replace: true }));
           return;
         case "prompt.suggestion": {
           const id = sessionRef.current?.id;
@@ -492,6 +532,13 @@ export default function App() {
         case "session.updated":
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
+          return;
+        case "pr_status":
+          setPrStatus((m) => {
+            const next = new Map(m);
+            for (const item of msg.items) next.set(pathKey(item.path), item);
+            return next;
+          });
           return;
         case "session.deleted":
           if (sessionRef.current?.id === msg.id) showStartRef.current();
@@ -506,6 +553,16 @@ export default function App() {
             return rest;
           });
           listRecent();
+          return;
+        case "steer.taken":
+          // The message is in the history now. The chat shows it at this place.
+          setQueues((q) => Object.fromEntries(Object.entries(q).map(([sid, list]) => [sid, list.filter((i) => i.id !== msg.id)])));
+          break;
+        case "steer.returned":
+          // The turn ended first. The messages go to the agent as prompts, as queued messages do.
+          setQueues((q) =>
+            Object.fromEntries(Object.entries(q).map(([sid, list]) => [sid, list.map((i) => (msg.ids.includes(i.id) ? { ...i, steering: false } : i))])),
+          );
           return;
         case "sessions.running":
           setRunningSessions(msg.items);
@@ -641,6 +698,10 @@ export default function App() {
             }
             return;
           }
+          if (msg.ref === "daemon.update") {
+            setRemoteUpdate((u) => (u ? { ...u, phase: "error", message: msg.message } : u));
+            return;
+          }
           if (msg.ref === "fs.dirs") {
             setPicker((p) => (p ? { ...p, error: msg.message } : p));
             return;
@@ -750,12 +811,15 @@ export default function App() {
   /** Closes the current connection and forgets its session. */
   const leave = useCallback(async () => {
     const previous = currentRef.current;
+    wantConnection.current = false; // The user closed it: no automatic reconnect.
     conn.close();
     setSession(null);
     dispatch({ type: "clear" });
     setReviewId(null);
     setCommands(null);
     setHello(null);
+    setDaemonVersion(null);
+    setRemoteUpdate(null); // Another daemon: the update of the old one does not show.
     setCurrent(null);
     if (previous) await closeTunnel(previous).catch(() => undefined);
   }, [conn]);
@@ -765,14 +829,20 @@ export default function App() {
       setConnectingId(c.id);
       setConnError(null);
       setBusy(true);
+      wantConnection.current = false; // No automatic reconnect while the user connects.
+      clearRetry();
       try {
         if (currentRef.current && currentRef.current.id !== c.id) await leave();
         setCurrent(c);
         const target = await resolveTarget(c);
-        const { host } = await conn.connect(target.host, target.port, target.token);
+        const { host, version, updatable } = await conn.connect(target.host, target.port, target.token);
         targetRef.current = target;
         setHello(host);
+        setDaemonVersion(version);
+        setDaemonUpdatable(updatable === true);
+        updateConnected(c.id, version);
         setLastConnectionId(c.id);
+        wantConnection.current = true;
         afterConnect();
       } catch (e) {
         setConnError({ id: c.id, message: errorText(e) });
@@ -784,6 +854,141 @@ export default function App() {
     },
     [conn, afterConnect, leave],
   );
+
+  /** After a connection: an update that restarted the daemon is done when the version is correct. */
+  const updateConnected = (connectionId: string, version: string) =>
+    setRemoteUpdate((u) => {
+      if (!u || u.connectionId !== connectionId || (u.phase !== "restarting" && u.phase !== "installing")) return u;
+      return version === u.version
+        ? { ...u, phase: "done" }
+        : { ...u, phase: "error", message: `The daemon restarted, but it is version ${version}, not ${u.version}.` };
+    });
+
+  /** "Update daemon": send the wheel of the app version to the remote daemon. */
+  const startDaemonUpdate = async () => {
+    const c = currentRef.current;
+    if (!c || !appVersion) return;
+    const host = hello?.hostname ?? c.name;
+    setRemoteUpdate({ connectionId: c.id, host, version: appVersion, phase: "sending" });
+    try {
+      const wheel = await daemonWheel();
+      conn.send({ type: "daemon.update", filename: wheel.filename, data: wheel.data });
+    } catch (e) {
+      setRemoteUpdate({ connectionId: c.id, host, version: appVersion, phase: "error", message: errorText(e) });
+    }
+  };
+
+  // "Daemon updated" closes by itself after a short time.
+  useEffect(() => {
+    if (remoteUpdate?.phase !== "done") return;
+    const timer = window.setTimeout(() => setRemoteUpdate(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [remoteUpdate?.phase]);
+
+  // Automatic reconnect: after a sleep of the computer, or when the daemon or the network went away
+  // for a short time. It runs only after a connection that the user did not close.
+  const wantConnection = useRef(false);
+  const retry = useRef<{ timer: number | null; attempt: number; inFlight: boolean }>({ timer: null, attempt: 0, inFlight: false });
+  const [reconnecting, setReconnecting] = useState(false);
+  const clearRetry = () => {
+    if (retry.current.timer !== null) window.clearTimeout(retry.current.timer);
+    retry.current.timer = null;
+    retry.current.attempt = 0;
+    setReconnecting(false);
+  };
+  const autoReconnectRef = useRef<() => void>(() => {});
+  autoReconnectRef.current = () => {
+    const c = currentRef.current;
+    const r = retry.current;
+    if (!c || !wantConnection.current || r.inFlight || conn.status !== "closed") return;
+    if (r.timer !== null) window.clearTimeout(r.timer);
+    r.timer = null;
+    r.inFlight = true;
+    setReconnecting(true);
+    void (async () => {
+      try {
+        const target = await resolveTarget(c);
+        const { host, version, updatable } = await conn.connect(target.host, target.port, target.token);
+        targetRef.current = target;
+        setHello(host);
+        setDaemonVersion(version);
+        setDaemonUpdatable(updatable === true);
+        updateConnected(c.id, version);
+        r.attempt = 0;
+        setReconnecting(false);
+        afterConnect();
+      } catch (e) {
+        r.inFlight = false; // Before scheduleReconnect, which waits for no try in flight.
+        if (!wantConnection.current) return;
+        if (/refused the token|no token/i.test(errorText(e))) {
+          // The token is wrong: a retry cannot help. The Computers screen shows the error.
+          wantConnection.current = false;
+          setReconnecting(false);
+          setConnError({ id: c.id, message: errorText(e) });
+          return;
+        }
+        r.attempt++;
+        scheduleReconnect();
+      } finally {
+        r.inFlight = false;
+      }
+    })();
+  };
+  /** The next try: after 1, 2, 4, 8, 16, then each 30 seconds. */
+  const scheduleReconnect = () => {
+    const r = retry.current;
+    if (!wantConnection.current || r.inFlight || r.timer !== null) return;
+    setReconnecting(true);
+    const delay = Math.min(RECONNECT_MAX_MS, 1000 * 2 ** r.attempt);
+    r.timer = window.setTimeout(() => {
+      r.timer = null;
+      autoReconnectRef.current();
+    }, delay);
+  };
+  const scheduleRef = useRef(scheduleReconnect);
+  scheduleRef.current = scheduleReconnect;
+
+  // The socket closed, but the user did not close it: try again.
+  useEffect(
+    () =>
+      conn.onStatus((next) => {
+        if (next === "closed" && wantConnection.current && !retry.current.inFlight) scheduleRef.current();
+      }),
+    [conn],
+  );
+
+  // A wake from sleep: the timer stops while the computer sleeps, so a long gap between two ticks
+  // shows a sleep. Then, and when the window shows again or the network comes back, check the
+  // connection. A dead socket closes, and the reconnect starts at once.
+  useEffect(() => {
+    const check = async () => {
+      if (!wantConnection.current) return;
+      if (conn.status === "connecting" || retry.current.inFlight) return;
+      if (conn.status === "open" && (await conn.checkAlive())) return;
+      if (retry.current.timer !== null) window.clearTimeout(retry.current.timer);
+      retry.current.timer = null;
+      retry.current.attempt = 0;
+      autoReconnectRef.current();
+    };
+    let last = Date.now();
+    const tick = window.setInterval(() => {
+      const now = Date.now();
+      const slept = now - last > WAKE_GAP_MS;
+      last = now;
+      if (slept) void check();
+    }, WAKE_TICK_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    const onOnline = () => void check();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.clearInterval(tick);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [conn]);
 
   // Connect one time to the last connection. React StrictMode runs effects two times in development.
   const autoConnected = useRef(false);
@@ -1033,9 +1238,9 @@ export default function App() {
   const submit = (s: Submission): boolean => {
     setSuggestion(null);
     try {
-      const { message, shown, startsTurn } = submissionMessage(s);
+      const { message, shown, startsTurn, messageId } = submissionMessage(s);
       conn.send(message);
-      dispatch({ type: "user", text: shown, startsTurn });
+      dispatch({ type: "user", text: shown, startsTurn, messageId });
       return true;
     } catch (e) {
       dispatch({ type: "notice", level: "error", text: errorText(e) });
@@ -1047,9 +1252,14 @@ export default function App() {
   const submitOrQueue = (s: Submission): boolean => {
     if (!session || !chat.running) return submit(s);
     const label = s.kind === "prompt" ? (s.display ?? s.text) : `/${s.name}${s.args ? ` ${s.args}` : ""}`;
-    const item = { id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, submission: s, label };
+    const item: QueuedItem = { id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, submission: s, label };
+    const mode = busySend(); // Settings > General.
+    // Steer: the agent reads the message at its next step. The item waits in the queue until then.
+    if (mode === "steer" && s.kind === "prompt") {
+      item.steering = sendSafely({ type: "steer", id: item.id, text: s.text, ...(s.display ? { display: s.display } : {}) });
+    }
     setQueues((q) => ({ ...q, [session.id]: [...(q[session.id] ?? []), item] }));
-    if (busySend() === "interrupt") sendNow(item.id); // Settings > General: stop the turn and send.
+    if (mode === "interrupt") sendNow(item.id);
     return true;
   };
 
@@ -1058,7 +1268,7 @@ export default function App() {
   // When the turn of the shown session ends, the next queued message goes to the agent.
   useEffect(() => {
     if (!session || chat.running || status !== "open" || screen !== "chat") return;
-    const next = queues[session.id]?.[0];
+    const next = queues[session.id]?.find((i) => !i.steering); // The daemon has the steer messages.
     if (!next) return;
     setQueues((q) => ({ ...q, [session.id]: (q[session.id] ?? []).filter((i) => i.id !== next.id) }));
     submit(next.submission);
@@ -1074,6 +1284,14 @@ export default function App() {
       return item ? { ...q, [session.id]: [item, ...list.filter((i) => i.id !== id)] } : q;
     });
     interrupt();
+  };
+
+  const rewind = (messageId: string, options: RewindOptions) => {
+    sendSafely({ type: "session.rewind", id: messageId, ...options });
+  };
+
+  const fork = (messageId: string) => {
+    sendSafely({ type: "session.fork", id: messageId });
   };
 
   const removeQueued = (id: string) => {
@@ -1269,6 +1487,21 @@ export default function App() {
     setLayout((l) => openPane(l, "browser"));
   }, []);
 
+  // "Open links in built-in browser": the chat links open in the Browser pane.
+  useEffect(() => {
+    setPaneOpener(showInBrowser);
+    return () => setPaneOpener(null);
+  }, [showInBrowser]);
+
+  // "Manage allowed sites" of the Browser pane: the site rules of the project.
+  const [sitesOpen, setSitesOpen] = useState(false);
+  const openSites = () => {
+    setSitesOpen(true);
+    setRules(null);
+    setRulesBusy(true);
+    if (!sendSafely({ type: "permissions.get" })) setRulesBusy(false);
+  };
+
   const browserError = useCallback((message: string) => dispatch({ type: "notice", level: "error", text: message }), []);
 
   /** A server URL for the Browser pane. A server on a remote daemon goes through a local forward port. */
@@ -1347,7 +1580,7 @@ export default function App() {
   useEffect(() => {
     for (const s of servers.items) {
       const before = serverStates.current[s.name];
-      if (s.state === "starting" && before && before !== "starting" && isTauri() && loadPref("browserKeepData", "true") === "false") {
+      if (s.state === "starting" && before && before !== "starting" && isTauri() && keepCookies() === "server") {
         void clearBrowserData().catch(() => undefined);
       }
       serverStates.current[s.name] = s.state;
@@ -1458,18 +1691,24 @@ export default function App() {
       )}
       {status === "closed" && (
         <div className="banner" role="alert">
-          <span>The connection to the daemon closed.</span>
+          <span>{reconnecting ? "The connection to the daemon closed. Reconnecting…" : "The connection to the daemon closed."}</span>
           <button type="button" className="btn" onClick={reconnect} disabled={busy}>
             <RefreshCw size={14} aria-hidden />
-            Reconnect
+            {reconnecting ? "Reconnect now" : "Reconnect"}
           </button>
         </div>
       )}
       <MessageList
         items={chat.items}
+        queued={queue}
+        running={chat.running}
         reviewId={paneVisible("diff") ? reviewId : null}
         onDecide={decide}
         onReview={toggleReview}
+        onSendNow={sendNow}
+        onRemoveQueued={removeQueued}
+        onRewind={rewind}
+        onFork={fork}
         emptyHint={
           <>
             <p>
@@ -1489,7 +1728,6 @@ export default function App() {
       <div className="composer">
         <div className="column">
           {chat.running && <WorkingLine turn={chat.turn} items={chat.items} model={session?.model ?? ""} />}
-          <QueuedPrompts items={queue} onSendNow={sendNow} onRemove={removeQueued} />
           <PromptBox
             running={chat.running}
             disabled={status !== "open"}
@@ -1660,6 +1898,10 @@ export default function App() {
           onOpenAgentPage={openAgentPage}
           onError={browserError}
           onEmpty={() => hidePane("browser")}
+          onShowLogs={() => setLayout((l) => openPane(l, "servers"))}
+          autoVerify={session ? autoVerify : null}
+          onAutoVerify={changeAutoVerify}
+          onManageSites={openSites}
         />
       ),
     },
@@ -1693,6 +1935,7 @@ export default function App() {
   const sessionActions: SessionActions = {
     onResume: (id) => fromSidebar(() => resumeSession(id))(),
     onPin: (id, pinned) => void sendSafely({ type: "session.update", session_id: id, pinned }),
+    onArchive: (id, archived) => void sendSafely({ type: "session.update", session_id: id, archived }),
     onMarkUnread: (id, on) =>
       setUnreadSessions((u) => {
         const next = new Set(u);
@@ -1871,6 +2114,12 @@ export default function App() {
             newSessionKey={NEW_SESSION_SHORTCUT}
             head={titleNav}
             tools={sessionTools}
+            prStatus={prStatus}
+            onRequestPr={(paths) => {
+              if (conn.status === "open") conn.send({ type: "git.pr_status", paths });
+            }}
+            onSearch={() => setSearchOpen(true)}
+            searchKey={SEARCH_SHORTCUT}
             connection={
               <button
                 type="button"
@@ -2022,7 +2271,37 @@ export default function App() {
             onFindFiles={(query, cwd) => sendSafely({ type: "fs.find", query, cwd })}
           />
         )}
-        {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("general")} />}
+        {sitesOpen && (
+          <AllowedSites rules={rules} busy={rulesBusy} onSave={saveRules} onClose={() => setSitesOpen(false)} />
+        )}
+        {searchOpen && (
+          <SessionSearch
+            sessions={recent}
+            activeId={session?.id ?? null}
+            onOpen={(id) => resumeSession(id)}
+            onClose={() => setSearchOpen(false)}
+          />
+        )}
+        {/* The popups at the bottom left: the app update, the daemon version, and the daemon update. */}
+        <div className="toast-stack">
+          {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("general")} />}
+          {/* No close button: the warning stays until the app connects to another daemon, or the update starts. */}
+          {appVersion &&
+            daemonVersion &&
+            status === "open" &&
+            compareVersions(appVersion, daemonVersion) !== 0 &&
+            !(remoteUpdate && remoteUpdate.connectionId === current?.id && remoteUpdate.phase !== "error") && (
+              <VersionWarning
+                appVersion={appVersion}
+                daemonVersion={daemonVersion}
+                host={hello?.hostname ?? current?.name ?? "the daemon computer"}
+                canUpdate={isTauri() && daemonUpdatable && current?.kind !== "local" && compareVersions(daemonVersion, appVersion) < 0}
+                onUpdate={() => void startDaemonUpdate()}
+                onComputers={() => openSettings("computers")}
+              />
+            )}
+          {remoteUpdate && <DaemonUpdateToast update={remoteUpdate} onClose={() => setRemoteUpdate(null)} />}
+        </div>
         {settingsPage && (
           <SettingsDialog
             page={settingsPage}
@@ -2035,6 +2314,7 @@ export default function App() {
                 : null
             }
           >
+            {settingsPage === "changelog" && <ChangelogPage appVersion={appVersion} />}
             {settingsPage === "general" && (
               <GeneralSettings
                 values={status === "open" ? userSettings : null}
@@ -2106,6 +2386,10 @@ export default function App() {
                 onTest={testProvider}
                 onUse={selectProviderModel}
                 onReturn={() => setSettingsPage(null)}
+                loadKey={(provider) => {
+                  const connectionId = currentRef.current?.id;
+                  return connectionId ? loadProviderKey(connectionId, provider) : Promise.resolve(null);
+                }}
               />
             )}
             {settingsPage === "computers" && (

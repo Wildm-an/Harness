@@ -5,10 +5,24 @@
 // ~/.tauri/harness-updater.key. With no key, it builds the installer with no update files.
 // See docs/RELEASE.md.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+
+// The wheel of the daemon: "Update daemon" sends it to a remote daemon (daemon/harness_daemon/update.py).
+// The installer puts it in the resource folder (tauri.bundle.json).
+const daemonDir = resolve("..", "daemon");
+const wheelDir = resolve("src-tauri", "binaries", "daemon-wheel");
+const venvPython = join(daemonDir, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+const python = existsSync(venvPython) ? venvPython : "python3";
+rmSync(wheelDir, { recursive: true, force: true });
+mkdirSync(wheelDir, { recursive: true });
+const wheel = spawnSync(python, ["-m", "pip", "wheel", "--no-deps", "--wheel-dir", wheelDir, daemonDir], { stdio: "inherit" });
+if (wheel.status !== 0) {
+  console.error("The wheel of the daemon failed. See the pip output above.");
+  process.exit(wheel.status ?? 1);
+}
 
 const env = { ...process.env };
 const args = ["tauri", "build", "--config", "src-tauri/tauri.bundle.json"];

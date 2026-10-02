@@ -37,6 +37,11 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 |---|---|---|
 
 | `session.new` | `cwd`, `model`, `provider` (optional), `permission_mode` (optional) | `model` is `<provider>/<model>` or `<model>`. A bare model uses `provider`, or the first provider in `providers.json`. If `model` is empty, the daemon uses `default_model` from the settings. `permission_mode` (the mode of the start page) becomes the project setting, as with `settings.set`. |
+| `steer` | `id`, `text`, `display` (optional) | A message for the running turn. The agent reads it at its next step, and the turn continues. If the model gives its last reply first, the turn continues for the message. `id` names the message in `steer.taken` and `steer.returned`. If no turn runs, the reply is `steer.returned` at once. |
+| `session.rewind` | `id`, `conversation`, `code` | Go back to the time before the user message `id`. `conversation`: remove the message and all messages after it, then send `session.ready` and `prompt.fill`. `code`: the files that the `edit` and `write` tools changed after the message get their old content (changes of commands are not restored), then a `notice` gives the count. Only when no turn runs. |
+| `session.fork` | `id` | A new session with the conversation before the user message `id`, in the same folder. The daemon opens it and sends `session.ready` and `prompt.fill`. The files do not change. |
+| `daemon.update` | `filename`, `data` | Install the wheel of the daemon (`data` is base64), then restart with the same arguments. The replies are `daemon.update` with `state`: `installing`, `restarting`, or `error` (with `message`). After `restarting`, the connection closes. Only when `auth.ok` has `updatable: true`, and no turn runs. |
+| `git.pr_status` | `paths` | The branch and the pull request of project folders, for the sidebar. The daemon reads the branch with `git` and the pull request with `gh pr view`. The reply is `pr_status`. The daemon keeps the results for 60 seconds. |
 
 | `session.list` | `cwd` (optional), `limit` (optional) | Asks for the stored sessions, newest first. With `cwd`, only the sessions of that folder (case-insensitive on Windows). `limit` is 50 by default, and at most 500. |
 | `session.leave` | — | The client shows the start screen. The current session closes, or stays open in the background if a turn or its shell runs. |
@@ -48,7 +53,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `side.ask` | `id`, `question`, `history` (optional) | A side chat question (Ctrl+;). The model sees the full session (the system prompt, the messages, and the tools) and the earlier side chat messages in `history` (`role`: `user` or `assistant`, `content`). Nothing is added to the session. It can run during a turn. The answer comes as `side.token`, then `side.done` or `side.error`. |
 | `side.cancel` | `id` | Stops the answer of a side chat question. |
 | `user_settings.get` | | The user settings of the daemon (`~/.harness/settings.json`), for the General page of the Settings dialog. It needs no session. The reply is `user_settings`. |
-| `user_settings.set` | `values` | Changes user settings: `permission_mode`, `prompt_suggestions`, `auto_verify`, `max_tool_calls` (1 to 500), `bash_timeout` (1 to 3600 seconds), `terminal_shell` (null removes it). The open sessions use the new values at once. The reply is `user_settings`. |
+| `user_settings.set` | `values` | Changes user settings: `permission_mode`, `prompt_suggestions`, `auto_verify`, `max_tool_calls` (1 to 500), `limit_tool_calls` (false: no tool call limit), `bash_timeout` (1 to 3600 seconds), `terminal_shell` (null removes it). The open sessions use the new values at once. The reply is `user_settings`. |
 | `tasks.list` | | The background tasks of the session: the commands that the agent runs with `bash` and `run_in_background`. The reply is `tasks`. |
 | `task.get` | `id` | One background task with its output. The reply is `task`. |
 | `task.stop` | `id` | Stops a background task and its child processes. |
@@ -121,6 +126,11 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 |---|---|---|
 
 | `auth.ok` | `version`, `host` | The token is correct. `host` has `hostname`, `platform`, `user`, `home`, and `sep` of the daemon computer. |
+| `steer.taken` | `id`, `text` | The `steer` message `id` went into the history. `text` is the text that the user sees. |
+| `steer.returned` | `ids` | The turn ended before its next step, or no turn ran. The client sends these messages as prompts. |
+| `prompt.fill` | `text` | After a rewind or a fork: the text of the user message. It replaces the text in the prompt box. |
+| `daemon.update` | `state`, `message` | The progress of `daemon.update`: `installing`, `restarting`, or `error`. |
+| `pr_status` | `items` | Reply to `git.pr_status`. Each item has `path`, `branch` (null outside a git repository), and `pr` (null if there is no pull request, or no `gh`): `number`, `state` (`open`, `draft`, `merged`, or `closed`), `url`, and `title`. |
 | `fs.dirs` | `path`, `parent`, `items`, `roots`, `is_project` | Reply to `fs.dirs`. `items` are folders only (`name`, `path`). `roots` are the drives on Windows, or `/`. `is_project` is true if the folder has `.git`, `HARNESS.md`, `CLAUDE.md`, `package.json`, or `pyproject.toml`. |
 
 | `session.ready` | `session_id`, `cwd`, `model`, `title`, `warnings`, `history`, `summary`, `context_length`, `context_source`, `context_tokens`, `instructions` | Reply to `session.new` and `session.resume`. `context_source` tells where the context length came from: `settings`, `providers.json`, `default`, or an endpoint (for example `llama-server` or `Ollama num_ctx`). `summary` replaces the messages before `history` (null if there is no summary). `instructions` is `HARNESS.md`, `CLAUDE.md`, or null. `history` holds the messages of the current context, in OpenAI chat format. A `tool` message also has `is_error`, and `diff` for a file change. The daemon does not send these fields to the model. |
@@ -195,6 +205,10 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `tool.result` | `diff` | A unified diff of the file change, for a tool that changed a file. The field is not present for other tools. |
 
 | `turn.end` | `stop_reason` | `end`, `max_tool_calls`, `denied`, `interrupted`, `error`, or `blocked` (a plugin ended the turn). |
+| `prompt` | `id` | Optional. The id of the user message in the history. Rewind and fork use it. |
+| `session.ready` | `history` | A `user` message has `id` and `ts` (epoch seconds). The daemon does not send these fields to the model. |
+| `auth.ok` | `updatable` | True if the daemon can install an update from the app (`daemon.update`). False for the daemon of the desktop app. |
+| `session.update` | `archived` | Optional. True archives the session: the sidebar shows it only with the "Archived" or "All" status filter. `session.updated` and the `sessions` items also have `archived`. |
 | `notice` | `level`, `text` | A message for the chat, for example "A plugin added a message: …". `level` is `info`, `warning`, or `error`. |
 
 | `turn.end` | `usage` | `prompt_tokens` and `completion_tokens` are sums for the turn. `last_prompt_tokens` is the prompt size of the last model call. `context_tokens` is the size of the next request (an estimate), and `context_length` is the limit. |

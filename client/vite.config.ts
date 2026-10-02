@@ -10,6 +10,9 @@ export default defineConfig({
     strictPort: true,
     host: "127.0.0.1",
     watch: { ignored: ["**/src-tauri/**"] },
+    // The Changelog page imports CHANGELOG.md from the root of the repository.
+    // The paths are relative to this folder.
+    fs: { allow: [".", "../CHANGELOG.md"] },
   },
   build: {
     target: "es2022",

@@ -21,6 +21,36 @@ async fn daemon_info(state: State<'_, Sidecar>) -> Result<DaemonInfo, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// The wheel of the daemon of this app version, for "Update daemon" of a remote daemon. The
+/// installer has it in the resource folder (`daemon-wheel/`). A development build reads it from
+/// `src-tauri/binaries/daemon-wheel/`, which `npm run package` makes.
+#[derive(serde::Serialize)]
+struct DaemonWheel {
+    filename: String,
+    data: String, // Base64.
+}
+
+#[tauri::command]
+async fn daemon_wheel(app: AppHandle) -> Result<DaemonWheel, String> {
+    use base64::Engine;
+    let mut folders = Vec::new();
+    if let Ok(dir) = app.path().resource_dir() {
+        folders.push(dir.join("daemon-wheel"));
+    }
+    folders.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries").join("daemon-wheel"));
+    for folder in folders {
+        let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("harness_daemon-") && name.ends_with(".whl") {
+                let bytes = std::fs::read(entry.path()).map_err(|e| e.to_string())?;
+                return Ok(DaemonWheel { filename: name, data: base64::engine::general_purpose::STANDARD.encode(bytes) });
+            }
+        }
+    }
+    Err("This app has no daemon package. Build the app with npm run package.".to_string())
+}
+
 /// Stops the local daemon and starts a new one with a new port and token.
 #[tauri::command]
 async fn restart_daemon(state: State<'_, Sidecar>) -> Result<DaemonInfo, String> {
@@ -76,8 +106,19 @@ fn forward_close_all(state: State<'_, Forwards>) {
 // The browser commands are async: a synchronous command that makes a webview deadlocks on Windows.
 // "id" is the tab of the Browser pane. Each tab has its own webview.
 #[tauri::command]
-async fn browser_open(app: AppHandle, id: String, url: String, bounds: Bounds) -> Result<(), String> {
-    browser::open(&app, &id, &url, bounds)
+async fn browser_open(app: AppHandle, id: String, url: String, bounds: Bounds, fresh: Option<bool>) -> Result<(), String> {
+    browser::open(&app, &id, &url, bounds, fresh.unwrap_or(false))
+}
+
+/// Saves a PNG screenshot of the visible part of a tab to ``path`` (from the save dialog).
+#[tauri::command]
+async fn browser_screenshot(app: AppHandle, id: String, path: String) -> Result<(), String> {
+    let rx = browser::screenshot(&app, &id)?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(15)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| "The screenshot did not finish.".to_string())??;
+    std::fs::write(&path, bytes).map_err(|e| format!("Cannot save the screenshot: {e}"))
 }
 
 #[tauri::command]
@@ -160,6 +201,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             daemon_info,
+            daemon_wheel,
             restart_daemon,
             tunnel_open,
             tunnel_close,
@@ -176,7 +218,8 @@ pub fn run() {
             browser_devtools,
             browser_clear_data,
             browser_close,
-            browser_close_all
+            browser_close_all,
+            browser_screenshot
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");

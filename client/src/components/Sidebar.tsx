@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import { ChevronRight, Plus, type LucideIcon } from "lucide-react";
+import { ChevronRight, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, GitMerge, Plus, Search, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
-import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
+import type { PrStatus, ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
+import { parentHints } from "../lib/projectLabels";
+import { PointMenu } from "./PointMenu";
 import { SessionRow, sessionState, type SessionActions } from "./SessionRow";
+import { SidebarFilter, loadView, saveView, type SidebarView, type SortBy, type StatusFilter } from "./SidebarFilter";
 
 export { sessionState } from "./SessionRow";
 
@@ -44,17 +47,46 @@ export interface ProjectGroup {
   sessions: SessionSummary[]; // Newest first.
 }
 
+/** The sessions newest first: by the last activity, or by the creation time. */
+export function sortSessions(sessions: SessionSummary[], sortBy: SortBy): SessionSummary[] {
+  const time = (s: SessionSummary) => (sortBy === "created" ? s.created_at : s.updated_at);
+  return [...sessions].sort((a, b) => time(b) - time(a));
+}
+
+/** The sessions that the status filter shows. */
+export function filterStatus(sessions: SessionSummary[], status: StatusFilter): SessionSummary[] {
+  if (status === "all") return sessions;
+  return sessions.filter((s) => !!s.archived === (status === "archived"));
+}
+
+const PR_ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
+const PR_STATES = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" };
+
+/** The pull request of the branch of a project folder, next to the project name. */
+function PrBadge({ status }: { status: PrStatus }) {
+  const pr = status.pr;
+  if (!pr) return null;
+  const Icon = PR_ICONS[pr.state] ?? GitPullRequest;
+  const tip = `${PR_STATES[pr.state] ?? pr.state} pull request #${pr.number}${pr.title ? `: ${pr.title}` : ""} (branch ${status.branch})`;
+  return (
+    <span className={`side-pr side-pr-${pr.state}`} title={tip} aria-label={tip}>
+      <Icon size={12} aria-hidden />
+      {pr.number}
+    </span>
+  );
+}
+
 /**
  * Groups the sessions by project folder. The saved projects are groups also with no session.
  * The group with the newest session is first. Groups with no session are last, by name.
  */
-export function groupByProject(sessions: SessionSummary[], projects: ProjectItem[]): ProjectGroup[] {
+export function groupByProject(sessions: SessionSummary[], projects: ProjectItem[], sortBy: SortBy = "activity"): ProjectGroup[] {
   const groups = new Map<string, ProjectGroup>();
   for (const p of projects) {
     const key = pathKey(p.path);
     if (!groups.has(key)) groups.set(key, { key, name: p.name, path: p.path, projectId: p.id, sessions: [] });
   }
-  for (const s of [...sessions].sort((a, b) => b.updated_at - a.updated_at)) {
+  for (const s of sortSessions(sessions, sortBy)) {
     const key = pathKey(s.cwd);
     let group = groups.get(key);
     if (!group) {
@@ -166,8 +198,10 @@ interface DropSpot {
   after: boolean;
 }
 
-function ProjectSection({ group, open, activeId, running, unread, disabled, onToggle, actions, onNewSession, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: {
+function ProjectSection({ group, hint, pr, open, activeId, running, unread, disabled, onToggle, actions, onNewSession, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove, canMove, onSort }: {
   group: ProjectGroup;
+  hint: string | null; // The parent folder, if another project has the same name.
+  pr: PrStatus | null; // The pull request of the folder branch. null: "Show PR status" is off, or no data.
   open: boolean;
   activeId: string | null;
   running: Map<string, RunningSession>;
@@ -183,8 +217,12 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
   onDrop: () => void;
   onDragEnd: () => void;
   onMove: (step: -1 | 1) => void; // Alt+Up and Alt+Down move the project with the keyboard.
+  canMove: { up: boolean; down: boolean };
+  onSort: () => void; // Sort all projects A to Z.
 }) {
   const [all, setAll] = useState(false);
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null); // The right-click menu.
+  const toArchive = group.sessions.filter((s) => !s.archived);
   const shown = all ? group.sessions : group.sessions.slice(0, SHOWN_SESSIONS);
   const listId = `side-project-${group.key.replace(/[^a-z0-9]/gi, "-")}`;
   const isProjectDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(PROJECT_DRAG);
@@ -206,6 +244,10 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
     >
       <div
         className="side-project-head"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuAt({ x: e.clientX, y: e.clientY });
+        }}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData(PROJECT_DRAG, group.key);
@@ -228,7 +270,11 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
           title={group.path}
         >
-          <span className="side-project-name">{group.name}</span>
+          <span className="side-project-name">
+            {group.name}
+            {hint && <span className="side-project-hint"> · {hint}</span>}
+          </span>
+          {pr && <PrBadge status={pr} />}
           <ChevronRight size={14} className="side-chevron" aria-hidden />
         </button>
         <button
@@ -236,12 +282,32 @@ function ProjectSection({ group, open, activeId, running, unread, disabled, onTo
           className="side-project-new"
           onClick={onNewSession}
           disabled={disabled}
-          aria-label={`New session in ${group.name}`}
-          title={`New session in ${group.name}`}
+          aria-label={`New session in ${group.name}${hint ? ` (${hint})` : ""}`}
+          title={`New session in ${group.name}${hint ? ` (${hint})` : ""}`}
         >
           <Plus size={14} aria-hidden />
         </button>
       </div>
+      {menuAt && (
+        <PointMenu
+          x={menuAt.x}
+          y={menuAt.y}
+          label={`The project ${group.name}`}
+          onClose={() => setMenuAt(null)}
+          items={[
+            { label: "New session", onClick: onNewSession, disabled },
+            { label: "Move up", onClick: () => onMove(-1), disabled: !canMove.up, separatorBefore: true },
+            { label: "Move down", onClick: () => onMove(1), disabled: !canMove.down },
+            { label: "Sort A to Z", onClick: onSort },
+            {
+              label: `Archive all (${toArchive.length})`,
+              onClick: () => toArchive.forEach((s) => actions.onArchive(s.id, true)),
+              disabled: disabled || toArchive.length === 0,
+              separatorBefore: true,
+            },
+          ]}
+        />
+      )}
       {open && (
         <ul id={listId} className="side-project-sessions">
           {group.sessions.length === 0 && <li className="side-empty">No sessions yet.</li>}
@@ -285,6 +351,10 @@ export function Sidebar({
   newSessionKey,
   head,
   tools = [],
+  prStatus,
+  onRequestPr,
+  onSearch,
+  searchKey,
 }: {
   sessions: SessionSummary[];
   projects: ProjectItem[];
@@ -301,6 +371,10 @@ export function Sidebar({
   newSessionKey?: string; // "Ctrl+N".
   head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
   tools?: SessionTool[]; // The pane buttons of the open session. Empty on the other screens.
+  prStatus: Map<string, PrStatus>; // By pathKey of the folder.
+  onRequestPr: (paths: string[]) => void; // Ask the daemon for the pull requests of these folders.
+  onSearch: () => void; // Open the session search.
+  searchKey?: string; // "Ctrl+K".
 }) {
   const [expanded, setExpanded] = useState(loadExpanded);
   const [moreOpen, setMoreOpen] = useState(() => loadPref(MORE_PREF, "0") === "1");
@@ -309,13 +383,22 @@ export function Sidebar({
     savePref(MORE_PREF, moreOpen ? "0" : "1");
   };
   const open = status === "open";
+  const [view, setView] = useState<SidebarView>(loadView);
+  const changeView = (next: SidebarView) => {
+    setView(next);
+    saveView(next);
+  };
+  const listed = filterStatus(sessions, view.status);
   // Pinned sessions are in their own list at the top, as in Claude.
-  const pinned = sessions.filter((s) => s.pinned);
+  const pinned = sortSessions(listed.filter((s) => s.pinned), view.sortBy);
+  const unpinned = listed.filter((s) => !s.pinned);
   const [order, setOrder] = useState(loadOrder);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
-  const byRecency = groupByProject(sessions.filter((s) => !s.pinned), projects);
-  const groups = orderGroups(byRecency, order);
+  const byRecency = groupByProject(unpinned, projects, view.sortBy);
+  const allGroups = orderGroups(byRecency, order);
+  const groups = view.showEmpty ? allGroups : allGroups.filter((g) => g.sessions.length > 0);
+  const hints = parentHints(groups);
   const runningById = new Map(running.map((r) => [r.session_id, r]));
   const activeKey = groups.find((g) => g.sessions.some((s) => s.id === activeId))?.key;
   const newestKey = byRecency[0]?.key;
@@ -343,11 +426,27 @@ export function Sidebar({
     if (dragKey && dropSpot?.key === target) saveOrder(moveKey(mergeOrder(shownKeys, order), dragKey, target, dropSpot.after));
     endDrag();
   };
+  /** Sort A to Z: the projects in the order of their names. The order is saved, as after a drag. */
+  const sortByName = () => {
+    const sorted = [...groups].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || (hints.get(a.key) ?? "").localeCompare(hints.get(b.key) ?? ""));
+    saveOrder(mergeOrder(sorted.map((g) => g.key), order));
+  };
   const moveBy = (key: string, step: -1 | 1) => {
     const at = shownKeys.indexOf(key);
     const target = shownKeys[at + step];
     if (target) saveOrder(moveKey(mergeOrder(shownKeys, order), key, target, step === 1));
   };
+
+  // "Show PR status": the daemon reads the pull request of each project folder, again each minute.
+  const prPaths = view.showPr && open ? allGroups.map((g) => g.path) : [];
+  const prJoined = prPaths.join("\n");
+  useEffect(() => {
+    if (prPaths.length === 0) return;
+    onRequestPr(prPaths);
+    const timer = window.setInterval(() => onRequestPr(prPaths), 60_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- prJoined holds the paths.
+  }, [prJoined]);
 
   // A project that the user did not open or close: open for the active session and the newest project.
   const isOpen = (g: ProjectGroup) => expanded[g.key] ?? (g.key === activeKey || g.key === newestKey);
@@ -413,15 +512,53 @@ export function Sidebar({
             </ul>
           </>
         )}
-        <h2 className="side-label">Projects</h2>
-        {groups.length === 0 ? (
-          <p className="side-empty">{open ? "No projects yet. Start a session to add one." : "Connect to a computer to see its projects."}</p>
+        <div className="side-label-row">
+          <h2 className="side-label">{view.groupBy === "folder" ? "Projects" : "Sessions"}</h2>
+          <button
+            type="button"
+            className="icon-btn ghost side-label-btn"
+            onClick={onSearch}
+            aria-label={searchKey ? `Search the sessions (${searchKey})` : "Search the sessions"}
+            title={searchKey ? `Search (${searchKey})` : "Search"}
+          >
+            <Search size={14} aria-hidden />
+          </button>
+          <SidebarFilter view={view} onChange={changeView} />
+        </div>
+        {view.groupBy === "none" ? (
+          unpinned.length === 0 ? (
+            <p className="side-empty">{!open ? "Connect to a computer to see its sessions." : view.status === "archived" ? "No archived sessions." : "No sessions yet."}</p>
+          ) : (
+            <ul className="side-pinned side-flat">
+              {sortSessions(unpinned, view.sortBy).map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  active={s.id === activeId}
+                  state={sessionState(runningById.get(s.id), unread.has(s.id))}
+                  unread={unread.has(s.id)}
+                  disabled={!open}
+                  actions={actions}
+                />
+              ))}
+            </ul>
+          )
+        ) : groups.length === 0 ? (
+          <p className="side-empty">
+            {!open
+              ? "Connect to a computer to see its projects."
+              : view.status === "archived"
+                ? "No archived sessions."
+                : "No projects yet. Start a session to add one."}
+          </p>
         ) : (
           <ul className="side-projects">
             {groups.map((g) => (
               <ProjectSection
                 key={g.key}
                 group={g}
+                hint={hints.get(g.key) ?? null}
+                pr={view.showPr ? (prStatus.get(g.key) ?? null) : null}
                 open={isOpen(g)}
                 activeId={activeId}
                 running={runningById}
@@ -439,6 +576,8 @@ export function Sidebar({
                 onDrop={() => dropOn(g.key)}
                 onDragEnd={endDrag}
                 onMove={(step) => moveBy(g.key, step)}
+                canMove={{ up: shownKeys.indexOf(g.key) > 0, down: shownKeys.indexOf(g.key) < shownKeys.length - 1 }}
+                onSort={sortByName}
               />
             ))}
           </ul>
