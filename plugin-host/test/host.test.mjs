@@ -2,7 +2,7 @@
 //   node --test test/
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -143,8 +143,20 @@ describe("plugin host", () => {
     const error = await host.call("plugins.install", { spec: join(FIXTURES, "script-dsh") }).catch((e) => e);
     // On a failure, show the result and the pnpm output: the cause can depend on the computer.
     const log = join(home, "logs", "pnpm-last.log");
-    assert.equal(error.code, 1, `The install did not ask. Result: ${JSON.stringify(error)}
-${existsSync(log) ? readFileSync(log, "utf8") : "(no pnpm log)"}`);
+    if (error.code !== 1) {
+      // TEMPORARY diagnostic for the CI failure: the pnpm settings and the environment of this computer.
+      const pnpm = fileURLToPath(new URL("../node_modules/pnpm/bin/pnpm.mjs", import.meta.url));
+      const env = { ...process.env, CI: "1", pnpm_config_ignore_scripts: "false", pnpm_config_strict_dep_builds: "true" };
+      const config = spawnSync(process.execPath, [pnpm, "config", "list"], { cwd: home, env, encoding: "utf8" });
+      const vars = Object.keys(process.env).filter((k) => /pnpm|npm_config|ignore|script/i.test(k)).map((k) => `${k}=${process.env[k]}`);
+      const ran = existsSync(join(home, "node_modules", "script-dsh", "ran.txt"));
+      const pnpmLog = existsSync(log) ? readFileSync(log, "utf8") : "(no pnpm log)";
+      assert.fail(
+        [`The install did not ask. Result: ${JSON.stringify(error)}`, `ran.txt: ${ran}`, pnpmLog,
+          "--- pnpm config list:", config.stdout + config.stderr, "--- env:", ...vars].join("\n"),
+      );
+    }
+    assert.equal(error.code, 1);
     assert.equal(error.data.pendingBuilds.length, 1);
     assert.match(error.data.pendingBuilds[0], /^script-dsh@file:/);
     const manifest = JSON.parse(readFileSync(join(home, "package.json"), "utf8"));
