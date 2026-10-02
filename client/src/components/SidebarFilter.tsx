@@ -15,12 +15,12 @@ export interface SidebarView {
   groupBy: GroupBy;
   sortBy: SortBy;
   showEmpty: boolean; // Show the projects that have no session for the filter.
-  showPr: boolean; // Show the pull request of the branch of each project.
+  showPr: boolean; // Show the pull request of the branch of each project. Off by default: it runs gh each minute.
 }
 
 const VIEW_PREF = "sidebar.view";
 
-export const DEFAULT_VIEW: SidebarView = { status: "active", groupBy: "folder", sortBy: "activity", showEmpty: true, showPr: true };
+export const DEFAULT_VIEW: SidebarView = { status: "active", groupBy: "folder", sortBy: "activity", showEmpty: true, showPr: false };
 
 export function loadView(): SidebarView {
   try {
@@ -30,7 +30,7 @@ export function loadView(): SidebarView {
       groupBy: saved.groupBy === "none" ? "none" : "folder",
       sortBy: saved.sortBy === "created" ? "created" : "activity",
       showEmpty: saved.showEmpty !== false,
-      showPr: saved.showPr !== false,
+      showPr: saved.showPr === true,
     };
   } catch {
     return DEFAULT_VIEW;
