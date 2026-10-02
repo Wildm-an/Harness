@@ -144,6 +144,13 @@ jobs:
           path: installers
           merge-multiple: true
 
+      # Each artifact keeps the bundle folders (nsis/, macos/, ...): put all the files in one folder.
+      - name: Put the files in one folder
+        run: |
+          find installers -mindepth 2 -type f -exec mv -t installers {} +
+          find installers -mindepth 1 -type d -empty -delete
+          ls -la installers
+
       # The update file of the Tauri updater: the version, and the URL and signature of each platform.
       - name: Make latest.json
         run: python3 .github/scripts/latest_json.py installers "${{ github.ref_name }}" "${{ github.repository }}"
