@@ -141,7 +141,10 @@ describe("plugin host", () => {
 
   it("asks before it runs the build scripts of a package", async () => {
     const error = await host.call("plugins.install", { spec: join(FIXTURES, "script-dsh") }).catch((e) => e);
-    assert.equal(error.code, 1);
+    // On a failure, show the result and the pnpm output: the cause can depend on the computer.
+    const log = join(home, "logs", "pnpm-last.log");
+    assert.equal(error.code, 1, `The install did not ask. Result: ${JSON.stringify(error)}
+${existsSync(log) ? readFileSync(log, "utf8") : "(no pnpm log)"}`);
     assert.equal(error.data.pendingBuilds.length, 1);
     assert.match(error.data.pendingBuilds[0], /^script-dsh@file:/);
     const manifest = JSON.parse(readFileSync(join(home, "package.json"), "utf8"));
