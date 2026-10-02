@@ -20,6 +20,9 @@ import { loadPref, savePref } from "../lib/prefs";
 import { PromptBox, type Submission } from "./PromptBox";
 import { mentionOrder, type MentionSession } from "./mentions";
 
+// The start screen shows this many recent sessions. "Show more" shows the rest.
+const RECENT_SHOWN = 3;
+
 function relativeTime(seconds: number): string {
   const diff = Date.now() / 1000 - seconds;
   if (diff < 60) return "now";
@@ -347,9 +350,20 @@ export function SessionStart({
   };
 
   const recent = selected && sessions.cwd === selected.path ? sessions.items : [];
+  // The 3 newest sessions show. "Show more" shows all of them, in a list that scrolls under the prompt box.
+  const [allRecent, setAllRecent] = useState(false);
+  const below = useRef<HTMLDivElement>(null);
+  useEffect(() => setAllRecent(false), [selected?.id]);
+  const shownRecent = allRecent ? recent : recent.slice(0, RECENT_SHOWN);
+  const toggleRecent = () => {
+    if (allRecent) below.current?.scrollTo({ top: 0 });
+    setAllRecent(!allRecent);
+  };
 
   return (
-    <div className="start-screen">
+    // The prompt box is at 2/3 of the height from the bottom. It stays there: only the list under it scrolls.
+    <div className="start-screen session-start">
+      <div className="start-space" aria-hidden />
       <section className="start-hero" aria-labelledby="start-title">
         <h1 id="start-title">What do you want to work on?</h1>
 
@@ -427,11 +441,12 @@ export function SessionStart({
         )}
       </section>
 
+      <div className="start-below" ref={below}>
       {recent.length > 0 && selected && !shownForm && (
         <section className="panel recent" aria-labelledby="recent-title">
           <h2 id="recent-title">Recent sessions in {selected.name}</h2>
-          <ul>
-            {recent.map((s) => (
+          <ul id="recent-list">
+            {shownRecent.map((s) => (
               <li key={s.id}>
                 <button type="button" className="recent-item" onClick={() => onResume(s.id)} disabled={busy}>
                   <span className="recent-title">{s.title ?? "Untitled session"}</span>
@@ -445,8 +460,14 @@ export function SessionStart({
               </li>
             ))}
           </ul>
+          {recent.length > RECENT_SHOWN && (
+            <button type="button" className="recent-more" onClick={toggleRecent} aria-expanded={allRecent} aria-controls="recent-list">
+              {allRecent ? "Show less" : `Show ${recent.length - RECENT_SHOWN} more`}
+            </button>
+          )}
         </section>
       )}
+      </div>
     </div>
   );
 }

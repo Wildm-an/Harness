@@ -1075,6 +1075,37 @@ textarea:focus-visible {
   padding: 48px 16px;
 }
 
+/* The start screen: the prompt box at 2/3 of the height from the bottom. The list under it gets
+   two times the height of the space above it, so the box stays there. Only the list scrolls. With a
+   tall form in the box (a new project), the spaces shrink and the screen scrolls. */
+.start-screen.session-start {
+  min-height: 0;
+  gap: 0;
+  padding: 0 16px;
+}
+
+.start-space {
+  flex: 1 1 0;
+  min-height: 24px;
+}
+
+.session-start > .start-hero {
+  flex: none;
+}
+
+.start-below {
+  /* 2 : 1 with the space above. The base (half the height of the box area, about 150 px) puts the
+     middle of the box, not its top, at 2/3 of the height from the bottom. */
+  flex: 2 1 75px;
+  display: flex;
+  justify-content: center;
+  align-self: stretch;
+  min-height: 0;
+  margin: 0 -16px; /* The scroll bar is at the edge of the window. */
+  padding: 0 16px; /* No vertical padding: it would change the 1 : 2 ratio of the spaces. */
+  overflow-y: auto;
+}
+
 .panel {
   width: 100%;
   max-width: 520px;
@@ -1136,13 +1167,42 @@ textarea:focus-visible {
 }
 
 .panel.recent {
+  align-self: flex-start;
   max-width: 680px;
-  margin-top: 16px;
-  padding: 16px 0 0;
+  margin: 16px 0 8px;
+  padding: 0;
   border: none;
-  border-top: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
+}
+
+/* The title stays at the top of the list while the list scrolls. */
+.panel.recent h2 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 4px;
+  padding: 12px 0 6px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.recent-more {
+  display: block;
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  font: 12.5px var(--font-sans);
+  cursor: pointer;
+  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
+}
+
+.recent-more:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 /* The chips of the start box: the project menu and the model field. */
