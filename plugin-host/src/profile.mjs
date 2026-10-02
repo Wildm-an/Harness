@@ -11,9 +11,9 @@
 // bundle order, then the user layer.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import semver from "semver";
@@ -89,8 +89,24 @@ export function specKind(spec) {
   return "registry";
 }
 
+/**
+ * The full path of a folder, also when the folder does not exist yet. On Windows, a path can have a
+ * short 8.3 name (C:\Users\RUNNER~1), and pnpm uses the long name. pnpm then sees two projects:
+ * a build script stays pending, with no question and no run.
+ */
+export function fullPath(path) {
+  const absolute = resolve(path);
+  try {
+    return realpathSync.native(absolute);
+  } catch {
+    const parent = dirname(absolute);
+    return parent === absolute ? absolute : join(fullPath(parent), basename(absolute));
+  }
+}
+
 export class Profile {
   constructor(home) {
+    home = fullPath(home);
     this.home = home;
     this.manifestPath = join(home, "package.json");
     this.workspacePath = join(home, "pnpm-workspace.yaml");
