@@ -46,6 +46,44 @@ if sys.platform == "win32":
     WINPTY = os.path.dirname(winpty.__file__)
     binaries += [(os.path.join(WINPTY, name), "winpty") for name in ("OpenConsole.exe", "winpty-agent.exe")]
 
+
+def windows_version_info():
+    """The version resource of harness-daemon.exe: the product name, the version, and the copyright.
+
+    Code signing (SignPath) checks that each signed file has the product name and the version of the
+    release. The version comes from pyproject.toml, the copyright from tauri.conf.json.
+    """
+    import json
+    import tomllib
+
+    from PyInstaller.utils.win32.versioninfo import (FixedFileInfo, StringFileInfo, StringStruct, StringTable,
+                                                     VarFileInfo, VarStruct, VSVersionInfo)
+
+    with open(os.path.join(DAEMON, "pyproject.toml"), "rb") as f:
+        version = tomllib.load(f)["project"]["version"]
+    tauri_conf = os.path.join(os.path.dirname(DAEMON), "client", "src-tauri", "tauri.conf.json")
+    with open(tauri_conf, encoding="utf-8") as f:
+        conf = json.load(f)
+    numbers = tuple(int(n) for n in version.split(".")[:3]) + (0,)
+    strings = [
+        StringStruct("CompanyName", conf["bundle"]["publisher"]),
+        StringStruct("FileDescription", f"{conf['productName']} daemon"),
+        StringStruct("FileVersion", version),
+        StringStruct("InternalName", "harness-daemon"),
+        StringStruct("LegalCopyright", conf["bundle"]["copyright"]),
+        StringStruct("OriginalFilename", "harness-daemon.exe"),
+        StringStruct("ProductName", conf["productName"]),
+        StringStruct("ProductVersion", version),
+    ]
+    return VSVersionInfo(
+        ffi=FixedFileInfo(filevers=numbers, prodvers=numbers),
+        kids=[
+            StringFileInfo([StringTable("040904B0", strings)]),  # US English, Unicode.
+            VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
+        ],
+    )
+
+
 a = Analysis(
     [os.path.join(SPECPATH, "entry.py")],
     pathex=[DAEMON],
@@ -63,6 +101,7 @@ exe = EXE(
     exclude_binaries=True,  # onedir: the binaries and the data files go in the folder (COLLECT).
     name="harness-daemon",
     console=True,  # The client starts it with no window (CREATE_NO_WINDOW on Windows).
+    version=windows_version_info() if sys.platform == "win32" else None,
     upx=False,
     strip=False,
 )
