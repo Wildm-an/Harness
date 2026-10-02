@@ -72,6 +72,12 @@ class Client:
             seen.append(msg)
             if msg["type"] == "server.status" and msg["name"] == name and msg["state"] == state:
                 return msg, seen
+            # A crash, or a start that failed (for example, the port is in use), gives no further
+            # status. Stop now, and show the error and the logs.
+            if (msg["type"] == "server.status" and msg["name"] == name and msg["state"] != state
+                    and (msg["state"] == "crashed" or (msg["state"] == "stopped" and msg.get("error")))):
+                logs = "\n".join(m["text"] for m in seen if m["type"] == "server.log" and m["name"] == name)
+                raise AssertionError(f"'{name}' is {msg['state']}, not {state}: {msg.get('error')}\nLogs:\n{logs}")
 
     def collect_logs(self, name: str, until, timeout: float = 10) -> dict[str, str]:
         """Collect the server.log text of one server until ``until(all text)`` is true."""
