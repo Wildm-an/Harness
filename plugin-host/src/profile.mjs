@@ -223,9 +223,11 @@ export class Profile {
           CI: "1",
           npm_config_fund: "false",
           // The user approves each build script (allowBuilds). A pnpm setting of the computer, for
-          // example of a CI runner, must not run or skip the scripts without the approval.
+          // example of a CI runner, must not run or skip the scripts without the approval. With
+          // ignore-scripts, pnpm skips all scripts with no message, and the plugin misses its build.
           pnpm_config_strict_dep_builds: "true",
           pnpm_config_dangerously_allow_all_builds: "false",
+          pnpm_config_ignore_scripts: "false",
         },
         windowsHide: true,
       });
