@@ -188,8 +188,8 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; - The welcome page and the finish page show the logo in the middle, and the text under it.
 ; - The other pages show the logo and the name in the middle of the header.
 ; - The install page shows the logo in the middle, the loading bar under it, and then the status:
-;   "Installing Harness 0.1.20", "Name: harness-daemon.exe... 37%" (NSIS updates it during the
-;   copy of a file), "Items remaining: 2", and the folder.
+;   the percentage ("37%"), "Installing Harness 0.1.20", "Name: harness-daemon.exe... 37%" (NSIS
+;   updates it during the copy of a file), and the folder.
 ; The images are in nsis/brand (make_images.py), one for each display scale of Windows.
 
 ; The colors of the dark theme of Harness (client/src/styles.css): --sidebar, --text, --text-muted,
@@ -209,14 +209,12 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; The HarnessUI plugin is in nsis/plugins (nsis/plugin/build.cmd builds it).
 !searchreplace HARNESS_PLUGINS "${HEADERIMAGE}" "header.bmp" "plugins\x86-unicode"
 !addplugindir "${HARNESS_PLUGINS}"
-!define HARNESS_ITEMS 0 ; The files of the install. HarnessItemDone counts them when the script compiles.
 
 Var HarnessPage
 Var HarnessScale ; The display scale in percent: 100, 125, 150, 175, or 200.
 Var HarnessHeader ; The logo and the name in the header.
 Var HarnessStatus
-Var HarnessRemaining
-Var HarnessLeft
+Var HarnessPercent ; The percentage under the loading bar of the install page.
 Var HarnessBigFont
 Var HarnessOneClick ; 1: the page for an installed version does not show.
 Var HarnessDirText ; The install folder on the first page.
@@ -227,10 +225,9 @@ Var HarnessDirLabel
   File "/oname=$PLUGINSDIR\harness-header-${SCALE}.bmp" "${HARNESS_BRAND}\header-${SCALE}.bmp"
 !macroend
 
-; One file is copied: count it (when the script compiles), and show the items that remain.
+; One file is copied: show the new percentage under the loading bar.
 !macro HarnessItemDone
-  !define /redef /math HARNESS_ITEMS ${HARNESS_ITEMS} + 1
-  Call HarnessItemDone
+  Call HarnessShowPercent
 !macroend
 
 !macro HARNESS_FUNCTIONS UN
@@ -515,8 +512,8 @@ Function ${UN}HarnessProgressPage
   StrCpy $R3 6
   Call ${UN}HarnessCenter
 
-  ; The large status line.
-  StrCpy $R1 124
+  ; The large status line. The install page shows the percentage between the bar and this line.
+  StrCpy $R1 146
   StrCpy $R3 26
   Call ${UN}HarnessLabel
   StrCpy $HarnessStatus $0
@@ -525,7 +522,7 @@ Function ${UN}HarnessProgressPage
 
   ; "Name: harness-daemon.exe... 37%": the status line of NSIS.
   GetDlgItem $0 $HarnessPage 1006
-  StrCpy $R1 154
+  StrCpy $R1 176
   StrCpy $R2 0
   StrCpy $R3 18
   Call ${UN}HarnessCenter
@@ -568,13 +565,14 @@ FunctionEnd
 Function HarnessInstFilesShow
   StrCpy $R4 "Installing ${PRODUCTNAME} ${VERSION}"
   Call HarnessProgressPage
-  StrCpy $R1 174
+  ; The percentage, directly under the loading bar: from 0% to 100%.
+  StrCpy $R1 120
   StrCpy $R3 18
-  StrCpy $R4 ""
+  StrCpy $R4 "0%"
   Call HarnessLabel
-  StrCpy $HarnessRemaining $0
-  SetCtlColors $HarnessRemaining ${HARNESS_MUTED} ${HARNESS_BG}
-  StrCpy $R1 194
+  StrCpy $HarnessPercent $0
+  SetCtlColors $HarnessPercent ${HARNESS_MUTED} ${HARNESS_BG}
+  StrCpy $R1 204
   StrCpy $R3 18
   StrCpy $R4 "$INSTDIR"
   Call HarnessLabel
@@ -586,25 +584,40 @@ Function un.HarnessInstFilesShow
   Call un.HarnessProgressPage
 FunctionEnd
 
-Function HarnessShowRemaining
-  ${If} $HarnessRemaining != ""
-    SendMessage $HarnessRemaining ${WM_SETTEXT} 0 "STR:Items remaining: $HarnessLeft"
+; The percentage of the loading bar: its position in its range (NSIS sets both). The install
+; section calls this between its commands, so it keeps the registers.
+Function HarnessShowPercent
+  ${If} $HarnessPercent == ""
+    Return
   ${EndIf}
-FunctionEnd
-
-Function HarnessItemDone
-  ${If} $HarnessLeft > 0
-    IntOp $HarnessLeft $HarnessLeft - 1
+  Push $R0
+  Push $R1
+  Push $R2
+  GetDlgItem $R0 $HarnessPage 1004
+  SendMessage $R0 0x407 0 0 $R1 ; PBM_GETRANGE: the high limit.
+  SendMessage $R0 0x408 0 0 $R2 ; PBM_GETPOS
+  ${If} $R1 > 0
+    IntOp $R2 $R2 * 100
+    IntOp $R2 $R2 / $R1
+  ${Else}
+    StrCpy $R2 0
   ${EndIf}
-  Call HarnessShowRemaining
+  ${If} $R2 > 100
+    StrCpy $R2 100
+  ${EndIf}
+  SendMessage $HarnessPercent ${WM_SETTEXT} 0 "STR:$R2%"
+  Pop $R2
+  Pop $R1
+  Pop $R0
 FunctionEnd
 
 Function HarnessInstallDone
   ${If} $HarnessStatus != ""
     SendMessage $HarnessStatus ${WM_SETTEXT} 0 "STR:${PRODUCTNAME} is installed"
   ${EndIf}
-  StrCpy $HarnessLeft 0
-  Call HarnessShowRemaining
+  ${If} $HarnessPercent != ""
+    SendMessage $HarnessPercent ${WM_SETTEXT} 0 "STR:100%"
+  ${EndIf}
 FunctionEnd
 
 ; Installer pages, must be ordered as they appear
@@ -1233,7 +1246,7 @@ SectionEnd
 
 Section Install
   SetOutPath $INSTDIR
-  Call HarnessItemsTotal
+  Call HarnessShowPercent
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
     !insertmacro NSIS_HOOK_PREINSTALL
@@ -1347,13 +1360,6 @@ Section Install
     SetAutoClose true
   ${EndIf}
 SectionEnd
-
-; Harness: the number of files. This function comes after the Install section, so the count is
-; complete when the script compiles this line.
-Function HarnessItemsTotal
-  StrCpy $HarnessLeft ${HARNESS_ITEMS}
-  Call HarnessShowRemaining
-FunctionEnd
 
 ; Harness: the install page has no buttons. After an error, show the buttons that close the window.
 Function .onInstFailed
