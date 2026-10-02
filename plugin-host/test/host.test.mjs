@@ -151,9 +151,15 @@ describe("plugin host", () => {
       const vars = Object.keys(process.env).filter((k) => /pnpm|npm_config|ignore|script/i.test(k)).map((k) => `${k}=${process.env[k]}`);
       const ran = existsSync(join(home, "node_modules", "script-dsh", "ran.txt"));
       const pnpmLog = existsSync(log) ? readFileSync(log, "utf8") : "(no pnpm log)";
+      const read = (path) => (existsSync(path) ? readFileSync(path, "utf8") : `(no ${path})`);
+      const ignored = spawnSync(process.execPath, [pnpm, "ignored-builds"], { cwd: home, env, encoding: "utf8" });
       assert.fail(
         [`The install did not ask. Result: ${JSON.stringify(error)}`, `ran.txt: ${ran}`, pnpmLog,
-          "--- pnpm config list:", config.stdout + config.stderr, "--- env:", ...vars].join("\n"),
+          "--- pnpm config list:", config.stdout + config.stderr, "--- env:", ...vars,
+          "--- .modules.yaml:", read(join(home, "node_modules", ".modules.yaml")),
+          "--- installed package.json:", read(join(home, "node_modules", "script-dsh", "package.json")),
+          "--- fixture package.json:", read(join(FIXTURES, "script-dsh", "package.json")),
+          "--- pnpm ignored-builds:", ignored.stdout + ignored.stderr].join("\n"),
       );
     }
     assert.equal(error.code, 1);
