@@ -179,6 +179,7 @@ const PLACEHOLDER: Record<PluginKind, string> = {
 };
 
 export function PluginsScreen({
+  embedded = false,
   status,
   error,
   busy,
@@ -193,6 +194,7 @@ export function PluginsScreen({
   onDismissBuilds,
   onReturn,
 }: {
+  embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
   status: PluginsStatus | null;
   error: string | null;
   busy: boolean;
@@ -221,13 +223,18 @@ export function PluginsScreen({
   };
 
   return (
-    <div className="start-screen">
+    <div className={embedded ? "settings-embed plugins-screen" : "start-screen plugins-screen"}>
       <section className="panel connections plugins" aria-labelledby="plugins-title">
         <div className="panel-head">
-          <h1 id="plugins-title">Plugins</h1>
-          <button type="button" className="btn btn-ghost" onClick={onReturn}>
-            {hasSession ? "Back to the session" : "Back"}
-          </button>
+          <h1 id="plugins-title">
+            <Puzzle size={20} aria-hidden /> Plugins
+          </h1>
+          <span className="spacer" />
+          {!embedded && (
+            <button type="button" className="btn btn-ghost" onClick={onReturn}>
+              {hasSession ? "Back to the session" : "Back"}
+            </button>
+          )}
         </div>
         <p className="help providers-intro">
           Plugins add tools, / commands, skills, prompt text, hooks, MCP servers, and model providers. Harness plugins are in{" "}

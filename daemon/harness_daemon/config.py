@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "max_tool_calls": 50,
+    "max_tool_calls": 250,
     "bash_timeout": 120,
     "bash_max_timeout": 600,
     "max_output_chars": 20000,

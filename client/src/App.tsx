@@ -290,7 +290,6 @@ export default function App() {
   const [models, setModels] = useState<ModelList | null>(null); // The model menus: the models of the connections that are on.
   const providerWait = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null);
   const providerTestRef = useRef<string | null>(null);
-  const returnScreen = useRef<Screen>("start"); // The screen before the Providers screen.
   // The saved projects of the daemon (the start screen).
   const [projects, setProjects] = useState<ProjectItem[] | null>(null);
   const projectWait = useRef<{ resolve: (id: string) => void; reject: (e: Error) => void } | null>(null);
@@ -332,6 +331,10 @@ export default function App() {
       setSettingsError(null);
       try {
         if (page === "general") conn.send({ type: "user_settings.get" });
+        if (page === "plugins") {
+          setPluginError(null);
+          conn.send({ type: "plugins.list" });
+        }
         if (page === "connections") {
           setProviderError(null);
           setProviderTest(null);
@@ -393,19 +396,8 @@ export default function App() {
   const [pluginBusy, setPluginBusy] = useState(false);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuilds | null>(null); // A DeepSeek install that waits for approval.
 
-  /** Opens the Plugins screen. Uses only refs and state setters: the message handler calls it too. */
-  const showPlugins = useCallback(() => {
-    setScreen((s) => {
-      if (s !== "plugins") returnScreen.current = s === "chat" || s === "start" ? s : "start";
-      return "plugins";
-    });
-    setPluginError(null);
-    try {
-      conn.send({ type: "plugins.list" });
-    } catch {
-      // Not connected. The screen shows the last list.
-    }
-  }, [conn]);
+  /** Opens the Plugins page of the Settings dialog. The message handler calls it too. */
+  const showPlugins = useCallback(() => openSettings("plugins"), [openSettings]);
 
   /** Sends the keys from the keychain that the daemon does not have. */
   const syncProviderKeys = useCallback(
@@ -1876,7 +1868,6 @@ export default function App() {
             onNewSession={fromSidebar(newSession)}
             onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
             actions={sessionActions}
-            onPlugins={fromSidebar(showPlugins)}
             newSessionKey={NEW_SESSION_SHORTCUT}
             head={titleNav}
             tools={sessionTools}
@@ -2031,37 +2022,6 @@ export default function App() {
             onFindFiles={(query, cwd) => sendSafely({ type: "fs.find", query, cwd })}
           />
         )}
-        {screen === "plugins" && (
-          <PluginsScreen
-            status={plugins}
-            error={pluginError}
-            busy={pluginBusy}
-            pendingBuilds={pendingBuilds}
-            hasSession={session !== null}
-            onInstall={(source, replace, kind, approvedBuilds) => {
-              setPluginError(null);
-              setPendingBuilds(null);
-              const msg = { type: "plugins.install" as const, source, replace, kind, ...(approvedBuilds ? { approved_builds: approvedBuilds } : {}) };
-              if (sendSafely(msg)) setPluginBusy(true);
-            }}
-            onRemove={(name, kind) => {
-              setPluginError(null);
-              if (sendSafely({ type: "plugins.remove", name, kind })) setPluginBusy(true);
-            }}
-            onSetBundle={(name, enabled, kind) => sendSafely({ type: "plugins.set_bundle", name, enabled, kind })}
-            onSetPlugin={(id, enabled, kind) => sendSafely({ type: "plugins.set_plugin", id, enabled, kind })}
-            onDismissBuilds={() => {
-              setPendingBuilds(null);
-              setPluginError(null);
-            }}
-            onReload={() => {
-              setPluginError(null);
-              if (sendSafely({ type: "plugins.reload" })) setPluginBusy(true);
-            }}
-            onBrowse={(initial) => browseFolder(initial ?? hello?.home ?? "")}
-            onReturn={() => setScreen(session ? "chat" : "start")}
-          />
-        )}
         {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("general")} />}
         {settingsPage && (
           <SettingsDialog
@@ -2086,6 +2046,38 @@ export default function App() {
                   setSettingsError(null);
                   sendSafely({ type: "user_settings.set", values });
                 }}
+              />
+            )}
+            {settingsPage === "plugins" && (
+              <PluginsScreen
+                embedded
+                status={plugins}
+                error={pluginError}
+                busy={pluginBusy}
+                pendingBuilds={pendingBuilds}
+                hasSession={session !== null}
+                onInstall={(source, replace, kind, approvedBuilds) => {
+                  setPluginError(null);
+                  setPendingBuilds(null);
+                  const msg = { type: "plugins.install" as const, source, replace, kind, ...(approvedBuilds ? { approved_builds: approvedBuilds } : {}) };
+                  if (sendSafely(msg)) setPluginBusy(true);
+                }}
+                onRemove={(name, kind) => {
+                  setPluginError(null);
+                  if (sendSafely({ type: "plugins.remove", name, kind })) setPluginBusy(true);
+                }}
+                onSetBundle={(name, enabled, kind) => sendSafely({ type: "plugins.set_bundle", name, enabled, kind })}
+                onSetPlugin={(id, enabled, kind) => sendSafely({ type: "plugins.set_plugin", id, enabled, kind })}
+                onDismissBuilds={() => {
+                  setPendingBuilds(null);
+                  setPluginError(null);
+                }}
+                onReload={() => {
+                  setPluginError(null);
+                  if (sendSafely({ type: "plugins.reload" })) setPluginBusy(true);
+                }}
+                onBrowse={(initial) => browseFolder(initial ?? hello?.home ?? "")}
+                onReturn={() => setSettingsPage(null)}
               />
             )}
             {settingsPage === "models" && (

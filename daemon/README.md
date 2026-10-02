@@ -177,7 +177,7 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 
 | Key | Default | Function |
 |---|---|---|
-| `max_tool_calls` | `50` | The maximum number of tool calls in one turn. |
+| `max_tool_calls` | `250` | The maximum number of tool calls in one turn. |
 | `bash_timeout` | `120` | The default `bash` timeout, in seconds. |
 | `bash_max_timeout` | `600` | The maximum `bash` timeout that the model can request. |
 | `max_output_chars` | `20000` | Tool output above this length is truncated. |

@@ -4324,14 +4324,13 @@ select {
 }
 
 .msg-user {
-  font-size: var(--chat-font-size, 15px);
+  font-size: var(--chat-font-size, 14px);
   align-self: flex-end;
   max-width: 80%;
   margin-top: 12px;
   padding: 10px 16px;
   border-radius: var(--radius-xl);
   background: var(--surface-2);
-  font-size: 15px;
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -4339,7 +4338,7 @@ select {
 
 .msg-assistant {
   padding: 0 8px;
-  font-size: var(--chat-font-size, 15px);
+  font-size: var(--chat-font-size, 14px);
   line-height: 1.65;
 }
 
@@ -6344,7 +6343,7 @@ mark.word-del {
   padding: 4px 24px 24px 12px;
 }
 
-/* A screen in the dialog (Local Models, Connections, Computers): no full-screen space or card. */
+/* A screen in the dialog (Plugins, Local Models, Connections, Computers): no full-screen space or card. */
 .settings-embed {
   display: flex;
   flex-direction: column;

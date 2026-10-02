@@ -1,9 +1,9 @@
 // The Settings dialog (Ctrl+,), as in the DeepSeek Harness and Claude apps: a list of pages on the
-// left, and the page on the right. General is here. Local Models, Connections, and Computers are
-// the screens that the sidebar opened before.
+// left, and the page on the right. General is here. Plugins, Local Models, Connections, and
+// Computers are the screens that the sidebar opened before.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Rows2, Rows4, Settings, Sun, X, type LucideIcon } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Puzzle, Rows2, Rows4, Settings, Sun, X, type LucideIcon } from "lucide-react";
 import type { PermissionMode, UserSettings } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
@@ -23,10 +23,11 @@ import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
 import { availableVersion, checkForUpdate, installUpdate, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "models" | "connections" | "computers";
+export type SettingsPage = "general" | "plugins" | "models" | "connections" | "computers";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
+  { id: "plugins", label: "Plugins", icon: Puzzle },
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "connections", label: "Connections", icon: Cable },
   { id: "computers", label: "Computers", icon: Monitor },
@@ -166,7 +167,7 @@ function Switch({ checked, label, disabled, onChange }: { checked: boolean; labe
   );
 }
 
-/** A number field that saves on Enter or when the focus leaves it. */
+/** A number field. A step with the arrows saves at once. Typed text saves on Enter or when the focus leaves it. */
 function NumberField({ id, value, min, max, unit, disabled, onSave }: {
   id: string;
   value: number;
@@ -178,9 +179,9 @@ function NumberField({ id, value, min, max, unit, disabled, onSave }: {
 }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
-  const save = () => {
-    const n = Math.round(Number(text));
-    if (!Number.isFinite(n) || text.trim() === "") return setText(String(value));
+  const save = (raw = text) => {
+    const n = Math.round(Number(raw));
+    if (!Number.isFinite(n) || raw.trim() === "") return setText(String(value));
     const clamped = Math.min(max, Math.max(min, n));
     setText(String(clamped));
     if (clamped !== value) onSave(clamped);
@@ -195,8 +196,12 @@ function NumberField({ id, value, min, max, unit, disabled, onSave }: {
         max={max}
         value={text}
         disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={save}
+        onChange={(e) => {
+          // The spin buttons and the arrow keys send an input event with no inputType. Typed text has one.
+          if ((e.nativeEvent as InputEvent).inputType) setText(e.target.value);
+          else save(e.target.value);
+        }}
+        onBlur={() => save()}
         onKeyDown={(e) => e.key === "Enter" && save()}
       />
       {unit && <span className="setting-unit">{unit}</span>}
@@ -379,7 +384,7 @@ export function GeneralSettings({
       </Row>
 
       <Row label="Tool calls in a turn" help="The agent stops after this many tool calls, and asks to continue." htmlFor="setting-tool-calls">
-        <NumberField id="setting-tool-calls" value={values?.max_tool_calls ?? 50} min={1} max={500} disabled={off} onSave={(n) => set({ max_tool_calls: n })} />
+        <NumberField id="setting-tool-calls" value={values?.max_tool_calls ?? 250} min={1} max={500} disabled={off} onSave={(n) => set({ max_tool_calls: n })} />
       </Row>
 
       <Row label="Command timeout" help="The default time limit of a command of the agent." htmlFor="setting-bash-timeout">

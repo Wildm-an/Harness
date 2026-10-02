@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronRight, Plus, Puzzle, type LucideIcon } from "lucide-react";
+import { ChevronRight, Plus, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
 import type { ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
@@ -282,7 +282,6 @@ export function Sidebar({
   onNewSession,
   onNewSessionIn,
   actions,
-  onPlugins,
   newSessionKey,
   head,
   tools = [],
@@ -299,7 +298,6 @@ export function Sidebar({
   onNewSession: () => void;
   onNewSessionIn: (group: ProjectGroup) => void;
   actions: SessionActions; // Open, pin, mark as unread, rename, and delete a session.
-  onPlugins: () => void;
   newSessionKey?: string; // "Ctrl+N".
   head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
   tools?: SessionTool[]; // The pane buttons of the open session. Empty on the other screens.
@@ -367,7 +365,6 @@ export function Sidebar({
 
       <div className="side-actions">
         <NavButton icon={Plus} label="New session" active={screen === "start"} disabled={!open} shortcut={newSessionKey} onClick={onNewSession} />
-        <NavButton icon={Puzzle} label="Plugins" active={screen === "plugins"} disabled={!open} onClick={onPlugins} />
         {/* The panes of the open session, in an accordion as the "More" row of Claude. */}
         {tools.length > 0 && (
           <>

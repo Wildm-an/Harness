@@ -11,7 +11,7 @@ const APPEARANCE_PREF = "appearance";
 const CHAT_FONT_PREF = "chatFontSize";
 export const CHAT_FONT_MIN = 12;
 export const CHAT_FONT_MAX = 22;
-export const CHAT_FONT_DEFAULT = 15;
+export const CHAT_FONT_DEFAULT = 14;
 
 const system = () => window.matchMedia?.("(prefers-color-scheme: light)");
 const listeners = new Set<() => void>();
