@@ -28,3 +28,21 @@ A desktop app for agentic coding with local models. See [SPEC.md](SPEC.md) for t
 | 11. Cookbook | Complete. Hardware detection (local and through SSH), the fit calculator from the GGUF header, the Hugging Face model browser with fit badges, downloads with pause, continue, and cancel, installed models, and llama-server serve control that adds the model to the providers. |
 | 12. MCP | Complete. MCP client for stdio, streamable HTTP, and SSE servers from `~/.harness/mcp.json` and `.harness/mcp.json`, `mcp__<server>__<tool>` tools with approval (and `mcp__<server>__*` rules), tool list updates, and the MCP panel. |
 | 13. Packaging | Complete. The PyInstaller sidecar (one executable, with a smoke test), the Tauri installers (MSI and NSIS, DMG, deb, rpm, and AppImage), the daemon log in `~/.harness/logs/daemon.log`, and a GitHub Actions workflow that builds the installers on each operating system. |
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- The release workflow (`.github/workflows/release.yml`) builds the Windows files from the source code of this repository. Only these files get a signature.
+- Each signature needs a manual approval.
+
+Team roles:
+
+| Role | Members |
+|---|---|
+| Committers and reviewers | [Wildm-an](https://github.com/Wildm-an) |
+| Approvers | [Wildm-an](https://github.com/Wildm-an) |
+
+Privacy: Harness transfers information to other networked systems only when you ask for it, or when you configure a service that it then uses. The one exception is the update check at start, and you can turn it off. See [docs/PRIVACY.md](docs/PRIVACY.md) for each connection.
+
+The licenses of the third-party components are in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
