@@ -218,7 +218,15 @@ export class Profile {
     return new Promise((resolvePromise, reject) => {
       const child = spawn(process.execPath, [PNPM, ...args, "--config.update-notifier=false"], {
         cwd: this.home,
-        env: { ...process.env, CI: "1", npm_config_fund: "false" },
+        env: {
+          ...process.env,
+          CI: "1",
+          npm_config_fund: "false",
+          // The user approves each build script (allowBuilds). A pnpm setting of the computer, for
+          // example of a CI runner, must not run or skip the scripts without the approval.
+          pnpm_config_strict_dep_builds: "true",
+          pnpm_config_dangerously_allow_all_builds: "false",
+        },
         windowsHide: true,
       });
       let output = "";
@@ -292,9 +300,10 @@ export class Profile {
     const oldDeps = Object.keys(JSON.parse(before.manifest).dependencies ?? {});
     const registryArgs = inspected.registry ? ["--registry", inspected.registry] : [];
     const { code, output } = await this.pnpm(["add", inspected.spec, ...registryArgs], { signal });
-    if (code !== 0) {
+    // pnpm exits with an error when it ignores a build script. Also check the output after a success.
+    const pendingBuilds = ignoredBuilds(output);
+    if (code !== 0 || pendingBuilds.length) {
       restore();
-      const pendingBuilds = ignoredBuilds(output);
       if (pendingBuilds.length) {
         throw new ProfileError(`The install needs to run build scripts of these packages: ${pendingBuilds.join(", ")}. Allow them to continue.`, { pendingBuilds });
       }

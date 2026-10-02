@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 
 import pytest
@@ -30,7 +31,11 @@ def test_read_offset_and_limit(ctx):
     assert "Use offset=3 to read more" in out
 
 
-@pytest.mark.parametrize("path", ["../outside.txt", "/etc/passwd", "C:/Windows/win.ini"])
+# On macOS and Linux, "C:/Windows/win.ini" is a relative path in the project.
+WINDOWS_ONLY = pytest.mark.skipif(sys.platform != "win32", reason="a drive path is a Windows path")
+
+
+@pytest.mark.parametrize("path", ["../outside.txt", "/etc/passwd", pytest.param("C:/Windows/win.ini", marks=WINDOWS_ONLY)])
 def test_paths_outside_project_are_rejected(ctx, path):
     with pytest.raises(ToolError, match="outside the project"):
         run(ReadTool().run({"path": path}, ctx))

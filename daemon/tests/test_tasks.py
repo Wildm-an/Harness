@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from harness_daemon.keepawake import AWAKE, KeepAwake
 from harness_daemon.tasks import MAX_KEPT_OUTPUT, BackgroundTask, TaskHost
@@ -78,18 +79,21 @@ def test_the_agent_starts_a_background_task(daemon, project, fake_model, monkeyp
     c.send({"type": "prompt", "text": "Run it in the background"})
     request = c.until("permission.request")[0]
     c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
-    c.until("turn.end")
+    _, seen = c.until("turn.end")
     result = next(m for m in fake_model.requests[-1]["messages"] if m["role"] == "tool")["content"]
     assert "background task task-" in result
     assert True in held  # The computer stayed awake during the turn.
 
-    items = c.until("tasks")[0]["items"]
+    # The task list can come before or after the end of the turn: a fast computer ends the task first.
+    early = [m for m in seen if m["type"] == "tasks" and m["items"]]
+    items = early[-1]["items"] if early else c.until("tasks")[0]["items"]
     task_id = items[0]["id"]
     c.send({"type": "task.get", "id": task_id})
     detail = c.until("task")[0]
-    for _ in range(40):
+    for _ in range(40):  # Up to 10 seconds.
         if detail["status"] != "running":
             break
+        time.sleep(0.25)
         c.send({"type": "task.get", "id": task_id})
         detail = c.until("task")[0]
     assert detail["status"] == "done" and "bg-task-ok" in detail["output"]
