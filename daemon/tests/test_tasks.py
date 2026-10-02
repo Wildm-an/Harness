@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
+
 from harness_daemon.keepawake import AWAKE, KeepAwake
 from harness_daemon.tasks import MAX_KEPT_OUTPUT, BackgroundTask, TaskHost
 from harness_daemon.tools.shell import detect_shell
@@ -46,6 +48,22 @@ def test_a_task_stops(project):
         task = host.start("sleep 30" if detect_shell().name != "powershell" else "Start-Sleep 30")
         await host.stop(task.id)
         await host.wait(task, 10)
+        assert task.status == "stopped"
+
+    asyncio.run(main())
+
+
+@pytest.mark.skipif(detect_shell().name not in ("bash", "sh"), reason="the command needs a POSIX shell")
+def test_a_stopped_task_ends_when_its_shell_ends(project):
+    # The subshell starts sleep and ends at once: sleep is no longer in the process tree of the shell,
+    # and it keeps the output pipe open. On a CI runner, a child that started at the moment of the
+    # kill did the same. The task must still end when the shell ends.
+    async def main() -> None:
+        host = TaskHost(project, detect_shell())
+        task = host.start("(sleep 5 &); sleep 5")
+        await asyncio.sleep(0.5)
+        await host.stop(task.id)
+        await host.wait(task, 3)
         assert task.status == "stopped"
 
     asyncio.run(main())

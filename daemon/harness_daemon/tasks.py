@@ -23,6 +23,7 @@ from .tools.shell import ShellInfo, _kill_tree
 MAX_TASKS = 10  # Running tasks of one session.
 MAX_KEPT_OUTPUT = 256 * 1024  # Characters. The start of a long output goes away.
 MAX_ENDED_KEPT = 20  # Ended tasks that the list still shows.
+STOP_WAIT = 5  # Seconds: after the kill, the time for the shell to end.
 
 OnChange = Callable[[], None]
 
@@ -87,6 +88,7 @@ class TaskHost:
         self.on_change = on_change
         self.tasks: dict[str, BackgroundTask] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._end_lock = threading.Lock()  # The output thread and stop() can both end a task.
 
     @property
     def running(self) -> list[BackgroundTask]:
@@ -124,8 +126,8 @@ class TaskHost:
         for chunk in iter(lambda: proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096), b""):
             task.append(chunk.decode("utf-8", errors="replace").replace("\r\n", "\n"))
         proc.wait()
-        task.returncode = proc.returncode
-        task.ended_at = time.time()
+        if not self._mark_ended(task):
+            return  # stop() ended the task first.
         loop = self._loop
         if loop is not None and not loop.is_closed():
             try:
@@ -140,11 +142,29 @@ class TaskHost:
             raise TaskError(f"Unknown background task: {task_id}. The tasks are: {names}.")
         return task
 
+    def _mark_ended(self, task: BackgroundTask) -> bool:
+        """Set the end of a task one time. Return True if this call set it."""
+        with self._end_lock:
+            if task.ended_at is not None:
+                return False
+            task.returncode = task.proc.returncode if task.proc is not None else None
+            task.ended_at = time.time()
+            return True
+
     async def stop(self, task_id: str) -> BackgroundTask:
         task = self.get(task_id)
         if task.ended_at is None and task.proc is not None:
             task.stopped = True
             await asyncio.to_thread(_kill_tree, task.proc)
+            # The task ends when its shell ends. A child that started at the moment of the kill is not
+            # in the process tree of the shell: it can keep the output pipe open, and the output thread
+            # then waits for it. On Windows, the Git Bash launcher starts bash, which starts the command.
+            try:
+                await asyncio.to_thread(task.proc.wait, STOP_WAIT)
+            except subprocess.TimeoutExpired:
+                return task
+            if self._mark_ended(task):
+                self._changed()
         return task
 
     async def wait(self, task: BackgroundTask, seconds: float) -> None:
