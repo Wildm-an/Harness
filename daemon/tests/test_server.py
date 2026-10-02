@@ -68,7 +68,12 @@ class Client:
         seen = []
         deadline = time.time() + timeout
         while True:
-            msg = self.recv(max(deadline - time.time(), 0.01))
+            try:
+                msg = self.recv(max(deadline - time.time(), 0.01))
+            except TimeoutError:
+                got = [{k: v for k, v in m.items() if k in ("type", "name", "state", "error", "stream", "text")}
+                       for m in seen]
+                raise AssertionError(f"No '{state}' status of '{name}' in {timeout} s. Messages: {got}") from None
             seen.append(msg)
             if msg["type"] == "server.status" and msg["name"] == name and msg["state"] == state:
                 return msg, seen
