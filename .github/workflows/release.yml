@@ -76,42 +76,6 @@ jobs:
           NODE=$(python -c "from playwright._impl._driver import compute_driver_executable as c; print(c()[0])")
           "$NODE" --test "test/*.test.mjs"
 
-      # Temporary: why the test dev server does not become "running" on macOS.
-      - name: Check the test dev server
-        if: runner.os == 'macOS'
-        working-directory: daemon
-        shell: bash
-        run: |
-          python - <<'EOF'
-          import os, select, signal, socket, subprocess, sys, time
-          print("executable:", sys.executable)
-          print("base executable:", getattr(sys, "_base_executable", None))
-          for host in ("127.0.0.1", ""):
-              t = time.time()
-              name = socket.getfqdn(host)
-              print(f"getfqdn({host!r}) = {name!r} in {time.time() - t:.2f} s")
-          with socket.socket() as s:
-              s.bind(("127.0.0.1", 0))
-              port = s.getsockname()[1]
-          for python in (sys._base_executable, sys.executable):
-              t = time.time()
-              cmd = f'"{python}" tests/dev_server.py {port}'
-              proc = subprocess.Popen(["/bin/bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                      stdin=subprocess.DEVNULL, start_new_session=True)
-              try:
-                  if select.select([proc.stdout], [], [], 60)[0]:
-                      line = proc.stdout.readline()
-                      print(f"{python}: first line after {time.time() - t:.2f} s: {line!r}")
-                  else:
-                      print(f"{python}: no line in 60 s. Exit code: {proc.poll()}")
-              finally:
-                  try:
-                      os.killpg(proc.pid, signal.SIGKILL)
-                  except ProcessLookupError:
-                      pass
-                  proc.wait()
-          EOF
-
       - name: Test the daemon
         working-directory: daemon
         run: python -m pytest -q

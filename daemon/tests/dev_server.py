@@ -10,7 +10,9 @@ code 3 after it prints its lines.
 from __future__ import annotations
 
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+
+from quick_http import QuickHTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -32,7 +34,7 @@ def main() -> None:
         print("Starting, then failing", flush=True)
         print("Error: something is wrong", file=sys.stderr, flush=True)
         sys.exit(3)
-    server = HTTPServer(("127.0.0.1", port), Handler)
+    server = QuickHTTPServer(("127.0.0.1", port), Handler)
     print(f"  Local:   http://127.0.0.1:{port}/", flush=True)
     print("a warning on stderr", file=sys.stderr, flush=True)
     server.serve_forever()

@@ -13,7 +13,9 @@ Pages:
 from __future__ import annotations
 
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+
+from quick_http import QuickHTTPServer
 
 HOME = """<!doctype html>
 <html>
@@ -64,7 +66,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     port = int(sys.argv[1])
-    server = HTTPServer(("127.0.0.1", port), Handler)
+    server = QuickHTTPServer(("127.0.0.1", port), Handler)
     print(f"  Local:   http://127.0.0.1:{port}/", flush=True)
     server.serve_forever()
 

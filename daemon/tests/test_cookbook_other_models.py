@@ -6,7 +6,7 @@ import asyncio
 import json
 import socket
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -14,6 +14,7 @@ import pytest
 from harness_daemon.cookbook import hostscript
 from harness_daemon.cookbook.hosts import HostError
 from harness_daemon.cookbook.service import Cookbook
+from quick_http import QuickThreadingHTTPServer
 
 
 class FakeOllama:
@@ -52,7 +53,7 @@ class FakeOllama:
             def log_message(self, *args) -> None:
                 pass
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = QuickThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.port = self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 

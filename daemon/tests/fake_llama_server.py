@@ -10,7 +10,9 @@ import json
 import os
 import sys
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+
+from quick_http import QuickHTTPServer
 
 
 def arg(name: str, default: str = "") -> str:
@@ -37,7 +39,7 @@ def main() -> None:
         print("error: failed to load model", flush=True)
         sys.exit(1)
     time.sleep(0.5)
-    server = HTTPServer(("127.0.0.1", int(arg("--port", "8080"))), Handler)
+    server = QuickHTTPServer(("127.0.0.1", int(arg("--port", "8080"))), Handler)
     print("main: server is listening", flush=True)
     server.serve_forever()
 
