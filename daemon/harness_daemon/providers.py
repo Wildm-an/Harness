@@ -9,8 +9,9 @@ Each provider is an entry in ``~/.harness/providers.json``::
 Optional provider fields:
 
 - ``api_key_env``: read the API key from this environment variable.
-- ``kind``: ``"ollama"`` or ``"openai"``. The daemon uses ``/api/show`` to check
-  tool support only for Ollama. The default is ``"ollama"`` for port 11434.
+- ``kind``: ``"ollama"``, ``"openrouter"``, or ``"openai"``. The daemon checks tool and image
+  support only for Ollama (``/api/show``) and OpenRouter (the model list). The default is
+  ``"ollama"`` for port 11434, ``"openrouter"`` for openrouter.ai, and ``"openai"`` for other URLs.
 - ``context_length``: the context size of the models on this provider.
 - ``models``: settings for each model, for example
   ``{"qwen2.5-coder:7b": {"context_length": 32768}}``.
@@ -26,6 +27,7 @@ The order for the API key: ``api_key``, then the ``api_key_env`` variable, then 
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
@@ -69,6 +71,18 @@ class ModelError(Exception):
     pass
 
 
+OPENROUTER_HOST = "openrouter.ai"
+
+
+def default_kind(base_url: str) -> str:
+    """The kind for a provider with no "kind" (or "auto"): from the URL."""
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    if host == OPENROUTER_HOST or host.endswith("." + OPENROUTER_HOST):
+        return "openrouter"
+    return "ollama" if parsed.port == 11434 else "openai"
+
+
 @dataclass(frozen=True)
 class Provider:
     name: str
@@ -99,8 +113,8 @@ def _provider_from_entry(name: str, entry: Any) -> Provider:
         api_key = CLIENT_KEYS.get(name)
         missing = None if api_key else "The desktop client did not send the key from its keychain."
     kind = entry.get("kind")
-    if kind is None:
-        kind = "ollama" if urlparse(entry["base_url"]).port == 11434 else "openai"
+    if kind in (None, "auto"):
+        kind = default_kind(entry["base_url"])
     return Provider(
         name=name,
         base_url=entry["base_url"].rstrip("/"),
@@ -186,10 +200,14 @@ def resolve_model(spec: str | None, provider_name: str | None = None) -> tuple[P
 
 
 async def model_capabilities(provider: Provider, model: str) -> list[str] | None:
-    """The capabilities of an Ollama model, for example ["completion", "tools", "vision"].
+    """The capabilities of an Ollama or OpenRouter model, for example ["completion", "tools", "vision"].
 
     Return None for other providers, or if the endpoint does not tell.
     """
+    if provider.kind == "openrouter":
+        async with httpx.AsyncClient(timeout=5) as client:
+            entry = (await openrouter_models(client, provider)).get(model)
+        return openrouter_capabilities(entry) if entry else None
     if provider.kind != "ollama":
         return None
     try:
@@ -319,6 +337,43 @@ async def _probe_ollama(client: httpx.AsyncClient, provider: Provider, model: st
     ))
 
 
+# -- OpenRouter ---------------------------------------------------------------------
+
+# GET /models of OpenRouter has hundreds of models. Keep each list for some minutes: base URL -> (time, id -> entry).
+OPENROUTER_LIST_TTL = 600
+OPENROUTER_LISTS: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
+
+
+async def openrouter_models(client: httpx.AsyncClient, provider: Provider,
+                            listing: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+    """The entries of the OpenRouter model list, by model id. ``listing``: a GET /models reply that the caller has."""
+    if listing is None:
+        saved = OPENROUTER_LISTS.get(provider.base_url)
+        if saved and time.monotonic() - saved[0] < OPENROUTER_LIST_TTL:
+            return saved[1]
+        listing = _entries(await _json(client, "GET", f"{provider.base_url}/models", headers=_auth_headers(provider)))
+    models = {str(m["id"]): m for m in listing if m.get("id")}
+    if models:
+        OPENROUTER_LISTS[provider.base_url] = (time.monotonic(), models)
+    return models
+
+
+def openrouter_capabilities(entry: dict[str, Any]) -> list[str] | None:
+    """The capabilities of an OpenRouter model: "tools" from supported_parameters, and "vision" from
+    the image input in architecture.input_modalities. None if the entry does not tell."""
+    params = entry.get("supported_parameters")
+    if not isinstance(params, list):
+        return None
+    caps = ["completion"]
+    if "tools" in params:
+        caps.append("tools")
+    architecture = entry.get("architecture") if isinstance(entry.get("architecture"), dict) else {}
+    modalities = architecture.get("input_modalities")
+    if isinstance(modalities, list) and "image" in modalities:
+        caps.append("vision")
+    return caps
+
+
 # -- OpenAI-compatible servers ------------------------------------------------------
 
 def context_from_entry(entry: dict[str, Any]) -> int | None:
@@ -336,6 +391,7 @@ class OpenAIContextSources:
     lmstudio: dict[str, dict[str, Any]] = field(default_factory=dict)  # GET /api/v0/models: model id -> entry.
     tgi: int | None = None  # GET /info of Text Generation Inference: max_total_tokens.
     listing: dict[str, int] = field(default_factory=dict)  # GET /models: model id -> context.
+    listing_source: str = "model list"
 
     def lookup(self, model: str) -> ContextInfo | None:
         if self.llama_server:
@@ -355,7 +411,7 @@ class OpenAIContextSources:
         if self.tgi:
             return ContextInfo(self.tgi, "Text Generation Inference")
         if model in self.listing:
-            return ContextInfo(self.listing[model], "model list")
+            return ContextInfo(self.listing[model], self.listing_source)
         return None
 
 
@@ -363,6 +419,11 @@ async def openai_context_sources(client: httpx.AsyncClient, provider: Provider,
                                  listing: list[dict[str, Any]] | None = None) -> OpenAIContextSources:
     """Ask each source at the same time. A server answers only its own requests; the others fail."""
     headers = _auth_headers(provider)
+    if provider.kind == "openrouter":  # Only the model list: the other sources are for local servers.
+        models = await openrouter_models(client, provider, listing)
+        return OpenAIContextSources(
+            listing={model: n for model, entry in models.items() if (n := context_from_entry(entry))},
+            listing_source="OpenRouter")
 
     async def models() -> Any:
         return {"data": listing} if listing is not None else await _json(

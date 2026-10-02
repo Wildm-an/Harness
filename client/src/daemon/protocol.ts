@@ -49,13 +49,13 @@ export interface AgentFrame {
 }
 
 /** A model endpoint of ~/.harness/providers.json on the daemon computer (the Providers screen). */
-export type ProviderKind = "auto" | "ollama" | "openai";
+export type ProviderKind = "auto" | "ollama" | "openai" | "openrouter";
 
 export interface ProviderItem {
   name: string;
   base_url: string;
   kind: ProviderKind;
-  kind_resolved: "ollama" | "openai";
+  kind_resolved: "ollama" | "openai" | "openrouter";
   enabled: boolean;
   context_length: number | null;
   ssh: string | null;

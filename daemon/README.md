@@ -33,9 +33,11 @@ You can also edit the file by hand. If the file does not exist, the daemon uses 
     "api_key": "ollama",
     "models": { "qwen2.5-coder:7b": { "context_length": 32768 } }
   },
-  "openrouter": { "base_url": "https://openrouter.ai/api/v1", "api_key_env": "OPENROUTER_API_KEY", "context_length": 128000 }
+  "openrouter": { "base_url": "https://openrouter.ai/api/v1", "api_key_env": "OPENROUTER_API_KEY" }
 }
 ```
+
+For OpenRouter (`"kind": "openrouter"`, or any `openrouter.ai` URL), give the model as `openrouter/<author>/<model>`, for example `openrouter/anthropic/claude-sonnet-4.5`. The daemon reads the context length, the tool support, and the image input of each model from the OpenRouter model list. It keeps the list for 10 minutes. The connection test also checks the API key with `/key`, because OpenRouter sends the model list with no key.
 
 The daemon finds the context length of a model in this order:
 
@@ -47,6 +49,7 @@ The daemon finds the context length of a model in this order:
    - LM Studio: `/api/v0/models` (`loaded_context_length` of a loaded model, else `max_context_length` with a warning: LM Studio can load the model with a smaller context).
    - Text Generation Inference: `/info` (`max_total_tokens`).
    - The model list `/models`: `max_model_len` (vLLM), `context_length` (OpenRouter), `context_window`, or `meta.n_ctx`.
+   - OpenRouter: only the model list (`context_length`).
 4. The default: 8192 tokens, with a warning.
 
 The client shows the source of the value in the tooltip of the context meter. The connection test on the Connections screen shows the context length of each model (Ollama: the first 40 models).

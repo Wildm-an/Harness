@@ -1983,13 +1983,14 @@ async def on_providers_keys(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("providers.test")
 async def on_providers_test(conn: Connection, msg: dict[str, Any]) -> None:
-    """Test the form values of a provider: GET <base_url>/models. "api_key" is a new key that is not saved yet."""
+    """Test the form values of a provider: GET <base_url>/models, and the key of OpenRouter.
+    "api_key" is a new key that is not saved yet."""
     api_key = msg.get("api_key")
     provider = provider_config.provider_for_test(_provider_fields(msg), api_key if isinstance(api_key, str) else None)
     ref = msg.get("ref")
 
     async def run() -> None:  # A slow endpoint must not block the other messages.
-        found = await provider_config.list_models(provider)
+        found = await provider_config.list_models(provider, verify_key=True)
         await conn.send({"type": "providers.test", "ref": ref, "name": provider.name, **found})
 
     asyncio.create_task(run())

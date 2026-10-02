@@ -22,13 +22,13 @@ from urllib.parse import urlparse
 import httpx
 
 from .config import ConfigError, harness_home, write_json
-from .providers import (CLIENT_KEYS, Provider, _provider_from_entry, endpoint, is_enabled, model_contexts,
-                        read_provider_entries)
+from .providers import (CLIENT_KEYS, Provider, _provider_from_entry, default_kind, endpoint, is_enabled,
+                        model_contexts, read_provider_entries)
 from .tunnels import TunnelError, parse_ssh
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,40}$")
 ENV_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-KINDS = ("auto", "ollama", "openai")
+KINDS = ("auto", "ollama", "openai", "openrouter")
 KEY_MODES = ("keep", "client", "env", "none")
 TEST_TIMEOUT = 10
 LIST_TIMEOUT = 6
@@ -72,8 +72,8 @@ def list_items() -> tuple[list[dict[str, Any]], bool]:
             "name": name,
             "base_url": base_url,
             "kind": kind,
-            # The kind that the daemon uses: "auto" is "ollama" for port 11434.
-            "kind_resolved": kind if kind != "auto" else ("ollama" if urlparse(base_url).port == 11434 else "openai"),
+            # The kind that the daemon uses: "auto" comes from the URL (see default_kind).
+            "kind_resolved": kind if kind != "auto" else default_kind(base_url),
             "enabled": is_enabled(entry),
             "context_length": entry.get("context_length"),
             "ssh": _ssh_label(entry.get("ssh")),
@@ -222,11 +222,31 @@ def provider_for_test(fields: dict[str, Any], api_key: str | None) -> Provider:
     return _provider_from_entry(previous if previous in entries else clean["name"], entry)
 
 
-async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT, contexts: bool = True) -> dict[str, Any]:
+async def _openrouter_key_problem(provider: Provider, timeout: float) -> str | None:
+    """Check the API key with GET <base_url>/key. OpenRouter answers /models also with no key or a bad key."""
+    if not provider.api_key or provider.api_key == "none":
+        hint = provider.key_missing or "Enter the key, or select where the key comes from."
+        return f"OpenRouter needs an API key. {hint}"
+    url = f"{provider.base_url}/key"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers={"Authorization": f"Bearer {provider.api_key}"})
+    except httpx.HTTPError as e:
+        return f"Cannot check the API key at {url}: {e}"
+    if response.status_code in (401, 403):
+        hint = f" {provider.key_missing}" if provider.key_missing else ""
+        return f"OpenRouter rejected the API key (HTTP {response.status_code}).{hint}"
+    if response.status_code != 200:
+        return f"OpenRouter returned HTTP {response.status_code} for {url}: {response.text[:200]}"
+    return None
+
+
+async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT, contexts: bool = True,
+                      verify_key: bool = False) -> dict[str, Any]:
     """Ask the endpoint for its models (GET <base_url>/models). Return ok, models, contexts, error, and ms.
 
     "contexts" maps a model to its context length and the source of the value. A model with no
-    known context length is not in it.
+    known context length is not in it. ``verify_key``: for OpenRouter, also check the API key.
     """
     start = time.monotonic()
 
@@ -260,6 +280,10 @@ async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT, context
     raw = data.get("data") if isinstance(data, dict) else None
     if not isinstance(raw, list):
         return result(False, error=f"{url} did not return a model list. Check that the URL ends with /v1.")
+    if verify_key and provider.kind == "openrouter":
+        problem = await _openrouter_key_problem(reachable, timeout)
+        if problem:
+            return result(False, error=problem)
     every = sorted({str(m.get("id")) for m in raw if isinstance(m, dict) and m.get("id")})
     models = every[:MAX_MODELS]
     found = result(True, models=models, truncated=len(every) > MAX_MODELS)  # "ms" is the time of /models only.

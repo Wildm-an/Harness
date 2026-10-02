@@ -19,11 +19,18 @@ import { isTauri } from "../lib/tauri";
 /** Common OpenAI-compatible endpoints. The user can change each value. */
 export const PRESETS: { label: string; name: string; base_url: string; kind: ProviderKind; needsKey: boolean }[] = [
   { label: "OpenAI", name: "openai", base_url: "https://api.openai.com/v1", kind: "openai", needsKey: true },
-  { label: "OpenRouter", name: "openrouter", base_url: "https://openrouter.ai/api/v1", kind: "openai", needsKey: true },
+  { label: "OpenRouter", name: "openrouter", base_url: "https://openrouter.ai/api/v1", kind: "openrouter", needsKey: true },
   { label: "Ollama", name: "ollama", base_url: "http://localhost:11434/v1", kind: "ollama", needsKey: false },
   { label: "llama-server", name: "llama-server", base_url: "http://localhost:8080/v1", kind: "openai", needsKey: false },
   { label: "LM Studio", name: "lm-studio", base_url: "http://localhost:1234/v1", kind: "openai", needsKey: false },
 ];
+
+const KIND_LABELS: Record<ProviderKind, string> = {
+  auto: "Auto",
+  openai: "OpenAI-compatible",
+  ollama: "Ollama",
+  openrouter: "OpenRouter",
+};
 
 type KeyTab = "keychain" | "env" | "none";
 
@@ -296,13 +303,13 @@ function ProviderForm({
           Server type
         </span>
         <div className="segmented wide" role="radiogroup" aria-labelledby="pf-kind-label">
-          {(["auto", "openai", "ollama"] as ProviderKind[]).map((k) => (
+          {(["auto", "openai", "ollama", "openrouter"] as ProviderKind[]).map((k) => (
             <button key={k} type="button" role="radio" aria-checked={kind === k} aria-pressed={kind === k} onClick={() => setKind(k)}>
-              {k === "auto" ? "Auto" : k === "openai" ? "OpenAI-compatible" : "Ollama"}
+              {KIND_LABELS[k]}
             </button>
           ))}
         </div>
-        <p className="help">For Ollama, the daemon also reads the context length and the tool support of each model.</p>
+        <p className="help">For Ollama and OpenRouter, the daemon also reads the tool and image support of each model. The test checks the OpenRouter key.</p>
       </div>
 
       <div className="field">
