@@ -3,7 +3,7 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
-## 0.1.32 (not released yet)
+## 0.1.32 (2026-10-02)
 
 ### Plugins
 
