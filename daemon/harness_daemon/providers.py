@@ -534,18 +534,25 @@ class ModelClient:
         self.model = model
         self._base_url: str | None = None
         self._client: AsyncOpenAI | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._send_stream_options = True
 
     async def _openai(self) -> AsyncOpenAI:
-        """The API client for the current address. A new tunnel can have a new local port."""
+        """The API client for the current address and event loop.
+
+        A new tunnel can have a new local port. The pooled connections of a client belong to the
+        event loop that opened them, so a new loop (for example a new asyncio.run) gets a new client.
+        """
         try:
             current = await endpoint(self.provider)
         except TunnelError as e:
             raise ModelError(str(e)) from e
-        if self._client is None or current.base_url != self._base_url:
+        loop = asyncio.get_running_loop()
+        if self._client is None or current.base_url != self._base_url or loop is not self._loop:
             from openai import AsyncOpenAI
 
             self._base_url = current.base_url
+            self._loop = loop
             self._client = AsyncOpenAI(
                 base_url=current.base_url,
                 api_key=current.api_key,
