@@ -12,7 +12,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { CommandItem, PermissionMode, ProjectItem, SessionSummary } from "../daemon/protocol";
+import type { CommandItem, GitBranches, PermissionMode, ProjectItem, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
@@ -20,6 +20,16 @@ import { loadPref, savePref } from "../lib/prefs";
 import { PromptBox, type Submission } from "./PromptBox";
 import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
+import { WorktreeMenu, type WorktreeChoice } from "./WorktreeMenu";
+
+function loadWorktreeChoice(key: string): WorktreeChoice {
+  try {
+    const v = JSON.parse(loadPref(key, "{}"));
+    return { on: v?.on === true, base: typeof v?.base === "string" ? v.base : null };
+  } catch {
+    return { on: false, base: null };
+  }
+}
 
 // The start screen shows this many recent sessions. "Show more" shows the rest.
 const RECENT_SHOWN = 3;
@@ -286,13 +296,18 @@ export function SessionStart({
   recentSessions,
   fileMatches,
   onFindFiles,
+  branches,
+  onRequestBranches,
 }: {
   projects: ProjectItem[] | null; // null: loading.
   sessions: { cwd: string | null; items: SessionSummary[] };
   busy: boolean;
   error: string | null;
   // prompt: the first task or command, or null for none. mode: the permission mode of the new session.
-  onStart: (cwd: string, model: string, prompt: Submission | null, mode: PermissionMode) => void;
+  // worktree: work in a new git worktree that starts from base (null: the current commit), or null.
+  onStart: (cwd: string, model: string, prompt: Submission | null, mode: PermissionMode, worktree: { base: string | null } | null) => void;
+  branches: (GitBranches & { cwd: string }) | null; // The branches of the last folder that the screen asked for.
+  onRequestBranches: (cwd: string) => void;
   // The prompt box is the same as in a session: the / menu and the @ menu of the selected project.
   commands: CommandItem[] | null;
   onRequestCommands: (cwd: string) => void;
@@ -326,6 +341,19 @@ export function SessionStart({
     if (selected) onListSessions(selected.path);
   }, [selected?.id, selected?.sessions]);
 
+  // Each project remembers its worktree choice. The chip shows only for a folder in a git repository.
+  const worktreeKey = `worktree.${prefScope}.${selected?.id ?? ""}`;
+  const [worktree, setWorktree] = useState<WorktreeChoice>(() => loadWorktreeChoice(worktreeKey));
+  useEffect(() => {
+    setWorktree(loadWorktreeChoice(worktreeKey));
+    if (selected?.exists) onRequestBranches(selected.path);
+  }, [selected?.id, selected?.exists]);
+  const changeWorktree = (choice: WorktreeChoice) => {
+    setWorktree(choice);
+    savePref(worktreeKey, JSON.stringify(choice));
+  };
+  const branchInfo = selected && branches?.cwd === selected.path ? branches : null;
+
   const select = (id: string) => {
     setSelectedId(id);
     savePref(`project.${prefScope}`, id);
@@ -351,7 +379,9 @@ export function SessionStart({
     savePref(modelKey(selected.id), model.trim());
     savePref(`model.${prefScope}`, model.trim());
     saveLastMode(prefScope, mode);
-    onStart(selected.path, model.trim(), s.kind === "prompt" && !s.text.trim() ? null : s, mode);
+    const base = worktree.base && branchInfo?.branches.includes(worktree.base) ? worktree.base : null;
+    onStart(selected.path, model.trim(), s.kind === "prompt" && !s.text.trim() ? null : s, mode,
+      worktree.on && branchInfo?.repo ? { base } : null);
     return false;
   };
 
@@ -406,6 +436,7 @@ export function SessionStart({
                   onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
                   onDelete={onDeleteProject}
                 />
+                <WorktreeMenu choice={worktree} info={branchInfo} onChange={changeWorktree} />
               </div>
               <ModelMenu
                 value={model}

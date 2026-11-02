@@ -4,14 +4,9 @@ import type { PermissionItem } from "../chat/state";
 import type { Decision } from "../daemon/protocol";
 import { parseUnifiedDiff, toSplitRows, wordSegments, type DiffLine, type Hunk, type Segment } from "../lib/diff";
 import { loadPref, savePref } from "../lib/prefs";
+import { DECIDED, PermissionButtons, PermissionTitle, ScopeNote, choiceForKey, permissionChoices, usePermissionShortcuts } from "./PermissionCard";
 
 type Mode = "split" | "unified";
-
-const DECISION_LABEL: Record<Decision, string> = {
-  allow_once: "Allowed once",
-  allow_always: "Always allowed",
-  deny: "Denied",
-};
 
 function Segments({ segments, kind }: { segments: Segment[]; kind: "add" | "del" }) {
   return (
@@ -106,13 +101,16 @@ export const DiffReview = memo(function DiffReview({
     savePref("diffMode", next);
   };
 
-  // Shortcuts work only when the pane has focus, so that text typed in the prompt box never approves a change.
+  // Ctrl+Enter and Ctrl+Shift+Enter work from any place. The number keys and Esc work only when the pane has
+  // focus, so that text typed in the prompt box never approves a change. They select the buttons as on the card.
+  usePermissionShortcuts(permission, (decision) => permission && onDecide(permission.id, decision));
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (!pending || e.ctrlKey || e.metaKey || e.altKey) return;
     if ((e.target as HTMLElement).closest("input, textarea")) return;
-    const decision = ({ "1": "allow_once", "2": "allow_always", "3": "deny" } as const)[e.key as "1" | "2" | "3"];
+    const decision = e.key === "Escape" ? "deny" : choiceForKey(permissionChoices(permission), e.key);
     if (decision) {
       e.preventDefault();
+      e.stopPropagation();
       onDecide(permission.id, decision);
     }
   };
@@ -189,27 +187,15 @@ export const DiffReview = memo(function DiffReview({
             <>
               <div className="pane-foot-title">
                 <ShieldAlert size={16} aria-hidden />
-                Apply this change?
+                <PermissionTitle item={permission} />
               </div>
-              <div className="permission-actions">
-                <button type="button" className="btn btn-primary" onClick={() => onDecide(permission.id, "allow_once")}>
-                  Allow once <kbd>1</kbd>
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => onDecide(permission.id, "allow_always")}
-                  title={`Adds ${permission.rule} to the project permission rules`}
-                >
-                  Always allow <kbd>2</kbd>
-                </button>
-                <button type="button" className="btn btn-danger" onClick={() => onDecide(permission.id, "deny")}>
-                  Deny <kbd>3</kbd>
-                </button>
+              <div className="permission-foot">
+                <ScopeNote rule={permission.rule} />
+                <div className="permission-actions">
+                  <PermissionButtons item={permission} onDecide={(decision) => onDecide(permission.id, decision)} />
+                </div>
               </div>
-              <p className="help">
-                "Always allow" adds the rule <code>{permission.rule}</code>. Click this pane to use the number keys.
-              </p>
+              <p className="help">Click this pane to use the number keys and Esc.</p>
             </>
           ) : (
             <div className={`pane-foot-status ${permission.decision === "deny" ? "denied" : permission.decision ? "allowed" : ""}`}>
@@ -220,7 +206,7 @@ export const DiffReview = memo(function DiffReview({
               ) : (
                 <Clock size={15} aria-hidden />
               )}
-              {permission.decision ? DECISION_LABEL[permission.decision] : "The turn ended with no decision."}
+              {permission.decision ? DECIDED[permission.decision] : "The turn ended with no decision."}
             </div>
           )}
         </footer>

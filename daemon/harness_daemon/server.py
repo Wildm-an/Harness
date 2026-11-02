@@ -55,6 +55,8 @@ from .tools.base import ToolError
 from .tools.grep import search_project
 from .tools.search import find_paths
 from .tunnels import TUNNELS, TunnelError
+from . import worktrees
+from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
@@ -785,7 +787,8 @@ class Connection:
             "context_source": s.agent.context_source,
             "instructions": s.agent.instructions.name if s.agent.instructions else None,
             "files_token": live.files_token,
-            "project": _project_ref(self.storage, s.cwd),
+            "project": _project_ref(self.storage, s.project_dir),
+            "worktree": worktrees.public(s.worktree),  # The branch and the folder of a worktree session.
             "auto_verify": bool(s.agent.settings.get("auto_verify")),
             "permission_mode": _permission_mode(s.agent.settings),
             "image_input": s.agent.image_input,
@@ -1019,9 +1022,29 @@ def _text_arg(msg: dict[str, Any], key: str) -> str:
 # start screen. "session.resume" of an open session shows it again, with its running turn.
 
 
+def _worktree_arg(msg: dict[str, Any]) -> dict[str, Any] | None:
+    """The "worktree" option of session.new: absent, false, true, or {"base"?: <branch>}."""
+    value = msg.get("worktree")
+    if value is None or value is False:
+        return None
+    if value is True:
+        return {}
+    if isinstance(value, dict):
+        base = value.get("base")
+        if base is not None and (not isinstance(base, str) or not base.strip()):
+            raise ProtocolError("'worktree.base' must be a branch name.")
+        return {"base": base.strip() if base else None}
+    raise ProtocolError("'worktree' must be true, false, or an object.")
+
+
 @handler("session.new")
 async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
+    """Start a session in a project folder: {"cwd", "model", "provider"?, "permission_mode"?, "worktree"?}.
+
+    "worktree": true or {"base": <branch>}: the session works in a new git worktree of the project.
+    """
     cwd = _project_dir(msg.get("cwd"))
+    wt_arg = _worktree_arg(msg)
     mode = msg.get("permission_mode")
     if mode is not None:
         # The mode of the start page. It is a project setting, as with settings.set.
@@ -1032,11 +1055,30 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
         if (data.get("permission_mode") or "default") != mode:
             data["permission_mode"] = mode
             write_json(path, data)
+    worktree = None
+    if wt_arg is not None:
+        try:
+            worktree = await asyncio.to_thread(worktrees.create, cwd, wt_arg.get("base"))
+        except WorktreeError as e:
+            raise ProtocolError(str(e)) from None
+        if mode is not None:  # The agent reads the settings of the worktree folder.
+            path = project_settings_path(Path(worktree["path"]))
+            data = read_json(path, {})
+            if (data.get("permission_mode") or "default") != mode:
+                data["permission_mode"] = mode
+                write_json(path, data)
     live = LiveSession(conn)
-    agent, warnings = await conn.make_agent(live, cwd, msg.get("provider"), msg.get("model"))
-    session_id = conn.storage.create_session(str(cwd), agent.client.provider.name, agent.client.model)
+    try:
+        agent, warnings = await conn.make_agent(live, Path(worktree["path"]) if worktree else cwd,
+                                                msg.get("provider"), msg.get("model"))
+    except BaseException:
+        if worktree:  # No session uses the new worktree.
+            await asyncio.to_thread(worktrees.remove, worktree)
+        raise
+    session_id = conn.storage.create_session(str(cwd), agent.client.provider.name, agent.client.model,
+                                             worktrees.dumps(worktree))
     conn.storage.touch_project(str(cwd))  # A new folder becomes a project.
-    live.session = Session(conn.storage, session_id, agent)
+    live.session = Session(conn.storage, session_id, agent, project_dir=cwd, worktree=worktree)
     await conn.open_session(live)
     await conn.send_ready(warnings)
 
@@ -1060,12 +1102,22 @@ async def _open_stored(conn: Connection, session_id: str) -> None:
     row = conn.storage.get_session(session_id)
     if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
-    cwd = _project_dir(row["cwd"])
+    worktree = worktrees.loads(row.get("worktree"))
+    if worktree:
+        # An archive removed the folder of the worktree. The branch has the work: check it out again.
+        try:
+            await asyncio.to_thread(worktrees.restore, worktree)
+        except WorktreeError as e:
+            raise ProtocolError(f"The worktree of this session could not open. {e}") from None
+        cwd = Path(row["cwd"])
+        work = Path(worktree["path"])
+    else:
+        cwd = work = _project_dir(row["cwd"])
     history = conn.storage.load_messages(session_id)
     live = LiveSession(conn)
-    agent, warnings = await conn.make_agent(live, cwd, row["provider"], row["model"], history, row["summary"])
+    agent, warnings = await conn.make_agent(live, work, row["provider"], row["model"], history, row["summary"])
     conn.storage.touch_project(str(cwd))
-    live.session = Session(conn.storage, session_id, agent, title=row["title"])
+    live.session = Session(conn.storage, session_id, agent, title=row["title"], project_dir=cwd, worktree=worktree)
     await conn.open_session(live)
     await conn.send_ready(warnings)
 
@@ -1078,8 +1130,11 @@ async def on_session_move(conn: Connection, msg: dict[str, Any]) -> None:
     """
     session_id = _text_arg(msg, "session_id")
     cwd = _project_dir(msg.get("cwd"))
-    if conn.storage.get_session(session_id) is None:
+    row = conn.storage.get_session(session_id)
+    if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
+    if worktrees.loads(row.get("worktree")):
+        raise ProtocolError("This session works in a git worktree. It cannot move to another folder.")
     live = conn.live.get(session_id)
     if live is not None:
         if live.running:
@@ -1097,9 +1152,16 @@ MAX_TITLE = 120
 
 @handler("session.update")
 async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
-    """Rename, pin, or archive a session: {"session_id", "title"?, "pinned"?, "archived"?}. The age of the session stays."""
+    """Rename, pin, or archive a session: {"session_id", "title"?, "pinned"?, "archived"?, "force"?}.
+    The age of the session stays.
+
+    The archive of a worktree session removes the folder of the worktree. The branch stays. If the
+    worktree has changes that are not in a commit, the daemon sends "session.archive_confirm" and
+    does nothing. "force": true archives the session and loses the changes.
+    """
     session_id = _text_arg(msg, "session_id")
-    if conn.storage.get_session(session_id) is None:
+    row = conn.storage.get_session(session_id)
+    if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
     fields: dict[str, Any] = {}
     if "title" in msg:
@@ -1117,6 +1179,25 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
         fields["archived"] = int(msg["archived"])
     if not fields:
         raise ProtocolError("Give 'title', 'pinned', or 'archived'.")
+    worktree = worktrees.loads(row.get("worktree"))
+    if worktree and fields.get("archived") and not row["archived"]:
+        live = conn.live.get(session_id)
+        if live is not None and live.running:
+            raise ProtocolError("A turn is running. Stop it, then archive the session.")
+        try:
+            dirty = await asyncio.to_thread(worktrees.has_changes, worktree)
+        except WorktreeError:
+            dirty = True  # Ask first when git cannot tell.
+        if dirty and msg.get("force") is not True:
+            await conn.send({"type": "session.archive_confirm", "id": session_id, "branch": worktree["branch"]})
+            return
+        if live is not None:  # The shell and the servers of the session use the folder.
+            if live is conn.current:
+                conn.current = None
+                conn.watched.clear()
+            await conn.close_live(live)
+            await conn.send_running()
+        await asyncio.to_thread(worktrees.remove, worktree)
     conn.storage.update_session(session_id, touch=False, **fields)
     live = conn.live.get(session_id)
     if live is not None and live.session is not None and "title" in fields:
@@ -1128,9 +1209,11 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("session.delete")
 async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
-    """Delete a session and its messages. A running turn and a shell of the session stop."""
+    """Delete a session and its messages. A running turn and a shell of the session stop.
+    The folder of a worktree session goes away. Its branch stays."""
     session_id = _text_arg(msg, "session_id")
-    if conn.storage.get_session(session_id) is None:
+    row = conn.storage.get_session(session_id)
+    if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
     live = conn.live.get(session_id)
     if live is not None:
@@ -1140,8 +1223,19 @@ async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
         await live.stop_turn()
         await conn.close_live(live)
         await conn.send_running()
+    worktree = worktrees.loads(row.get("worktree"))
+    if worktree:
+        await asyncio.to_thread(worktrees.remove, worktree)
     conn.storage.delete_session(session_id)
     await conn.send({"type": "session.deleted", "id": session_id})
+
+
+@handler("git.branches")
+async def on_git_branches(conn: Connection, msg: dict[str, Any]) -> None:
+    """The branches of the repository of a folder, for the "Branch to start from" menu: {"cwd"}."""
+    cwd = _project_dir(msg.get("cwd"))
+    info = await asyncio.to_thread(worktrees.branches, cwd)
+    await conn.send({"type": "git.branches", "cwd": msg["cwd"], **info})
 
 
 @handler("session.leave")

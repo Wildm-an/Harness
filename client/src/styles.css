@@ -1001,6 +1001,29 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
+/* The branch of a worktree session, after the folder chip. */
+.topbar-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.topbar-branch .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-session-branch {
+  flex: none;
+  color: var(--text-muted);
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -1256,6 +1279,63 @@ textarea:focus-visible {
   width: min(380px, calc(100vw - 32px));
 }
 
+/* The worktree chip of the start screen: where the agent works, and the branch to start from. */
+.worktree-dropdown {
+  width: min(400px, calc(100vw - 32px));
+}
+
+.worktree-branches {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.menu .worktree-branch {
+  gap: 6px;
+}
+
+.worktree-branch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.worktree-branch-note {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* A short question before a destructive action (UI_RULES R7). */
+.modal.confirm-dialog {
+  max-width: 440px;
+  padding: 20px;
+  gap: 12px;
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.confirm-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .menu .mode-item {
   align-items: flex-start;
   min-height: 0;
@@ -1285,6 +1365,11 @@ textarea:focus-visible {
   font-size: 12px;
   line-height: 1.4;
   white-space: normal;
+}
+
+/* "Accepts all permissions" shows in the warning color, as in Claude desktop. */
+.mode-bypassPermissions .mode-help {
+  color: var(--warning);
 }
 
 /* The start page: the project and the permission mode on the left of the row under the box. */
@@ -4587,7 +4672,7 @@ select {
   border-radius: var(--radius);
 }
 
-/* permission prompt: numbered choices, as in Claude Code */
+/* permission prompt: the desktop form of Claude (docs/UI_RULES.md M7-M10) */
 
 .permission-card {
   border: 1px solid var(--accent);
@@ -4605,6 +4690,7 @@ select {
 
 .permission-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 12px 14px 10px;
@@ -4664,79 +4750,56 @@ select {
   overflow-wrap: anywhere;
 }
 
-.permission-question {
-  margin: 12px 14px 6px;
-  color: var(--text-muted);
-  font-size: 13px;
+.permission-head-title {
+  flex: 1 1 160px;
+  min-width: 0;
 }
 
-.permission-options:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: var(--radius);
+.permission-title {
+  font-weight: 500;
 }
 
-.permission-options {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 8px 8px;
+.permission-title b {
+  font-weight: 650;
 }
 
-.permission-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 36px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text);
-  font: 13.5px var(--font-sans);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out);
-}
-
-.permission-option:hover {
-  background: var(--hover);
-}
-
-.permission-option:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.permission-option kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.permission-option:focus-visible kbd {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.permission-option code {
+.permission-title code {
+  font-size: 0.92em;
   overflow-wrap: anywhere;
 }
 
-.permission-key-hint {
-  margin-left: auto;
+.permission-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 14px;
+}
+
+.permission-scope {
+  margin: 0;
+  min-width: 0;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.permission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+  border-radius: var(--radius);
+}
+
+.permission-actions:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.permission-deny {
+  color: var(--danger);
 }
 
 /* notices */
@@ -6487,6 +6550,19 @@ input.setting-text-input {
   outline-offset: 2px;
 }
 
+/* A sample of the code font on the Appearance page. */
+.code-font-preview {
+  margin: 14px 0 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: 13px/1.6 var(--font-mono);
+  white-space: pre;
+  overflow-x: auto;
+}
+
 .shortcut-list {
   margin: 0;
 }
@@ -6972,4 +7048,406 @@ input.setting-text-input {
 .daemon-update-body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The session rail (SessionRail.tsx): a column at the right of a session, as in Claude Code. In a
+   narrow window it covers the workspace. */
+.session-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.session-body > .workspace {
+  min-width: 0;
+}
+
+.session-rail {
+  flex: none;
+  width: 272px;
+  overflow-y: auto;
+  padding: 8px 8px 16px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  font: 13px var(--font-sans);
+  outline: none;
+}
+
+@media (max-width: 900px) {
+  .session-rail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-overlay);
+    box-shadow: 0 8px 24px #0000001f, 0 2px 6px #00000014;
+  }
+}
+
+.rail-section + .rail-section {
+  border-top: 1px solid var(--border);
+}
+
+.rail-section-head {
+  margin: 0;
+}
+
+.rail-section-head button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: 500 12.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-section-head button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.rail-section-head button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.rail-chevron {
+  flex: none;
+  transition: transform var(--duration) var(--ease-out);
+}
+
+.rail-section.open .rail-chevron {
+  transform: rotate(90deg);
+}
+
+.rail-section-body {
+  padding: 2px 6px 12px;
+}
+
+.rail-rows {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.rail-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.rail-row dt {
+  color: var(--text-muted);
+}
+
+.rail-row dd {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.rail-row dd svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rail-value-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-context-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.rail-context-pct {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-meter {
+  height: 6px;
+  margin: 8px 0 10px;
+  border-radius: 999px;
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.rail-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-muted);
+}
+
+.rail-meter.mid > span {
+  background: var(--warning);
+}
+
+.rail-meter.high > span {
+  background: var(--danger);
+}
+
+.rail-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rail-empty {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+}
+
+.rail-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.rail-item:disabled {
+  cursor: default;
+}
+
+.rail-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.rail-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-item-title,
+.rail-item-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-item-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.rail-item-end {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rail-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.rail-dot.running {
+  background: var(--success);
+}
+
+.rail-dot.starting {
+  background: var(--warning);
+}
+
+.rail-dot.crashed {
+  background: var(--danger);
+}
+
+.rail-pr-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rail-pr-icon.open {
+  color: var(--success);
+}
+
+.rail-pr-icon.merged {
+  color: var(--accent);
+}
+
+.rail-pr-icon.closed {
+  color: var(--danger);
+}
+
+/* The accent color swatches on the Appearance page. The last swatch opens the system color picker. */
+.accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.accent-swatch {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.accent-swatch.active {
+  box-shadow: 0 0 0 2px var(--surface-2, var(--surface)), 0 0 0 4px var(--text-muted);
+}
+
+.accent-swatch:focus-visible,
+.accent-custom:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.accent-custom:not(.active) {
+  background: conic-gradient(#e5484d, #f5a524, #46a758, #2a78d6, #8b5cf6, #d6457f, #e5484d);
+}
+
+.accent-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The view switch in the title bar (ViewSwitch.tsx): "</>" is the Code view, "IDE" the IDE view. */
+.view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--hover);
+}
+
+/* In the sidebar head, the switch is at the right edge, as in the Claude app. */
+.side-head > .title-nav {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-head .view-switch {
+  margin-left: auto;
+}
+
+.view-switch-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
+}
+
+.view-switch-option:hover {
+  color: var(--text);
+}
+
+.view-switch-option.active {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 1px 2px #0000001f;
+}
+
+.view-switch-option:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.view-switch-text {
+  font: 600 11.5px var(--font-sans);
+  letter-spacing: 0.04em;
+}
+
+/* The inline edit box of the editor (Ctrl+K), as in Cursor. */
+.inline-edit {
+  position: absolute;
+  left: 56px;
+  right: 24px;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 640px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: 0 8px 24px #0000001f, 0 2px 6px #00000014;
+}
+
+.inline-edit-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.inline-edit-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  outline: none;
+}
+
+.inline-edit-ref {
+  flex: none;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11.5px;
 }

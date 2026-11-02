@@ -205,6 +205,21 @@ export interface SessionSummary {
   updated_at: number;
   pinned?: boolean; // The sidebar shows it in the Pinned list.
   archived?: boolean; // The sidebar shows it only with the "Archived" or "All" status filter.
+  branch?: string | null; // The branch of a worktree session. null: the session works in its project folder.
+}
+
+/** The branches of the repository of a folder, for the "Branch to start from" menu. */
+export interface GitBranches {
+  repo: boolean; // false: the folder is not in a git repository.
+  current: string | null; // null: a detached HEAD.
+  branches: string[]; // The local branches, the current first.
+}
+
+/** The git worktree of a session: its branch and its folder. */
+export interface SessionWorktree {
+  branch: string;
+  base: string | null; // The branch that the session started from.
+  path: string;
 }
 
 /** The pull request of the branch of a project folder. branch is null outside a git repository. */
@@ -436,10 +451,19 @@ export interface HfSearchFilters {
 
 export type ClientMessage =
   | { type: "auth"; token: string }
-  | { type: "session.new"; cwd: string; model: string; provider?: string; permission_mode?: PermissionMode }
+  | {
+      type: "session.new";
+      cwd: string;
+      model: string;
+      provider?: string;
+      permission_mode?: PermissionMode;
+      worktree?: boolean | { base?: string | null }; // Work in a new git worktree of the project.
+    }
+  | { type: "git.branches"; cwd: string }
   | { type: "session.resume"; session_id: string }
   | { type: "session.leave" } // The start screen. A running turn of the session continues.
-  | { type: "session.update"; session_id: string; title?: string; pinned?: boolean; archived?: boolean } // Rename, pin, or archive.
+  // Rename, pin, or archive. force: archive a worktree session with uncommitted changes.
+  | { type: "session.update"; session_id: string; title?: string; pinned?: boolean; archived?: boolean; force?: boolean }
   // The branch and the pull request of project folders, for the sidebar. The reply is "pr_status".
   | { type: "git.pr_status"; paths: string[] }
   | { type: "session.delete"; session_id: string }
@@ -582,6 +606,7 @@ export type DaemonMessage =
       instructions: string | null; // HARNESS.md or CLAUDE.md, if the project has one.
       files_token: string | null; // Project files for the Browser pane: /files/<token>/<path>.
       project: { id: string; name: string } | null; // The saved project of the session folder.
+      worktree?: SessionWorktree | null; // The session works in this git worktree. cwd is in it.
       auto_verify: boolean; // The agent checks the app after each UI change.
       permission_mode?: PermissionMode;
       image_input: boolean; // The model accepts images: the agent has preview_screenshot.
@@ -598,6 +623,9 @@ export type DaemonMessage =
   | { type: "session.updated"; id: string; title: string | null; pinned: boolean; archived?: boolean }
   | { type: "pr_status"; items: PrStatus[] }
   | { type: "session.deleted"; id: string }
+  | ({ type: "git.branches"; cwd: string } & GitBranches)
+  // The worktree of the session has uncommitted changes. Ask, then send session.update with force.
+  | { type: "session.archive_confirm"; id: string; branch: string }
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
   // replay: the last output of a running shell. seq: the number of its last output.
   | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean; ref?: string }

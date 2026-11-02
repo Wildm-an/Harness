@@ -545,6 +545,5 @@ Complete each phase and test it before the next phase starts.
 ## 11. Out of scope for version 1
 
 - Multiple agents in parallel.
-- Git worktree isolation.
 - Language server features, such as autocomplete and go to definition.
 - Voice input.

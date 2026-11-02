@@ -7,6 +7,7 @@ import {
   Globe as GlobeIcon,
   Server,
   FileDiff,
+  GitBranch,
   Globe,
   KeyRound,
   LoaderCircle,
@@ -16,6 +17,7 @@ import {
   ListChecks,
   Monitor,
   PanelLeft,
+  PanelRight,
   Plug,
   RefreshCw,
   ShieldCheck,
@@ -62,6 +64,7 @@ import {
   closePane,
   defaultLayout,
   findGroupOf,
+  ideLayout,
   openPane,
   parseLayout,
   togglePane,
@@ -88,7 +91,7 @@ import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
 import { UpdateToast } from "./components/UpdateToast";
 import { availableVersion, checkOnLaunch, useUpdateState } from "./lib/updater";
-import { GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
+import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { TasksPane } from "./components/TasksPane";
 import { WorkingLine } from "./components/WorkingLine";
 import { SlashIcon } from "./components/SlashIcon";
@@ -99,11 +102,15 @@ import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { BrowserPane, clearBrowserData, keepCookies } from "./browser/BrowserPane";
 import { AllowedSites } from "./components/AllowedSites";
-import { setPaneOpener } from "./lib/openLink";
+import { openLink, setPaneOpener } from "./lib/openLink";
+import { railShown, setRailShown } from "./lib/sessionRail";
+import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } from "./lib/viewMode";
+import { ViewSwitch } from "./components/ViewSwitch";
+import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { ServerMenu } from "./servers/ServerMenu";
 import { ServersPane } from "./servers/ServersPane";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ClientMessage, ServerItem, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, ClientMessage, GitBranches, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath } from "./editor/paths";
@@ -118,6 +125,7 @@ import { ChangelogPage } from "./components/ChangelogPage";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
+import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
@@ -162,16 +170,13 @@ const NARROW_QUERY = "(max-width: 900px)";
 // Project files that open in the Browser pane.
 const BROWSER_FILE_RE = /\.(html?|pdf|png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|ogg|mp3|wav)$/i;
 
-function layoutKey(connectionId: string, cwd: string): string {
-  return `layout.${connectionId}:${cwd}`;
-}
-
-/** The saved layout of a project, or the default layout. */
-function loadLayout(connectionId: string, cwd: string): LayoutNode {
+/** The saved layout of a project in a view, or the default layout of the view. */
+function loadLayout(connectionId: string, cwd: string, mode: ViewMode): LayoutNode {
+  const fallback = mode === "ide" ? ideLayout : defaultLayout;
   try {
-    return parseLayout(JSON.parse(loadPref(layoutKey(connectionId, cwd), "null"))) ?? defaultLayout();
+    return parseLayout(JSON.parse(loadPref(layoutKey(connectionId, cwd, mode), "null"))) ?? fallback();
   } catch {
-    return defaultLayout();
+    return fallback();
   }
 }
 
@@ -210,6 +215,7 @@ interface ActiveSession {
   model: string;
   title: string | null;
   project: string | null; // The name of the saved project.
+  worktree: SessionWorktree | null; // The session works in this git worktree.
 }
 
 /** The daemon message of a prompt or a command, and the user message that the chat shows. */
@@ -273,15 +279,26 @@ export default function App() {
   const [fileMatches, setFileMatches] = useState<{ query: string; items: string[] } | null>(null); // The "@" menu.
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null); // The context breakdown.
+  // The IDE view starts with the sidebar hidden. The Code view shows it again (switchView).
   const [sidebarOpen, setSidebarOpen] = useState(
-    () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches,
+    () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches && viewMode() !== "ide",
   );
   const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebar(Number(loadPref("sidebar.width", String(SIDEBAR_DEFAULT)))));
   const [session, setSession] = useState<ActiveSession | null>(null);
+  const [branches, setBranches] = useState<(GitBranches & { cwd: string }) | null>(null); // For the worktree chip.
+  const [archiveAsk, setArchiveAsk] = useState<{ id: string; branch: string } | null>(null); // A worktree with changes.
   // The next prompt that the model predicts after a turn, for the session that got it.
   const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
-  const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
+  const [layout, setLayout] = useState<LayoutNode>(() => (viewMode() === "ide" ? ideLayout() : defaultLayout()));
+  // The Code view or the IDE view (the switch in the title bar). Each view has its own layout.
+  const [view, setView] = useState<ViewMode>(viewMode);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // The IDE view hides the sessions sidebar. This is the sidebar state of the Code view.
+  const sidebarBeforeIde = useRef<boolean | null>(
+    viewMode() === "ide" ? loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches : null,
+  );
   const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
   const [promptInsert, setPromptInsert] = useState<{ text: string; key: number; replace?: boolean } | null>(null);
   const [browserRequest, setBrowserRequest] = useState<{ url: string; key: number } | null>(null);
@@ -382,10 +399,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [conn]);
 
-  // Ctrl+K opens the session search on any screen, and closes it.
+  // Ctrl+K opens the session search on any screen, and closes it. In the code editor, Ctrl+K is the
+  // inline edit, as in Cursor (EditorPane.tsx).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isSearchShortcut(e)) return;
+      if (e.target instanceof Element && e.target.closest(".editor-surface .monaco-editor")) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
@@ -475,9 +494,16 @@ export default function App() {
             setRules(null);
             setAgentFrame(null);
             setMcpStatus(null);
-            setLayout(loadLayout(currentRef.current?.id ?? "local", msg.cwd));
+            setLayout(loadLayout(currentRef.current?.id ?? "local", msg.cwd, viewRef.current));
           }
-          setSession({ id: msg.session_id, cwd: msg.cwd, model: msg.model, title: msg.title, project: msg.project?.name ?? null });
+          setSession({
+            id: msg.session_id,
+            cwd: msg.cwd,
+            model: msg.model,
+            title: msg.title,
+            project: msg.project?.name ?? null,
+            worktree: msg.worktree ?? null,
+          });
           dispatch({
             type: "load",
             history: msg.history,
@@ -538,6 +564,14 @@ export default function App() {
             for (const item of msg.items) next.set(pathKey(item.path), item);
             return next;
           });
+          return;
+        case "git.branches": {
+          const { type: _type, ...info } = msg;
+          setBranches(info);
+          return;
+        }
+        case "session.archive_confirm":
+          setArchiveAsk({ id: msg.id, branch: msg.branch });
           return;
         case "session.deleted":
           if (sessionRef.current?.id === msg.id) showStartRef.current();
@@ -1052,11 +1086,12 @@ export default function App() {
   };
 
   /** Starts a session. The first task from the start screen goes to the agent when the session is ready. */
-  const startSession = (cwd: string, model: string, prompt: Submission | null, mode: PermissionMode) => {
+  const startSession = (cwd: string, model: string, prompt: Submission | null, mode: PermissionMode,
+    worktree: { base: string | null } | null) => {
     setBusy(true);
     setStartError(null);
     firstPrompt.current = prompt;
-    conn.send({ type: "session.new", cwd, model, permission_mode: mode });
+    conn.send({ type: "session.new", cwd, model, permission_mode: mode, ...(worktree ? { worktree } : {}) });
   };
 
   const resumeSession = (id: string) => {
@@ -1403,6 +1438,27 @@ export default function App() {
     [conn],
   );
   const runningTasks = tasks?.filter((t) => t.status === "running").length ?? 0;
+  // The session rail at the right of a session (the title bar button shows or hides it).
+  const [rail, setRail] = useState(railShown);
+  const showRail = useCallback((on: boolean) => {
+    setRail(on);
+    setRailShown(on);
+  }, []);
+  const closeRail = useCallback(() => showRail(false), [showRail]);
+  /** Change the view. Each view loads its own layout. The IDE view hides the sessions sidebar, and the Code view shows it again. */
+  const switchView = (mode: ViewMode) => {
+    if (mode === view) return;
+    setView(mode);
+    setViewMode(mode);
+    if (session) setLayout(loadLayout(currentRef.current?.id ?? "local", session.cwd, mode));
+    if (mode === "ide") {
+      sidebarBeforeIde.current = sidebarOpen;
+      setSidebarOpen(false);
+    } else if (sidebarBeforeIde.current !== null) {
+      setSidebarOpen(sidebarBeforeIde.current);
+      sidebarBeforeIde.current = null;
+    }
+  };
   const [sideFloating, setSideFloating] = useState(false);
   const [sideFocus, setSideFocus] = useState(0);
   const sideDocked = findGroupOf(layout, "side") !== null;
@@ -1472,8 +1528,8 @@ export default function App() {
 
   // Save the layout for each project (SPEC.md section 8.4).
   useEffect(() => {
-    if (session) savePref(layoutKey(currentRef.current?.id ?? "local", session.cwd), JSON.stringify(layout));
-  }, [layout, session]);
+    if (session) savePref(layoutKey(currentRef.current?.id ?? "local", session.cwd, view), JSON.stringify(layout));
+  }, [layout, session, view]);
 
   const editor = useEditor(conn, session?.id ?? null, session?.cwd ?? "");
   const servers = useServers(conn, session?.id ?? null);
@@ -1819,7 +1875,15 @@ export default function App() {
       icon: Files,
       closable: true,
       badge: dirtyCount ? <span className="tab-badge" title={`${dirtyCount} unsaved`}>{dirtyCount}</span> : undefined,
-      render: () => <EditorPane api={editor} sessionKey={session?.id ?? ""} agentLines={agentLines} onReference={addReference} />,
+      render: () => (
+        <EditorPane
+          api={editor}
+          sessionKey={session?.id ?? ""}
+          agentLines={agentLines}
+          onReference={addReference}
+          onInlineEdit={(reference, instruction) => submitOrQueue({ kind: "prompt", text: inlineEditPrompt(reference, instruction) })}
+        />
+      ),
     },
     diff: {
       title: "Diff",
@@ -1946,7 +2010,8 @@ export default function App() {
   const narrow = () => window.matchMedia(NARROW_QUERY).matches;
   const showSidebar = (open: boolean) => {
     setSidebarOpen(open);
-    if (!narrow()) savePref("sidebar.open", open ? "1" : "0");
+    // The saved state is the state of the Code view. The IDE view does not change it.
+    if (!narrow() && viewRef.current !== "ide") savePref("sidebar.open", open ? "1" : "0");
   };
 
   // Ctrl+B shows or hides the sidebar on every screen. The capture phase runs before the editor
@@ -1958,7 +2023,7 @@ export default function App() {
       e.stopPropagation();
       if (e.repeat) return;
       setSidebarOpen(!sidebarOpen);
-      if (!window.matchMedia(NARROW_QUERY).matches) savePref("sidebar.open", sidebarOpen ? "0" : "1");
+      if (!window.matchMedia(NARROW_QUERY).matches && viewRef.current !== "ide") savePref("sidebar.open", sidebarOpen ? "0" : "1");
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -2055,6 +2120,8 @@ export default function App() {
       >
         <ArrowRight size={16} aria-hidden />
       </button>
+      {/* At the right end of the sidebar head. With the sidebar hidden, after the arrows in the title bar. */}
+      <ViewSwitch value={view} onChange={switchView} />
     </div>
   );
 
@@ -2169,11 +2236,20 @@ export default function App() {
                   name={folder ?? session.cwd}
                   path={session.cwd}
                   canReveal={isTauri() && current?.kind === "local"}
-                  canChange={!chat.running && status === "open"}
+                  canChange={!chat.running && status === "open" && !session.worktree}
                   onReveal={() => void revealInExplorer(session.cwd).catch((e) => dispatch({ type: "notice", level: "error", text: errorText(e) }))}
                   onChange={() => void changeFolder()}
                   onOpenTerminal={() => showPane("terminal")}
                 />
+                {session.worktree && (
+                  <span
+                    className="topbar-branch"
+                    title={`Worktree: ${session.worktree.path}${session.worktree.base ? `. Started from ${session.worktree.base}.` : ""}`}
+                  >
+                    <GitBranch size={12} aria-hidden />
+                    <span className="mono">{session.worktree.branch}</span>
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -2214,6 +2290,20 @@ export default function App() {
                 }}
                 disabled={status !== "open"}
               />
+              {view === "code" && (
+              <button
+                type="button"
+                className={`icon-btn ghost pane-toggle session-rail-toggle${rail ? " active" : ""}`}
+                onClick={() => showRail(!rail)}
+                aria-label="Session rail"
+                aria-pressed={rail}
+                aria-expanded={rail}
+                aria-controls={rail ? SESSION_RAIL_ID : undefined}
+                title={rail ? "Hide session rail" : "Show session rail"}
+              >
+                <PanelRight size={16} aria-hidden />
+              </button>
+              )}
             </div>
           )}
           {hasWindowControls() && <WindowControls />}
@@ -2250,6 +2340,8 @@ export default function App() {
             busy={busy}
             error={startError}
             onStart={startSession}
+            branches={branches}
+            onRequestBranches={(cwd) => void sendSafely({ type: "git.branches", cwd })}
             onResume={resumeSession}
             prefScope={current?.id ?? "local"}
             onBrowse={browseFolder}
@@ -2298,6 +2390,17 @@ export default function App() {
             )}
           {remoteUpdate && <DaemonUpdateToast update={remoteUpdate} onClose={() => setRemoteUpdate(null)} />}
         </div>
+        {archiveAsk && (
+          <ArchiveConfirm
+            title={recent.find((r) => r.id === archiveAsk.id)?.title ?? "this session"}
+            branch={archiveAsk.branch}
+            onCancel={() => setArchiveAsk(null)}
+            onArchive={() => {
+              sendSafely({ type: "session.update", session_id: archiveAsk.id, archived: true, force: true });
+              setArchiveAsk(null);
+            }}
+          />
+        )}
         {settingsPage && (
           <SettingsDialog
             page={settingsPage}
@@ -2311,6 +2414,7 @@ export default function App() {
             }
           >
             {settingsPage === "changelog" && <ChangelogPage appVersion={appVersion} />}
+            {settingsPage === "appearance" && <AppearanceSettings />}
             {settingsPage === "general" && (
               <GeneralSettings
                 values={status === "open" ? userSettings : null}
@@ -2413,7 +2517,33 @@ export default function App() {
         )}
         {screen === "chat" && session && (
           <OpenPathContext.Provider value={openPath}>
-            <Workspace layout={layout} onChange={setLayout} panes={panes} reveal={reveal} />
+            <div className="session-body">
+              <Workspace layout={layout} onChange={setLayout} panes={panes} reveal={reveal} />
+              {rail && view === "code" && (
+                <SessionRail
+                  environment={{
+                    placeKind: current?.kind ?? "local",
+                    place: current?.kind === "local" || !current ? "This computer" : current.name,
+                    placeDetail: hello?.hostname ?? null,
+                    folder: folder ?? session.cwd,
+                    path: session.cwd,
+                    branch: prStatus.get(pathKey(session.cwd))?.branch ?? null,
+                    worktree: session.worktree,
+                  }}
+                  context={chat.context ? { tokens: chat.context.tokens, length: chat.context.length } : null}
+                  running={chat.running}
+                  onCompact={() => submit({ kind: "command", name: "compact", args: "" })}
+                  pr={prStatus.get(pathKey(session.cwd))?.pr ?? null}
+                  onOpenPr={openLink}
+                  servers={servers.items}
+                  onOpenServer={(s) => void openServer(s)}
+                  onShowServers={() => setLayout((l) => openPane(l, "servers"))}
+                  tasks={tasks ?? []}
+                  onShowTasks={() => showPane("tasks")}
+                  onClose={closeRail}
+                />
+              )}
+            </div>
           </OpenPathContext.Provider>
         )}
       </main>

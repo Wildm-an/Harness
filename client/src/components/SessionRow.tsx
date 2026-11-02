@@ -2,7 +2,7 @@
 // The menu has the keys of Claude: P (pin), U (mark as unread), R (rename), and D (delete).
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, EllipsisVertical, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
+import { Archive, ArchiveRestore, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
 import type { RunningSession, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 
@@ -128,7 +128,10 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
     >
       {confirm ? (
         <div className="session-menu-confirm">
-          <p>Delete this session? Its messages are deleted. This cannot be undone.</p>
+          <p>
+            Delete this session? Its messages are deleted. This cannot be undone.
+            {session.branch && ` The worktree folder is removed. The branch ${session.branch} stays.`}
+          </p>
           <div className="session-menu-confirm-actions">
             <button type="button" className="btn btn-small" onClick={() => setConfirm(false)}>
               Cancel
@@ -215,10 +218,11 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
           onClick={() => !active && actions.onResume(session.id)}
           disabled={disabled}
           aria-current={active ? "true" : undefined}
-          title={`${title}\n${session.provider}/${session.model}`}
+          title={`${title}\n${session.provider}/${session.model}${session.branch ? `\nWorktree: ${session.branch}` : ""}`}
         >
           <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />
           <span className="side-session-title">{title}</span>
+          {session.branch && <GitBranch size={12} className="side-session-branch" aria-label="Worktree" />}
         </button>
       )}
       {!renaming && (

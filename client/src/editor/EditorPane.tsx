@@ -11,10 +11,12 @@ import {
   RefreshCw,
   Save,
   Search,
+  Sparkles,
   TriangleAlert,
   X,
 } from "lucide-react";
 import { languageFor, monaco, monacoTheme } from "../lib/monaco";
+import { codeFontFamily } from "../lib/theme";
 import { FileTree } from "./FileTree";
 import { selectionReference } from "./paths";
 import { SearchPanel } from "./SearchPanel";
@@ -22,7 +24,6 @@ import { modelUri, type EditorApi, type OpenFile } from "./useEditor";
 
 const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
   automaticLayout: true,
-  fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
   fontSize: 13,
   fontLigatures: false,
   lineHeight: 20,
@@ -89,12 +90,17 @@ export function EditorPane({
   sessionKey,
   agentLines,
   onReference,
+  onInlineEdit,
 }: {
   api: EditorApi;
   sessionKey: string;
   agentLines: Map<string, number[]>; // The lines that the agent changed in the current turn.
   onReference: (text: string) => void;
+  onInlineEdit: (reference: string, instruction: string) => void; // Ctrl+K: the agent changes the selected code.
 }) {
+  // The inline edit box (Ctrl+K), as in Cursor: it shows at the selection, and sends the instruction to the agent.
+  const [inline, setInline] = useState<{ reference: string; top: number } | null>(null);
+  const [instruction, setInstruction] = useState("");
   const [sidebar, setSidebar] = useState<"files" | "search" | null>("files");
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -115,6 +121,36 @@ export function EditorPane({
   const addSelectionRef = useRef(addSelection);
   addSelectionRef.current = addSelection;
 
+  /** Open the inline edit box above the selection (or the line of the cursor). */
+  const openInline = () => {
+    const editor = editorRef.current;
+    const path = activeRef.current;
+    const selection = editor?.getSelection();
+    if (!editor || !path || !selection) return;
+    const pos = editor.getScrolledVisiblePosition({ lineNumber: selection.startLineNumber, column: 1 });
+    const lineHeight = editor.getOption(monaco.editor.EditorOption.lineHeight);
+    const lineTop = pos?.top ?? 0;
+    // Above the selection when there is space, else under its first line.
+    setInline({ reference: selectionReference(path, selection), top: lineTop >= 52 ? lineTop - 48 : lineTop + lineHeight + 4 });
+    setInstruction("");
+  };
+  const openInlineRef = useRef(openInline);
+  openInlineRef.current = openInline;
+
+  const closeInline = () => {
+    setInline(null);
+    editorRef.current?.focus();
+  };
+
+  const sendInline = () => {
+    if (!inline || !instruction.trim()) return;
+    onInlineEdit(inline.reference, instruction);
+    closeInline();
+  };
+
+  // A different file closes the inline edit box.
+  useEffect(() => setInline(null), [api.active]);
+
   const onMount: OnMount = (editor) => {
     editorRef.current = editor;
     decorations.current = editor.createDecorationsCollection();
@@ -122,6 +158,8 @@ export function EditorPane({
       if (activeRef.current) api.save(activeRef.current);
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL, () => addSelectionRef.current());
+    // Ctrl+K is the inline edit, as in Cursor. It replaces the Ctrl+K chords of Monaco.
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => openInlineRef.current());
     setMounted((n) => n + 1);
   };
 
@@ -270,7 +308,7 @@ export function EditorPane({
                 modified={api.models.current.get(api.compare.path)?.model.getValue() ?? ""}
                 language={languageFor(api.compare.path)}
                 theme={monacoTheme()}
-                options={{ ...EDITOR_OPTIONS, readOnly: true, renderSideBySide: true, originalEditable: false }}
+                options={{ ...EDITOR_OPTIONS, fontFamily: codeFontFamily(), readOnly: true, renderSideBySide: true, originalEditable: false }}
               />
             </div>
           ) : ready && file ? (
@@ -278,7 +316,7 @@ export function EditorPane({
               path={modelUri(sessionKey, file.path).toString()}
               keepCurrentModel
               theme={monacoTheme()}
-              options={EDITOR_OPTIONS}
+              options={{ ...EDITOR_OPTIONS, fontFamily: codeFontFamily() }}
               onMount={onMount}
               loading={<span className="pane-empty">Loading the editor.</span>}
             />
@@ -291,10 +329,47 @@ export function EditorPane({
               <FileCode size={28} aria-hidden />
               <p>Open a file from the tree, or click a file path in the chat.</p>
               <p className="help">
-                <kbd>Ctrl</kbd>+<kbd>S</kbd> saves. <kbd>Ctrl</kbd>+<kbd>L</kbd> adds the selected lines to the chat.
+                <kbd>Ctrl</kbd>+<kbd>S</kbd> saves. <kbd>Ctrl</kbd>+<kbd>L</kbd> adds the selected lines to the chat. <kbd>Ctrl</kbd>+<kbd>K</kbd> asks the
+                agent to edit them.
               </p>
             </div>
           ) : null}
+          {inline && ready && !api.compare && (
+            <form
+              className="inline-edit"
+              style={{ top: inline.top }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendInline();
+              }}
+            >
+              <Sparkles size={14} aria-hidden className="inline-edit-icon" />
+              <input
+                autoFocus
+                className="inline-edit-input"
+                value={instruction}
+                placeholder="Tell the agent how to change this code"
+                aria-label={`Edit ${inline.reference}`}
+                onChange={(e) => setInstruction(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    closeInline();
+                  }
+                }}
+              />
+              <span className="inline-edit-ref mono" title={inline.reference}>
+                {inline.reference.split("/").pop()}
+              </span>
+              <button type="submit" className="btn btn-primary btn-small" disabled={!instruction.trim()} title="Send (Enter)">
+                Send
+              </button>
+              <button type="button" className="icon-btn ghost" onClick={closeInline} aria-label="Close the inline edit" title="Close (Esc)">
+                <X size={14} aria-hidden />
+              </button>
+            </form>
+          )}
         </div>
 
         {file && (
@@ -305,6 +380,10 @@ export function EditorPane({
             <span>{languageFor(file.path) ?? "plain text"}</span>
             <span aria-live="polite">{file.saving ? "Saving" : file.dirty ? "Modified" : "Saved"}</span>
             <span className="spacer" />
+            <button type="button" className="btn btn-ghost btn-small" onClick={openInline} disabled={!ready} title="Ctrl+K">
+              <Sparkles size={13} aria-hidden />
+              Edit with agent
+            </button>
             <button type="button" className="btn btn-ghost btn-small" onClick={addSelection} disabled={!ready} title="Ctrl+L">
               <MessageSquarePlus size={13} aria-hidden />
               Add selection to chat

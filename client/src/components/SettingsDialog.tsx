@@ -1,33 +1,56 @@
 // The Settings dialog (Ctrl+,), as in the DeepSeek Harness and Claude apps: a list of pages on the
-// left, and the page on the right. General is here. Plugins, Local Models, Connections, and
-// Computers are the screens that the sidebar opened before.
+// left, and the page on the right. General and Appearance are here. Plugins, Local Models,
+// Connections, and Computers are the screens that the sidebar opened before.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Puzzle, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, Puzzle, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import type { PermissionMode, UserSettings } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
 import {
+  CHAT_FONT_DEFAULT,
   CHAT_FONT_MAX,
   CHAT_FONT_MIN,
+  CODE_FONT_MAX,
+  ACCENT_PRESETS,
+  DARK_CODE_THEMES,
+  LIGHT_CODE_THEMES,
+  accentColor,
   appearance as savedAppearance,
+  setAccentColor,
   chatFontSize,
+  codeFont,
+  darkCodeTheme,
   density as savedDensity,
+  interfaceFont,
+  lightCodeTheme,
+  resetAppearance,
   setAppearance,
   setChatFontSize,
+  setCodeFont,
+  setDarkCodeTheme,
   setDensity,
+  setInterfaceFont,
+  setLightCodeTheme,
+  setTranscriptWidth,
+  transcriptWidth,
   type Appearance,
+  type DarkCodeTheme,
   type Density,
+  type InterfaceFont,
+  type LightCodeTheme,
+  type TranscriptWidth,
 } from "../lib/theme";
 import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
 import { compareVersions } from "../lib/version";
 import { availableVersion, checkAtStart, checkForUpdate, installUpdate, setCheckAtStart, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "plugins" | "models" | "connections" | "computers" | "changelog";
+export type SettingsPage = "general" | "appearance" | "plugins" | "models" | "connections" | "computers" | "changelog";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
+  { id: "appearance", label: "Appearance", icon: Palette },
   { id: "plugins", label: "Plugins", icon: Puzzle },
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "connections", label: "Connections", icon: Cable },
@@ -233,6 +256,242 @@ const SHORTCUTS: [string, string][] = [
   ["Interrupt the agent", "Esc"],
 ];
 
+/** A row of large choice buttons, for the theme and the density. */
+function Choices<T extends string>({ label, value, choices, onChoose }: {
+  label: string;
+  value: T;
+  choices: [T, string, LucideIcon][];
+  onChoose: (id: T) => void;
+}) {
+  return (
+    <div className="appearance-choices" role="radiogroup" aria-label={label} style={{ gridTemplateColumns: `repeat(${choices.length}, 1fr)` }}>
+      {choices.map(([id, text, Icon]) => (
+        <button key={id} type="button" role="radio" aria-checked={value === id} className={`appearance-choice${value === id ? " active" : ""}`} onClick={() => onChoose(id)}>
+          <Icon size={16} aria-hidden />
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const WIDTH_CHOICES: [TranscriptWidth, string][] = [
+  ["narrow", "Narrow"],
+  ["default", "Default"],
+  ["wide", "Wide"],
+  ["full", "Full width"],
+];
+
+const CODE_PREVIEW = "function greet(name) {\n  return `Hello, ${name}!`; // 0O 1lI {}[]\n}";
+
+/** The Appearance page: the look of this app on this computer. A change shows at once. */
+export function AppearanceSettings() {
+  const [look, setLook] = useState<Appearance>(savedAppearance);
+  const [font, setFont] = useState<InterfaceFont>(interfaceFont);
+  const [fontSize, setFontSize] = useState(chatFontSize);
+  const [width, setWidth] = useState<TranscriptWidth>(transcriptWidth);
+  const [dense, setDense] = useState<Density>(savedDensity);
+  const [mono, setMono] = useState(codeFont);
+  const [lightCode, setLightCode] = useState<LightCodeTheme>(lightCodeTheme);
+  const [darkCode, setDarkCode] = useState<DarkCodeTheme>(darkCodeTheme);
+  const [accent, setAccent] = useState(accentColor);
+  const chooseAccent = (value: string) => {
+    setAccentColor(value);
+    setAccent(accentColor());
+  };
+
+  const reset = () => {
+    resetAppearance();
+    setAccent(accentColor());
+    setFont(interfaceFont());
+    setFontSize(chatFontSize());
+    setWidth(transcriptWidth());
+    setDense(savedDensity());
+    setMono(codeFont());
+    setLightCode(lightCodeTheme());
+    setDarkCode(darkCodeTheme());
+  };
+
+  return (
+    <div className="settings-page">
+      <div className="settings-page-head">
+        <h2 className="settings-page-title">Appearance</h2>
+        <span className="spacer" />
+        <button type="button" className="btn btn-small" onClick={reset} title="Put the accent color, the fonts, the sizes, and the code themes back to the defaults. The theme stays.">
+          <RotateCcw size={14} aria-hidden /> Reset to defaults
+        </button>
+      </div>
+      <p className="help settings-note">These settings apply to this computer only.</p>
+
+      <div className="setting-block">
+        <span className="setting-label">Theme</span>
+        <Choices<Appearance>
+          label="Theme"
+          value={look}
+          choices={[
+            ["light", "Light", Sun],
+            ["dark", "Dark", Moon],
+            ["system", "System", Monitor],
+          ]}
+          onChoose={(a) => {
+            setLook(a);
+            setAppearance(a);
+          }}
+        />
+      </div>
+
+      <Row label="Accent color" help="The color of the primary buttons, the links, and the selected items. White shows as black in the light theme.">
+        <div className="accent-swatches" role="radiogroup" aria-label="Accent color">
+          {ACCENT_PRESETS.map(([id, label, color]) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={accent === id}
+              aria-label={label}
+              title={label}
+              className={`accent-swatch${accent === id ? " active" : ""}`}
+              style={{ background: color }}
+              onClick={() => chooseAccent(id)}
+            />
+          ))}
+          <label
+            className={`accent-swatch accent-custom${accent.startsWith("#") ? " active" : ""}`}
+            title="Custom color…"
+            style={accent.startsWith("#") ? { background: accent } : undefined}
+          >
+            <input
+              type="color"
+              aria-label="Custom accent color"
+              value={accent.startsWith("#") ? accent : "#c6613f"}
+              onChange={(e) => chooseAccent(e.target.value)}
+            />
+          </label>
+        </div>
+      </Row>
+
+      <Row label="Interface font" help="Font for the whole interface — menus, sidebars, and panels." htmlFor="setting-interface-font">
+        <select
+          id="setting-interface-font"
+          value={font}
+          onChange={(e) => {
+            const next: InterfaceFont = e.target.value === "system" ? "system" : "default";
+            setFont(next);
+            setInterfaceFont(next);
+          }}
+        >
+          <option value="default">IBM Plex Sans (default)</option>
+          <option value="system">System font</option>
+        </select>
+      </Row>
+
+      <Row label="Text size" help={`The text of the conversation. Default: ${CHAT_FONT_DEFAULT} px.`} htmlFor="setting-font-size">
+        <NumberField
+          id="setting-font-size"
+          value={fontSize}
+          min={CHAT_FONT_MIN}
+          max={CHAT_FONT_MAX}
+          unit="px"
+          onSave={(n) => {
+            setFontSize(n);
+            setChatFontSize(n);
+          }}
+        />
+      </Row>
+
+      <Row label="Transcript width" help="The maximum width of the conversation and the prompt box." htmlFor="setting-transcript-width">
+        <select
+          id="setting-transcript-width"
+          value={width}
+          onChange={(e) => {
+            const next = WIDTH_CHOICES.find(([id]) => id === e.target.value)?.[0] ?? "default";
+            setWidth(next);
+            setTranscriptWidth(next);
+          }}
+        >
+          {WIDTH_CHOICES.map(([id, text]) => (
+            <option key={id} value={id}>
+              {text}
+            </option>
+          ))}
+        </select>
+      </Row>
+
+      <div className="setting-block">
+        <span className="setting-label">Density</span>
+        <span className="setting-help">The height of the rows and the size of the text in the sidebar.</span>
+        <Choices<Density>
+          label="Density"
+          value={dense}
+          choices={[
+            ["compact", "Compact", Rows4],
+            ["comfortable", "Comfortable", Rows2],
+          ]}
+          onChoose={(d) => {
+            setDense(d);
+            setDensity(d);
+          }}
+        />
+      </div>
+
+      <h3 className="settings-section">Code appearance</h3>
+
+      <Row label="Code font" help="The font of code blocks, the editor, and the terminal. Empty: JetBrains Mono." htmlFor="setting-code-font">
+        <TextField
+          id="setting-code-font"
+          value={mono}
+          placeholder="e.g. JetBrains Mono"
+          maxLength={CODE_FONT_MAX}
+          onSave={(v) => {
+            setCodeFont(v);
+            setMono(codeFont());
+          }}
+        />
+      </Row>
+
+      <Row label="Light code theme" help="The colors of the editor and the diff view in the light theme." htmlFor="setting-light-code">
+        <select
+          id="setting-light-code"
+          value={lightCode}
+          onChange={(e) => {
+            const next = LIGHT_CODE_THEMES.find(([id]) => id === e.target.value)?.[0] ?? "harness-light";
+            setLightCode(next);
+            setLightCodeTheme(next);
+          }}
+        >
+          {LIGHT_CODE_THEMES.map(([id, text]) => (
+            <option key={id} value={id}>
+              {text}
+            </option>
+          ))}
+        </select>
+      </Row>
+
+      <Row label="Dark code theme" help="The colors of the editor and the diff view in the dark theme." htmlFor="setting-dark-code">
+        <select
+          id="setting-dark-code"
+          value={darkCode}
+          onChange={(e) => {
+            const next = DARK_CODE_THEMES.find(([id]) => id === e.target.value)?.[0] ?? "harness-dark";
+            setDarkCode(next);
+            setDarkCodeTheme(next);
+          }}
+        >
+          {DARK_CODE_THEMES.map(([id, text]) => (
+            <option key={id} value={id}>
+              {text}
+            </option>
+          ))}
+        </select>
+      </Row>
+
+      <pre className="code-font-preview" aria-label="Code font preview">
+        <code>{CODE_PREVIEW}</code>
+      </pre>
+    </div>
+  );
+}
+
 /** The General page: the settings of this app, and the user settings of the daemon. */
 export function GeneralSettings({
   values,
@@ -249,9 +508,6 @@ export function GeneralSettings({
   daemonVersion: string | null;
   onSet: (changes: Partial<UserSettings>) => void;
 }) {
-  const [look, setLook] = useState<Appearance>(savedAppearance);
-  const [dense, setDense] = useState<Density>(savedDensity);
-  const [fontSize, setFontSize] = useState(chatFontSize);
   const [busy, setBusy] = useState<BusySend>(busySend);
   const off = !connected || values === null;
   // "Saving" until the daemon sends the new values, then "Saved" for a moment.
@@ -270,11 +526,6 @@ export function GeneralSettings({
     if (error) setStatus("");
   }, [error]);
 
-  const choose = (a: Appearance) => {
-    setLook(a);
-    setAppearance(a);
-  };
-
   return (
     <div className="settings-page">
       <div className="settings-page-head">
@@ -289,66 +540,6 @@ export function GeneralSettings({
         </p>
       )}
       {isTauri() && <UpdateBanner appVersion={appVersion} />}
-
-      <div className="setting-block">
-        <span className="setting-label">Appearance</span>
-        <div className="appearance-choices" role="radiogroup" aria-label="Appearance">
-          {(
-            [
-              ["light", "Light", Sun],
-              ["dark", "Dark", Moon],
-              ["system", "System", Monitor],
-            ] as [Appearance, string, LucideIcon][]
-          ).map(([id, label, Icon]) => (
-            <button key={id} type="button" role="radio" aria-checked={look === id} className={`appearance-choice${look === id ? " active" : ""}`} onClick={() => choose(id)}>
-              <Icon size={16} aria-hidden />
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="setting-block">
-        <span className="setting-label">Density</span>
-        <span className="setting-help">The height of the rows and the size of the text in the sidebar.</span>
-        <div className="appearance-choices" role="radiogroup" aria-label="Density">
-          {(
-            [
-              ["compact", "Compact", Rows4],
-              ["comfortable", "Comfortable", Rows2],
-            ] as [Density, string, LucideIcon][]
-          ).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              role="radio"
-              aria-checked={dense === id}
-              className={`appearance-choice${dense === id ? " active" : ""}`}
-              onClick={() => {
-                setDense(id);
-                setDensity(id);
-              }}
-            >
-              <Icon size={16} aria-hidden />
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <Row label="Font size" help="Only the text of the conversation." htmlFor="setting-font-size">
-        <NumberField
-          id="setting-font-size"
-          value={fontSize}
-          min={CHAT_FONT_MIN}
-          max={CHAT_FONT_MAX}
-          unit="px"
-          onSave={(n) => {
-            setFontSize(n);
-            setChatFontSize(n);
-          }}
-        />
-      </Row>
 
       <Row label="Send while the agent works" help="Queue: send after the turn. Interrupt: stop the turn and send. Steer: the agent reads it at its next step." htmlFor="setting-busy-send">
         <select
@@ -449,11 +640,12 @@ export function GeneralSettings({
   );
 }
 
-function TextField({ id, value, placeholder, disabled, onSave }: {
+function TextField({ id, value, placeholder, disabled, maxLength, onSave }: {
   id: string;
   value: string;
   placeholder?: string;
   disabled?: boolean;
+  maxLength?: number;
   onSave: (v: string) => void;
 }) {
   const [text, setText] = useState(value);
@@ -468,6 +660,7 @@ function TextField({ id, value, placeholder, disabled, onSave }: {
       value={text}
       placeholder={placeholder}
       disabled={disabled}
+      maxLength={maxLength}
       spellCheck={false}
       onChange={(e) => setText(e.target.value)}
       onBlur={save}

@@ -11,8 +11,8 @@ describe("the permission mode menu", () => {
     expect(nextMode("bypassPermissions")).toBe("default");
   });
 
-  it("has a short name for the chip under the prompt box", () => {
-    expect(MODES.map((m) => m.short)).toEqual(["Ask", "Accept edits", "Plan", "Auto", "Bypass"]);
+  it("uses the labels of the Claude desktop mode menu", () => {
+    expect(MODES.map((m) => m.label)).toEqual(["Manual", "Accept edits", "Plan", "Auto", "Bypass permissions"]);
   });
 
   it("has a label for each mode", () => {

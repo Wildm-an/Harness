@@ -6,6 +6,7 @@ describe("splitTip", () => {
     expect(splitTip("Close the sidebar (Ctrl+B)")).toEqual({ text: "Close the sidebar", keys: "Ctrl+B" });
     expect(splitTip("Terminal (Ctrl+`)")).toEqual({ text: "Terminal", keys: "Ctrl+`" });
     expect(splitTip("Files (Ctrl+Shift+F)")).toEqual({ text: "Files", keys: "Ctrl+Shift+F" });
+    expect(splitTip("Deny (Esc or 1)")).toEqual({ text: "Deny", keys: "Esc or 1" });
   });
 
   it("keeps parentheses that are not a key", () => {

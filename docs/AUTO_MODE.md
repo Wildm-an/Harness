@@ -2,7 +2,7 @@
 
 In auto mode, a model checks each action of the agent that no rule decides. Safe actions run with no question. Risky actions are blocked, and the agent gets the reason. The code is in `daemon/harness_daemon/auto_mode.py` and `permissions.py`.
 
-Select **Auto mode** in the permission menu under the prompt box, or press Shift+Tab until it shows.
+Select **Auto** in the mode menu under the prompt box, or press Shift+Tab until it shows.
 
 ## The order of the checks
 

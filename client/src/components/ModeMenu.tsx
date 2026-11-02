@@ -4,31 +4,13 @@ import type { PermissionMode } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
 
-// label: the name in the menu. short: the name under the prompt box.
-export const MODES: { mode: PermissionMode; label: string; short: string; help: string; icon: LucideIcon }[] = [
-  { mode: "default", label: "Ask permissions", short: "Ask", help: "Ask before each action that changes something.", icon: ShieldCheck },
-  {
-    mode: "acceptEdits",
-    label: "Accept edits",
-    short: "Accept edits",
-    help: "Change the project files with no question. Ask for the other actions.",
-    icon: FilePenLine,
-  },
-  { mode: "plan", label: "Plan mode", short: "Plan", help: "Read and make a plan. No file changes.", icon: ClipboardList },
-  {
-    mode: "auto",
-    label: "Auto mode",
-    short: "Auto",
-    help: "A model checks each action. Safe actions run, risky actions are blocked. After 3 blocks in a row it asks you.",
-    icon: RefreshCw,
-  },
-  {
-    mode: "bypassPermissions",
-    label: "Bypass permissions",
-    short: "Bypass",
-    help: "Run each action with no question. Only the deny rules apply.",
-    icon: ShieldOff,
-  },
+// The labels and descriptions of the Claude desktop mode menu (docs/UI_RULES.md C11). The chip under the prompt box shows the label.
+export const MODES: { mode: PermissionMode; label: string; help: string; icon: LucideIcon }[] = [
+  { mode: "default", label: "Manual", help: "Always ask before making changes", icon: ShieldCheck },
+  { mode: "acceptEdits", label: "Accept edits", help: "Automatically accept all file edits", icon: FilePenLine },
+  { mode: "plan", label: "Plan", help: "Create a plan before making changes", icon: ClipboardList },
+  { mode: "auto", label: "Auto", help: "Claude handles permission decisions", icon: RefreshCw },
+  { mode: "bypassPermissions", label: "Bypass permissions", help: "Accepts all permissions", icon: ShieldOff },
 ];
 
 // Shift+Tab goes through these modes, as in Claude Code. Bypass is only in the menu.
@@ -93,14 +75,15 @@ export function ModeMenu({ mode, onChange, up = true }: {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={`${current.label}: ${current.help} Shift+Tab changes the mode.`}
+        title={`${current.label}: ${current.help}. Shift+Tab changes the mode.`}
       >
         <Icon size={13} aria-hidden />
-        <span className="prompt-chip-text">{current.short}</span>
+        <span className="prompt-chip-text">{current.label}</span>
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && (
-        <div className={`menu model-dropdown${up ? " up" : ""} mode-dropdown`} role="menu" aria-label="Permission mode">
+        <div className={`menu model-dropdown${up ? " up" : ""} mode-dropdown`} role="menu" aria-label="Mode">
+          <div className="menu-heading">Mode</div>
           {MODES.map((m) => {
             const ItemIcon = m.icon;
             return (

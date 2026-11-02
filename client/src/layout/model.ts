@@ -65,6 +65,14 @@ export function defaultLayout(): LayoutNode {
   return split("row", [group(["chat"]), group(["editor"])], chatSizes());
 }
 
+/**
+ * The IDE view, as in Cursor: the editor (with its file tree) and the terminal under it on the
+ * left, and the chat with the agent at the right.
+ */
+export function ideLayout(): LayoutNode {
+  return split("row", [split("column", [group(["editor"]), group(["terminal"])], [0.72, 0.28]), group(["chat"])], [0.7, 0.3]);
+}
+
 /** One window for each pane of a group: the chat on the left, the other panes in a column. */
 function splitTabs(g: Group): LayoutNode {
   if (g.tabs.length < 2) return g;

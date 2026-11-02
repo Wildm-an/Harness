@@ -14,7 +14,7 @@ const EDGE = 8;
 
 /** Splits "Close the sidebar (Ctrl+B)" into the text and the key. */
 export function splitTip(tip: string): { text: string; keys: string | null } {
-  const m = /^([\s\S]*\S)\s+\(((?:Ctrl|Alt|Shift|Cmd|Win|F\d{1,2})\b[^()]*)\)$/.exec(tip.trim());
+  const m = /^([\s\S]*\S)\s+\(((?:Ctrl|Alt|Shift|Cmd|Win|Esc|F\d{1,2})\b[^()]*)\)$/.exec(tip.trim());
   return m ? { text: m[1], keys: m[2] } : { text: tip.trim(), keys: null };
 }
 

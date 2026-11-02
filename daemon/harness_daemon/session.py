@@ -11,11 +11,16 @@ TITLE_CHARS = 80
 
 
 class Session:
-    def __init__(self, storage: Storage, session_id: str, agent: Agent, title: str | None = None):
+    def __init__(self, storage: Storage, session_id: str, agent: Agent, title: str | None = None,
+                 project_dir: Path | None = None, worktree: dict | None = None):
         self.storage = storage
         self.id = session_id
         self.agent = agent
         self.title = title
+        # The project folder of the user. It is the agent folder, except for a worktree session:
+        # then the agent works in the worktree (worktrees.py).
+        self.project_dir = Path(project_dir) if project_dir is not None else Path(agent.cwd)
+        self.worktree = worktree
         self._saved = len(agent.history)  # The number of history messages in storage.
         agent.on_compact = self.on_compact
         agent.on_checkpoint = lambda message_id, path, content: storage.add_checkpoint(self.id, message_id, path, content)

@@ -13,7 +13,7 @@ import type { DaemonConnection } from "../daemon/connection";
 import type { ClientMessage } from "../daemon/protocol";
 import { PaneHeader } from "../layout/Workspace";
 import { WindowTabs } from "../layout/WindowTabs";
-import { onThemeChange } from "../lib/theme";
+import { codeFontFamily, onThemeChange } from "../lib/theme";
 
 const MAX_TABS = 8; // The daemon allows 8 shells for each session.
 
@@ -67,7 +67,7 @@ function makeTab(label: string): Kept {
   const element = document.createElement("div");
   element.className = "terminal-screen";
   const term = new Terminal({
-    fontFamily: cssVar("--font-mono") || "Consolas, monospace",
+    fontFamily: codeFontFamily(),
     fontSize: 13,
     cursorBlink: true,
     scrollback: 5000,
@@ -203,7 +203,15 @@ export function TerminalPane({
     });
     observer.observe(host);
     const offTheme = onThemeChange(() => {
-      for (const k of s.tabs) k.term.options.theme = terminalTheme();
+      const fontFamily = codeFontFamily();
+      for (const k of s.tabs) {
+        k.term.options.theme = terminalTheme();
+        if (k.term.options.fontFamily !== fontFamily) {
+          k.term.options.fontFamily = fontFamily;
+          const next = size(k); // The size of a cell changes with the font.
+          if (k.id && !k.stopped) send({ type: "term.resize", id: k.id, ...next });
+        }
+      }
     });
 
     // Open the shells after the next frame: then the pane is visible, and a shell starts at the

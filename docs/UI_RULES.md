@@ -89,7 +89,7 @@ Harness now has a "More" accordion for Skills, MCP servers and Permission rules,
 - **N3.** A row of pills under the prompt box sets where and how the session runs:
   - The environment pill. Tooltip "Where Claude runs". Items: "Local", then remote computers ("SSH", "Add SSH connection…").
   - The folder pill: "Select folder…", "Recent", "Open folder…", "Choose a folder to work in".
-  - The branch and worktree option: "Work in an isolated copy of the repository", "Branch to start from".
+  - The branch and worktree option: "Work in an isolated copy of the repository", "Branch to start from". Harness has it as a chip after the project chip (`WorktreeMenu.tsx`). The chip shows only for a project in a git repository.
   - The permission mode and the model, as in the session prompt box (section 5).
 - **N4.** Under the pills, show "Suggested tasks" or recent sessions.
 
@@ -238,6 +238,24 @@ Harness has no "+" button now. Add it.
 - **V5.** Left side: the origin chip (local or remote, with the folder name), then the title. A click on the title renames it in place. A caret button opens the session menu (the same menu as S7).
 - **V6.** The folder chip menu: "Copy" > "Path" / "Branch name", "Change folder…", "Open in terminal".
 
+### 7.2a Session rail
+
+- **V6a.** The session rail is a column at the right of a session (`role="group"`, label "Session details"). An icon button at the right end of the title bar shows or hides it. Tooltip: "Show session rail" / "Hide session rail". Label: "Session rail". Claude has no shortcut for it.
+- **V6b.** The View menu has "Show Session Rail" / "Hide Session Rail". The command menu has the same command. (Harness has no app menu yet.)
+- **V6c.** Claude sections, in this order: Environment, Goal, Settings, Context, Usage, Connectors, Progress, Outputs, Pull requests, Servers, Background tasks. Each section folds. The user can hide and reorder sections. The app keeps the shown state and the folded sections.
+- **V6d.** In a narrow window the rail covers the session. Esc or a click outside closes it.
+- **V6e.** Harness shows Environment, Context, Pull requests, Servers, and Background tasks (`SessionRail.tsx`). A section with no data does not show. Harness does not hide or reorder sections yet. Harness has no Settings section: the user asked to keep the mode and model menus only under the prompt box.
+- The section titles are not in the bundles. The titles above are a guess from the section ids.
+
+### 7.2b View switch (Harness only)
+
+Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
+
+- **V6f.** A switch with "</>" (tooltip "Code view") and "IDE" (tooltip "IDE view"). It is at the right end of the sidebar head, as the Chat / Code switch of the Claude app. When the sidebar is hidden (always in the IDE view at first), it is in the title bar, right after Back and Forward. It is a radio group. The arrow keys move the choice. It has no shortcut.
+- **V6g.** The Code view is the Claude layout. The IDE view puts the editor (with its file tree and search) and the terminal at the left, and the chat at the right. Each view keeps its own layout for each project. The app keeps the last view.
+- **V6h.** The IDE view hides the sessions sidebar and the session rail. The Code view shows the sidebar again. Ctrl+B still shows the sidebar in the IDE view.
+- **V6i.** In the editor, Ctrl+K opens the inline edit box, as in Cursor: the instruction goes to the agent with the selected lines. Outside the editor, Ctrl+K opens the command menu. Ctrl+L adds the selection to the chat.
+
 ### 7.3 Split view
 
 - **V7.** "Open in" > "Split view" in the row menu, or a drag of a row to the side, opens a split. Shortcuts: "New session on the right" Ctrl+Alt+\, "New session below" Ctrl+Alt+-, "Focus next split view" Ctrl+], "Focus previous split view" Ctrl+[.
@@ -310,16 +328,18 @@ Notes:
   5. The changelog moves to the account menu ("View changelog").
 - **G3.** The Claude Code page has sections in this order: "General", "Appearance", "Code appearance", "Sessions", "Browser", "Pull requests".
 
+  Harness now has "Appearance" as its own page after "General". The page holds the "Appearance" rows and the "Code appearance" rows. When Settings changes to the groups in G2, move these rows into the Claude Code page.
+
 ### 9.3 Setting map
 
 | Option | Claude location and label | Control | Harness now |
 |---|---|---|---|
-| Theme | Appearance | Light / Dark / System | General > Appearance |
-| Interface font | Appearance: "Font for the whole interface — menus, sidebars, and panels." | select | missing |
-| Text size and width | Appearance (transcript text size, transcript width with reset) | select | General > Font size |
-| Density | (the `data-density` attribute: compact or comfortable) | segmented | General > Density |
-| Code theme | Code appearance: "Light code theme", "Dark code theme" | select with a diff preview | missing |
-| Code font | Code appearance, placeholder "e.g. JetBrains Mono" | text field | missing |
+| Theme | Appearance | Light / Dark / System | Appearance > Theme |
+| Interface font | Appearance: "Font for the whole interface — menus, sidebars, and panels." | select | Appearance > Interface font |
+| Text size and width | Appearance (transcript text size, transcript width with reset) | select | Appearance > Text size, Transcript width |
+| Density | (the `data-density` attribute: compact or comfortable) | segmented | Appearance > Density |
+| Code theme | Code appearance: "Light code theme", "Dark code theme" | select with a diff preview | Appearance > Code appearance (a code sample, no diff preview) |
+| Code font | Code appearance, placeholder "e.g. JetBrains Mono" | text field | Appearance > Code appearance |
 | Allow bypass mode | Sessions: "Allow bypass permissions mode" | switch, default off | Default permission mode list |
 | Default permission mode | per session in the mode picker | menu | General > The agent |
 | Notifications | Sessions: "Permission request notifications", "Question notifications", "Task complete notifications" | Off / Badge only / Banners | missing |
@@ -328,7 +348,7 @@ Notes:
 | Keep awake | Sessions: "Keep computer awake while Claude works", child "Keep awake on battery power" | switch, default on | ⋮ menu, per session |
 | Prompt suggestions | Sessions: "Prompt suggestions" | switch, default on | General > The agent |
 | Auto-archive | Sessions: "Archive inactive sessions" | Never / 1 / 2 / 7 / 14 / 30 days | missing |
-| Worktree folder | Sessions: "Worktree location" | "Inside project" / "Custom…" | missing |
+| Worktree folder | Sessions: "Worktree location" | "Inside project" / "Custom…" | always inside the project (`.harness/worktrees/<name>`, branch `harness/<name>`); no setting yet |
 | Output style | Sessions: "Output style" (the session menu can change it for one session) | select | missing |
 | Browser tools | Browser: "Browser tools" | switch, default on | Browser ⋮ menu |
 | Browser cookies | Browser: "Keep cookies" | Until quit / Shared / Per session | Browser ⋮ > Cookies |

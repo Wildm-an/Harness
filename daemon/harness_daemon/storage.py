@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     context_start INTEGER NOT NULL DEFAULT 0,
     summary TEXT,
     pinned INTEGER NOT NULL DEFAULT 0,
-    archived INTEGER NOT NULL DEFAULT 0
+    archived INTEGER NOT NULL DEFAULT 0,
+    worktree TEXT  -- JSON: the git worktree of the session (worktrees.py). NULL: the session works in cwd.
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -76,6 +77,8 @@ class Storage:
             self.db.execute("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         if "archived" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        if "worktree" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN worktree TEXT")
         # The first start with the projects table: add the folders of the stored sessions.
         if self.db.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
             rows = self.db.execute("SELECT cwd, MIN(created_at), MAX(updated_at) FROM sessions GROUP BY cwd").fetchall()
@@ -149,12 +152,13 @@ class Storage:
     def close(self) -> None:
         self.db.close()
 
-    def create_session(self, cwd: str, provider: str, model: str) -> str:
+    def create_session(self, cwd: str, provider: str, model: str, worktree: str | None = None) -> str:
+        """``cwd``: the project folder. ``worktree``: the JSON of the git worktree of the session, or None."""
         session_id = uuid.uuid4().hex
         now = time.time()
         self.db.execute(
-            "INSERT INTO sessions (id, cwd, provider, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, cwd, provider, model, now, now),
+            "INSERT INTO sessions (id, cwd, provider, model, created_at, updated_at, worktree) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, cwd, provider, model, now, now, worktree),
         )
         self.db.commit()
         return session_id
@@ -164,13 +168,17 @@ class Storage:
         return dict(row) if row else None
 
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        sql = "SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived FROM sessions"
+        sql = "SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived, worktree FROM sessions"
         params: tuple = ()
         sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
         for r in rows:
             r["pinned"] = bool(r["pinned"])
             r["archived"] = bool(r["archived"])
+            try:  # The branch of a worktree session, for the sidebar. None: the session works in cwd.
+                r["branch"] = json.loads(r.pop("worktree") or "null")["branch"]
+            except (ValueError, TypeError, KeyError):
+                r["branch"] = None
         if cwd:  # Compare as paths: case-insensitive on Windows.
             key = path_key(cwd)
             rows = [r for r in rows if path_key(r["cwd"]) == key]
