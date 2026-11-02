@@ -3,6 +3,50 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.33 (2026-11-02)
+
+### IDE view
+
+- A switch with "</>" and "IDE" is at the right end of the sidebar head. When the sidebar is
+  hidden, it is in the title bar, after Back and Forward.
+- The IDE view is like Cursor: the file tree and the editor, the terminal under them, and the chat
+  at the right. It hides the sessions sidebar and the session rail. Each view keeps its own layout
+  for each project.
+- In the editor, Ctrl+K opens an inline box at the selected lines. Type an instruction and press
+  Enter: the agent gets the instruction with the lines. "Edit with agent" in the status bar does
+  the same. Ctrl+L adds the selection to the chat.
+
+### Session rail
+
+- A column at the right of a session shows the details of the session: Environment (the computer,
+  the folder, the branch, and the worktree), Context (the tokens in use and "Compact this
+  session"), Pull requests, Servers, and Background tasks. A section with no data does not show.
+- The button at the right end of the title bar shows or hides the rail. Each section folds. In a
+  narrow window, the rail covers the session, and Esc closes it.
+
+### Git worktrees
+
+- On the start screen, the worktree chip can start a session in an isolated copy of the repository,
+  from a branch that you select. The session gets a new branch `harness/<name>` and its own folder.
+  Your project folder does not change.
+- The title bar shows the branch of a worktree session. The archive of a session with changes that
+  are not in a commit asks first. The branch and its commits stay.
+
+### Appearance
+
+- Settings has a new Appearance page: Theme, Accent color, Interface font, Text size, Transcript
+  width, and Density. Code appearance has the Code font and the Light and Dark code themes.
+- The accent color is white by default (black in the light theme). Clay (the old orange), Blue,
+  Green, Purple, Pink, and a custom color are also available.
+- "Reset to defaults" puts the appearance settings back. The theme stays.
+
+### Permissions
+
+- The permission modes have the Claude names: Manual, Accept edits, Plan, Auto, and Bypass
+  permissions. Each mode has a description in the mode menu.
+- A permission request asks "Allow Claude to {action} {object}?" with Deny (Esc), Always allow
+  (Ctrl+Shift+Enter), and Allow once (Ctrl+Enter). A note tells where Always allow saves the rule.
+
 ## 0.1.32 (2026-10-02)
 
 ### Plugins
