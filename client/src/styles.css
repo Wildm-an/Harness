@@ -1098,37 +1098,6 @@ textarea:focus-visible {
   padding: 48px 16px;
 }
 
-/* The start screen: the prompt box at 2/3 of the height from the bottom. The list under it gets
-   two times the height of the space above it, so the box stays there. Only the list scrolls. With a
-   tall form in the box (a new project), the spaces shrink and the screen scrolls. */
-.start-screen.session-start {
-  min-height: 0;
-  gap: 0;
-  padding: 0 16px;
-}
-
-.start-space {
-  flex: 1 1 0;
-  min-height: 24px;
-}
-
-.session-start > .start-hero {
-  flex: none;
-}
-
-.start-below {
-  /* 2 : 1 with the space above. The base (half the height of the box area, about 150 px) puts the
-     middle of the box, not its top, at 2/3 of the height from the bottom. */
-  flex: 2 1 75px;
-  display: flex;
-  justify-content: center;
-  align-self: stretch;
-  min-height: 0;
-  margin: 0 -16px; /* The scroll bar is at the edge of the window. */
-  padding: 0 16px; /* No vertical padding: it would change the 1 : 2 ratio of the spaces. */
-  overflow-y: auto;
-}
-
 .panel {
   width: 100%;
   max-width: 520px;
@@ -1144,22 +1113,9 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
-/* The start screen is a prompt box, as the new session page of the Claude Code desktop app. */
+/* The other full screens (connections, providers, plugins) start lower. */
 .start-screen {
   padding-top: 14vh;
-}
-
-.start-hero {
-  width: 100%;
-  max-width: 680px;
-}
-
-.start-hero h1 {
-  margin: 0 0 28px;
-  font-size: 30px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  text-align: center;
 }
 
 .prompt-box.start-box textarea:disabled {
@@ -1173,13 +1129,211 @@ textarea:focus-visible {
   text-align: center;
 }
 
-.start-hero .form-error {
-  margin: 12px 0 0;
-  text-align: center;
-}
-
 .start-project-form {
   margin-top: 20px;
+}
+
+/* The new session page, as in Claude: the folder block or the project form in the center, and the
+   prompt box at the bottom of the window, at the same place as in a session. */
+.start-screen.session-start {
+  min-height: 0;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.start-center {
+  flex: 1;
+  min-height: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+
+.start-center > .start-project-form {
+  width: min(680px, 100%);
+  margin: 0;
+}
+
+.start-composer {
+  align-self: stretch;
+}
+
+.start-composer .start-help,
+.start-composer .form-error {
+  margin: 0 0 8px;
+}
+
+.project-dropdown.up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* The folder block: the recent project folders in the center of the new session page, as in Claude. */
+.recent-folders {
+  width: min(400px, 100%);
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.recent-folders-list {
+  overflow-y: auto;
+}
+
+/* The rows of the block. The buttons of the "New project" form keep the usual button style. */
+.recent-folders > button,
+.recent-folders-list > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 13.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-folders > button > svg,
+.recent-folders-list > button > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.recent-folders > button:hover:not(:disabled),
+.recent-folders > button:focus-visible,
+.recent-folders-list > button:hover:not(:disabled),
+.recent-folders-list > button:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+
+.recent-folders-list > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.recent-folders-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-folders .recent-folders-check {
+  color: var(--text);
+}
+
+.recent-folders .recent-folders-more {
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.recent-folders-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.recent-folders-error {
+  margin: 4px 10px 6px;
+}
+
+/* "New project…" in the folder block: the folder name and its location. */
+.new-project-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+}
+
+.new-project-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.new-project-head > svg {
+  color: var(--text-muted);
+}
+
+.new-project-label {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.new-project-form input {
+  width: 100%;
+  min-width: 0;
+}
+
+.new-project-row {
+  display: flex;
+  gap: 6px;
+}
+
+.new-project-path {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-project-form .new-project-error {
+  margin: 4px 0 0;
+}
+
+.new-project-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* The IDE view before the user selects a folder: one editor window with the folder block. */
+.ide-start {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.pane-group > .pane-body.ide-start-body {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.ide-start-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .start-project-form .project-form {
@@ -1187,45 +1341,6 @@ textarea:focus-visible {
   border-style: solid;
   border-radius: var(--radius-lg);
   background: var(--surface);
-}
-
-.panel.recent {
-  align-self: flex-start;
-  max-width: 680px;
-  margin: 16px 0 8px;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-}
-
-/* The title stays at the top of the list while the list scrolls. */
-.panel.recent h2 {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  margin: 0 0 4px;
-  padding: 12px 0 6px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.recent-more {
-  display: block;
-  margin-top: 4px;
-  padding: 6px 12px;
-  border: none;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-muted);
-  font: 12.5px var(--font-sans);
-  cursor: pointer;
-  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
-}
-
-.recent-more:hover {
-  background: var(--hover);
-  color: var(--text);
 }
 
 /* The chips of the start box: the project menu and the model field. */
@@ -1687,57 +1802,6 @@ textarea:focus-visible {
   background: var(--danger-soft);
   color: var(--danger);
   font-size: 13px;
-}
-
-.recent ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.recent-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-  transition: background var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out);
-}
-
-.recent-item:hover:not(:disabled) {
-  border-color: var(--border);
-  background: var(--surface-2);
-}
-
-.recent-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-}
-
-.recent-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.recent-meta span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 
 /* ---------- connections ---------- */

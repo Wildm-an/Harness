@@ -275,7 +275,6 @@ export default function App() {
   currentRef.current = current;
   const [startError, setStartError] = useState<string | null>(null);
   // The stored sessions of one folder (cwd), or of all folders (cwd null).
-  const [sessions, setSessions] = useState<{ cwd: string | null; items: SessionSummary[] }>({ cwd: null, items: [] });
   const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
   const [prStatus, setPrStatus] = useState<Map<string, PrStatus>>(() => new Map()); // By pathKey of the folder.
   const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
@@ -322,6 +321,9 @@ export default function App() {
   }, [layout, view]);
   // The IDE view hides the sessions sidebar. This is the sidebar state of the Code view.
   const [ideStart, setIdeStart] = useState(0); // A new number: the start screen starts an empty session.
+  // false: the start screen shows the recent folders in its center (the app just opened, "New
+  // session", or the "+" of a project). A folder from that block, a new session, or an open session makes it true.
+  const [folderChosen, setFolderChosen] = useState(false);
   const sidebarBeforeIde = useRef<boolean | null>(null);
   const ideStarting = useRef(false); // The IDE switch on the start screen starts this session: it stays in the IDE view.
   const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
@@ -640,9 +642,8 @@ export default function App() {
           listRecent(); // A turn in the background changes the title and the age of its session.
           return;
         case "sessions":
-          // A list with no folder is the sidebar list. The start screen asks for the list of one folder.
-          if (msg.cwd) setSessions({ cwd: msg.cwd, items: msg.items });
-          else setRecent(msg.items);
+          // A list with no folder is the sidebar list.
+          if (!msg.cwd) setRecent(msg.items);
           return;
         case "turn.end":
           listRecent(); // The first turn gives the session a title.
@@ -1143,6 +1144,7 @@ export default function App() {
     worktree: { base: string | null } | null) => {
     setBusy(true);
     setStartError(null);
+    setFolderChosen(true);
     firstPrompt.current = prompt;
     if (!ideStarting.current) switchViewRef.current("code"); // A new session starts in the Code view.
     ideStarting.current = false;
@@ -1150,6 +1152,7 @@ export default function App() {
   };
 
   const resumeSession = (id: string) => {
+    setFolderChosen(true);
     firstPrompt.current = null;
     setBusy(true);
     setStartError(null);
@@ -1174,7 +1177,9 @@ export default function App() {
     });
   }, [shownId]);
 
+  /** Shows the start screen, with the folder block in its center. */
   const newSession = () => {
+    setFolderChosen(false);
     switchViewRef.current("code"); // A new session starts in the Code view.
     conn.leaveSession(); // A running turn of the session continues in the background.
     setSession(null);
@@ -1202,7 +1207,7 @@ export default function App() {
     try {
       const id = projectId ?? (await saveProject({ name, path }));
       setStartProject((p) => ({ id, key: (p?.key ?? 0) + 1 }));
-      newSession();
+      newSession(); // The block shows, with the check mark on this project.
     } catch (e) {
       setStartError(errorText(e));
       newSession();
@@ -1227,14 +1232,6 @@ export default function App() {
       conn.send({ type: "projects.delete", id });
     } catch (e) {
       setStartError(errorText(e));
-    }
-  };
-
-  const listSessions = (cwd: string) => {
-    try {
-      conn.send({ type: "session.list", cwd });
-    } catch {
-      // Not connected. The list stays empty.
     }
   };
 
@@ -2496,13 +2493,11 @@ export default function App() {
           <SessionStart
             key={current?.id ?? "none"}
             projects={projects}
-            sessions={sessions}
             busy={busy}
             error={startError}
             onStart={startSession}
             branches={branches}
             onRequestBranches={(cwd) => void sendSafely({ type: "git.branches", cwd })}
-            onResume={resumeSession}
             prefScope={current?.id ?? "local"}
             onBrowse={browseFolder}
             models={models}
@@ -2510,7 +2505,6 @@ export default function App() {
             onManageProviders={showProviders}
             onSaveProject={saveProject}
             onDeleteProject={deleteProject}
-            onListSessions={listSessions}
             selectProject={startProject}
             commands={commands}
             onRequestCommands={(cwd) => sendSafely({ type: "skills.list", cwd })}
@@ -2519,6 +2513,9 @@ export default function App() {
             onFindFiles={(query, cwd) => sendSafely({ type: "fs.find", query, cwd })}
             startRequest={ideStart}
             onAddFiles={addFiles}
+            folderChosen={folderChosen}
+            onChooseFolder={() => setFolderChosen(true)}
+            view={view}
           />
         )}
         {sitesOpen && (

@@ -80,7 +80,7 @@ export function WorktreeMenu({ choice, info, onChange }: {
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && (
-        <div className="menu model-dropdown worktree-dropdown" role="menu" aria-label="Where the agent works">
+        <div className="menu model-dropdown up worktree-dropdown" role="menu" aria-label="Where the agent works">
           <div className="menu-heading">Where the agent works</div>
           {(
             [

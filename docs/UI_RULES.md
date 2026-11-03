@@ -84,14 +84,15 @@ Harness now has a "More" accordion for Skills, MCP servers and Permission rules,
 
 ## 4. New session screen
 
-- **N1.** The heading is "What's up next?" (with the name: "What's up next, {name}?"). Put it above the prompt box, near the vertical center.
+- **N1.** The prompt box is at the bottom of the window, at the same place as in a session. The page has no visible heading. (Changed from the "What's up next?" heading near the center: the user wants the page to match the Claude new session page, with the folder block in the center.)
 - **N2.** The prompt box placeholder is "Describe a task or ask a question".
 - **N3.** A row of pills under the prompt box sets where and how the session runs:
   - The environment pill. Tooltip "Where Claude runs". Items: "Local", then remote computers ("SSH", "Add SSH connection…").
   - The folder pill: "Select folder…", "Recent", "Open folder…", "Choose a folder to work in".
   - The branch and worktree option: "Work in an isolated copy of the repository", "Branch to start from". Harness has it as a chip after the project chip (`WorktreeMenu.tsx`). The chip shows only for a project in a git repository.
   - The permission mode and the model, as in the session prompt box (section 5).
-- **N4.** Under the pills, show "Suggested tasks" or recent sessions.
+- **N4.** The page shows no recent sessions. The sidebar lists them. (Changed from a list under the pills: the prompt box is now at the bottom, so there is no room under it.)
+- **N5.** When the app opens, and after "New session" (Ctrl+N), a block in the center lists the 3 most recent project folders, then "Open folder…", "New project…", and "Show more" (`RecentFolders.tsx`). "Show more" shows all the project folders. "New project…" asks for the folder name and its location, and makes the folder. The location stays the same for each new project until the user changes it. The block stays until the user selects a folder, starts a session, or opens a session. The "+" of a project in the sidebar also shows the block, with the check mark on that project. In the IDE view, the same block shows in the editor, and a folder from it starts an empty session.
 
 ## 5. Prompt box
 

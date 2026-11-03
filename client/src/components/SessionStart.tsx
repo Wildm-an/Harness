@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
-  Clock,
+  Code2,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -12,7 +12,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { CommandItem, GitBranches, PermissionMode, ProjectItem, SessionSummary } from "../daemon/protocol";
+import type { CommandItem, GitBranches, PermissionMode, ProjectItem } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
@@ -21,7 +21,13 @@ import { PromptBox, type Submission } from "./PromptBox";
 import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
 import { WorktreeMenu, type WorktreeChoice } from "./WorktreeMenu";
-import { modelName } from "../lib/modelName";
+import { RecentFolders, joinFolder, recentFolders } from "./RecentFolders";
+import type { ViewMode } from "../lib/viewMode";
+
+function samePath(a: string, b: string): boolean {
+  const key = (p: string) => p.replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+  return key(a) === key(b);
+}
 
 function loadWorktreeChoice(key: string): WorktreeChoice {
   try {
@@ -32,15 +38,10 @@ function loadWorktreeChoice(key: string): WorktreeChoice {
   }
 }
 
-// The start screen shows this many recent sessions. "Show more" shows the rest.
-const RECENT_SHOWN = 3;
-
-function relativeTime(seconds: number): string {
-  const diff = Date.now() / 1000 - seconds;
-  if (diff < 60) return "now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
-  return new Date(seconds * 1000).toLocaleDateString();
+/** The folder that holds a path. */
+function parentFolder(path: string): string {
+  const at = Math.max(path.lastIndexOf("/"), path.lastIndexOf(String.fromCharCode(92)));
+  return at > 0 ? path.slice(0, at) : path;
 }
 
 function folderName(path: string): string {
@@ -221,7 +222,7 @@ function ProjectMenu({
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && projects && (
-        <div className="menu project-dropdown" role="menu" aria-label="Projects">
+        <div className="menu project-dropdown up" role="menu" aria-label="Projects">
           {projects.map((p) => {
             const checked = p.id === selected?.id;
             return (
@@ -278,11 +279,9 @@ function ProjectMenu({
 
 export function SessionStart({
   projects,
-  sessions,
   busy,
   error,
   onStart,
-  onResume,
   prefScope,
   onBrowse,
   models,
@@ -290,7 +289,6 @@ export function SessionStart({
   onManageProviders,
   onSaveProject,
   onDeleteProject,
-  onListSessions,
   selectProject,
   commands,
   onRequestCommands,
@@ -301,9 +299,15 @@ export function SessionStart({
   onRequestBranches,
   startRequest = 0,
   onAddFiles,
+  folderChosen = true,
+  onChooseFolder,
+  view = "code",
 }: {
+  // false: the app just opened. The recent folders show in the center until the user selects one.
+  folderChosen?: boolean;
+  onChooseFolder?: () => void;
+  view?: ViewMode; // The IDE view shows the folder block in the editor.
   projects: ProjectItem[] | null; // null: loading.
-  sessions: { cwd: string | null; items: SessionSummary[] };
   busy: boolean;
   error: string | null;
   // prompt: the first task or command, or null for none. mode: the permission mode of the new session.
@@ -317,7 +321,6 @@ export function SessionStart({
   recentSessions: MentionSession[]; // The sessions of all folders. The "@" menu shows those of the project first.
   fileMatches: { query: string; items: string[] } | null;
   onFindFiles: (query: string, cwd: string) => void;
-  onResume: (id: string) => void;
   prefScope: string; // The project and the model are remembered for each connection.
   onBrowse: (current: string) => Promise<string | null>; // The native dialog, or the remote folder picker.
   models: ModelList | null; // The models of the connections that are on. null: loading.
@@ -325,7 +328,6 @@ export function SessionStart({
   onManageProviders: () => void;
   onSaveProject: (draft: ProjectDraft) => Promise<string>;
   onDeleteProject: (id: string) => void;
-  onListSessions: (cwd: string) => void;
   selectProject?: { id: string; key: number } | null; // A project to select now: a new key selects it again.
   // A new number starts an empty session in the selected project, with the selected model, mode,
   // and worktree choice (the switch to the IDE view). It waits until the project list is loaded.
@@ -345,8 +347,7 @@ export function SessionStart({
   // Each project remembers its model. A project with no model uses the last model of the connection.
   useEffect(() => {
     setModel(loadPref(modelKey(selected?.id), loadPref(`model.${prefScope}`, "")));
-    if (selected) onListSessions(selected.path);
-  }, [selected?.id, selected?.sessions]);
+  }, [selected?.id]);
 
   // Each project remembers its worktree choice. The chip shows only for a folder in a git repository.
   const worktreeKey = `worktree.${prefScope}.${selected?.id ?? ""}`;
@@ -366,6 +367,45 @@ export function SessionStart({
     savePref(`project.${prefScope}`, id);
   };
 
+  // The folder block shows until the user selects a folder. With no project, the form to add one shows.
+  const picking = !folderChosen && !noProjects && !form;
+  const [pickError, setPickError] = useState<string | null>(null);
+  const pick = (id: string) => {
+    select(id);
+    setPickError(null);
+    onChooseFolder?.();
+  };
+  // "New project…": the location of a new folder. It stays the same for each new folder, until the user
+  // changes it. With no saved location, it is the parent folder of the newest project.
+  const locationKey = `newProject.location.${prefScope}`;
+  const [location, setLocation] = useState(() => loadPref(locationKey, ""));
+  const shownLocation = location || (projects?.length ? parentFolder(recentFolders(projects)[0].path) : "");
+  const changeLocation = (next: string) => {
+    setLocation(next);
+    savePref(locationKey, next.trim());
+  };
+  const createProject = async (name: string, where: string) => {
+    const path = joinFolder(where, name);
+    if (projects?.some((p) => samePath(p.path, path))) throw new Error(`A project already uses this folder: ${path}`);
+    const id = await onSaveProject({ name, path, create: true });
+    savePref(locationKey, where);
+    setLocation(where);
+    pick(id);
+  };
+
+  /** "Open folder…": a folder from the dialog. A folder that is not a saved project becomes one. */
+  const openFolder = async () => {
+    setPickError(null);
+    const folder = await onBrowse("");
+    if (!folder) return;
+    const known = projects?.find((p) => samePath(p.path, folder));
+    try {
+      pick(known?.id ?? (await onSaveProject({ name: folderName(folder), path: folder, create: false })));
+    } catch (err) {
+      setPickError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   useEffect(() => {
     if (selectProject) select(selectProject.id);
   }, [selectProject?.key]);
@@ -375,7 +415,7 @@ export function SessionStart({
   const saveForm = async (draft: ProjectDraft) => {
     const id = await onSaveProject(draft);
     setForm(null);
-    select(id);
+    pick(id);
   };
 
   const canStart = !busy && selected !== null && selected.exists;
@@ -392,96 +432,67 @@ export function SessionStart({
     return false;
   };
 
-  // The switch to the IDE view: start an empty session, so that the files show at once.
+  // The switch to the IDE view: start an empty session, so that the files show at once. Before the
+  // user selects a folder, the request waits: the editor shows the folder block. A switch back to
+  // the Code view cancels the request.
   const handledStart = useRef(startRequest);
   useEffect(() => {
-    if (startRequest === handledStart.current || !canStart) return;
+    if (startRequest === handledStart.current) return;
+    if (view !== "ide") {
+      handledStart.current = startRequest;
+      return;
+    }
+    if (!canStart || picking) return;
     handledStart.current = startRequest;
     start({ kind: "prompt", text: "" });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- start reads the current choices.
-  }, [startRequest, canStart]);
+  }, [startRequest, canStart, picking, view]);
 
-  const recent = selected && sessions.cwd === selected.path ? sessions.items : [];
-  // The 3 newest sessions show. "Show more" shows all of them, in a list that scrolls under the prompt box.
-  const [allRecent, setAllRecent] = useState(false);
-  const below = useRef<HTMLDivElement>(null);
-  useEffect(() => setAllRecent(false), [selected?.id]);
-  const shownRecent = allRecent ? recent : recent.slice(0, RECENT_SHOWN);
-  const toggleRecent = () => {
-    if (allRecent) below.current?.scrollTo({ top: 0 });
-    setAllRecent(!allRecent);
-  };
+  const folderBlock = (
+    <RecentFolders
+      projects={projects}
+      selectedId={selected?.id ?? null}
+      onPick={pick}
+      onOpenFolder={() => void openFolder()}
+      location={shownLocation}
+      onLocationChange={changeLocation}
+      onBrowse={onBrowse}
+      onCreate={createProject}
+      error={pickError}
+    />
+  );
+
+  // The IDE view before the user selects a folder: an empty editor with the folder block in its center.
+  if (picking && view === "ide") {
+    return (
+      <div className="ide-start">
+        <section className="pane-group pane-window ide-start-pane" aria-labelledby="ide-start-title">
+          <div className="win-head">
+            <div className="win-panes">
+              <span className="win-pane active">
+                <Code2 size={13} aria-hidden />
+                Editor
+              </span>
+            </div>
+          </div>
+          <div className="pane-body ide-start-body">
+            <h1 id="ide-start-title" className="ide-start-title">Choose a folder to work in</h1>
+            {folderBlock}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
-    // The prompt box is at 2/3 of the height from the bottom. It stays there: only the list under it scrolls.
+    // As in Claude: the folder block (or the project form) in the center, and the prompt box at the
+    // bottom of the window, where it stays in the session.
     <div className="start-screen session-start">
-      <div className="start-space" aria-hidden />
-      <section className="start-hero" aria-labelledby="start-title">
-        <h1 id="start-title">What do you want to work on?</h1>
-
-        <PromptBox
-          onAddFiles={onAddFiles && selected ? () => onAddFiles(selected.path) : undefined}
-          running={false}
-          disabled={!selected}
-          busy={busy}
-          sendBlocked={!canStart}
-          sendEmpty
-          inputId="start-input"
-          label="The first task for the agent"
-          placeholder={selected ? `Describe a task for ${selected.name}. Type / for commands and skills, @ for files.` : "Add a project first."}
-          sendLabel={{ empty: "Start the session (Enter)", text: "Start the session with this task (Enter)" }}
-          boxClassName="start-box"
-          menuBelow
-          focusKey={form ? null : selected?.id}
-          commands={commands}
-          onRequestCommands={() => selected?.exists && onRequestCommands(selected.path)}
-          sessions={selected ? mentionOrder(recentSessions, selected.path) : recentSessions}
-          fileMatches={fileMatches}
-          onFindFiles={(query) => selected?.exists && onFindFiles(query, selected.path)}
-          onSubmit={start}
-          onInterrupt={() => {}}
-          onCycleMode={() => setMode(nextMode(mode))} // Shift+Tab changes the mode, as in a session.
-          below={
-            <>
-              <div className="prompt-below-left">
-                <ModeMenu mode={mode} onChange={setMode} up={false} />
-                <ProjectMenu
-                  projects={projects}
-                  selected={selected}
-                  onSelect={select}
-                  onAdd={() => openForm(NEW_PROJECT)}
-                  onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
-                  onDelete={onDeleteProject}
-                />
-                <WorktreeMenu choice={worktree} info={branchInfo} onChange={changeWorktree} />
-              </div>
-              <ModelMenu
-                value={model}
-                models={models}
-                allowDefault
-                alignRight
-                onOpen={onRequestModels}
-                onSelect={setModel}
-                onManage={onManageProviders}
-              />
-            </>
-          }
-        />
-
-        {selected && !selected.exists && (
-          <p className="start-help">
-            <span className="project-missing">
-              <TriangleAlert size={12} aria-hidden /> The folder of {selected.name} does not exist. Edit the project or select another.
-            </span>
-          </p>
-        )}
-
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-
+      <section className="start-center" aria-labelledby="start-title">
+        <h1 id="start-title" className="sr-only">
+          {picking ? "Choose a folder to work in" : "New session"}
+        </h1>
+        {picking && folderBlock}
         {shownForm && (
           <div className="start-project-form">
             <ProjectForm
@@ -495,32 +506,71 @@ export function SessionStart({
         )}
       </section>
 
-      <div className="start-below" ref={below}>
-      {recent.length > 0 && selected && !shownForm && (
-        <section className="panel recent" aria-labelledby="recent-title">
-          <h2 id="recent-title">Recent sessions in {selected.name}</h2>
-          <ul id="recent-list">
-            {shownRecent.map((s) => (
-              <li key={s.id}>
-                <button type="button" className="recent-item" onClick={() => onResume(s.id)} disabled={busy}>
-                  <span className="recent-title">{s.title ?? "Untitled session"}</span>
-                  <span className="recent-meta">
-                    <span className="mono">{modelName(s.model)}</span>
-                    <span>
-                      <Clock size={12} aria-hidden /> {relativeTime(s.updated_at)}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {recent.length > RECENT_SHOWN && (
-            <button type="button" className="recent-more" onClick={toggleRecent} aria-expanded={allRecent} aria-controls="recent-list">
-              {allRecent ? "Show less" : `Show ${recent.length - RECENT_SHOWN} more`}
-            </button>
+      <div className="composer start-composer">
+        <div className="column">
+          {selected && !selected.exists && (
+            <p className="start-help">
+              <span className="project-missing">
+                <TriangleAlert size={12} aria-hidden /> The folder of {selected.name} does not exist. Edit the project or select another.
+              </span>
+            </p>
           )}
-        </section>
-      )}
+
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+
+          <PromptBox
+            onAddFiles={onAddFiles && selected ? () => onAddFiles(selected.path) : undefined}
+            running={false}
+            disabled={!selected}
+            busy={busy}
+            sendBlocked={!canStart}
+            sendEmpty
+            inputId="start-input"
+            label="The first task for the agent"
+            placeholder={selected ? "Describe a task or ask a question" : "Add a project first."}
+            sendLabel={{ empty: "Start the session (Enter)", text: "Start the session with this task (Enter)" }}
+            boxClassName="start-box"
+            focusKey={form || picking ? null : selected?.id}
+            commands={commands}
+            onRequestCommands={() => selected?.exists && onRequestCommands(selected.path)}
+            sessions={selected ? mentionOrder(recentSessions, selected.path) : recentSessions}
+            fileMatches={fileMatches}
+            onFindFiles={(query) => selected?.exists && onFindFiles(query, selected.path)}
+            onSubmit={start}
+            onInterrupt={() => {}}
+            onCycleMode={() => setMode(nextMode(mode))} // Shift+Tab changes the mode, as in a session.
+            below={
+              <>
+                <div className="prompt-below-left">
+                  <ModeMenu mode={mode} onChange={setMode} />
+                  <ProjectMenu
+                    projects={projects}
+                    selected={selected}
+                    onSelect={pick}
+                    onAdd={() => openForm(NEW_PROJECT)}
+                    onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
+                    onDelete={onDeleteProject}
+                  />
+                  <WorktreeMenu choice={worktree} info={branchInfo} onChange={changeWorktree} />
+                </div>
+                <ModelMenu
+                  value={model}
+                  models={models}
+                  allowDefault
+                  alignRight
+                  up
+                  onOpen={onRequestModels}
+                  onSelect={setModel}
+                  onManage={onManageProviders}
+                />
+              </>
+            }
+          />
+        </div>
       </div>
     </div>
   );
