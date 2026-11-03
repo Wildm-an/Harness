@@ -35,7 +35,7 @@ from .plugins.install import (InstallError, install as install_plugin, remove as
 from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
 from . import provider_config
-from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, project_config_path
+from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, load_mcp_config, project_config_path, user_config_path
 from .cookbook import hosts as cookbook_hosts
 from .cookbook.hosts import HostError
 from .cookbook.hub import HubError
@@ -1541,6 +1541,39 @@ async def on_mcp_init(conn: Connection, msg: dict[str, Any]) -> None:
     await conn.send({"type": "mcp.init", "path": relpath(session.cwd, path), "created": created})
 
 
+def _configured_mcp(folder: Path | None, host: PluginHost | None) -> dict[str, Any]:
+    """The MCP servers in the configuration files, with no connection. Each server is "stopped" or "disabled"."""
+    configs, problems = load_mcp_config(folder, host.mcp_servers() if host is not None else None)
+    items = [{"name": c.name, "scope": c.scope, "transport": c.transport, "target": c.describe(),
+              "state": "disabled" if c.disabled else "stopped", "error": None, "server_name": None, "tools": []}
+             for c in configs.values()]
+    return {"items": items, "problems": problems,
+            "paths": {"user": str(user_config_path()), "project": ".harness/mcp.json"}}
+
+
+@handler("capabilities.list")
+async def on_capabilities_list(conn: Connection, msg: dict[str, Any]) -> None:
+    """The Capabilities page: all the skills and the MCP servers.
+
+    With a session: the skills of the session and the live MCP states. With no session: the skills and the
+    configured MCP servers of the project folder "cwd" (or only the user's, with no "cwd"), with no connection.
+    """
+    folder = _project_dir(msg["cwd"]) if msg.get("cwd") is not None else None
+    session = conn.session
+    if session is not None and (folder is None or session.cwd == folder):
+        skills = conn.skills()
+        mcp = {k: v for k, v in conn.mcp.items().items() if k != "type"} if conn.mcp is not None \
+            else _configured_mcp(session.cwd, conn.plugins)
+        live, folder = True, session.cwd
+    else:
+        host = await conn.start_plugins(folder) if folder is not None else None
+        skills = await asyncio.to_thread(discover_skills, folder, host.skill_roots() if host is not None else None)
+        mcp = _configured_mcp(folder, host)
+        live = False
+    await conn.send({"type": "capabilities", "cwd": str(folder) if folder is not None else None, "live": live,
+                     "skills": [s.summary() for s in skills.values()], "mcp": mcp})
+
+
 # -- plugins (docs/PLUGINS.md) -----------------------------------------------------------------------
 
 
@@ -2326,9 +2359,17 @@ async def on_skills_list(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("skills.get")
 async def on_skills_get(conn: Connection, msg: dict[str, Any]) -> None:
-    """One skill for the Skills panel: the SKILL.md text and the other files in its folder."""
+    """One skill for the Capabilities page: the SKILL.md text and the other files in its folder.
+
+    With no session, "cwd" names the project folder, as in capabilities.list.
+    """
     name = _text_arg(msg, "name")
-    skill = conn.skills().get(name)
+    folder = _project_dir(msg["cwd"]) if msg.get("cwd") is not None else None
+    if folder is not None and (conn.session is None or conn.session.cwd != folder):
+        host = await conn.start_plugins(folder)
+        skill = discover_skills(folder, host.skill_roots()).get(name)
+    else:
+        skill = conn.skills().get(name)
     if skill is None:
         raise ProtocolError(f"Unknown skill: {name}")
     files = sorted(

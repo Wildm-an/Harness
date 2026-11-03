@@ -505,7 +505,8 @@ export type ClientMessage =
   // A message for the running turn. The agent reads it at its next step. id: the queue item of the client.
   | { type: "steer"; id: string; text: string; display?: string }
   | { type: "skills.list"; cwd?: string } // cwd: the start screen, which has no session.
-  | { type: "skills.get"; name: string }
+  | { type: "skills.get"; name: string; cwd?: string }
+  | { type: "capabilities.list"; cwd?: string }
   | { type: "fs.dirs"; path?: string; hidden?: boolean }
   | { type: "fs.list"; path: string }
   | { type: "fs.read"; path: string }
@@ -656,6 +657,7 @@ export type DaemonMessage =
   | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[] }
   | ({ type: "mcp" } & McpStatus)
   | { type: "mcp.init"; path: string; created: boolean }
+  | { type: "capabilities"; cwd: string | null; live: boolean; skills: CommandItem[]; mcp: McpStatus }
   | ({ type: "plugins" } & PluginsStatus)
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }
   | { type: "hardware"; host: string; info: HardwareInfo }

@@ -4,7 +4,7 @@
 export type Place =
   | { screen: "start" }
   | { screen: "chat"; id: string }
-  | { screen: "cookbook" | "plugins" | "providers" | "connections" };
+  | { screen: "cookbook" | "plugins" | "providers" | "connections" | "capabilities" };
 
 export interface NavHistory {
   stack: Place[];
@@ -31,6 +31,7 @@ export function placeOf(screen: string, sessionId: string | null | undefined): P
     case "plugins":
     case "providers":
     case "connections":
+    case "capabilities":
       return { screen } as Place;
     default:
       return null;

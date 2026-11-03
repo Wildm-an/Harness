@@ -6,8 +6,9 @@
 
 // "preview": a PDF or Word file (preview/PreviewPane.tsx).
 // "files": the file list and search of the editor as its own window (the IDE view, as VS Code's Explorer).
-export type PaneId = "chat" | "editor" | "files" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp" | "terminal" | "side" | "tasks" | "preview";
-export const PANE_IDS: PaneId[] = ["chat", "editor", "files", "browser", "servers", "diff", "rules", "skills", "mcp", "terminal", "side", "tasks", "preview"];
+// The Skills and MCP panes of older versions are gone: the Capabilities page shows both. normalize() drops them.
+export type PaneId = "chat" | "editor" | "files" | "browser" | "servers" | "diff" | "rules" | "terminal" | "side" | "tasks" | "preview";
+export const PANE_IDS: PaneId[] = ["chat", "editor", "files", "browser", "servers", "diff", "rules", "terminal", "side", "tasks", "preview"];
 
 export type Zone = "center" | "left" | "right" | "top" | "bottom";
 

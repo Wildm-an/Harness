@@ -10,12 +10,12 @@ import { SidebarFilter, loadView, saveView, type SidebarView, type SortBy, type 
 
 export { sessionState } from "./SessionRow";
 
-/** A pane button of the "This session" group: Skills, MCP servers, or Permission rules. */
+/** A nav item ("Capabilities") or a pane button of the "More" group ("Permission rules"). */
 export interface SessionTool {
   key: string;
   icon: LucideIcon;
   label: string;
-  active: boolean; // The pane is open.
+  active: boolean; // The pane or the page is open.
   detail?: string; // Short text on the right, for example "2/3" for the MCP servers.
   alert?: boolean; // A red dot: for example, an MCP server failed.
   title?: string; // The hover tip.
@@ -168,8 +168,8 @@ function NavButton({ icon: Icon, label, active, disabled, shortcut, onClick }: {
   );
 }
 
-/** A button that shows or hides a pane of the session. */
-function ToolButton({ tool, disabled }: { tool: SessionTool; disabled: boolean }) {
+/** A button that shows or hides a pane of the session, or ("page") opens a page. */
+function ToolButton({ tool, disabled, page }: { tool: SessionTool; disabled: boolean; page?: boolean }) {
   const Icon = tool.icon;
   return (
     <button
@@ -177,7 +177,8 @@ function ToolButton({ tool, disabled }: { tool: SessionTool; disabled: boolean }
       className={`side-item${tool.active ? " active" : ""}`}
       onClick={tool.onClick}
       disabled={disabled}
-      aria-pressed={tool.active}
+      aria-pressed={page ? undefined : tool.active}
+      aria-current={page && tool.active ? "page" : undefined}
       title={tool.title}
     >
       <Icon size={16} aria-hidden />
@@ -350,6 +351,7 @@ export function Sidebar({
   actions,
   newSessionKey,
   head,
+  nav = [],
   tools = [],
   prStatus,
   onRequestPr,
@@ -370,6 +372,7 @@ export function Sidebar({
   actions: SessionActions; // Open, pin, mark as unread, rename, and delete a session.
   newSessionKey?: string; // "Ctrl+N".
   head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
+  nav?: SessionTool[]; // The page items under "New session", always shown: "Capabilities".
   tools?: SessionTool[]; // The pane buttons of the open session. Empty on the other screens.
   prStatus: Map<string, PrStatus>; // By pathKey of the folder.
   onRequestPr: (paths: string[]) => void; // Ask the daemon for the pull requests of these folders.
@@ -464,6 +467,9 @@ export function Sidebar({
 
       <div className="side-actions">
         <NavButton icon={Plus} label="New session" active={screen === "start"} disabled={!open} shortcut={newSessionKey} onClick={onNewSession} />
+        {nav.map((item) => (
+          <ToolButton key={item.key} tool={item} disabled={!open} page />
+        ))}
         {/* The panes of the open session, in an accordion as the "More" row of Claude. */}
         {tools.length > 0 && (
           <>

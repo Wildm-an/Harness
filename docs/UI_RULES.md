@@ -38,12 +38,12 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 
 1. A "Search" field. It opens the command menu (Ctrl+K). The key hint shows on hover or focus.
 2. "New session" (Ctrl+N), with a round "+" icon.
-3. Nav items. Claude shows "Routines" and "Customize". Harness puts "Customize" here (skills, plugins, MCP servers, permission rules). See section 9.
+3. Nav items. Claude shows "Routines" and "Customize". Harness shows "Capabilities" here (the user asked for this name). It opens the Capabilities page with the skills and the MCP servers (section 3.4). Plugins and permission rules are not on this page yet. See section 9.
 4. "Pinned". Show the first 20 items, then "Show more". The empty text is "Tip: you can drag sessions here to pin them".
 5. The session sections (projects, date groups, or custom sections).
 6. A bottom tray: the update strip (section 7.4), then the account button. The account button opens a menu with "Settings", "View changelog", "Keyboard shortcuts", "Get help".
 
-Harness now has a "More" accordion for Skills, MCP servers and Permission rules, and a Settings gear in the footer. Move these to the "Customize" nav item and the account menu.
+Harness now has a "More" accordion for Permission rules, and a Settings gear in the footer. Move these to the Capabilities page and the account menu.
 
 ### 3.2 Group and sort menu
 
@@ -82,6 +82,28 @@ Harness now has a "More" accordion for Skills, MCP servers and Permission rules,
 - **S8.** Archive asks first only when the session has uncommitted changes: "Archive session with uncommitted changes?" with "Archive anyway". Delete always asks first.
 - **S9.** A drag of a row shows a label pill: "Open in split view", "Release to unpin", "Move to {label}".
 - **S10.** When the sidebar is hidden, the pointer on the sidebar toggle in the title row shows the sidebar over the view (the user asked for this). It goes away a short time after the pointer leaves it, on Esc, or after a choice in it. A menu or a dialog of the sidebar keeps it. The sidebar toggle in it shows the sidebar again in its usual place.
+
+### 3.4 Capabilities page
+
+Claude shows skills and connectors on separate tabs of its "Customize" page. The Hermes dashboard shows them on separate "Skills" and "MCP" pages. The user asked for one page that shows both (`CapabilitiesPage.tsx`).
+
+- **K1.** The "Capabilities" nav item is under "New session". It shows at all times, also with no session. A red dot shows when an MCP server failed. The page is a full screen in the main area, as the new session page. Back and Forward include it. `/skills` and `/mcp` also open it.
+- **K2.** The page has the title "Capabilities", one line that names the project folder, a "Filter" field, then two sections in this order: "Skills" and "MCP servers". The filter finds each word in the name, the description, the command or URL, or the tool names.
+- **K3.** Each row shows an icon, the name, a short description, and a status pill. A skill row also shows its source. The description of an MCP server is "{n} tools · {transport} · {scope}". A failed server shows its error.
+- **K4.** Status pills:
+
+  | Item | Pill | Meaning |
+  |---|---|---|
+  | Skill | "Enabled" | A / command, and the agent can use it |
+  | Skill | "Command only" | `disable-model-invocation: true` |
+  | Skill | "Agent only" | `user-invocable: false` |
+  | MCP server | "Connected" / "Connecting" / "Failed" | The state in the session |
+  | MCP server | "Disabled" | `"disabled": true` in `mcp.json` |
+  | MCP server | "Not connected" | No session is open in the folder |
+
+- **K5.** A click on a skill row opens the skill (the SKILL.md text, the files, the frontmatter) with "All capabilities" to go back. A click on an MCP row opens the command or URL, the error, the server log, and the tools. A failed server row is open at the start.
+- **K6.** With a session, the page shows the session's skills and live MCP states (daemon message `capabilities.list`). The MCP section head has "Reload all" and "Edit mcp.json". Each server row has a restart button. "Edit mcp.json" opens the file in the session editor.
+- **K7.** With no session, the page shows the skills and the configured servers of the project that the new session page selected, with no connection. The restart buttons and "Edit mcp.json" do not show. A note says: "Open a session in this folder to connect the servers, restart them, or edit mcp.json."
 
 ## 4. New session screen
 
@@ -336,7 +358,7 @@ Notes:
 - **G1.** Settings is a page with a left nav in groups and a search field. Claude groups: "Account", "Customize" (Plugins, Skills, Connectors), "Products" (Claude Code), "This computer" (System, Extensions, Developer).
 - **G2.** Harness groups, in this order:
   1. "Claude Code": the page with sections in G3.
-  2. "Customize": "Plugins", "Skills", "Connectors" (MCP servers), "Permission rules".
+  2. "Customize": "Plugins", "Permission rules". The skills and the MCP servers are not in Settings: they are on the Capabilities page (section 3.4).
   3. "Models": "Connections" (model providers) and "Local models". These are Harness-only (P6).
   4. "This computer": "System", "Computers" (remote daemons).
   5. The changelog moves to the account menu ("View changelog").
@@ -500,7 +522,7 @@ Do these in separate changes, in this order:
 6. Rename the "Diff" pane "Changes", and move Files to the pane buttons (V4).
 7. Move the session row keys to the Ctrl+Alt chords (S7).
 8. Move the update toast to a sidebar strip (V8).
-9. Reorganize the sidebar: search field, "Customize" nav item, account menu (section 3.1).
+9. Reorganize the sidebar: search field, account menu (section 3.1). The "Capabilities" nav item is done (section 3.4).
 10. Reorganize Settings into the groups in G2 and the map in 9.3.
 11. Add the notification settings (V10, 9.3).
 12. Add the Keyboard shortcuts dialog (Ctrl+/).

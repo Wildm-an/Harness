@@ -284,6 +284,34 @@ def test_skills_panel_messages(daemon, project, project_skills, fake_model):  # 
     c.close()
 
 
+def test_capabilities_page_with_and_without_a_session(daemon, project, project_skills, fake_model):  # noqa: F811
+    import json
+    (project / ".harness" / "mcp.json").write_text(json.dumps({"mcpServers": {
+        "off": {"command": "python", "args": ["-V"], "disabled": True},
+        "web": {"url": "http://127.0.0.1:9/mcp"},
+    }}), encoding="utf-8")
+    c = Client(daemon)
+    c.until("auth.ok")
+    # No session: the skills and the servers of the project folder, with no connection.
+    c.send({"type": "capabilities.list", "cwd": str(project)})
+    page = c.until("capabilities")[0]
+    assert page["live"] is False and page["cwd"] == str(project.resolve())
+    assert {i["name"] for i in page["skills"]} == {"greet", "hidden", "help", "research", "secret"}
+    states = {i["name"]: i["state"] for i in page["mcp"]["items"]}
+    assert states == {"off": "disabled", "web": "stopped"}
+    assert page["mcp"]["paths"]["project"] == ".harness/mcp.json"
+    c.send({"type": "skills.get", "name": "greet", "cwd": str(project)})
+    assert c.until("skill")[0]["files"] == ["SKILL.md", "notes.md"]
+    # With a session: the skills of the session and the MCP servers of the session.
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    c.until("session.ready")
+    c.send({"type": "capabilities.list"})
+    page = c.until("capabilities")[0]
+    assert page["live"] is True and "greet" in {i["name"] for i in page["skills"]}
+    assert {i["name"] for i in page["mcp"]["items"]} == {"off", "web"}
+    c.close()
+
+
 def test_start_screen_menus_with_no_session(daemon, project, project_skills, fake_model):  # noqa: F811
     c = Client(daemon)
     c.send({"type": "skills.list", "cwd": str(project)})

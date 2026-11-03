@@ -19,10 +19,10 @@ import {
   Monitor,
   PanelLeft,
   PanelRight,
-  Plug,
   RefreshCw,
   ShieldCheck,
   SquareTerminal,
+  Blocks,
 } from "lucide-react";
 import { chatReducer, emptyChat, type PermissionItem } from "./chat/state";
 import { DaemonConnection, type ConnectionStatus } from "./daemon/connection";
@@ -53,7 +53,7 @@ import {
   saveProviderKey,
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
-import { McpPanel } from "./components/McpPanel";
+import { CapabilitiesPage } from "./components/CapabilitiesPage";
 import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
@@ -101,7 +101,6 @@ import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
 import { base64ToBytes, isPreviewFile, shownDocument, type PreviewDoc } from "./preview/document";
 import { WorkingLine } from "./components/WorkingLine";
-import { SlashIcon } from "./components/SlashIcon";
 import { WindowControls, hasWindowControls } from "./components/WindowControls";
 import { SIDEBAR_DEFAULT, SidebarResizer, clampSidebar } from "./components/SidebarResizer";
 import { saveLastMode } from "./components/ModeMenu";
@@ -139,7 +138,6 @@ import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
-import { SkillsPanel } from "./components/SkillsPanel";
 import {
   LOCAL,
   closeTunnel,
@@ -158,7 +156,7 @@ import { filesPromptText } from "./lib/fileRefs";
 import { FolderMenu } from "./components/FolderMenu";
 import type { SessionActions } from "./components/SessionRow";
 
-type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins";
+type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities";
 
 const PROVIDER_REPLY_TIMEOUT = 15_000;
 
@@ -348,8 +346,13 @@ export default function App() {
   const [autoVerify, setAutoVerify] = useState(false);
   const targetRef = useRef<{ host: string; port: number; token: string } | null>(null);
   const [commands, setCommands] = useState<CommandItem[] | null>(null); // The / menu.
-  const [skillItems, setSkillItems] = useState<CommandItem[] | null>(null); // The Skills panel.
+  // The Capabilities page: the skills, the open skill, the project folder, and whether a session is open in it.
+  const [skillItems, setSkillItems] = useState<CommandItem[] | null>(null);
   const [skillDetail, setSkillDetail] = useState<SkillDetail | null | "loading">(null);
+  const [capsFolder, setCapsFolder] = useState<string | null>(null);
+  const [capsLive, setCapsLive] = useState(false);
+  const capsFallback = useRef(false); // An older daemon: the page asks for the skills and the MCP servers one at a time.
+  const openCapabilitiesRef = useRef<() => void>(() => {});
   const [instructions, setInstructions] = useState<string | null>(null);
   const [rules, setRules] = useState<Rules | null>(null);
   const [rulesBusy, setRulesBusy] = useState(false);
@@ -483,7 +486,7 @@ export default function App() {
 
 
   const [hfTokenSaved, setHfTokenSaved] = useState(false);
-  // The MCP servers of the session (the MCP panel).
+  // The MCP servers of the Capabilities page.
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [pendingEdit, setPendingEdit] = useState<{ path: string; key: number } | null>(null); // A file for the editor.
@@ -736,8 +739,17 @@ export default function App() {
           setMcpBusy(status.items.some((i) => i.state === "starting"));
           return;
         }
+        case "capabilities":
+          setSkillItems(msg.skills);
+          setMcpStatus(msg.mcp);
+          setMcpBusy(msg.mcp.items.some((i) => i.state === "starting"));
+          setCapsLive(msg.live);
+          setCapsFolder(msg.cwd);
+          return;
         case "mcp.init":
+          // The file opens in the editor of the session. The Capabilities page goes back to the session.
           setPendingEdit((p) => ({ path: msg.path, key: (p?.key ?? 0) + 1 }));
+          if (sessionRef.current) setScreen("chat");
           return;
         case "permission.request":
           // Show each change for approval in the diff review pane.
@@ -759,6 +771,19 @@ export default function App() {
           }
           if (msg.ref === "skills.get") setSkillDetail(null);
           if (msg.ref === "mcp.restart" || msg.ref === "mcp") setMcpBusy(false);
+          if (msg.ref === "capabilities.list") {
+            // An older daemon has no capabilities.list. With a session, ask for the two lists one at a time.
+            if (sessionRef.current) {
+              capsFallback.current = true;
+              setCapsLive(true);
+              conn.send({ type: "mcp.list" });
+              conn.send({ type: "command", name: "skills", args: "" });
+            } else {
+              setSkillItems([]);
+              setMcpStatus({ items: [], problems: [msg.message], paths: { user: "", project: "" } });
+            }
+            return;
+          }
           if (msg.ref?.startsWith("plugins.")) {
             setPluginBusy(false);
             setPluginError(msg.message);
@@ -819,15 +844,19 @@ export default function App() {
             showPlugins();
             return;
           }
+          // /mcp and /skills open the Capabilities page.
           if (msg.action === "open_panel" && msg.panel === "mcp") {
-            setLayout((l) => openPane(l, "mcp"));
-            conn.send({ type: "mcp.list" });
+            openCapabilitiesRef.current();
             return;
           }
           if (msg.action === "open_panel" && msg.panel === "skills") {
+            if (!capsFallback.current) {
+              openCapabilitiesRef.current();
+              return;
+            }
             setSkillItems(msg.items ?? []);
             setSkillDetail(null);
-            setLayout((l) => openPane(l, "skills"));
+            setScreen("capabilities");
             return;
           }
           break;
@@ -1658,29 +1687,37 @@ export default function App() {
     if (conn.status === "open") conn.send({ type: "skills.list" });
   }, [conn]);
 
-  const openMcp = () => {
-    setLayout((l) => openPane(l, "mcp"));
-    sendSafely({ type: "mcp.list" });
-  };
-
   const restartMcp = (name?: string) => {
     setMcpBusy(true);
     if (!sendSafely({ type: "mcp.restart", ...(name ? { name } : {}) })) setMcpBusy(false);
   };
 
-  const openSkills = () => {
+  /**
+   * Opens the Capabilities page: the skills and the MCP servers of the open session, or with no
+   * session, of the folder of the start screen.
+   */
+  const openCapabilities = () => {
+    // The project that the start screen selected (SessionStart saves its id).
+    const startId = loadPref(`project.${current?.id ?? "local"}`, "");
+    const folder = session ? null : ((projects ?? []).find((p) => p.id === startId && p.exists)?.path ?? null);
+    capsFallback.current = false;
     setSkillItems(null);
     setSkillDetail(null);
-    setLayout((l) => openPane(l, "skills"));
-    sendSafely({ type: "command", name: "skills", args: "" });
+    setMcpStatus(null);
+    setCapsLive(session !== null);
+    setCapsFolder(session?.cwd ?? folder);
+    setScreen("capabilities");
+    sendSafely({ type: "capabilities.list", ...(folder ? { cwd: folder } : {}) });
   };
+  openCapabilitiesRef.current = openCapabilities;
 
   const openSkill = useCallback(
     (name: string) => {
       setSkillDetail("loading");
-      if (!sendSafely({ type: "skills.get", name })) setSkillDetail(null);
+      const cwd = !capsLive && capsFolder ? { cwd: capsFolder } : {};
+      if (!sendSafely({ type: "skills.get", name, ...cwd })) setSkillDetail(null);
     },
-    [sendSafely],
+    [sendSafely, capsLive, capsFolder],
   );
 
   const backToSkills = useCallback(() => setSkillDetail(null), []);
@@ -1890,9 +1927,8 @@ export default function App() {
   const reviewDiff = reviewItem && (reviewItem.kind === "tool" || reviewItem.kind === "permission") ? reviewItem.diff : null;
   const paneVisible = (pane: PaneId) => findGroupOf(layout, pane)?.active === pane;
 
-  // A Rules or MCP tab from the saved layout has no data yet: load it when the tab shows.
+  // A Rules tab from the saved layout has no data yet: load it when the tab shows.
   const rulesShown = session !== null && status === "open" && paneVisible("rules");
-  const mcpShown = session !== null && status === "open" && paneVisible("mcp");
   useEffect(() => {
     if (rulesShown && rules === null && !rulesBusy) {
       setRulesBusy(true);
@@ -1903,14 +1939,6 @@ export default function App() {
       }
     }
   }, [rulesShown, rules === null]);
-  useEffect(() => {
-    if (!mcpShown || mcpStatus !== null) return;
-    try {
-      conn.send({ type: "mcp.list" });
-    } catch {
-      // The panel stays at "Loading" until the connection opens.
-    }
-  }, [mcpShown, mcpStatus === null]);
 
   const folder = session?.project ?? session?.cwd.split(/[\\/]/).filter(Boolean).pop();
 
@@ -2143,31 +2171,6 @@ export default function App() {
         <RulesPanel rules={rules} busy={rulesBusy} savedAt={rulesSavedAt} onSave={saveRules} onClose={() => hidePane("rules")} />
       ),
     },
-    mcp: {
-      title: "MCP",
-      icon: Plug,
-      closable: true,
-      badge: mcpStatus?.items.some((i) => i.state === "failed") ? (
-        <span className="tab-badge" title="An MCP server failed">!</span>
-      ) : undefined,
-      render: () => (
-        <McpPanel
-          status={mcpStatus}
-          busy={mcpBusy}
-          onRestart={restartMcp}
-          onEditConfig={() => sendSafely({ type: "mcp.init" })}
-          onClose={() => hidePane("mcp")}
-        />
-      ),
-    },
-    skills: {
-      title: "Skills",
-      icon: SlashIcon,
-      closable: true,
-      render: () => (
-        <SkillsPanel items={skillItems} detail={skillDetail} onOpen={openSkill} onBack={backToSkills} onClose={() => hidePane("skills")} />
-      ),
-    },
     terminal: {
       title: "Terminal",
       icon: SquareTerminal,
@@ -2347,6 +2350,8 @@ export default function App() {
         return showProviders();
       case "connections":
         return openConnections();
+      case "capabilities":
+        return openCapabilities();
     }
   };
   const canNav = status === "open" && !busy;
@@ -2417,28 +2422,22 @@ export default function App() {
     </div>
   );
 
-  // The panes of the open session in the sidebar: Skills, MCP servers, and Permission rules.
-  const mcpConnected = mcpStatus?.items.filter((i) => i.state === "connected").length ?? 0;
+  // The "Capabilities" nav item: the skills and the MCP servers. A red dot shows when a server failed.
+  const mcpFailed = mcpStatus?.items.filter((i) => i.state === "failed").length ?? 0;
+  const capabilitiesNav: SessionTool = {
+    key: "capabilities",
+    icon: Blocks,
+    label: "Capabilities",
+    active: screen === "capabilities",
+    alert: mcpFailed > 0,
+    title: mcpFailed > 0 ? (mcpFailed === 1 ? "1 MCP server failed" : `${mcpFailed} MCP servers failed`) : "Skills and MCP servers",
+    onClick: fromSidebar(openCapabilities),
+  };
+
+  // The panes of the open session in the sidebar: Permission rules.
   const sessionTools: SessionTool[] =
     screen === "chat" && session
       ? [
-          {
-            key: "skills",
-            icon: SlashIcon,
-            label: "Skills",
-            active: paneVisible("skills"),
-            onClick: fromSidebar(paneVisible("skills") ? () => hidePane("skills") : openSkills),
-          },
-          {
-            key: "mcp",
-            icon: Plug,
-            label: "MCP servers",
-            active: paneVisible("mcp"),
-            detail: mcpStatus && mcpStatus.items.length > 0 ? `${mcpConnected}/${mcpStatus.items.length}` : undefined,
-            alert: mcpStatus?.items.some((i) => i.state === "failed"),
-            title: mcpStatus ? `${mcpConnected} of ${mcpStatus.items.length} servers connected` : undefined,
-            onClick: fromSidebar(paneVisible("mcp") ? () => hidePane("mcp") : openMcp),
-          },
           {
             key: "rules",
             icon: ShieldCheck,
@@ -2465,6 +2464,7 @@ export default function App() {
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
       head={titleNav}
+      nav={[capabilitiesNav]}
       tools={sessionTools}
       prStatus={prStatus}
       onRequestPr={(paths) => {
@@ -2635,6 +2635,20 @@ export default function App() {
             onDelete={(c) => void deleteConnection(c)}
             onTest={testConnection}
             onReturn={() => setScreen(session ? "chat" : "start")}
+          />
+        )}
+        {screen === "capabilities" && (
+          <CapabilitiesPage
+            folder={capsFolder}
+            live={capsLive && session !== null}
+            skills={skillItems}
+            skillDetail={skillDetail}
+            mcp={mcpStatus}
+            mcpBusy={mcpBusy}
+            onOpenSkill={openSkill}
+            onBack={backToSkills}
+            onRestart={restartMcp}
+            onEditConfig={() => sendSafely({ type: "mcp.init" })}
           />
         )}
         {screen === "start" && (
