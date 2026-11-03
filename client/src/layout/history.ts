@@ -50,3 +50,18 @@ export function step(h: NavHistory, delta: -1 | 1): { history: NavHistory; place
   const place = h.stack[index];
   return place ? { history: { stack: h.stack, index }, place } : null;
 }
+
+/**
+ * Removes the places of a deleted session. Two same places that become neighbors become one. The
+ * current place is the last place that stays at or before the old current place.
+ */
+export function forget(h: NavHistory, sessionId: string): NavHistory {
+  const stack: Place[] = [];
+  let index = -1;
+  h.stack.forEach((place, i) => {
+    const gone = place.screen === "chat" && place.id === sessionId;
+    if (!gone && !samePlace(stack[stack.length - 1], place)) stack.push(place);
+    if (i <= h.index) index = stack.length - 1;
+  });
+  return { stack, index };
+}

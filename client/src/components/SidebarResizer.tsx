@@ -4,7 +4,9 @@ import { useRef } from "react";
 // A double-click sets the default width. The arrow keys also change the width.
 
 export const SIDEBAR_DEFAULT = 264;
-export const SIDEBAR_MIN = 200;
+// The title row of the sidebar (logo, toggle, Back, Forward, and the Code / IDE switch) needs 214px
+// with its padding and border. A smaller width cuts off the switch.
+export const SIDEBAR_MIN = 216;
 export const SIDEBAR_MAX = 480;
 const KEY_STEP = 16;
 

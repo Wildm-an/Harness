@@ -21,13 +21,8 @@ import { PromptBox, type Submission } from "./PromptBox";
 import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
 import { WorktreeMenu, type WorktreeChoice } from "./WorktreeMenu";
-import { RecentFolders, joinFolder, recentFolders } from "./RecentFolders";
+import { FolderChooser, folderName } from "./RecentFolders";
 import type { ViewMode } from "../lib/viewMode";
-
-function samePath(a: string, b: string): boolean {
-  const key = (p: string) => p.replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
-  return key(a) === key(b);
-}
 
 function loadWorktreeChoice(key: string): WorktreeChoice {
   try {
@@ -39,15 +34,6 @@ function loadWorktreeChoice(key: string): WorktreeChoice {
 }
 
 /** The folder that holds a path. */
-function parentFolder(path: string): string {
-  const at = Math.max(path.lastIndexOf("/"), path.lastIndexOf(String.fromCharCode(92)));
-  return at > 0 ? path.slice(0, at) : path;
-}
-
-function folderName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-}
-
 interface ProjectDraft {
   id?: string;
   name: string;
@@ -303,7 +289,8 @@ export function SessionStart({
   onChooseFolder,
   view = "code",
 }: {
-  // false: the app just opened. The recent folders show in the center until the user selects one.
+  // false: the user did not select a folder yet, so the folder block keeps the focus. The block stays
+  // in the center until the session starts.
   folderChosen?: boolean;
   onChooseFolder?: () => void;
   view?: ViewMode; // The IDE view shows the folder block in the editor.
@@ -367,43 +354,12 @@ export function SessionStart({
     savePref(`project.${prefScope}`, id);
   };
 
-  // The folder block shows until the user selects a folder. With no project, the form to add one shows.
-  const picking = !folderChosen && !noProjects && !form;
-  const [pickError, setPickError] = useState<string | null>(null);
+  // The folder block shows on the start screen until the user starts the session. With no project,
+  // the form to add one shows. folderChosen: the user selected a folder, so the prompt box gets the focus.
+  const picking = !noProjects && !form;
   const pick = (id: string) => {
     select(id);
-    setPickError(null);
     onChooseFolder?.();
-  };
-  // "New project…": the location of a new folder. It stays the same for each new folder, until the user
-  // changes it. With no saved location, it is the parent folder of the newest project.
-  const locationKey = `newProject.location.${prefScope}`;
-  const [location, setLocation] = useState(() => loadPref(locationKey, ""));
-  const shownLocation = location || (projects?.length ? parentFolder(recentFolders(projects)[0].path) : "");
-  const changeLocation = (next: string) => {
-    setLocation(next);
-    savePref(locationKey, next.trim());
-  };
-  const createProject = async (name: string, where: string) => {
-    const path = joinFolder(where, name);
-    if (projects?.some((p) => samePath(p.path, path))) throw new Error(`A project already uses this folder: ${path}`);
-    const id = await onSaveProject({ name, path, create: true });
-    savePref(locationKey, where);
-    setLocation(where);
-    pick(id);
-  };
-
-  /** "Open folder…": a folder from the dialog. A folder that is not a saved project becomes one. */
-  const openFolder = async () => {
-    setPickError(null);
-    const folder = await onBrowse("");
-    if (!folder) return;
-    const known = projects?.find((p) => samePath(p.path, folder));
-    try {
-      pick(known?.id ?? (await onSaveProject({ name: folderName(folder), path: folder, create: false })));
-    } catch (err) {
-      setPickError(err instanceof Error ? err.message : String(err));
-    }
   };
 
   useEffect(() => {
@@ -432,37 +388,36 @@ export function SessionStart({
     return false;
   };
 
-  // The switch to the IDE view: start an empty session, so that the files show at once. Before the
-  // user selects a folder, the request waits: the editor shows the folder block. A switch back to
-  // the Code view cancels the request.
-  const handledStart = useRef(startRequest);
+  // The switch to the IDE view: start an empty session in the selected folder, so that the files, the
+  // terminal, and the chat show at once. The editor shows the folder block until the user opens a file
+  // or sends a prompt. Until the project list loads, the request waits. A switch back to the Code
+  // view cancels the request.
+  // In the IDE view, the start screen always starts an empty session: the current request waits.
+  const handledStart = useRef(view === "ide" ? startRequest - 1 : startRequest);
   useEffect(() => {
     if (startRequest === handledStart.current) return;
     if (view !== "ide") {
       handledStart.current = startRequest;
       return;
     }
-    if (!canStart || picking) return;
+    if (!canStart) return;
     handledStart.current = startRequest;
     start({ kind: "prompt", text: "" });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- start reads the current choices.
-  }, [startRequest, canStart, picking, view]);
+  }, [startRequest, canStart, view]);
 
   const folderBlock = (
-    <RecentFolders
+    <FolderChooser
       projects={projects}
       selectedId={selected?.id ?? null}
-      onPick={pick}
-      onOpenFolder={() => void openFolder()}
-      location={shownLocation}
-      onLocationChange={changeLocation}
+      prefScope={prefScope}
       onBrowse={onBrowse}
-      onCreate={createProject}
-      error={pickError}
+      onSaveProject={onSaveProject}
+      onPicked={pick}
     />
   );
 
-  // The IDE view before the user selects a folder: an empty editor with the folder block in its center.
+  // The IDE view until the empty session starts: an empty editor with the folder block in its center.
   if (picking && view === "ide") {
     return (
       <div className="ide-start">
@@ -534,7 +489,7 @@ export function SessionStart({
             placeholder={selected ? "Describe a task or ask a question" : "Add a project first."}
             sendLabel={{ empty: "Start the session (Enter)", text: "Start the session with this task (Enter)" }}
             boxClassName="start-box"
-            focusKey={form || picking ? null : selected?.id}
+            focusKey={form || !folderChosen ? null : selected?.id}
             commands={commands}
             onRequestCommands={() => selected?.exists && onRequestCommands(selected.path)}
             sessions={selected ? mentionOrder(recentSessions, selected.path) : recentSessions}

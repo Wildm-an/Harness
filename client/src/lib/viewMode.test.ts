@@ -1,10 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { findGroupOf, groups, ideLayout, normalize, parseLayout } from "../layout/model";
-import { inlineEditPrompt, layoutKey, viewMode } from "./viewMode";
+import { inlineEditPrompt, layoutKey, setViewMode, viewMode } from "./viewMode";
 
 describe("the view mode", () => {
   it("is the Code view when no preference is saved", () => {
     expect(viewMode()).toBe("code");
+  });
+
+  it("is the view that the user used last", () => {
+    // The tests run with no browser: a storage in memory.
+    const data = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+      },
+    });
+    try {
+      setViewMode("ide");
+      expect(viewMode()).toBe("ide");
+      setViewMode("code");
+      expect(viewMode()).toBe("code");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps the old layout key for the Code view, and a separate key for the IDE view", () => {

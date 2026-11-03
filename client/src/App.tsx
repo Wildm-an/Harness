@@ -90,7 +90,7 @@ import {
   shortcutLabel,
   shortcutPane,
 } from "./layout/shortcuts";
-import { emptyHistory, placeOf, samePlace, step, visit, type NavHistory, type Place } from "./layout/history";
+import { emptyHistory, forget, placeOf, samePlace, step, visit, type NavHistory, type Place } from "./layout/history";
 import { TerminalPane, forgetSessionTerminals } from "./components/TerminalPane";
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
@@ -111,7 +111,7 @@ import { BrowserPane, clearBrowserData, keepCookies } from "./browser/BrowserPan
 import { AllowedSites } from "./components/AllowedSites";
 import { openLink, setPaneOpener } from "./lib/openLink";
 import { ROOM_PANES, needsRailRoom, railShown, setRailShown } from "./lib/sessionRail";
-import { inlineEditPrompt, layoutKey, type ViewMode } from "./lib/viewMode";
+import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } from "./lib/viewMode";
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
@@ -134,6 +134,7 @@ import { ChangelogPage } from "./components/ChangelogPage";
 import { PromptBox, type Submission } from "./components/PromptBox";
 import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
+import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
@@ -176,6 +177,10 @@ const SIDEBAR_SESSIONS = 300;
 
 // On a window this narrow, the sidebar covers the page (the same width as in styles.css).
 const NARROW_QUERY = "(max-width: 900px)";
+// The hidden sidebar: the time the pointer stays on the sidebar toggle before it shows, and the time
+// after the pointer leaves it before it goes away.
+const PEEK_OPEN_MS = 120;
+const PEEK_CLOSE_MS = 300;
 
 // Project files that open in the Browser pane. PDF and Word files open in the Preview pane.
 const BROWSER_FILE_RE = /\.(html?|png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|ogg|mp3|wav)$/i;
@@ -292,10 +297,11 @@ export default function App() {
   const [fileMatches, setFileMatches] = useState<{ query: string; items: string[] } | null>(null); // The "@" menu.
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null); // The context breakdown.
-  // The IDE view starts with the sidebar hidden. The Code view shows it again (switchView).
-  const [sidebarOpen, setSidebarOpen] = useState(
-    () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches,
-  );
+  // The app opens in the view that the user used last. The IDE view starts with the sidebar hidden.
+  // The Code view shows it again (switchView).
+  const [startView] = useState(viewMode);
+  const [savedSidebar] = useState(() => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches);
+  const [sidebarOpen, setSidebarOpen] = useState(startView === "code" && savedSidebar);
   const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebar(Number(loadPref("sidebar.width", String(SIDEBAR_DEFAULT)))));
   const [session, setSession] = useState<ActiveSession | null>(null);
   const [branches, setBranches] = useState<(GitBranches & { cwd: string }) | null>(null); // For the worktree chip.
@@ -309,7 +315,7 @@ export default function App() {
   const lastLayout = useRef<LayoutNode | null>(null);
   // The Code view or the IDE view (the switch in the title bar). Each view has its own layout. The
   // app always opens in the Code view, and each new session starts in it (newSession, startSession).
-  const [view, setView] = useState<ViewMode>("code");
+  const [view, setView] = useState<ViewMode>(startView);
   const viewRef = useRef(view);
   viewRef.current = view;
   useLayoutEffect(() => {
@@ -324,8 +330,15 @@ export default function App() {
   // false: the start screen shows the recent folders in its center (the app just opened, "New
   // session", or the "+" of a project). A folder from that block, a new session, or an open session makes it true.
   const [folderChosen, setFolderChosen] = useState(false);
-  const sidebarBeforeIde = useRef<boolean | null>(null);
+  const sidebarBeforeIde = useRef<boolean | null>(startView === "ide" ? savedSidebar : null);
   const ideStarting = useRef(false); // The IDE switch on the start screen starts this session: it stays in the IDE view.
+  // The empty session that the IDE switch started: its editor shows the folder block until the user
+  // opens a file or sends a prompt. ideBlockNext: the next new session gets the block.
+  const [ideBlockFor, setIdeBlockFor] = useState<string | null>(null);
+  const ideBlockNext = useRef(false);
+  // The same empty session until the user sends a prompt. A switch back to the Code view removes it
+  // and shows the start screen again: only the view changed.
+  const ideEmptyFor = useRef<string | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
   const [promptInsert, setPromptInsert] = useState<{ text: string; key: number; replace?: boolean } | null>(null);
   const [browserRequest, setBrowserRequest] = useState<{ url: string; key: number } | null>(null);
@@ -526,6 +539,9 @@ export default function App() {
       switch (msg.type) {
         case "session.ready": {
           if (sessionRef.current?.id !== msg.session_id) {
+            setIdeBlockFor(ideBlockNext.current ? msg.session_id : null);
+            ideEmptyFor.current = ideBlockNext.current ? msg.session_id : null;
+            ideBlockNext.current = false;
             setReviewId(null);
             setRules(null);
             setAgentFrame(null);
@@ -615,6 +631,7 @@ export default function App() {
           return;
         case "session.deleted":
           if (sessionRef.current?.id === msg.id) showStartRef.current();
+          setNav((h) => forget(h, msg.id)); // Back and Forward do not open a deleted session.
           setUnreadSessions((u) => {
             if (!u.has(msg.id)) return u;
             const next = new Set(u);
@@ -1147,7 +1164,9 @@ export default function App() {
     setFolderChosen(true);
     firstPrompt.current = prompt;
     if (!ideStarting.current) switchViewRef.current("code"); // A new session starts in the Code view.
+    ideBlockNext.current = ideStarting.current;
     ideStarting.current = false;
+    setRail(true); // Each new session opens with the session rail. The saved preference does not change.
     conn.send({ type: "session.new", cwd, model, permission_mode: mode, ...(worktree ? { worktree } : {}) });
   };
 
@@ -1179,8 +1198,12 @@ export default function App() {
 
   /** Shows the start screen, with the folder block in its center. */
   const newSession = () => {
-    setFolderChosen(false);
     switchViewRef.current("code"); // A new session starts in the Code view.
+    showStart();
+  };
+  /** Leaves the session and shows the start screen in the current view. */
+  const showStart = () => {
+    setFolderChosen(false);
     conn.leaveSession(); // A running turn of the session continues in the background.
     setSession(null);
     dispatch({ type: "clear" });
@@ -1334,6 +1357,8 @@ export default function App() {
 
   /** A message during a turn waits in the queue. Else it goes to the agent now. */
   const submitOrQueue = (s: Submission): boolean => {
+    setIdeBlockFor(null); // A prompt closes the folder block in the editor.
+    ideEmptyFor.current = null; // The session started: it stays in the Code view.
     if (!session || !chat.running) return submit(s);
     const label = s.kind === "prompt" ? (s.display ?? s.text) : `/${s.name}${s.args ? ` ${s.args}` : ""}`;
     const item: QueuedItem = { id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, submission: s, label };
@@ -1508,6 +1533,15 @@ export default function App() {
     roomPanes.current = { view, open };
     if (view === "code" && before?.view === view && needsRailRoom(before.open, open)) setRail(false);
   }, [layout, view]);
+  // The next launch opens in this view.
+  useEffect(() => setViewMode(view), [view]);
+  // The start screen in the IDE view (at launch, or after a change of computer): start an empty
+  // session in the selected project, as a switch to the IDE view does.
+  useEffect(() => {
+    if (screen !== "start" || viewRef.current !== "ide") return;
+    ideStarting.current = true;
+    setIdeStart((n) => n + 1);
+  }, [screen, current?.id]);
   /** Change the view. Each view loads its own layout. The IDE view hides the sessions sidebar, and the Code view shows it again. */
   const switchView = (mode: ViewMode) => {
     if (mode === view) return;
@@ -1519,8 +1553,20 @@ export default function App() {
       setIdeStart((n) => n + 1);
     } else if (mode === "code") {
       ideStarting.current = false;
+      // The IDE view started this empty session, and the user sent no prompt: go back to the start
+      // screen, and remove the session.
+      if (session && ideEmptyFor.current === session.id && !chat.running) {
+        const id = session.id;
+        ideEmptyFor.current = null;
+        showStart();
+        sendSafely({ type: "session.delete", session_id: id });
+      }
     }
-    if (session) setLayout(loadLayout(currentRef.current?.id ?? "local", session.cwd, mode));
+    if (session) {
+      const next = loadLayout(currentRef.current?.id ?? "local", session.cwd, mode);
+      // The Files window belongs to the IDE view: a switch to the Code view closes it.
+      setLayout(mode === "code" ? closePane(closePane(next, "files"), "editor") : next);
+    }
     if (mode === "ide") {
       sidebarBeforeIde.current = sidebarOpen;
       setSidebarOpen(false);
@@ -1645,6 +1691,38 @@ export default function App() {
   }, [layout, session, view]);
 
   const editor = useEditor(conn, session?.id ?? null, session?.cwd ?? "");
+  // An open file closes the folder block in the editor.
+  useEffect(() => {
+    if (editor.active && ideBlockFor) setIdeBlockFor(null);
+  }, [editor.active, ideBlockFor]);
+
+  /** A folder from the block in the editor: the empty session moves there, with its files and terminal. */
+  const pickIdeFolder = (id: string, path: string) => {
+    if (!session) return;
+    savePref(`project.${currentRef.current?.id ?? "local"}`, id); // The start screen selects it next time.
+    if (samePath(path, session.cwd)) return;
+    if (session.worktree) {
+      // A worktree session cannot move: a new empty session starts in the folder.
+      ideStarting.current = true;
+      startSession(path, session.model, null, permissionMode, null);
+      return;
+    }
+    sendSafely({ type: "session.move", session_id: session.id, cwd: path });
+  };
+  const ideBlock =
+    session && ideBlockFor === session.id ? (
+      <>
+        <p className="ide-start-title">Choose a folder to work in</p>
+        <FolderChooser
+          projects={projects}
+          selectedId={projects?.find((p) => samePath(p.path, session.cwd))?.id ?? null}
+          prefScope={currentRef.current?.id ?? "local"}
+          onBrowse={browseFolder}
+          onSaveProject={saveProject}
+          onPicked={pickIdeFolder}
+        />
+      </>
+    ) : undefined;
   const servers = useServers(conn, session?.id ?? null);
 
   const showInBrowser = useCallback((url: string) => {
@@ -2017,6 +2095,7 @@ export default function App() {
           onOpenFolder={() => void changeFolder()}
           onPreview={openPreview}
           openFolderBlocked={openFolderBlocked({ connected: status === "open", running: chat.running, worktree: !!session?.worktree })}
+          emptyContent={ideBlock}
         />
       ),
     },
@@ -2182,9 +2261,65 @@ export default function App() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [sidebarOpen]);
-  /** On a narrow window the sidebar covers the page. Close it after a choice. */
+  // The hidden sidebar shows over the view while the pointer is on the sidebar toggle, or on the sidebar.
+  const [peek, setPeek] = useState(false);
+  // The pointer is on the sidebar toggle. The browser does not update the hover while the sidebar
+  // reveals under a still pointer, so the toggle in the sidebar keeps the hover look until the pointer moves off it.
+  const [toggleHot, setToggleHot] = useState(false);
+  const peekRef = useRef<HTMLDivElement>(null);
+  const peekTimer = useRef<number | null>(null);
+  const cancelPeek = () => {
+    if (peekTimer.current !== null) window.clearTimeout(peekTimer.current);
+    peekTimer.current = null;
+  };
+  const startPeek = (e: React.MouseEvent) => {
+    if (e.buttons !== 0) return; // Not during a drag.
+    cancelPeek();
+    peekTimer.current = window.setTimeout(() => {
+      peekTimer.current = null;
+      setToggleHot(true);
+      setPeek(true);
+    }, PEEK_OPEN_MS);
+  };
+  useEffect(() => {
+    if (sidebarOpen) setPeek(false);
+  }, [sidebarOpen]);
+  // The sidebar goes away a short time after the pointer leaves it. A menu or a dialog of the
+  // sidebar keeps it. Esc closes it.
+  useEffect(() => {
+    if (!peek) return;
+    let closeTimer: number | null = null;
+    const keep = (target: EventTarget | null) =>
+      target instanceof Element && (peekRef.current?.contains(target) || target.closest('[role="menu"], [role="dialog"], [role="listbox"], .tooltip') !== null);
+    const onMove = (e: PointerEvent) => {
+      setToggleHot(e.target instanceof Element && e.target.closest(".sidebar-toggle") !== null);
+      if (keep(e.target)) {
+        if (closeTimer !== null) window.clearTimeout(closeTimer);
+        closeTimer = null;
+      } else if (closeTimer === null) {
+        closeTimer = window.setTimeout(() => setPeek(false), PEEK_CLOSE_MS);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !document.querySelector('[role="menu"], [role="dialog"]')) setPeek(false);
+    };
+    const onLeaveWindow = (e: MouseEvent) => {
+      if (!e.relatedTarget) setPeek(false);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mouseout", onLeaveWindow);
+    return () => {
+      if (closeTimer !== null) window.clearTimeout(closeTimer);
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mouseout", onLeaveWindow);
+    };
+  }, [peek]);
+  /** On a narrow window the sidebar covers the page. Close it after a choice. The shown-over sidebar also closes. */
   const fromSidebar = (action: () => void) => () => {
     action();
+    setPeek(false);
     if (narrow()) setSidebarOpen(false);
   };
   // Back and forward, as in Claude. Each new screen or session goes into the history.
@@ -2247,8 +2382,11 @@ export default function App() {
       <img className="title-logo" src="/app-logo.png" alt="Harness" width={20} height={20} draggable={false} />
       <button
         type="button"
-        className="icon-btn ghost"
+        className={`icon-btn ghost sidebar-toggle${peek && toggleHot ? " hot" : ""}`}
         onClick={() => showSidebar(!sidebarOpen)}
+        // While the sidebar is hidden, the pointer on this button shows the sidebar over the view.
+        onMouseEnter={sidebarOpen ? undefined : startPeek}
+        onMouseLeave={cancelPeek}
         aria-label={sidebarOpen ? "Hide the sidebar" : "Show the sidebar"}
         title={`${sidebarOpen ? "Hide sidebar" : "Show sidebar"} (${SIDEBAR_SHORTCUT})`}
       >
@@ -2313,58 +2451,62 @@ export default function App() {
 
   const statusText = status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected";
 
+  const sidebarView = (
+    <Sidebar
+      sessions={recent}
+      running={runningSessions}
+      unread={unreadSessions}
+      activeId={shownId}
+      screen={screen}
+      status={status}
+      projects={projects ?? []}
+      onNewSession={fromSidebar(newSession)}
+      onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
+      actions={sessionActions}
+      newSessionKey={NEW_SESSION_SHORTCUT}
+      head={titleNav}
+      tools={sessionTools}
+      prStatus={prStatus}
+      onRequestPr={(paths) => {
+        if (conn.status === "open") conn.send({ type: "git.pr_status", paths });
+      }}
+      onSearch={() => setSearchOpen(true)}
+      searchKey={SEARCH_SHORTCUT}
+      connection={
+        <button
+          type="button"
+          className={`conn conn-${status}${screen === "connections" ? " active" : ""}`}
+          onClick={fromSidebar(openConnections)}
+          title={`${statusText}${hello ? ` to ${hello.hostname} (${hello.platform})` : ""}. Open the computers.`}
+        >
+          <span className="conn-dot" aria-hidden />
+          <ConnectionIcon connection={current} />
+          <span className="conn-text">
+            <span className="conn-name">{current?.name ?? "No connection"}</span>
+            <span className="conn-host">{hello ? `${statusText} · ${hello.hostname}` : statusText}</span>
+          </span>
+        </button>
+      }
+      settings={
+        <button
+          type="button"
+          className={`icon-btn ghost side-settings${settingsPage ? " active" : ""}`}
+          onClick={() => (settingsPage ? setSettingsPage(null) : openSettings("general"))}
+          aria-label={newVersion ? `Settings (${SETTINGS_SHORTCUT}). Version ${newVersion} is available.` : `Settings (${SETTINGS_SHORTCUT})`}
+          title={newVersion ? `Settings (${SETTINGS_SHORTCUT}): version ${newVersion} is available` : `Settings (${SETTINGS_SHORTCUT})`}
+        >
+          <SettingsIcon size={16} aria-hidden />
+          {newVersion && <span className="update-dot" aria-hidden />}
+        </button>
+      }
+    />
+  );
+
   return (
     <div className={`app${sidebarOpen ? " sidebar-open" : ""}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       {sidebarOpen && (
         <>
-          <Sidebar
-            sessions={recent}
-            running={runningSessions}
-            unread={unreadSessions}
-            activeId={shownId}
-            screen={screen}
-            status={status}
-            projects={projects ?? []}
-            onNewSession={fromSidebar(newSession)}
-            onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
-            actions={sessionActions}
-            newSessionKey={NEW_SESSION_SHORTCUT}
-            head={titleNav}
-            tools={sessionTools}
-            prStatus={prStatus}
-            onRequestPr={(paths) => {
-              if (conn.status === "open") conn.send({ type: "git.pr_status", paths });
-            }}
-            onSearch={() => setSearchOpen(true)}
-            searchKey={SEARCH_SHORTCUT}
-            connection={
-              <button
-                type="button"
-                className={`conn conn-${status}${screen === "connections" ? " active" : ""}`}
-                onClick={fromSidebar(openConnections)}
-                title={`${statusText}${hello ? ` to ${hello.hostname} (${hello.platform})` : ""}. Open the computers.`}
-              >
-                <span className="conn-dot" aria-hidden />
-                <ConnectionIcon connection={current} />
-                <span className="conn-text">
-                  <span className="conn-name">{current?.name ?? "No connection"}</span>
-                  <span className="conn-host">{hello ? `${statusText} · ${hello.hostname}` : statusText}</span>
-                </span>
-              </button>
-            }
-            settings={
-              <button
-                type="button"
-                className={`icon-btn ghost side-settings${settingsPage ? " active" : ""}`}
-                onClick={() => (settingsPage ? setSettingsPage(null) : openSettings("general"))}
-                aria-label={newVersion ? `Settings (${SETTINGS_SHORTCUT}). Version ${newVersion} is available.` : `Settings (${SETTINGS_SHORTCUT})`}
-                title={newVersion ? `Settings (${SETTINGS_SHORTCUT}): version ${newVersion} is available` : `Settings (${SETTINGS_SHORTCUT})`}
-              >
-                <SettingsIcon size={16} aria-hidden />
-                {newVersion && <span className="update-dot" aria-hidden />}
-              </button>
-            }
-          />
+          {sidebarView}
           <SidebarResizer
             width={sidebarWidth}
             onChange={setSidebarWidth}
@@ -2375,6 +2517,12 @@ export default function App() {
           />
           <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden />
         </>
+      )}
+      {/* The sidebar is hidden: the pointer on the sidebar toggle shows it over the view. */}
+      {!sidebarOpen && peek && (
+        <div className="sidebar-peek" ref={peekRef}>
+          {sidebarView}
+        </div>
       )}
       <div className="shell">
         <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">

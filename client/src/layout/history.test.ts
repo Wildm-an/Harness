@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyHistory, placeOf, samePlace, step, visit, type Place } from "./history";
+import { emptyHistory, forget, placeOf, samePlace, step, visit, type Place } from "./history";
 
 const start: Place = { screen: "start" };
 const chatA: Place = { screen: "chat", id: "a" };
@@ -48,5 +48,26 @@ describe("the back and forward history", () => {
     expect(placeOf("starting", null)).toBeNull();
     expect(samePlace(placeOf("cookbook", "a")!, { screen: "cookbook" })).toBe(true);
     expect(samePlace(chatA, chatB)).toBe(false);
+  });
+});
+
+describe("a deleted session in the history", () => {
+  it("goes away, and the start screens around it become one place", () => {
+    const h = forget(visit(visit(visit(emptyHistory, start), chatA), start), "a");
+    expect(h.stack).toEqual([start]);
+    expect(h.index).toBe(0);
+    expect(step(h, -1)).toBeNull();
+  });
+
+  it("keeps the other places and the current place", () => {
+    const h = forget(visit(visit(visit(visit(emptyHistory, chatB), chatA), plugins), start), "a");
+    expect(h.stack).toEqual([chatB, plugins, start]);
+    expect(h.index).toBe(2);
+  });
+
+  it("moves the current place back when the current place goes away", () => {
+    const h = forget(visit(visit(emptyHistory, start), chatA), "a");
+    expect(h.stack).toEqual([start]);
+    expect(h.index).toBe(0);
   });
 });

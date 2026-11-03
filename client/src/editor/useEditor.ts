@@ -131,7 +131,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     models.current.clear();
   }, []);
 
-  // A new session has other files.
+  // A new session, or a session in another folder, has other files.
   useEffect(() => {
     disposeAll();
     reads.current = [];
@@ -143,7 +143,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     setSearch({ query: "", busy: false, items: [], truncated: false, error: null });
     if (sessionKey) listDir(".");
     return disposeAll;
-  }, [sessionKey, disposeAll, listDir]);
+  }, [sessionKey, cwd, disposeAll, listDir]);
 
   const setModelContent = useCallback(
     (path: string, content: string, keepUndo: boolean) => {

@@ -8,11 +8,29 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, Folder, FolderOpen, FolderPlus, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { ProjectItem } from "../daemon/protocol";
 import { parentHints } from "../lib/projectLabels";
+import { loadPref, savePref } from "../lib/prefs";
 
 // The block shows this many folders. "Show more" shows all of them.
 const SHOWN = 3;
 // With all the folders shown, the list scrolls after this many rows.
 const SCROLL_AFTER = 8;
+
+/** True for two paths of the same folder. */
+export function samePath(a: string, b: string): boolean {
+  const key = (p: string) => p.replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+  return key(a) === key(b);
+}
+
+/** The folder that contains a path. */
+export function parentFolder(path: string): string {
+  const at = Math.max(path.lastIndexOf("/"), path.lastIndexOf(String.fromCharCode(92)));
+  return at > 0 ? path.slice(0, at) : path;
+}
+
+/** The last part of a path. */
+export function folderName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
 
 /** The path of a new folder in a location, with the separator of the location. */
 export function joinFolder(location: string, name: string): string {
@@ -274,5 +292,80 @@ export function RecentFolders({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The folder block with its actions: "Open folder…" adds a folder as a project, and "New project…"
+ * makes a new folder. The start screen and the IDE editor use it. onPicked gets the project and its path.
+ */
+export function FolderChooser({
+  projects,
+  selectedId,
+  prefScope,
+  onBrowse,
+  onSaveProject,
+  onPicked,
+}: {
+  projects: ProjectItem[] | null; // null: loading.
+  selectedId: string | null; // The folder with the check mark.
+  prefScope: string; // The location of a new project is remembered for each connection.
+  onBrowse: (current: string) => Promise<string | null>;
+  onSaveProject: (draft: { name: string; path: string; create: boolean }) => Promise<string>;
+  onPicked: (id: string, path: string) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  // The location of a new folder. It stays the same for each new folder, until the user changes it.
+  // With no saved location, it is the parent folder of the newest project.
+  const locationKey = `newProject.location.${prefScope}`;
+  const [location, setLocation] = useState(() => loadPref(locationKey, ""));
+  const shownLocation = location || (projects?.length ? parentFolder(recentFolders(projects)[0].path) : "");
+  const changeLocation = (next: string) => {
+    setLocation(next);
+    savePref(locationKey, next.trim());
+  };
+
+  const pick = (id: string, path: string) => {
+    setError(null);
+    onPicked(id, path);
+  };
+
+  const create = async (name: string, where: string) => {
+    const path = joinFolder(where, name);
+    if (projects?.some((p) => samePath(p.path, path))) throw new Error(`A project already uses this folder: ${path}`);
+    const id = await onSaveProject({ name, path, create: true });
+    savePref(locationKey, where);
+    setLocation(where);
+    pick(id, path);
+  };
+
+  /** A folder from the dialog. A folder that is not a saved project becomes one. */
+  const openFolder = async () => {
+    setError(null);
+    const folder = await onBrowse("");
+    if (!folder) return;
+    const known = projects?.find((p) => samePath(p.path, folder));
+    try {
+      pick(known?.id ?? (await onSaveProject({ name: folderName(folder), path: folder, create: false })), known?.path ?? folder);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <RecentFolders
+      projects={projects}
+      selectedId={selectedId}
+      onPick={(id) => {
+        const p = projects?.find((x) => x.id === id);
+        if (p) pick(p.id, p.path);
+      }}
+      onOpenFolder={() => void openFolder()}
+      location={shownLocation}
+      onLocationChange={changeLocation}
+      onBrowse={onBrowse}
+      onCreate={create}
+      error={error}
+    />
   );
 }

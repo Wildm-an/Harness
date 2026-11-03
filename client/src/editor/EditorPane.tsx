@@ -106,6 +106,7 @@ export function EditorPane({
   onPreview,
   openFolderBlocked,
   part = "all",
+  emptyContent,
 }: {
   // "files": only the file list and search, as the Files pane of the IDE view (VS Code's Explorer).
   // "editor": only the editor, when the Files pane shows the files. "all": both, in one pane.
@@ -118,6 +119,7 @@ export function EditorPane({
   onOpenFolder: () => void; // "Open folder…": select a folder in the file explorer. The session moves to it.
   onPreview?: (path: string) => void; // A PDF or Word file opens in the Preview pane.
   openFolderBlocked: string | null; // Why the folder cannot change now. null: it can change.
+  emptyContent?: React.ReactNode; // Shows in place of the help text when no file is open.
 }) {
   // The inline edit box (Ctrl+K), as in Cursor: it shows at the selection, and sends the instruction to the agent.
   const [inline, setInline] = useState<{ reference: string; top: number } | null>(null);
@@ -544,6 +546,8 @@ export function EditorPane({
             <p className="pane-empty">
               <LoaderCircle size={16} className="spin" aria-hidden /> Opening {file.path}
             </p>
+          ) : !file && emptyContent ? (
+            <div className="editor-empty editor-empty-custom">{emptyContent}</div>
           ) : !file ? (
             <div className="editor-empty">
               <FileCode size={28} aria-hidden />
