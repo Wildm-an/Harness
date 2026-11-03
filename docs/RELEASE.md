@@ -66,6 +66,19 @@ For each release:
    the installed apps find the new version only after this step.
 5. The installed apps find the new version at launch, and with "Check for updates".
 
+To build a release again with the same version (for example after a fix that has no new version):
+
+1. Push the fix to `master`, and move the tag to the new commit:
+   `git tag -f -a v0.1.34 <commit> -m "Harness 0.1.34"`, then `git push --force origin refs/tags/v0.1.34`.
+   The moved tag starts the workflow.
+2. Or keep the tag, and start the workflow by hand with the tag:
+   `gh workflow run release.yml --ref master -f tag=v0.1.34`. It builds the code of the tag.
+3. The workflow sees that the release exists. It replaces the files with the same names and the
+   release keeps its state (draft or published). It does not make a second release.
+
+An installed app that has the same version does not see an update. To get the new build, run the
+setup file of the release again.
+
 `latest.json` has the version, the date, and the URL and the signature of each platform:
 
 ```json
