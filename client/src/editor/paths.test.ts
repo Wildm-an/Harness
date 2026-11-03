@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deleteText, normalizePath, openFolderBlocked, selectionReference } from "./paths";
+import { absolutePath, deleteText, normalizePath, openFolderBlocked, renamedPath, renameProblem, selectionReference } from "./paths";
 import { parsePathRef } from "../lib/openPath";
 
 describe("editor paths", () => {
@@ -55,5 +55,28 @@ describe("the delete question", () => {
     expect(deleteText({ path: "src", type: "dir" }, open)).toContain("2 open files have unsaved changes");
     expect(deleteText({ path: "src/a.py", type: "file" }, open)).toContain("An open file has unsaved changes");
     expect(deleteText({ path: "src/d.py", type: "file" }, open)).not.toContain("unsaved");
+  });
+});
+
+describe("rename and copy path in the file tree", () => {
+  it("moves the item and the files in a renamed folder", () => {
+    expect(renamedPath("src/a.py", "src/a.py", "src/b.py")).toBe("src/b.py");
+    expect(renamedPath("src/lib/x.ts", "src/lib", "src/core")).toBe("src/core/x.ts");
+    expect(renamedPath("src/library/x.ts", "src/lib", "src/core")).toBeNull(); // Only the same folder.
+    expect(renamedPath("other.py", "src", "lib")).toBeNull();
+  });
+
+  it("makes the full path with the separator of the session folder", () => {
+    expect(absolutePath("C:\\Users\\me\\app", "src/a.py")).toBe("C:\\Users\\me\\app\\src\\a.py");
+    expect(absolutePath("/home/me/app/", "src/a.py")).toBe("/home/me/app/src/a.py");
+    expect(absolutePath("/home/me/app", ".")).toBe("/home/me/app");
+  });
+
+  it("accepts a plain name only", () => {
+    expect(renameProblem("b.py")).toBeNull();
+    expect(renameProblem("  ")).toBe("Give a name.");
+    expect(renameProblem("..")).not.toBeNull();
+    expect(renameProblem("src/b.py")).toContain("no /");
+    expect(renameProblem("src\\b.py")).toContain("no /");
   });
 });

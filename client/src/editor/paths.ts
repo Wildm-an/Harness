@@ -88,3 +88,30 @@ export function deleteText(entry: { path: string; type: "file" | "dir" }, open: 
   if (unsaved > 0) parts.push(unsaved === 1 ? "An open file has unsaved changes. They are lost." : `${unsaved} open files have unsaved changes. They are lost.`);
   return parts.join(" ");
 }
+
+/**
+ * The new path of a path after a rename of `from` to `to` (the item, or a file in a renamed
+ * folder). null: the rename does not change the path.
+ */
+export function renamedPath(path: string, from: string, to: string): string | null {
+  if (path === from) return to;
+  if (path.startsWith(`${from}/`)) return to + path.slice(from.length);
+  return null;
+}
+
+/** The full path of a file of the session folder, with the separator of the session folder path. */
+export function absolutePath(cwd: string, path: string): string {
+  const sep = cwd.includes("\\") ? "\\" : "/";
+  const root = cwd.replace(/[\\/]+$/, "");
+  if (!path || path === ".") return root || sep;
+  return `${root}${sep}${path.split("/").join(sep)}`;
+}
+
+/** Why a new name for Rename cannot be used, or null. The name stays in the same folder. */
+export function renameProblem(name: string): string | null {
+  const n = name.trim();
+  if (!n) return "Give a name.";
+  if (n === "." || n === "..") return "Give a name that is not . or ..";
+  if (/[\\/]/.test(n)) return "Give a name with no / or \\.";
+  return null;
+}

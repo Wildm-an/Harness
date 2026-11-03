@@ -52,6 +52,7 @@ from .providers import (
     resolve_model,
 )
 from .tools.base import ToolError
+from .tools.document import check_preview_file
 from .tools.grep import search_project
 from .tools.search import find_paths
 from .tunnels import TUNNELS, TunnelError
@@ -2550,6 +2551,26 @@ async def on_fs_read(conn: Connection, msg: dict[str, Any]) -> None:
                      "hash": hash_bytes(data)})
 
 
+@handler("fs.read_bytes")
+async def on_fs_read_bytes(conn: Connection, msg: dict[str, Any]) -> None:
+    """The bytes of a .pdf or .docx file for the Preview pane, as base64. The reply is "fs.bytes".
+
+    The client cannot fetch the /files/ URL: its Content Security Policy allows only WebSocket
+    connections to the daemon.
+    """
+    session = conn.require_session()
+    raw = _text_arg(msg, "path")
+    path = resolve_in_cwd(session.cwd, raw)
+    rel = relpath(session.cwd, path)
+    try:
+        check_preview_file(path, rel)
+    except ToolError as e:
+        raise ProtocolError(str(e)) from None
+    data = await asyncio.to_thread(path.read_bytes)
+    await conn.send({"type": "fs.bytes", "path": rel, "data": base64.b64encode(data).decode("ascii"),
+                     "size": len(data)})
+
+
 @handler("fs.write")
 async def on_fs_write(conn: Connection, msg: dict[str, Any]) -> None:
     session = conn.require_session()
@@ -2625,6 +2646,46 @@ async def on_fs_delete(conn: Connection, msg: dict[str, Any]) -> None:
     for watched in [w for w in conn.watched if w == rel or w.startswith(rel + "/")]:
         conn.watched.pop(watched, None)  # The editor closes these files. No change reports for them.
     await conn.send({"type": "fs.deleted", "path": rel, "kind": kind, "trash": to_trash})
+
+
+@handler("fs.rename")
+async def on_fs_rename(conn: Connection, msg: dict[str, Any]) -> None:
+    """Rename of the editor file tree: {"path", "name"}. The item stays in its folder: "name" is
+    a new name, not a path. The reply is "fs.renamed" {"path", "new_path", "kind"}."""
+    session = conn.require_session()
+    raw = _text_arg(msg, "path").strip().replace("\\", "/").strip("/")
+    name = _text_arg(msg, "name").strip()
+    if not raw or raw == ".":
+        raise ProtocolError("Give a file or a folder in the project.")
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        raise ProtocolError("Give a name with no / or \\.")
+    link = Path(session.cwd) / raw
+    if link.is_symlink():  # Rename the link itself, not its target.
+        source = link
+        resolve_in_cwd(session.cwd, str(Path(raw).parent))
+    else:
+        source = resolve_in_cwd(session.cwd, raw)
+    if source == Path(session.cwd).resolve():
+        raise ProtocolError("The session folder itself cannot be renamed here.")
+    if not os.path.lexists(source):
+        raise ProtocolError(f"{raw} does not exist.")
+    target = source.parent / name
+    resolve_in_cwd(session.cwd, str(target.parent))  # The folder of the item is in the project.
+    old = raw if source is link else relpath(session.cwd, source)
+    # The folder and the typed name. resolve() of the target would give the old case on Windows.
+    folder = relpath(session.cwd, source.parent)
+    new = name if folder in ("", ".") else f"{folder}/{name}"
+    # A change of case only ("a.py" to "A.py") is a rename on Windows too, not a name that exists.
+    if os.path.lexists(target) and os.path.normcase(str(target)) != os.path.normcase(str(source)):
+        raise ProtocolError(f"{name} exists already.")
+    kind = "dir" if source.is_dir() and not source.is_symlink() else "file"
+    try:
+        await asyncio.to_thread(os.rename, source, target)
+    except OSError as e:
+        raise ProtocolError(f"Could not rename {old}: {e.strerror or e}") from None
+    for watched in [w for w in conn.watched if w == old or w.startswith(old + "/")]:
+        conn.watched.pop(watched, None)  # The editor opens the files again at their new paths.
+    await conn.send({"type": "fs.renamed", "path": old, "new_path": new, "kind": kind})
 
 
 @handler("fs.unwatch")

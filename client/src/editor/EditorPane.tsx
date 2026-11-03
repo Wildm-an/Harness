@@ -103,14 +103,20 @@ export function EditorPane({
   onReference,
   onInlineEdit,
   onOpenFolder,
+  onPreview,
   openFolderBlocked,
+  part = "all",
 }: {
+  // "files": only the file list and search, as the Files pane of the IDE view (VS Code's Explorer).
+  // "editor": only the editor, when the Files pane shows the files. "all": both, in one pane.
+  part?: "all" | "files" | "editor";
   api: EditorApi;
   sessionKey: string;
   agentLines: Map<string, number[]>; // The lines that the agent changed in the current turn.
   onReference: (text: string) => void;
   onInlineEdit: (reference: string, instruction: string) => void; // Ctrl+K: the agent changes the selected code.
   onOpenFolder: () => void; // "Open folder…": select a folder in the file explorer. The session moves to it.
+  onPreview?: (path: string) => void; // A PDF or Word file opens in the Preview pane.
   openFolderBlocked: string | null; // Why the folder cannot change now. null: it can change.
 }) {
   // The inline edit box (Ctrl+K), as in Cursor: it shows at the selection, and sends the instruction to the agent.
@@ -143,7 +149,8 @@ export function EditorPane({
     { label: "New folder…", icon: FolderPlus, run: () => startCreate("dir") },
     { label: "Open folder…", icon: FolderOpen, run: onOpenFolder, disabled: openFolderBlocked !== null, title: openFolderBlocked ?? undefined },
     { label: "Refresh", icon: RefreshCw, run: api.refreshTree },
-    { label: "Hide the sidebar", icon: PanelLeftClose, run: () => setSidebar(null) },
+    // The Files pane closes with the X of its window, not with this button.
+    ...(part === "files" ? [] : [{ label: "Hide the sidebar", icon: PanelLeftClose, run: () => setSidebar(null) }]),
   ];
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TreeEntry | null>(null); // Delete of the file tree asks first.
@@ -174,6 +181,7 @@ export function EditorPane({
   // Autocomplete, as GitHub Copilot: when the user stops typing, the model of the session writes
   // the text at the cursor. Monaco shows it as gray text: Tab accepts it, Esc hides it.
   useEffect(() => {
+    if (part === "files") return; // The Files pane has no editor: one provider is enough.
     const provider = monaco.languages.registerInlineCompletionsProvider("*", {
       provideInlineCompletions: async (model, position, _context, token) => {
         const none = { items: [] };
@@ -289,21 +297,25 @@ export function EditorPane({
     else api.closeFile(path);
   };
 
+  // The Files pane always shows its list. The editor-only part has no list.
+  const showSide = part === "files" ? true : part === "editor" ? false : sidebar !== null;
   return (
     <div
-      className={`editor-pane${sidebar ? "" : " no-sidebar"}`}
-      style={sidebar && sideWidth !== null ? { gridTemplateColumns: `${sideWidth}px minmax(0, 1fr)` } : undefined}
+      className={`editor-pane${showSide ? "" : " no-sidebar"}${part === "files" ? " files-only" : ""}`}
+      style={showSide && part === "all" && sideWidth !== null ? { gridTemplateColumns: `${sideWidth}px minmax(0, 1fr)` } : undefined}
     >
-      {sidebar && (
+      {showSide && (
         <aside className="editor-side" aria-label="Files and search" ref={sideRef}>
-          <FileSidebarResizer
-            side={sideRef}
-            onChange={setSideWidth}
-            onDone={(w) => {
-              setSideWidth(w);
-              saveFileSidebarWidth(w);
-            }}
-          />
+          {part === "all" && (
+            <FileSidebarResizer
+              side={sideRef}
+              onChange={setSideWidth}
+              onDone={(w) => {
+                setSideWidth(w);
+                saveFileSidebarWidth(w);
+              }}
+            />
+          )}
           <div className="editor-side-head">
             <div className="segmented" role="group" aria-label="Sidebar">
               <button type="button" aria-pressed={sidebar === "files"} onClick={() => setSidebar("files")} title="Files" aria-label="Files">
@@ -426,7 +438,10 @@ export function EditorPane({
                 active={api.active}
                 onToggle={api.toggleDir}
                 onOpen={(p) => api.openFile(p)}
+                onPreview={onPreview}
                 onDelete={setConfirmDelete}
+                onRename={(entry, name) => api.renameEntry(entry.path, name)}
+                onCopyPath={(entry) => void navigator.clipboard.writeText(api.fullPath(entry.path)).catch(() => {})}
               />
             ) : (
               <SearchPanel search={api.search} onSearch={api.runSearch} onOpen={(p, line) => api.openFile(p, line)} />
@@ -435,9 +450,10 @@ export function EditorPane({
         </aside>
       )}
 
+      {part !== "files" && (
       <div className="editor-main">
         <div className="file-tabs" role="tablist" aria-label="Open files">
-          {!sidebar && (
+          {!sidebar && part === "all" && (
             <button type="button" className="icon-btn ghost" onClick={() => setSidebar("files")} title="Show the sidebar" aria-label="Show the sidebar">
               <PanelLeftOpen size={14} aria-hidden />
             </button>
@@ -630,6 +646,7 @@ export function EditorPane({
           </div>
         )}
       </div>
+      )}
       {confirmDelete && (
         <ConfirmDialog
           title={`Delete ${confirmDelete.name}?`}

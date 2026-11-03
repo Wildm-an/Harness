@@ -20,9 +20,9 @@ describe("the view mode", () => {
 });
 
 describe("the IDE layout", () => {
-  it("has the editor, the terminal, and the chat, each in its own window", () => {
+  it("has the files, the editor, the terminal, and the chat, each in its own window", () => {
     const layout = ideLayout();
-    expect(groups(layout).map((g) => g.tabs)).toEqual([["editor"], ["terminal"], ["chat"]]);
+    expect(groups(layout).map((g) => g.tabs)).toEqual([["files"], ["editor"], ["terminal"], ["chat"]]);
     expect(findGroupOf(layout, "chat")).not.toBeNull();
   });
 
@@ -30,14 +30,14 @@ describe("the IDE layout", () => {
     const layout = ideLayout();
     if (layout.type !== "split") throw new Error("not a split");
     expect(layout.direction).toBe("row");
-    const [left, right] = layout.children;
+    const [, middle, right] = layout.children;
     expect(right.type === "group" && right.tabs).toEqual(["chat"]);
-    expect(left.type === "split" && left.direction).toBe("column");
+    expect(middle.type === "split" && middle.direction).toBe("column");
   });
 
   it("survives a save and a load", () => {
     const layout = ideLayout();
     const loaded = parseLayout(JSON.parse(JSON.stringify(layout)));
-    expect(loaded && groups(normalize(loaded)).map((g) => g.tabs)).toEqual([["editor"], ["terminal"], ["chat"]]);
+    expect(loaded && groups(normalize(loaded)).map((g) => g.tabs)).toEqual([["files"], ["editor"], ["terminal"], ["chat"]]);
   });
 });

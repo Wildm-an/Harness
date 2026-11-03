@@ -44,4 +44,11 @@ describe("the context rows", () => {
     expect(full.find((r) => r.kind === "free")?.tokens).toBe(0);
     expect(full.find((r) => r.kind === "buffer")?.tokens).toBe(1000);
   });
+
+  it("names the tool results, and hides them when they are empty", () => {
+    const withResults = { ...usage, parts: [...usage.parts, { kind: "tool_results", tokens: 800 }] };
+    expect(contextRows(withResults).find((r) => r.kind === "tool_results")?.label).toBe("Tool results");
+    const empty = { ...usage, parts: [...usage.parts, { kind: "tool_results", tokens: 0 }] };
+    expect(contextRows(empty).some((r) => r.kind === "tool_results")).toBe(false);
+  });
 });

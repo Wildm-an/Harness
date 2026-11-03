@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 let check: () => Promise<unknown> = async () => null;
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: () => check() }));
 vi.mock("./tauri", () => ({ isTauri: () => true }));
+let relaunched = 0;
+vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: async () => void (relaunched += 1) }));
 
-const { availableVersion, checkAtStart, checkForUpdate, checkOnLaunch, getUpdateState, setCheckAtStart } = await import(
-  "./updater"
-);
+const { availableVersion, checkAtStart, checkForUpdate, checkOnLaunch, getUpdateState, installUpdate, setCheckAtStart } =
+  await import("./updater");
+const { updateToastView } = await import("../components/UpdateToast");
 
 describe("the update check", () => {
   it("finds a new version", async () => {
@@ -81,5 +83,68 @@ describe("the check at start", () => {
     expect(calls).toBe(1);
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("the install", () => {
+  type Event = { event: "Started"; data: { contentLength?: number } } | { event: "Progress"; data: { chunkLength: number } } | { event: "Finished" };
+
+  // The failure goes first: after the mocked relaunch, the state stays "installing".
+  it("reports a failed download", async () => {
+    check = async () => ({
+      version: "0.3.1",
+      downloadAndInstall: async () => {
+        throw new Error("network down");
+      },
+    });
+    await checkForUpdate(true);
+    await installUpdate();
+    const state = getUpdateState();
+    expect(state.kind === "error" && state.message).toBe("The update did not install: network down");
+  });
+
+  it("shows the download percent, then the install step, then starts the app again", async () => {
+    const seen: unknown[] = [];
+    check = async () => ({
+      version: "0.3.0",
+      downloadAndInstall: async (onEvent: (e: Event) => void) => {
+        onEvent({ event: "Started", data: { contentLength: 200 } });
+        seen.push(getUpdateState());
+        onEvent({ event: "Progress", data: { chunkLength: 50 } });
+        seen.push(getUpdateState());
+        onEvent({ event: "Progress", data: { chunkLength: 150 } });
+        seen.push(getUpdateState());
+        onEvent({ event: "Finished" });
+        seen.push(getUpdateState());
+      },
+    });
+    await checkForUpdate(true);
+    expect(updateToastView(getUpdateState(), null)).toEqual({ kind: "offer", version: "0.3.0" });
+    relaunched = 0;
+    await installUpdate();
+    expect(seen).toEqual([
+      { kind: "installing", version: "0.3.0", step: "download", percent: null },
+      { kind: "installing", version: "0.3.0", step: "download", percent: 25 },
+      { kind: "installing", version: "0.3.0", step: "download", percent: 100 },
+      { kind: "installing", version: "0.3.0", step: "install", percent: 100 },
+    ]);
+    expect(relaunched).toBe(1);
+  });
+
+});
+
+describe("the update popup", () => {
+  it("shows the offer, the progress, the install step, and the error of its own install", () => {
+    const installing = (step: "download" | "install", percent: number | null) =>
+      ({ kind: "installing", version: "0.3.0", step, percent }) as const;
+    expect(updateToastView(installing("download", null), "0.3.0")).toEqual({ kind: "download", version: "0.3.0", percent: null });
+    expect(updateToastView(installing("download", 42), null)).toEqual({ kind: "download", version: "0.3.0", percent: 42 });
+    expect(updateToastView(installing("install", 100), "0.3.0")).toEqual({ kind: "install", version: "0.3.0" });
+    const error = { kind: "error", message: "The update did not install: x" } as const;
+    expect(updateToastView(error, "0.3.0")).toEqual({ kind: "error", version: "0.3.0", message: error.message });
+    // An error of a check or an install from Settings does not show in the popup.
+    expect(updateToastView(error, null)).toBeNull();
+    expect(updateToastView({ kind: "none" }, null)).toBeNull();
+    expect(updateToastView({ kind: "checking" }, null)).toBeNull();
   });
 });

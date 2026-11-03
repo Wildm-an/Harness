@@ -1,8 +1,8 @@
 // The ⋮ menu at the right of the title bar, as in Claude: the Files pane, the Background tasks pane,
-// and the "Keep computer awake" switch of the session.
+// the Preview pane (PDF and Word files), and the "Keep computer awake" switch of the session.
 
 import { useEffect, useRef, useState } from "react";
-import { EllipsisVertical, Files, ListChecks } from "lucide-react";
+import { EllipsisVertical, FileText, Files, ListChecks } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 
 export function MoreMenu({
@@ -11,6 +11,8 @@ export function MoreMenu({
   onFiles,
   runningTasks,
   onTasks,
+  previewOpen,
+  onPreview,
   keepAwake,
   onKeepAwake,
   disabled,
@@ -20,6 +22,8 @@ export function MoreMenu({
   onFiles: () => void;
   runningTasks: number;
   onTasks: () => void;
+  previewOpen: boolean;
+  onPreview: () => void;
   keepAwake: boolean;
   onKeepAwake: (on: boolean) => void;
   disabled: boolean; // Not connected.
@@ -81,6 +85,10 @@ export function MoreMenu({
             <ListChecks size={15} aria-hidden />
             <span className="more-label">Background tasks</span>
             {runningTasks > 0 && <span className="more-count" aria-label={`${runningTasks} running`}>{runningTasks}</span>}
+          </button>
+          <button type="button" role="menuitemcheckbox" aria-checked={previewOpen} onClick={() => run(onPreview)}>
+            <FileText size={15} aria-hidden />
+            <span className="more-label">Preview</span>
           </button>
           <div className="menu-sep" role="separator" />
           <button

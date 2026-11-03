@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, contextShare, parseFolded, percentText, prStateText, railShown, sortTasks, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, contextShare, foldedValue, needsRailRoom, parseFolded, percentText, prStateText, railShown, sortTasks, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -62,5 +62,30 @@ describe("the pull request and task sections", () => {
   it("count the running and the ended tasks", () => {
     expect(taskSummary([])).toBe("None");
     expect(taskSummary([task("a", "running", 1), task("b", "done", 2), task("c", "stopped", 3)])).toBe("1 running · 2 ended");
+  });
+});
+
+describe("the heading of a folded section", () => {
+  it("shows the share of the context window for the Context section", () => {
+    expect(foldedValue("context", { tokens: 5700, length: 10000 })).toBe("57%");
+    expect(foldedValue("context", { tokens: 10, length: 10000 })).toBe("<1%");
+  });
+
+  it("shows no value without context data or for another section", () => {
+    expect(foldedValue("context", null)).toBeNull();
+    expect(foldedValue("servers", { tokens: 5700, length: 10000 })).toBeNull();
+  });
+});
+
+describe("the room for a pane", () => {
+  it("closes the rail when the Preview or the Browser pane opens", () => {
+    expect(needsRailRoom([], ["preview"])).toBe(true);
+    expect(needsRailRoom(["preview"], ["preview", "browser"])).toBe(true);
+  });
+
+  it("keeps the rail when no such pane opens", () => {
+    expect(needsRailRoom(["browser"], ["browser"])).toBe(false);
+    expect(needsRailRoom(["preview"], [])).toBe(false);
+    expect(needsRailRoom([], ["terminal", "diff"])).toBe(false);
   });
 });

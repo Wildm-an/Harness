@@ -10,6 +10,7 @@ import {
   RAIL_SECTIONS,
   contextShare,
   foldedSections,
+  foldedValue,
   percentText,
   prStateText,
   sortTasks,
@@ -17,7 +18,8 @@ import {
   toggleFolded,
   type RailSection,
 } from "../lib/sessionRail";
-import { formatTokens } from "../lib/context";
+import { formatTokens, type ContextUsage } from "../lib/context";
+import { ContextBreakdown } from "./ContextRing";
 
 export const SESSION_RAIL_ID = "session-rail";
 const NARROW = "(max-width: 900px)";
@@ -38,6 +40,8 @@ export interface RailEnvironment {
 export function SessionRail({
   environment,
   context,
+  usage,
+  onReadUsage,
   running,
   onCompact,
   pr,
@@ -47,10 +51,15 @@ export function SessionRail({
   onShowServers,
   tasks,
   onShowTasks,
+  keepAwake,
+  onKeepAwake,
+  keepAwakeDisabled,
   onClose,
 }: {
   environment: RailEnvironment;
   context: { tokens: number; length: number } | null;
+  usage: ContextUsage | null; // The last context breakdown (context.usage).
+  onReadUsage: () => void; // Asks the daemon for the breakdown (context.get).
   running: boolean; // A turn runs: the compaction waits.
   onCompact: () => void;
   pr: PrStatus["pr"];
@@ -60,6 +69,9 @@ export function SessionRail({
   onShowServers: () => void;
   tasks: TaskItem[];
   onShowTasks: () => void;
+  keepAwake: boolean; // "Keep computer awake" for this session (the same switch as in the ⋮ menu).
+  onKeepAwake: (on: boolean) => void;
+  keepAwakeDisabled: boolean; // Not connected.
   onClose: () => void; // Esc or a click outside, in a narrow window.
 }) {
   const [folded, setFolded] = useState<RailSection[]>(foldedSections);
@@ -87,14 +99,42 @@ export function SessionRail({
     };
   }, [onClose]);
 
+  // The open Context section shows the breakdown. Ask for it again after each change of the context.
+  const contextOpen = context !== null && !folded.includes("context");
+  useEffect(() => {
+    if (contextOpen) onReadUsage();
+  }, [contextOpen, context?.tokens, context?.length]);
+
   const PlaceIcon = PLACE_ICONS[environment.placeKind];
   const share = context ? contextShare(context.tokens, context.length) : 0;
   const level = share >= 0.8 ? "high" : share >= 0.6 ? "mid" : "low";
   const sortedTasks = sortTasks(tasks);
   const branch = environment.worktree?.branch ?? environment.branch;
 
+  // Under the environment: the computer of the agent does not sleep while the agent works in this session.
+  const awake = (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={keepAwake}
+      className="rail-awake"
+      disabled={keepAwakeDisabled}
+      onClick={() => onKeepAwake(!keepAwake)}
+      title="The computer of the agent does not sleep while the agent works in this session."
+    >
+      <span className="rail-awake-text">
+        <span>Keep computer awake</span>
+        <span className="rail-awake-sub">Only for this session</span>
+      </span>
+      <span className={`switch${keepAwake ? " on" : ""}`} aria-hidden>
+        <span className="switch-knob" />
+      </span>
+    </button>
+  );
+
   const body: Record<RailSection, ReactNode | null> = {
     environment: (
+      <>
       <dl className="rail-rows">
         <RailRow label="Computer" title={environment.placeDetail ?? undefined}>
           <PlaceIcon size={13} aria-hidden />
@@ -121,6 +161,8 @@ export function SessionRail({
           <span className="rail-value-text">{environment.worktree ? "On" : "Off"}</span>
         </RailRow>
       </dl>
+      {awake}
+      </>
     ),
     context: context ? (
       <div className="rail-context">
@@ -130,16 +172,20 @@ export function SessionRail({
           </span>
           <span className="rail-context-pct">{percentText(share)}</span>
         </div>
-        <div
-          className={`rail-meter ${level}`}
-          role="meter"
-          aria-label="Context window"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(share * 100)}
-        >
-          <span style={{ width: `${share * 100}%` }} />
-        </div>
+        {usage ? (
+          <ContextBreakdown usage={usage} />
+        ) : (
+          <div
+            className={`rail-meter ${level}`}
+            role="meter"
+            aria-label="Context window"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(share * 100)}
+          >
+            <span style={{ width: `${share * 100}%` }} />
+          </div>
+        )}
         <button type="button" className="btn btn-small rail-action" onClick={onCompact} disabled={running} title={running ? "Compaction waits for the end of the turn." : undefined}>
           <Archive size={13} aria-hidden /> Compact this session
         </button>
@@ -210,6 +256,11 @@ export function SessionRail({
               <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => setFolded((f) => toggleFolded(f, s.id))}>
                 <ChevronRight size={13} aria-hidden className="rail-chevron" />
                 {s.title}
+                {!open && foldedValue(s.id, context) && (
+                  <span className="rail-head-value" aria-label={`${foldedValue(s.id, context)} of the context window in use`}>
+                    {foldedValue(s.id, context)}
+                  </span>
+                )}
               </button>
             </h3>
             {open && (

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
   Code2,
   Files,
+  FileText,
   Globe as GlobeIcon,
   Server,
   FileDiff,
@@ -65,11 +66,15 @@ import {
   defaultLayout,
   findGroupOf,
   ideLayoutFor,
+  layoutSignature,
+  legacyIdeLayoutFor,
   openPane,
+  reopenInSlot,
   parseLayout,
   togglePane,
   type LayoutNode,
   type PaneId,
+  type PaneSlot,
 } from "./layout/model";
 import {
   BACK_SHORTCUT,
@@ -93,6 +98,8 @@ import { UpdateToast } from "./components/UpdateToast";
 import { availableVersion, checkOnLaunch, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { TasksPane } from "./components/TasksPane";
+import { PreviewPane } from "./preview/PreviewPane";
+import { base64ToBytes, isPreviewFile, shownDocument, type PreviewDoc } from "./preview/document";
 import { WorkingLine } from "./components/WorkingLine";
 import { SlashIcon } from "./components/SlashIcon";
 import { WindowControls, hasWindowControls } from "./components/WindowControls";
@@ -103,7 +110,7 @@ import { useEditor } from "./editor/useEditor";
 import { BrowserPane, clearBrowserData, keepCookies } from "./browser/BrowserPane";
 import { AllowedSites } from "./components/AllowedSites";
 import { openLink, setPaneOpener } from "./lib/openLink";
-import { railShown, setRailShown } from "./lib/sessionRail";
+import { ROOM_PANES, needsRailRoom, railShown, setRailShown } from "./lib/sessionRail";
 import { inlineEditPrompt, layoutKey, type ViewMode } from "./lib/viewMode";
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { ViewSwitch } from "./components/ViewSwitch";
@@ -170,14 +177,18 @@ const SIDEBAR_SESSIONS = 300;
 // On a window this narrow, the sidebar covers the page (the same width as in styles.css).
 const NARROW_QUERY = "(max-width: 900px)";
 
-// Project files that open in the Browser pane.
-const BROWSER_FILE_RE = /\.(html?|pdf|png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|ogg|mp3|wav)$/i;
+// Project files that open in the Browser pane. PDF and Word files open in the Preview pane.
+const BROWSER_FILE_RE = /\.(html?|png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|ogg|mp3|wav)$/i;
 
 /** The saved layout of a project in a view, or the default layout of the view. */
 function loadLayout(connectionId: string, cwd: string, mode: ViewMode): LayoutNode {
   const fallback = () => (mode === "ide" ? ideLayoutFor(ideOptions()) : defaultLayout());
   try {
-    return parseLayout(JSON.parse(loadPref(layoutKey(connectionId, cwd, mode), "null"))) ?? fallback();
+    const saved = parseLayout(JSON.parse(loadPref(layoutKey(connectionId, cwd, mode), "null")));
+    // A saved IDE layout that is still the old default (the file list in the editor) gets the
+    // new default with the Files pane. A layout that the user changed stays.
+    if (saved && mode === "ide" && layoutSignature(saved) === layoutSignature(legacyIdeLayoutFor(ideOptions()))) return fallback();
+    return saved ?? fallback();
   } catch {
     return fallback();
   }
@@ -294,11 +305,21 @@ export default function App() {
   const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
+  // The last place and size of each closed pane, per view. A pane that opens again goes back there.
+  const closedSlots = useRef(new Map<ViewMode, Map<PaneId, PaneSlot>>());
+  const lastLayout = useRef<LayoutNode | null>(null);
   // The Code view or the IDE view (the switch in the title bar). Each view has its own layout. The
   // app always opens in the Code view, and each new session starts in it (newSession, startSession).
   const [view, setView] = useState<ViewMode>("code");
   const viewRef = useRef(view);
   viewRef.current = view;
+  useLayoutEffect(() => {
+    let slots = closedSlots.current.get(view);
+    if (!slots) closedSlots.current.set(view, (slots = new Map()));
+    const placed = reopenInSlot(lastLayout.current, layout, slots);
+    lastLayout.current = placed;
+    if (placed !== layout) setLayout(placed);
+  }, [layout, view]);
   // The IDE view hides the sessions sidebar. This is the sidebar state of the Code view.
   const [ideStart, setIdeStart] = useState(0); // A new number: the start screen starts an empty session.
   const sidebarBeforeIde = useRef<boolean | null>(null);
@@ -1480,6 +1501,16 @@ export default function App() {
     setRailShown(on);
   }, []);
   const closeRail = useCallback(() => showRail(false), [showRail]);
+  // In the Code view, the rail closes when the Preview or the Browser pane opens, so the pane gets
+  // the room. The saved preference does not change, and the title bar button opens the rail again.
+  // A change of view only records the panes.
+  const roomPanes = useRef<{ view: ViewMode; open: string[] } | null>(null);
+  useEffect(() => {
+    const open = ROOM_PANES.filter((p) => findGroupOf(layout, p) !== null);
+    const before = roomPanes.current;
+    roomPanes.current = { view, open };
+    if (view === "code" && before?.view === view && needsRailRoom(before.open, open)) setRail(false);
+  }, [layout, view]);
   /** Change the view. Each view loads its own layout. The IDE view hides the sessions sidebar, and the Code view shows it again. */
   const switchView = (mode: ViewMode) => {
     if (mode === view) return;
@@ -1538,6 +1569,47 @@ export default function App() {
     },
     [conn],
   );
+
+  // The Preview pane: a PDF or Word file of the session folder. The user opens it from the file tree
+  // or a path in the chat. The agent opens it with the show_document tool. The daemon sends the
+  // bytes ("fs.read_bytes"). Only the reply to the last request shows.
+  const [preview, setPreview] = useState<PreviewDoc | null>(null);
+  const previewPending = useRef(0);
+  const openPreview = useCallback(
+    (path: string) => {
+      const rel = normalizePath(path, sessionRef.current?.cwd ?? "");
+      setPreview({ path: rel, status: "loading" });
+      showPane("preview");
+      if (sendSafely({ type: "fs.read_bytes", path: rel })) previewPending.current += 1;
+      else setPreview({ path: rel, status: "error", error: "Connect to the computer of the session, then try again." });
+    },
+    [sendSafely, showPane],
+  );
+  useEffect(() => {
+    previewPending.current = 0;
+    setPreview(null);
+  }, [session?.id]);
+  useEffect(() => {
+    const toolCalls = new Map<string, { name: string; input: unknown }>();
+    return conn.onMessage((msg) => {
+      if (msg.type === "fs.bytes" || (msg.type === "error" && msg.ref === "fs.read_bytes")) {
+        if (previewPending.current === 0) return;
+        previewPending.current -= 1;
+        if (previewPending.current > 0) return; // A newer request waits for its reply.
+        if (msg.type === "fs.bytes") setPreview({ path: msg.path, status: "ready", data: base64ToBytes(msg.data) });
+        else setPreview((p) => (p ? { path: p.path, status: "error", error: msg.message } : p));
+      } else if (msg.type === "tool.start") {
+        toolCalls.set(msg.id, { name: msg.name, input: msg.input });
+      } else if (msg.type === "tool.result") {
+        const call = toolCalls.get(msg.id);
+        toolCalls.delete(msg.id);
+        const path = call && shownDocument(call.name, call.input, msg.is_error, sessionRef.current?.cwd ?? "");
+        if (path) openPreview(path);
+      } else if (msg.type === "session.ready") {
+        toolCalls.clear();
+      }
+    });
+  }, [conn, openPreview]);
 
   const requestCommands = useCallback(() => {
     if (conn.status === "open") conn.send({ type: "skills.list" });
@@ -1690,7 +1762,12 @@ export default function App() {
 
   const openPath = useCallback(
     (path: string, line?: number) => {
-      // HTML, PDF, images, and video open in the Browser pane (SPEC.md section 8.6). Other files open in the editor.
+      // PDF and Word files open in the Preview pane. HTML, images, and video open in the Browser pane
+      // (SPEC.md section 8.6). Other files open in the editor.
+      if (isPreviewFile(path)) {
+        openPreview(path);
+        return;
+      }
       const target = targetRef.current;
       if (BROWSER_FILE_RE.test(path) && target && filesToken) {
         const rel = normalizePath(path, sessionRef.current?.cwd ?? "");
@@ -1700,7 +1777,7 @@ export default function App() {
       editor.openFile(path, line);
       setLayout((l) => openPane(l, "editor"));
     },
-    [editor.openFile, filesToken, showInBrowser],
+    [editor.openFile, filesToken, showInBrowser, openPreview],
   );
 
   // mcp.init created (or found) .harness/mcp.json: open it in the editor.
@@ -1877,8 +1954,17 @@ export default function App() {
   );
 
   const dirtyCount = editor.files.filter((f) => f.dirty).length;
+  const filesPaneOpen = findGroupOf(layout, "files") !== null;
   const panes: Record<PaneId, PaneSpec> = {
     chat: { title: "Chat", icon: MessageSquare, closable: false, render: () => chatPane },
+    preview: {
+      title: "Preview",
+      icon: FileText,
+      closable: true,
+      render: () => (
+        <PreviewPane doc={preview} onReload={() => preview && openPreview(preview.path)} onOpenLink={openLink} />
+      ),
+    },
     tasks: {
       title: "Background tasks",
       icon: ListChecks,
@@ -1917,18 +2003,41 @@ export default function App() {
         ),
     },
     editor: {
-      title: "Files",
-      icon: Files,
-      closable: true,
+      // With the Files pane open (the IDE view), this window is only the editor.
+      title: filesPaneOpen ? "Editor" : "Files",
+      icon: filesPaneOpen ? Code2 : Files,
+      // The IDE view always shows the editor. The open files keep their close buttons.
+      closable: view !== "ide",
       badge: dirtyCount ? <span className="tab-badge" title={`${dirtyCount} unsaved`}>{dirtyCount}</span> : undefined,
       render: () => (
         <EditorPane
+          part={filesPaneOpen ? "editor" : "all"}
           api={editor}
           sessionKey={session?.id ?? ""}
           agentLines={agentLines}
           onReference={addReference}
           onInlineEdit={(reference, instruction) => submitOrQueue({ kind: "prompt", text: inlineEditPrompt(reference, instruction) })}
           onOpenFolder={() => void changeFolder()}
+          onPreview={openPreview}
+          openFolderBlocked={openFolderBlocked({ connected: status === "open", running: chat.running, worktree: !!session?.worktree })}
+        />
+      ),
+    },
+    // The file list and search in their own window, as VS Code's Explorer (the IDE view).
+    files: {
+      title: "Files",
+      icon: Files,
+      closable: true,
+      render: () => (
+        <EditorPane
+          part="files"
+          api={editor}
+          sessionKey={session?.id ?? ""}
+          agentLines={agentLines}
+          onReference={addReference}
+          onInlineEdit={(reference, instruction) => submitOrQueue({ kind: "prompt", text: inlineEditPrompt(reference, instruction) })}
+          onOpenFolder={() => void changeFolder()}
+          onPreview={openPreview}
           openFolderBlocked={openFolderBlocked({ connected: status === "open", running: chat.running, worktree: !!session?.worktree })}
         />
       ),
@@ -2333,6 +2442,8 @@ export default function App() {
                 onFiles={() => toggleShortcutPane("editor")}
                 runningTasks={runningTasks}
                 onTasks={() => showPane("tasks")}
+                previewOpen={paneVisible("preview")}
+                onPreview={() => toggleShortcutPane("preview")}
                 keepAwake={keepAwake}
                 onKeepAwake={(on) => {
                   if (sendSafely({ type: "session.keep_awake", on })) setKeepAwake(on);
@@ -2582,6 +2693,8 @@ export default function App() {
                     worktree: session.worktree,
                   }}
                   context={chat.context ? { tokens: chat.context.tokens, length: chat.context.length } : null}
+                  usage={contextUsage}
+                  onReadUsage={() => sendSafely({ type: "context.get" })}
                   running={chat.running}
                   onCompact={() => submit({ kind: "command", name: "compact", args: "" })}
                   pr={prStatus.get(pathKey(session.cwd))?.pr ?? null}
@@ -2591,6 +2704,11 @@ export default function App() {
                   onShowServers={() => setLayout((l) => openPane(l, "servers"))}
                   tasks={tasks ?? []}
                   onShowTasks={() => showPane("tasks")}
+                  keepAwake={keepAwake}
+                  onKeepAwake={(on) => {
+                    if (sendSafely({ type: "session.keep_awake", on })) setKeepAwake(on);
+                  }}
+                  keepAwakeDisabled={status !== "open"}
                   onClose={closeRail}
                 />
               )}

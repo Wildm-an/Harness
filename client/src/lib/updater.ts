@@ -15,7 +15,9 @@ export type UpdateState =
   | { kind: "checking" }
   | { kind: "none" } // This is the newest version.
   | { kind: "available"; update: Update }
-  | { kind: "installing"; version: string; percent: number | null }
+  // step "download": the app downloads the update. percent is null when the size is not known.
+  // step "install": the download is complete. The installer runs, then the app starts again.
+  | { kind: "installing"; version: string; step: "download" | "install"; percent: number | null }
   | { kind: "error"; message: string };
 
 const LAUNCH_DELAY_MS = 4000; // The app and the daemon start first.
@@ -99,7 +101,7 @@ export async function installUpdate(): Promise<void> {
   if (state.kind !== "available") return;
   const { update } = state;
   const version = update.version;
-  setState({ kind: "installing", version, percent: null });
+  setState({ kind: "installing", version, step: "download", percent: null });
   let total = 0;
   let done = 0;
   try {
@@ -107,8 +109,8 @@ export async function installUpdate(): Promise<void> {
       if (event.event === "Started") total = event.data.contentLength ?? 0;
       else if (event.event === "Progress") {
         done += event.data.chunkLength;
-        setState({ kind: "installing", version, percent: total ? Math.min(100, Math.round((done / total) * 100)) : null });
-      }
+        setState({ kind: "installing", version, step: "download", percent: total ? Math.min(100, Math.round((done / total) * 100)) : null });
+      } else if (event.event === "Finished") setState({ kind: "installing", version, step: "install", percent: 100 });
     });
     const { relaunch } = await import("@tauri-apps/plugin-process");
     await relaunch();

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DaemonConnection } from "../daemon/connection";
 import type { DaemonMessage } from "../daemon/protocol";
 import { languageFor, monaco } from "../lib/monaco";
-import { normalizePath } from "./paths";
+import { absolutePath, normalizePath, renamedPath } from "./paths";
 
 export type Notice =
   | { kind: "external"; hash: string | null; by: "agent" | "external" } // The file changed on disk. The tab has changes.
@@ -79,6 +79,10 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   filesRef.current = files;
   const treeRef = useRef(tree);
   treeRef.current = tree;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
   const revealKey = useRef(0);
   const [createError, setCreateError] = useState<string | null>(null); // New file or New folder failed.
   const openFileRef = useRef<(path: string) => void>(() => {});
@@ -227,6 +231,26 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           setCreateError(null);
           return;
         }
+        case "fs.renamed": {
+          // Open the tabs again at the new paths (renameEntry allows no unsaved changes in them),
+          // keep the open folders open, and list the folder of the item again.
+          const moved = (p: string) => renamedPath(p, msg.path, msg.new_path);
+          const open = filesRef.current.filter((f) => moved(f.path) !== null).map((f) => f.path);
+          const wasActive = activeRef.current;
+          for (const p of open) closeFileRef.current(p);
+          for (const p of open) openFileRef.current(moved(p)!);
+          if (wasActive !== null) setActive(moved(wasActive) ?? wasActive);
+          setTree((t) => Object.fromEntries(Object.entries(t).filter(([dir]) => moved(dir) === null)));
+          setExpanded((set) => new Set([...set].map((dir) => moved(dir) ?? dir)));
+          const parent = msg.new_path.includes("/") ? msg.new_path.slice(0, msg.new_path.lastIndexOf("/")) : ".";
+          listDir(parent);
+          for (const dir of expandedRef.current) {
+            const next = moved(dir);
+            if (next !== null) listDir(next);
+          }
+          setCreateError(null);
+          return;
+        }
         case "fs.conflict":
           patchFile(msg.path, { saving: false, notice: { kind: "conflict", hash: msg.disk_hash } });
           return;
@@ -254,7 +278,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             setFiles((list) => list.map((f) => (f.saving ? { ...f, saving: false, error: msg.message } : f)));
           } else if (msg.ref === "fs.search") {
             setSearch((s) => ({ ...s, busy: false, error: msg.message }));
-          } else if (msg.ref === "fs.create" || msg.ref === "fs.delete") {
+          } else if (msg.ref === "fs.create" || msg.ref === "fs.delete" || msg.ref === "fs.rename") {
             setCreateError(msg.message); // The error line under the file tree head.
           } else if (msg.ref === "fs.list") {
             setTree((t) => Object.fromEntries(Object.entries(t).filter(([, v]) => v !== "loading")));
@@ -318,6 +342,27 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     },
     [send],
   );
+
+  /**
+   * Rename of the file tree: a new name in the same folder. The daemon renames the item, and
+   * fs.renamed updates the tree and the tabs. An open file with unsaved changes in the item
+   * blocks the rename: the tab opens again from the disk, so the changes would be lost.
+   */
+  const renameEntry = useCallback(
+    (path: string, name: string): boolean => {
+      const unsaved = filesRef.current.find((f) => f.dirty && renamedPath(f.path, path, path) !== null);
+      if (unsaved) {
+        setCreateError(`Save or close ${unsaved.path} first. It has unsaved changes.`);
+        return false;
+      }
+      setCreateError(null);
+      return send({ type: "fs.rename", path, name });
+    },
+    [send],
+  );
+
+  /** The full path of a file of the session folder, for "Copy Path". */
+  const fullPath = useCallback((path: string) => absolutePath(cwd, path), [cwd]);
 
   const save = useCallback(
     (path: string, baseHash?: string | null) => {
@@ -421,6 +466,8 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   return {
     createEntry,
     deleteEntry,
+    renameEntry,
+    fullPath,
     createError,
     clearCreateError: () => setCreateError(null),
     complete,

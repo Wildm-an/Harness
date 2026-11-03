@@ -4,8 +4,10 @@
 // version can have groups with more tabs: normalize() gives each pane its own window.
 // All functions are pure. Each one returns a new layout.
 
-export type PaneId = "chat" | "editor" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp" | "terminal" | "side" | "tasks";
-export const PANE_IDS: PaneId[] = ["chat", "editor", "browser", "servers", "diff", "rules", "skills", "mcp", "terminal", "side", "tasks"];
+// "preview": a PDF or Word file (preview/PreviewPane.tsx).
+// "files": the file list and search of the editor as its own window (the IDE view, as VS Code's Explorer).
+export type PaneId = "chat" | "editor" | "files" | "browser" | "servers" | "diff" | "rules" | "skills" | "mcp" | "terminal" | "side" | "tasks" | "preview";
+export const PANE_IDS: PaneId[] = ["chat", "editor", "files", "browser", "servers", "diff", "rules", "skills", "mcp", "terminal", "side", "tasks", "preview"];
 
 export type Zone = "center" | "left" | "right" | "top" | "bottom";
 
@@ -96,6 +98,36 @@ const clampShare = (n: number, min: number, max: number, fallback: number) =>
  * - review: the editor and the Changes pane with the terminal under them, and the chat at the side.
  */
 export function ideLayoutFor(options: IdeLayoutOptions): LayoutNode {
+  // As VS Code: the Files pane (the Explorer) at the left in the full height, the work in the
+  // middle, and the chat at the side. With the chat at the left: the chat, the Files, the work.
+  const chat = clampShare(options.chatShare, 0.2, 0.5, DEFAULT_IDE_OPTIONS.chatShare);
+  const term = clampShare(options.terminalShare, 0.15, 0.5, DEFAULT_IDE_OPTIONS.terminalShare);
+  const files = FILES_SHARE;
+  const withSides = (work: LayoutNode): LayoutNode =>
+    options.chatSide === "left"
+      ? split("row", [group(["chat"]), group(["files"]), work], [chat, files, 1 - chat - files])
+      : split("row", [group(["files"]), work, group(["chat"])], [files, 1 - files - chat, chat]);
+  const underTerminal = (work: LayoutNode): LayoutNode => split("column", [work, group(["terminal"])], [1 - term, term]);
+  switch (options.preset) {
+    case "focus":
+      return withSides(group(["editor"]));
+    case "wideTerminal":
+      return underTerminal(withSides(group(["editor"])));
+    case "review":
+      return withSides(underTerminal(split("row", [group(["editor"]), group(["diff"])], [0.6, 0.4])));
+    default:
+      return withSides(underTerminal(group(["editor"])));
+  }
+}
+
+/** The share of the window width for the Files pane of the IDE view. */
+export const FILES_SHARE = 0.17;
+
+/**
+ * The IDE layout of version 0.1.34 and before: the file list inside the editor pane. A saved
+ * layout that is still this default (the user did not change it) gets the new default.
+ */
+export function legacyIdeLayoutFor(options: IdeLayoutOptions): LayoutNode {
   const chat = clampShare(options.chatShare, 0.2, 0.5, DEFAULT_IDE_OPTIONS.chatShare);
   const term = clampShare(options.terminalShare, 0.15, 0.5, DEFAULT_IDE_OPTIONS.terminalShare);
   const withChat = (work: LayoutNode): LayoutNode =>
@@ -113,6 +145,13 @@ export function ideLayoutFor(options: IdeLayoutOptions): LayoutNode {
     default:
       return withChat(underTerminal(group(["editor"])));
   }
+}
+
+/** The shape of a layout with no window ids, to compare two layouts: the panes, the splits, and the sizes (two decimals). */
+export function layoutSignature(node: LayoutNode): string {
+  if (node.type === "group") return `[${node.tabs.join(",")}]`;
+  const sizes = node.sizes.map((s) => s.toFixed(2)).join(",");
+  return `${node.direction}(${node.children.map(layoutSignature).join(" ")};${sizes})`;
 }
 
 /** One window for each pane of a group: the chat on the left, the other panes in a column. */
@@ -135,17 +174,124 @@ export function findGroupOf(node: LayoutNode, pane: PaneId): Group | null {
 
 function mapGroups(node: LayoutNode, fn: (g: Group) => LayoutNode | null): LayoutNode | null {
   if (node.type === "group") return fn(node);
+  const results = node.children.map((child) => mapGroups(child, fn));
+  const sizes = node.children.map((_, i) => node.sizes[i] ?? 1 / node.children.length);
+  // A window that goes away gives its space to the window next to it (the one before it, or the
+  // one after it for the first), as in VS Code. The other windows keep their size, so a window
+  // that opens again in its last place gets its last size back (openPaneAt).
+  results.forEach((r, i) => {
+    if (r) return;
+    const j = neighborIndex(results.map((x) => x !== null), i);
+    if (j >= 0) sizes[j] += sizes[i];
+  });
   const children: LayoutNode[] = [];
-  const sizes: number[] = [];
-  node.children.forEach((child, i) => {
-    const next = mapGroups(child, fn);
-    if (next) {
-      children.push(next);
-      sizes.push(node.sizes[i] ?? 1 / node.children.length);
+  const kept: number[] = [];
+  results.forEach((r, i) => {
+    if (r) {
+      children.push(r);
+      kept.push(sizes[i]);
     }
   });
   if (children.length === 0) return null;
-  return { ...node, children, sizes };
+  return { ...node, children, sizes: kept };
+}
+
+/** The index of the kept child next to child ``i``: the nearest one before it, else the nearest one after it. -1 if none. */
+function neighborIndex(kept: boolean[], i: number): number {
+  for (let j = i - 1; j >= 0; j--) if (kept[j]) return j;
+  for (let j = i + 1; j < kept.length; j++) if (kept[j]) return j;
+  return -1;
+}
+
+/** Where a pane was before it closed: the window next to it, the side, and its share of the two. */
+export interface PaneSlot {
+  neighborId: string; // The window or the split next to the pane.
+  neighborPane: PaneId | null; // A pane in that window, if the id is gone.
+  direction: "row" | "column";
+  before: boolean; // The pane was before (left of, or above) its neighbor.
+  share: number; // The share of the pane in the space of the two.
+}
+
+/** The slot of a pane that is alone in its window, to open it again in the same place (openPaneAt). */
+export function paneSlot(node: LayoutNode, pane: PaneId): PaneSlot | null {
+  if (node.type === "group") return null;
+  const i = node.children.findIndex((c) => c.type === "group" && c.tabs.length === 1 && c.tabs[0] === pane);
+  if (i >= 0) {
+    const j = neighborIndex(node.children.map((_, k) => k !== i), i);
+    if (j < 0) return null;
+    const mine = node.sizes[i] ?? 0;
+    const theirs = node.sizes[j] ?? 0;
+    return {
+      neighborId: node.children[j].id,
+      neighborPane: groups(node.children[j])[0]?.tabs[0] ?? null,
+      direction: node.direction,
+      before: i < j,
+      share: mine + theirs > 0 ? mine / (mine + theirs) : 0.5,
+    };
+  }
+  for (const child of node.children) {
+    const found = paneSlot(child, pane);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findNode(node: LayoutNode, id: string): LayoutNode | null {
+  if (node.id === id) return node;
+  if (node.type === "group") return null;
+  for (const child of node.children) {
+    const found = findNode(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function replaceNode(node: LayoutNode, id: string, fn: (n: LayoutNode) => LayoutNode): LayoutNode {
+  if (node.id === id) return fn(node);
+  if (node.type === "group") return node;
+  return { ...node, children: node.children.map((c) => replaceNode(c, id, fn)) };
+}
+
+/**
+ * Keeps the last place of each closed pane in ``slots``, and moves a pane that opens again back to
+ * that place. Only a change of one pane counts: a close, or an open. A new layout (another session
+ * or view) changes nothing. Returns ``next``, or the layout with the pane in its last place.
+ */
+export function reopenInSlot(prev: LayoutNode | null, next: LayoutNode, slots: Map<PaneId, PaneSlot>): LayoutNode {
+  if (!prev || prev === next) return next;
+  const before = new Set(groups(prev).flatMap((g) => g.tabs));
+  const after = new Set(groups(next).flatMap((g) => g.tabs));
+  const closed = [...before].filter((p) => !after.has(p));
+  const opened = [...after].filter((p) => !before.has(p));
+  if (closed.length === 1 && opened.length === 0) {
+    const pane = closed[0];
+    const slot = paneSlot(prev, pane);
+    if (slot && layoutSignature(closePane(prev, pane)) === layoutSignature(next)) slots.set(pane, slot);
+    return next;
+  }
+  if (opened.length === 1 && closed.length === 0) {
+    const pane = opened[0];
+    const slot = slots.get(pane);
+    if (!slot) return next;
+    const without = closePane(next, pane);
+    if (layoutSignature(without) !== layoutSignature(prev)) return next;
+    return openPaneAt(prev, pane, slot);
+  }
+  return next;
+}
+
+/** Opens a pane in its last place and size (a slot of paneSlot). Without the place, as openPane. */
+export function openPaneAt(node: LayoutNode, pane: PaneId, slot: PaneSlot): LayoutNode {
+  if (findGroupOf(node, pane)) return activate(node, pane);
+  const target = findNode(node, slot.neighborId) ?? (slot.neighborPane ? findGroupOf(node, slot.neighborPane) : null);
+  if (!target) return openPane(node, pane);
+  const share = Math.min(0.9, Math.max(0.1, slot.share));
+  const placed = replaceNode(node, target.id, (n) => {
+    const fresh = group([pane]);
+    return slot.before ? split(slot.direction, [fresh, n], [share, 1 - share]) : split(slot.direction, [n, fresh], [1 - share, share]);
+  });
+  const result = normalize(placed);
+  return chatHasFullHeight(result) ? result : openPane(node, pane);
 }
 
 /**

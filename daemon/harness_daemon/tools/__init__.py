@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .base import Approval, Tool, ToolContext, ToolError, ToolResult, truncate
 from .bash import BashTool
+from .document import ShowDocumentTool
 from .edit import EditTool
 from .glob import GlobTool
 from .grep import GrepTool
@@ -17,7 +18,7 @@ from .write import WriteTool
 
 
 def default_tools() -> list[Tool]:
-    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool(), OfficeEditTool(), UpdatePlanTool(), WrapUpTool()]
+    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool(), OfficeEditTool(), ShowDocumentTool(), UpdatePlanTool(), WrapUpTool()]
 
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "GlobTool",
     "GrepTool",
     "OfficeEditTool",
+    "ShowDocumentTool",
     "ReadTool",
     "ShellInfo",
     "SkillTool",

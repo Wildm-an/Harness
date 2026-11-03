@@ -1530,6 +1530,7 @@ textarea:focus-visible {
 .ctx-tools { background: var(--info); }
 .ctx-mcp_tools { background: var(--teal); }
 .ctx-messages { background: var(--accent); }
+.ctx-tool_results { background: color-mix(in srgb, var(--info) 50%, var(--violet)); }
 .ctx-free { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); }
 .ctx-buffer { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); }
 .context-bar > .ctx-free { box-shadow: none; }
@@ -3599,6 +3600,47 @@ select {
 .tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Rename of the file tree: the name field in the place of the name. */
+.tree-item.renaming {
+  position: relative;
+  cursor: default;
+}
+
+.tree-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+input.tree-rename-input {
+  width: 100%;
+  height: 20px;
+  min-height: 0;
+  padding: 0 4px;
+  border: 1px solid var(--focus);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
+  font: 12.5px var(--font-sans);
+}
+
+input.tree-rename-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.tree-rename-problem {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: var(--z-overlay);
+  padding: 4px 8px;
+  border: 1px solid var(--danger);
+  background: var(--surface);
+  color: var(--danger);
+  font-size: 12px;
+  white-space: normal;
 }
 
 .tree-loading,
@@ -6749,6 +6791,64 @@ input.setting-text-input {
   height: 26px;
 }
 
+/* The download progress of "Update now": a bar and the percent. */
+.update-toast-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.update-toast-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+}
+
+.update-toast-bar {
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 300ms var(--ease-out);
+}
+
+/* The size is not known, or the installer runs: a short bar moves from left to right. */
+.update-toast-track.indeterminate .update-toast-bar {
+  position: absolute;
+  width: 35%;
+  animation: update-toast-slide 1.2s var(--ease-out) infinite;
+}
+
+@keyframes update-toast-slide {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-toast-track.indeterminate .update-toast-bar {
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}
+
+.update-toast-percent {
+  min-width: 32px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* The API key field of a provider: the masked key, and the Show and Copy buttons in the field. */
 .key-field {
   position: relative;
@@ -7192,6 +7292,21 @@ input.setting-text-input {
   font-variant-numeric: tabular-nums;
 }
 
+/* The share of the context in the heading of the folded Context section. */
+.rail-section-head .rail-head-value {
+  margin-left: auto;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-context .context-bar {
+  margin: 8px 0 10px;
+}
+
+.rail-context .context-list {
+  margin-bottom: 12px;
+}
+
 .rail-meter {
   height: 6px;
   margin: 8px 0 10px;
@@ -7219,6 +7334,46 @@ input.setting-text-input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* "Keep computer awake" under the environment (SessionRail.tsx): the same switch as in the ⋮ menu. */
+.rail-awake {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-awake:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rail-awake-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.rail-awake-sub {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.rail-awake .switch {
+  flex: none;
+  pointer-events: none; /* The row is the button. */
 }
 
 .rail-empty {
@@ -7567,6 +7722,132 @@ input.setting-text-input {
   background: transparent;
 }
 
+/* The Preview pane (preview/PreviewPane.tsx): a PDF or Word file as white pages on a dark ground. */
+.preview-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-sunken);
+}
+
+.preview-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.preview-pages {
+  margin-right: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.preview-error {
+  color: var(--danger);
+}
+
+.preview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+
+.preview-pdf {
+  display: flex;
+  flex-direction: column;
+  align-items: safe center; /* A page wider than the pane starts at the left edge, so it can scroll. */
+  gap: 12px;
+  padding: 16px;
+}
+
+.preview-page {
+  position: relative;
+  flex: none;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.preview-page canvas {
+  display: block;
+}
+
+/* The text layer of pdf.js: clear text over the page, so the user can select and copy. */
+.preview-page .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.preview-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.preview-page .textLayer > :not(.markedContent),
+.preview-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.preview-page .textLayer .markedContent {
+  display: contents;
+}
+
+.preview-page .textLayer ::selection {
+  background: rgba(42, 120, 214, 0.35);
+  color: transparent;
+}
+
+.preview-page .textLayer br::selection {
+  background: transparent;
+}
+
+.preview-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.preview-page .textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* docx-preview draws white pages in a gray wrapper. Use the ground of the pane. */
+.preview-docx .docx-wrapper {
+  background: transparent;
+  padding: 16px 16px 0;
+  align-items: safe center;
+}
+
+.preview-docx .docx-wrapper > section.docx {
+  margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
 /* Narrow panes (for example the chat of the IDE view): each pane is a size container, so its
    menus and popovers fit in the pane. The pane hides what goes past its edges. */
 .pane-content {
@@ -7888,4 +8169,18 @@ input.setting-text-input {
 
 .ide-sketch.small > span {
   border-radius: 2px;
+}
+
+/* The Files pane of the IDE view (EditorPane part="files"): the file list fills its window. */
+.editor-pane.files-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.editor-pane.files-only .editor-side {
+  border-right: 0;
+}
+
+.ide-sketch .ide-sketch-f {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }

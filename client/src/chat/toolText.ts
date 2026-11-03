@@ -83,6 +83,9 @@ export function toolAction(item: ToolItem): ToolAction {
       return { verb: pick("Found files", "Finding files"), object: short(text(a.pattern)), mono: true };
     case "skill":
       return { verb: pick("Ran skill", "Running skill"), object: `/${text(a.name) || "skill"}`, mono: false };
+    case "show_document":
+      // The agent opened a PDF or Word file in the Preview pane (daemon tools/document.py).
+      return { verb: pick("Opened preview of", "Opening preview of"), object: baseName(text(a.path) || "a document"), mono: false };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(item.name);
   if (mcp) return { verb: pick("Used", "Using"), object: `${mcp[1]}: ${mcp[2]}`, mono: false };

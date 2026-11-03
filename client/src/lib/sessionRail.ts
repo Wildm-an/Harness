@@ -22,6 +22,14 @@ export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
 const SHOWN_PREF = "sessionRail.shown";
 const FOLDED_PREF = "sessionRail.folded";
 
+/** The panes that need the room of the rail: in the Code view the rail closes when one of them opens. */
+export const ROOM_PANES = ["preview", "browser"] as const;
+
+/** True when a pane of ROOM_PANES is in ``after`` and was not in ``before``. */
+export function needsRailRoom(before: readonly string[], after: readonly string[]): boolean {
+  return ROOM_PANES.some((p) => after.includes(p) && !before.includes(p));
+}
+
 /** The rail shows by default, as in Claude. */
 export function railShown(): boolean {
   return loadPref(SHOWN_PREF, "true") !== "false";
@@ -56,6 +64,15 @@ export function toggleFolded(folded: RailSection[], id: RailSection): RailSectio
 /** The share of the context window in use, from 0 to 1. */
 export function contextShare(tokens: number, length: number): number {
   return length > 0 ? Math.min(Math.max(tokens / length, 0), 1) : 0;
+}
+
+/**
+ * The value in the heading of a folded section: the share of the context window in use for the
+ * Context section ("57%"). null: the section shows no value.
+ */
+export function foldedValue(section: RailSection, context: { tokens: number; length: number } | null): string | null {
+  if (section !== "context" || !context) return null;
+  return percentText(contextShare(context.tokens, context.length));
 }
 
 /** The share as text: "<1%" for a small share that is not zero. */

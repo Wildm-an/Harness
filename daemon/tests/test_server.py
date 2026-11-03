@@ -641,6 +641,37 @@ def test_the_editor_creates_files_and_folders(daemon, project, fake_model):
     c.close()
 
 
+def test_the_editor_renames_files_and_folders(daemon, project, fake_model, tmp_path):
+    (project / "src" / "deep").mkdir(parents=True)
+    (project / "src" / "deep" / "a.py").write_text("a")
+    (project / "notes.txt").write_text("n")
+    (project / "other.txt").write_text("o")
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "fs.rename", "path": "notes.txt", "name": "todo.md"})
+    done = c.until("fs.renamed")[0]
+    assert (done["path"], done["new_path"], done["kind"]) == ("notes.txt", "todo.md", "file")
+    assert (project / "todo.md").read_text() == "n" and not (project / "notes.txt").exists()
+    c.send({"type": "fs.rename", "path": "src\\deep", "name": "lib"})  # A folder keeps its files. Windows separators too.
+    done = c.until("fs.renamed")[0]
+    assert (done["new_path"], done["kind"]) == ("src/lib", "dir") and (project / "src" / "lib" / "a.py").read_text() == "a"
+    c.send({"type": "fs.rename", "path": "todo.md", "name": "TODO.md"})  # A change of case only.
+    assert c.until("fs.renamed")[0]["new_path"] == "TODO.md"
+    # A name that exists, a path in the name, the session folder, a missing file, and a path outside are errors.
+    for path, name, error in [
+        ("TODO.md", "other.txt", "exists already"),
+        ("TODO.md", "../x.md", "no / or"),
+        ("TODO.md", "..", "no / or"),
+        (".", "x", "Give a file"),
+        ("missing.txt", "x.txt", "does not exist"),
+        ("../outside.txt", "x.txt", "outside the project"),
+    ]:
+        c.send({"type": "fs.rename", "path": path, "name": name})
+        assert error in c.until("error")[0]["message"]
+    assert (project / "other.txt").read_text() == "o"
+    c.close()
+
+
 def test_the_editor_deletes_files_and_folders(daemon, project, fake_model, tmp_path, monkeypatch):
     from harness_daemon import trash
     monkeypatch.setattr(trash, "_recycle_windows", lambda path: False)  # Keep the Recycle Bin clean.

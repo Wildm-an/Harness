@@ -2,13 +2,36 @@ import { useEffect, useRef, useState } from "react";
 import { Archive, LoaderCircle } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 import { contextRows, contextSourceText, formatTokens, type ContextUsage } from "../lib/context";
+import { percentText } from "../lib/sessionRail";
 
 const RADIUS = 7;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-function percent(share: number): string {
-  const p = share * 100;
-  return p > 0 && p < 1 ? "<1%" : `${Math.round(p)}%`;
+const percent = percentText;
+
+/**
+ * The parts of the context: a bar and a list with the tokens and the share of each part, then the
+ * free space and the compaction buffer. The context panel of the ring and the session rail use it.
+ */
+export function ContextBreakdown({ usage }: { usage: ContextUsage }) {
+  const rows = contextRows(usage);
+  return (
+    <>
+      <div className="context-bar" aria-hidden>
+        {rows.map((r) => (r.share > 0 ? <span key={r.kind} className={`ctx-${r.kind}`} style={{ width: `${r.share * 100}%` }} /> : null))}
+      </div>
+      <ul className="context-list">
+        {rows.map((r) => (
+          <li key={r.kind}>
+            <span className={`context-dot ctx-${r.kind}`} aria-hidden />
+            <span className="context-label">{r.label}</span>
+            <span className="context-tokens mono">{formatTokens(r.tokens)}</span>
+            <span className="context-share mono">{percent(r.share)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 /**
@@ -54,7 +77,6 @@ export function ContextRing({
     if (open) onOpen();
   }, [tokens, length]);
 
-  const rows = usage ? contextRows(usage) : [];
   return (
     <div className="context-ring-wrap" ref={ref} onKeyDown={(e) => e.key === "Escape" && open && (e.stopPropagation(), setOpen(false))}>
       <button
@@ -93,19 +115,7 @@ export function ContextRing({
             </p>
           ) : (
             <>
-              <div className="context-bar" aria-hidden>
-                {rows.map((r) => (r.share > 0 ? <span key={r.kind} className={`ctx-${r.kind}`} style={{ width: `${r.share * 100}%` }} /> : null))}
-              </div>
-              <ul className="context-list">
-                {rows.map((r) => (
-                  <li key={r.kind}>
-                    <span className={`context-dot ctx-${r.kind}`} aria-hidden />
-                    <span className="context-label">{r.label}</span>
-                    <span className="context-tokens mono">{formatTokens(r.tokens)}</span>
-                    <span className="context-share mono">{percent(r.share)}</span>
-                  </li>
-                ))}
-              </ul>
+              <ContextBreakdown usage={usage} />
               <p className="context-note">
                 The agent summarizes the old turns at {Math.round(compactAt * 100)}% of the context. {contextSourceText(source ?? usage.source)}
               </p>

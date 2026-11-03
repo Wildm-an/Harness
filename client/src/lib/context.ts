@@ -41,6 +41,7 @@ const PART_LABELS: Record<string, string> = {
   tools: "Built-in tools",
   mcp_tools: "MCP tools",
   messages: "Messages",
+  tool_results: "Tool results",
 };
 
 /**

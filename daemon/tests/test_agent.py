@@ -40,7 +40,7 @@ def test_text_reply_streams_tokens(harness_home, project, fake_model):
     assert sent["messages"][0]["role"] == "system"
     assert sent["messages"][-1] == {"role": "user", "content": "hi"}
     assert {t["function"]["name"] for t in sent["tools"]} == {
-        "read", "glob", "grep", "edit", "write", "bash", "office_edit", "update_plan", "wrap_up",
+        "read", "glob", "grep", "edit", "write", "bash", "office_edit", "show_document", "update_plan", "wrap_up",
     }
 
 
