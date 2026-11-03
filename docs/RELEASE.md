@@ -74,7 +74,9 @@ To build a release again with the same version (for example after a fix that has
 2. Or keep the tag, and start the workflow by hand with the tag:
    `gh workflow run release.yml --ref master -f tag=v0.1.34`. It builds the code of the tag.
    If the build of the tag failed and the fix is in a later commit, add the commit:
-   `gh workflow run release.yml --ref master -f tag=v0.1.34 -f ref=<commit>`. The workflow builds
+   `gh workflow run release.yml --ref master -f tag=v0.1.34 -f ref=<commit>`, with the full
+   40-character hash of the commit (`git rev-parse <commit>`): the checkout step does not accept a
+   short hash. The workflow builds
    that commit and puts the files on the release of the tag. The tag does not move, so the
    "Source code" downloads of the release still show the code of the tag.
 3. The workflow sees that the release exists. It replaces the files with the same names and the

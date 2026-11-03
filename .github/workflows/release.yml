@@ -28,7 +28,7 @@ on:
         required: false
         default: ""
       ref:
-        description: "With a tag: build this branch or commit instead of the code of the tag. Empty: the tag."
+        description: "With a tag: build this branch, or this commit (the full 40-character hash), instead of the code of the tag. Empty: the tag."
         required: false
         default: ""
 
