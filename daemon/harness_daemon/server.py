@@ -2675,8 +2675,10 @@ async def on_fs_rename(conn: Connection, msg: dict[str, Any]) -> None:
     # The folder and the typed name. resolve() of the target would give the old case on Windows.
     folder = relpath(session.cwd, source.parent)
     new = name if folder in ("", ".") else f"{folder}/{name}"
-    # A change of case only ("a.py" to "A.py") is a rename on Windows too, not a name that exists.
-    if os.path.lexists(target) and os.path.normcase(str(target)) != os.path.normcase(str(source)):
+    # A change of case only ("a.py" to "A.py") is a rename, not a name that exists. On a disk that
+    # ignores case (Windows, and macOS by default), the "other" name is the same file: compare the
+    # files, not the paths. normcase() does not help on macOS: it changes nothing there.
+    if os.path.lexists(target) and not os.path.samestat(os.lstat(source), os.lstat(target)):
         raise ProtocolError(f"{name} exists already.")
     kind = "dir" if source.is_dir() and not source.is_symlink() else "file"
     try:
