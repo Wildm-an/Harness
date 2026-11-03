@@ -3076,6 +3076,21 @@ select {
   color: var(--warning);
 }
 
+/* The URL of an endpoint, with its copy button at the end. A long URL gets "…", not the button. */
+.provider-url {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.icon-btn.copy-url-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+}
+
 .switch {
   position: relative;
   flex: none;

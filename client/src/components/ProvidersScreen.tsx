@@ -544,6 +544,28 @@ function ProviderForm({
   );
 }
 
+/** Copies the URL of an endpoint. A check mark shows for a short time after the copy. */
+function CopyUrlButton({ url, name }: { url: string; name: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button
+      type="button"
+      className="icon-btn ghost copy-url-btn"
+      onClick={copy}
+      aria-label={`Copy the URL of ${name}`}
+      title={copied ? "Copied" : "Copy the URL"}
+    >
+      {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
+    </button>
+  );
+}
+
 /** A connection test: running, or its result. ``ref`` names the form that started it. */
 export type ProviderTest = { ref: string; busy: true } | (ProviderTestResult & { busy?: false });
 
@@ -651,9 +673,12 @@ export function ProvidersScreen({
                       {item.name}
                       {!item.enabled && <span className="badge">Off</span>}
                     </span>
-                    <span className="connection-desc mono" title={item.base_url}>
-                      {item.base_url}
-                      {item.ssh ? `  via SSH ${item.ssh}` : ""}
+                    <span className="provider-url">
+                      <span className="connection-desc mono" title={item.base_url}>
+                        {item.base_url}
+                        {item.ssh ? `  via SSH ${item.ssh}` : ""}
+                      </span>
+                      <CopyUrlButton url={item.base_url} name={item.name} />
                     </span>
                     <span className={`provider-key${key.warn ? " warn" : ""}`}>
                       {key.warn ? <TriangleAlert size={12} aria-hidden /> : <KeyRound size={12} aria-hidden />}
