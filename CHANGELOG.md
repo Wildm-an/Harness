@@ -3,6 +3,50 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.34 (2026-11-02)
+
+### Documents
+
+- The agent reads PDF, Word, PowerPoint, and Excel files. It sees numbered paragraphs, tables,
+  slides, and cells, and can read only some pages of a PDF.
+- The agent changes and makes Word, PowerPoint, and Excel files with the new office_edit tool:
+  text, paragraphs, table cells, slides and notes, cells and formulas, and sheets. The permission
+  request shows the change as a diff of the text. Rewind restores the file.
+
+### IDE view
+
+- Autocomplete in the editor, as GitHub Copilot: when you stop typing, the model suggests the code
+  at the cursor in gray. Tab accepts it. "Autocomplete" in the status bar turns it off.
+- New file and New folder in the Files sidebar, a language menu in the status bar, and a sidebar
+  edge to drag. Files that the editor cannot open are gray. The sidebar buttons go into a "⋯" menu
+  when the sidebar is narrow.
+- Settings > Appearance > IDE view, and a Layout menu in the title bar: the Classic, Focus, Wide
+  terminal, and Review layouts, the chat side, and the first sizes.
+- The app opens in the Code view, and each new session starts in it. "IDE" on the start screen
+  starts an empty session, so the files show at once.
+
+### Chat
+
+- The agent can show its task list under the messages, and a box at the end of a turn with a
+  recap, a question, and answer buttons, as Claude Code does.
+- Ctrl+U in a prompt box adds files to the prompt. "Open folder…" in the Files sidebar moves the
+  session to another folder.
+- The model shows without its provider, except in the menus. When the mode and the model do not fit
+  under the prompt box, only their icons show.
+
+### Appearance
+
+- An accent color: white by default (black in the light theme), the old clay orange, four other
+  colors, or a custom color.
+- "System font" for the code font. The Visual Studio themes are the default code themes.
+
+### Fixes
+
+- The terminal no longer takes the keyboard from the editor or the prompt box.
+- A session that moves to another folder gets new terminal shells, with no "Unknown terminal" error.
+- Menus and the context panel fit in narrow panes. The space under the last terminal row is no
+  longer black. The installer loading bar is white.
+
 ## 0.1.33 (2026-11-02)
 
 ### IDE view
