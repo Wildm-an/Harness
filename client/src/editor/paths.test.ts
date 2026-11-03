@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePath, selectionReference } from "./paths";
+import { normalizePath, openFolderBlocked, selectionReference } from "./paths";
 import { parsePathRef } from "../lib/openPath";
 
 describe("editor paths", () => {
@@ -24,5 +24,17 @@ describe("editor paths", () => {
     expect(parsePathRef("1.2.3")).toBeNull();
     expect(parsePathRef("git status")).toBeNull();
     expect(parsePathRef("add")).toBeNull();
+  });
+});
+
+describe("open folder", () => {
+  it("can change the folder of a connected session that is idle", () => {
+    expect(openFolderBlocked({ connected: true, running: false, worktree: false })).toBeNull();
+  });
+
+  it("tells why it cannot change the folder", () => {
+    expect(openFolderBlocked({ connected: false, running: false, worktree: false })).toMatch(/Connect/);
+    expect(openFolderBlocked({ connected: true, running: false, worktree: true })).toMatch(/worktree/);
+    expect(openFolderBlocked({ connected: true, running: true, worktree: false })).toMatch(/end of the turn/);
   });
 });

@@ -251,9 +251,16 @@ Harness has no "+" button now. Add it.
 
 Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 
-- **V6f.** A switch with "</>" (tooltip "Code view") and "IDE" (tooltip "IDE view"). It is at the right end of the sidebar head, as the Chat / Code switch of the Claude app. When the sidebar is hidden (always in the IDE view at first), it is in the title bar, right after Back and Forward. It is a radio group. The arrow keys move the choice. It has no shortcut.
-- **V6g.** The Code view is the Claude layout. The IDE view puts the editor (with its file tree and search) and the terminal at the left, and the chat at the right. Each view keeps its own layout for each project. The app keeps the last view.
+- **V6f.** A switch with "</>" (label "Code view") and "IDE" (label "IDE view"). It has no hover tip: the user asked for none (an exception to P5). It is at the right end of the sidebar head, as the Chat / Code switch of the Claude app. When the sidebar is hidden (always in the IDE view at first), it is in the title bar, right after Back and Forward. It is a radio group. The arrow keys move the choice. It has no shortcut.
+- **V6g.** The Code view is the Claude layout. The IDE view puts the editor (with its file tree and search) and the terminal at the left, and the chat at the right. Each view keeps its own layout for each project. The app always opens in the Code view, and each new session (New session, or a prompt on the start screen) starts in the Code view. A switch to the IDE view on the start screen starts an empty session in the selected project (with the selected model, mode, and worktree choice), so the files show at once.
 - **V6h.** The IDE view hides the sessions sidebar and the session rail. The Code view shows the sidebar again. Ctrl+B still shows the sidebar in the IDE view.
+- **V6j.** Settings > Appearance > "IDE view" sets the layout of the IDE view, from Cursor (named layouts), OpenCode (fixed regions), and Hermes (presets): "Classic", "Focus", "Wide terminal", "Review", then "Chat side" (Right / Left), "Chat width", and "Terminal height". A change resets the saved IDE layout of each project and applies at once. The user can still drag and resize the panes. In the IDE view, a Layout menu in the title bar (to the left of the Servers menu) has the same layouts and chat side, "Reset layout", and "Layout settings…".
+- **V6k.** Editor autocomplete, as GitHub Copilot: when the user stops typing (400 ms), the model of the session writes the text at the cursor. The editor shows it as gray text. Tab accepts it, and Esc hides it. "Autocomplete" in the editor status bar turns it on or off (on by default). While it is on, the word list opens only with Ctrl+Space.
+- **V6m.** The Files sidebar head has "New file…" and "New folder…". A name field opens at the top of the tree, with the folder of the open file as the start. Enter makes the item (the daemon message `fs.create`), and a new file opens in the editor. Esc closes the field. The edge on the right of the sidebar changes its width. A double-click sets the automatic width.
+- **V6n.** The language of the open file is a menu in the editor status bar, with a filter. The choice changes the colors and the editor features of that file. The file on disk does not change.
+- **V6o.** The Files sidebar head shows its action buttons when they fit. A narrow sidebar (236px or less) shows one "⋯" menu with the same actions and their names. The sidebar is at least 120px wide: the Files and Search switch and "⋯" stay in view.
+- **V6p.** The agent shows a task list and an end-of-turn box, as Claude Code does (daemon tools `update_plan` and `wrap_up`). The chat draws the latest plan under the messages: a check mark for a completed step, a spinner for the step in progress, and a dashed circle for a pending step. At the end of a turn it draws a box with the recap, a question, and one or two answer buttons. A button sends its message as the next prompt. The chat does not show these two tools as tool rows.
+- **V6l.** The file tree grays out the files that the editor cannot open (binary files, by extension). A click does nothing. The hover hint is "Binary file".
 - **V6i.** In the editor, Ctrl+K opens the inline edit box, as in Cursor: the instruction goes to the agent with the selected lines. Outside the editor, Ctrl+K opens the command menu. Ctrl+L adds the selection to the chat.
 
 ### 7.3 Split view
@@ -290,7 +297,7 @@ Use these keys. Do not give a key to a different command.
 | Close pane | Ctrl+\ | missing |
 | Close session or pane | Ctrl+W | browser tab only |
 | Reopen closed session | Ctrl+Shift+T | missing |
-| Add files or photos | Ctrl+U | missing |
+| Add files or photos | Ctrl+U | in the prompt box: files as `@path` references (no photos yet) |
 | Open model menu | Ctrl+Shift+. | missing |
 | Jump to previous / next prompt | Alt+Up / Alt+Down | used for "move project" |
 | Rename session | Ctrl+Alt+R | R in the row menu |

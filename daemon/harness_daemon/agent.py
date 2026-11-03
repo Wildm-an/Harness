@@ -66,7 +66,7 @@ CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts")
 OnCheckpoint = Callable[[str, str, "bytes | None"], None]
 
 # The tools that change files. A checkpoint keeps the file content before the change.
-FILE_TOOLS = ("edit", "write")
+FILE_TOOLS = ("edit", "write", "office_edit")  # Rewind keeps the file before these tools change it.
 
 IMAGE_MESSAGE = "The image from the {tool} tool call:"
 

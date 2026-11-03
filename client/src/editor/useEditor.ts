@@ -80,6 +80,11 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   const treeRef = useRef(tree);
   treeRef.current = tree;
   const revealKey = useRef(0);
+  const [createError, setCreateError] = useState<string | null>(null); // New file or New folder failed.
+  const openFileRef = useRef<(path: string) => void>(() => {});
+  // The editor autocomplete request that waits for the daemon. A new request ends the old one.
+  const completion = useRef<{ id: string; resolve: (text: string | null) => void } | null>(null);
+  const completionCount = useRef(0);
 
   const patchFile = useCallback((path: string, patch: Partial<OpenFile>) => {
     setFiles((list) => list.map((f) => (f.path === path ? { ...f, ...patch } : f)));
@@ -167,6 +172,14 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   useEffect(() => {
     return conn.onMessage((msg: DaemonMessage) => {
       switch (msg.type) {
+        case "editor.completion": {
+          const pending = completion.current;
+          if (pending?.id === msg.id) {
+            completion.current = null;
+            pending.resolve(msg.text);
+          }
+          return;
+        }
         case "fs.tree":
           setTree((t) => ({ ...t, [msg.path]: msg.items as TreeEntry[] }));
           return;
@@ -190,6 +203,17 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           }
           const dirty = entry ? entry.model.getAlternativeVersionId() !== entry.savedVersion : false;
           patchFile(msg.path, { hash: msg.hash, saving: false, dirty, notice: undefined });
+          return;
+        }
+        case "fs.created": {
+          // Show the new file or folder: open its parent folders, and open a new file in the editor.
+          const parts = msg.path.split("/");
+          const parents = parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+          const dirs = msg.kind === "dir" ? [...parents, msg.path] : parents;
+          setExpanded((set) => new Set([...set, ...dirs]));
+          for (const dir of [".", ...dirs]) listDir(dir);
+          setCreateError(null);
+          if (msg.kind === "file") openFileRef.current(msg.path);
           return;
         }
         case "fs.conflict":
@@ -219,6 +243,8 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             setFiles((list) => list.map((f) => (f.saving ? { ...f, saving: false, error: msg.message } : f)));
           } else if (msg.ref === "fs.search") {
             setSearch((s) => ({ ...s, busy: false, error: msg.message }));
+          } else if (msg.ref === "fs.create") {
+            setCreateError(msg.message);
           } else if (msg.ref === "fs.list") {
             setTree((t) => Object.fromEntries(Object.entries(t).filter(([, v]) => v !== "loading")));
           }
@@ -239,6 +265,16 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
       read(path, "open");
     },
     [cwd, read],
+  );
+  openFileRef.current = openFile;
+
+  /** New file or New folder: the daemon makes it, and fs.created shows it. */
+  const createEntry = useCallback(
+    (path: string, kind: "file" | "dir"): boolean => {
+      setCreateError(null);
+      return send({ type: "fs.create", path, kind });
+    },
+    [send],
   );
 
   const closeFile = useCallback(
@@ -338,7 +374,33 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     [send],
   );
 
+  /**
+   * Ask the model for the text at the cursor (editor autocomplete). null: no completion, a newer
+   * request replaced this one, or the signal ended it (the user typed on).
+   */
+  const complete = useCallback(
+    (path: string, prefix: string, suffix: string, signal: AbortSignal): Promise<string | null> => {
+      completion.current?.resolve(null);
+      completion.current = null;
+      const id = `c${++completionCount.current}`;
+      return new Promise((resolve) => {
+        const end = (text: string | null) => {
+          if (completion.current?.id === id) completion.current = null;
+          resolve(text);
+        };
+        completion.current = { id, resolve: end };
+        signal.addEventListener("abort", () => end(null), { once: true });
+        if (!send({ type: "editor.complete", id, path, prefix, suffix })) end(null);
+      });
+    },
+    [send],
+  );
+
   return {
+    createEntry,
+    createError,
+    clearCreateError: () => setCreateError(null),
+    complete,
     files,
     active,
     setActive,

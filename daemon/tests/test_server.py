@@ -293,8 +293,12 @@ def test_terminal_tabs_have_their_own_shells(daemon, project, fake_model):
     c.send({"type": "term.open", "cols": 80, "rows": 24, "id": a["id"]})
     assert c.until("term.opened")[0]["id"] == a["id"]
     c.send({"type": "term.close", "id": b["id"]})
+    # Keys for a closed shell: the client learns that the shell stopped. A resize is no error.
+    c.send({"type": "term.resize", "id": b["id"], "cols": 90, "rows": 30})
     c.send({"type": "term.input", "id": b["id"], "data": "x"})
-    assert "Unknown terminal" in c.until("error")[0]["message"]
+    gone, seen = c.until("term.exit")
+    assert gone["id"] == b["id"] and gone["code"] is None
+    assert not [m for m in seen if m["type"] == "error"]
     c.close()
 
 
@@ -613,4 +617,23 @@ def test_update_refused_without_enable(daemon):
     assert ok["updatable"] is False
     c.send({"type": "daemon.update", "filename": "harness_daemon-9.9.9-py3-none-any.whl", "data": ""})
     assert "cannot update itself" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_the_editor_creates_files_and_folders(daemon, project, fake_model):
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "fs.create", "path": "src/new/helpers.py", "kind": "file"})
+    created = c.until("fs.created")[0]
+    assert (created["path"], created["kind"]) == ("src/new/helpers.py", "file")
+    assert (project / "src" / "new" / "helpers.py").read_bytes() == b""
+    c.send({"type": "fs.create", "path": r"docs\notes", "kind": "dir"})  # Windows separators too.
+    assert c.until("fs.created")[0]["path"] == "docs/notes" and (project / "docs" / "notes").is_dir()
+    # A name that exists, a path outside the project, and a bad kind are errors.
+    c.send({"type": "fs.create", "path": "src/new/helpers.py", "kind": "file"})
+    assert "exists already" in c.until("error")[0]["message"]
+    c.send({"type": "fs.create", "path": "../outside.txt", "kind": "file"})
+    assert "outside the project" in c.until("error")[0]["message"]
+    c.send({"type": "fs.create", "path": "x", "kind": "link"})
+    assert "'kind'" in c.until("error")[0]["message"]
     c.close()

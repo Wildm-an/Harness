@@ -70,6 +70,7 @@ from .skills import Skill, discover_skills, inline_skill_text
 from .storage import Storage
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
+from .completions import complete_code
 from .titles import summarize_title
 
 log = logging.getLogger("harness.daemon")
@@ -343,6 +344,7 @@ class LiveSession:
         self.turn_tokens = 0
         self.title_task: asyncio.Task | None = None
         self.suggestion_task: asyncio.Task | None = None  # The next prompt of the user (suggestions.py).
+        self.completion_task: asyncio.Task | None = None  # The editor autocomplete (completions.py).
         self.side_tasks: dict[str, asyncio.Task] = {}  # The answers of the side chat that run, by question id.
         self.tasks: TaskHost | None = None  # The background tasks that the agent started (tasks.py).
         # "Keep computer awake" (keepawake.py): only for this session, while the daemon keeps it open.
@@ -424,6 +426,11 @@ class LiveSession:
             self.suggestion_task.cancel()
         self.suggestion_task = None
 
+    def cancel_completion(self) -> None:
+        if self.completion_task is not None and not self.completion_task.done():
+            self.completion_task.cancel()
+        self.completion_task = None
+
     def cancel_side(self, question_id: str | None = None) -> None:
         """Stop one answer of the side chat, or all of them."""
         for key in [question_id] if question_id is not None else list(self.side_tasks):
@@ -435,6 +442,7 @@ class LiveSession:
         """Stop the shell, the MCP servers, the agent browser, the servers, and the plugins of the
         session, and end its file URLs."""
         self.cancel_suggestion()
+        self.cancel_completion()
         self.cancel_side()
         if self.tasks is not None:
             self.tasks.close()
@@ -1390,13 +1398,23 @@ async def on_term_close(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("term.input")
 async def on_term_input(conn: Connection, msg: dict[str, Any]) -> None:
-    _terminal(conn).get(_text_arg(msg, "id")).write(_text_arg(msg, "data"))
+    """Keys for a shell. A shell that is gone (for example after session.move) gets "term.exit":
+    the client then shows that the shell stopped, and Enter starts a new one."""
+    terminal_id = _text_arg(msg, "id")
+    terminal = _terminal(conn).terminals.get(terminal_id)
+    if terminal is None:
+        await conn.require_live().send({"type": "term.exit", "id": terminal_id, "code": None})
+        return
+    terminal.write(_text_arg(msg, "data"))
 
 
 @handler("term.resize")
 async def on_term_resize(conn: Connection, msg: dict[str, Any]) -> None:
+    """A new size for a shell. A shell that is gone needs no size: no error."""
     cols, rows = _term_size(msg)
-    _terminal(conn).get(_text_arg(msg, "id")).resize(cols, rows)
+    terminal = _terminal(conn).terminals.get(_text_arg(msg, "id"))
+    if terminal is not None:
+        terminal.resize(cols, rows)
 
 
 MAX_SESSION_LIST = 500
@@ -2153,6 +2171,29 @@ async def on_ping(conn: Connection, msg: dict[str, Any]) -> None:
     await conn.send({"type": "pong"})
 
 
+@handler("editor.complete")
+async def on_editor_complete(conn: Connection, msg: dict[str, Any]) -> None:
+    """Editor autocomplete: {"id", "path", "prefix", "suffix"}. The model of the session writes the
+    text at the cursor. The reply {"type": "editor.completion", "id", "text"} comes later; "text" is
+    null when there is no completion. A new request replaces the one that runs."""
+    live = conn.require_live()
+    request_id, path = msg.get("id"), msg.get("path", "")
+    prefix, suffix = msg.get("prefix", ""), msg.get("suffix", "")
+    if not isinstance(request_id, str) or not request_id:
+        raise ProtocolError("'id' must be a string.")
+    if not all(isinstance(v, str) for v in (path, prefix, suffix)):
+        raise ProtocolError("'path', 'prefix', and 'suffix' must be strings.")
+    session = live.session
+    assert session is not None
+    live.cancel_completion()
+
+    async def work() -> None:
+        text = await complete_code(session.agent.client, path, prefix, suffix)
+        await live.send({"type": "editor.completion", "id": request_id, "text": text})
+
+    live.completion_task = asyncio.create_task(work())
+
+
 @handler("context.get")
 async def on_context_get(conn: Connection, msg: dict[str, Any]) -> None:
     """The context breakdown of the session: the size of each part of the next request."""
@@ -2528,6 +2569,32 @@ async def on_fs_write(conn: Connection, msg: dict[str, Any]) -> None:
     if rel in conn.watched:
         conn.watched[rel] = hash_bytes(data)
     await conn.send({"type": "fs.saved", "path": rel, "hash": hash_bytes(data)})
+
+
+@handler("fs.create")
+async def on_fs_create(conn: Connection, msg: dict[str, Any]) -> None:
+    """New file or New folder of the editor: {"path", "kind": "file" | "dir"}. A file is empty. The
+    parent folders are made too. A path that exists is an error. The reply is "fs.created"."""
+    session = conn.require_session()
+    kind = msg.get("kind")
+    if kind not in ("file", "dir"):
+        raise ProtocolError("'kind' must be \"file\" or \"dir\".")
+    raw = _text_arg(msg, "path").strip().replace("\\", "/").strip("/")
+    if not raw:
+        raise ProtocolError("Give a name.")
+    path = resolve_in_cwd(session.cwd, raw)
+    rel = relpath(session.cwd, path)
+    if path.exists():
+        raise ProtocolError(f"{rel} exists already.")
+    try:
+        if kind == "dir":
+            path.mkdir(parents=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"")
+    except OSError as e:
+        raise ProtocolError(f"Could not create {rel}: {e.strerror or e}") from None
+    await conn.send({"type": "fs.created", "path": rel, "kind": kind})
 
 
 @handler("fs.unwatch")

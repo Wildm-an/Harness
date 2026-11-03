@@ -130,8 +130,12 @@ export function cleanFontName(name: string): string {
 }
 
 /** The CSS font stack for a code font name. */
+/** The code font value for the monospace font of the system (Cascadia Mono or Consolas on Windows). */
+export const SYSTEM_CODE_FONT = "system";
+
 export function codeFontStack(name: string): string {
   const clean = cleanFontName(name);
+  if (clean === SYSTEM_CODE_FONT) return `ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace`;
   return clean ? `"${clean}", "JetBrains Mono", ${MONO_FALLBACK}` : `"JetBrains Mono", ${MONO_FALLBACK}`;
 }
 
@@ -154,27 +158,30 @@ export function setCodeFont(name: string): void {
 // The Monaco themes of the editor and the diff view: one for the light theme, one for the dark theme.
 export type LightCodeTheme = "harness-light" | "vs" | "hc-light";
 export type DarkCodeTheme = "harness-dark" | "vs-dark" | "hc-black";
+// The Visual Studio themes are the default (the user asked for them).
+export const DEFAULT_LIGHT_CODE: LightCodeTheme = "vs";
+export const DEFAULT_DARK_CODE: DarkCodeTheme = "vs-dark";
 export const LIGHT_CODE_THEMES: [LightCodeTheme, string][] = [
+  ["vs", "Visual Studio light (default)"],
   ["harness-light", "Harness light"],
-  ["vs", "Visual Studio light"],
   ["hc-light", "High contrast light"],
 ];
 export const DARK_CODE_THEMES: [DarkCodeTheme, string][] = [
+  ["vs-dark", "Visual Studio dark (default)"],
   ["harness-dark", "Harness dark"],
-  ["vs-dark", "Visual Studio dark"],
   ["hc-black", "High contrast dark"],
 ];
 const LIGHT_CODE_PREF = "lightCodeTheme";
 const DARK_CODE_PREF = "darkCodeTheme";
 
 export function lightCodeTheme(): LightCodeTheme {
-  const value = loadPref(LIGHT_CODE_PREF, "harness-light");
-  return LIGHT_CODE_THEMES.find(([id]) => id === value)?.[0] ?? "harness-light";
+  const value = loadPref(LIGHT_CODE_PREF, DEFAULT_LIGHT_CODE);
+  return LIGHT_CODE_THEMES.find(([id]) => id === value)?.[0] ?? DEFAULT_LIGHT_CODE;
 }
 
 export function darkCodeTheme(): DarkCodeTheme {
-  const value = loadPref(DARK_CODE_PREF, "harness-dark");
-  return DARK_CODE_THEMES.find(([id]) => id === value)?.[0] ?? "harness-dark";
+  const value = loadPref(DARK_CODE_PREF, DEFAULT_DARK_CODE);
+  return DARK_CODE_THEMES.find(([id]) => id === value)?.[0] ?? DEFAULT_DARK_CODE;
 }
 
 export function setLightCodeTheme(value: LightCodeTheme): void {
@@ -289,8 +296,8 @@ export function resetAppearance(): void {
   setChatFontSize(CHAT_FONT_DEFAULT);
   setTranscriptWidth("default");
   setDensity("compact");
-  savePref(LIGHT_CODE_PREF, "harness-light");
-  savePref(DARK_CODE_PREF, "harness-dark");
+  savePref(LIGHT_CODE_PREF, DEFAULT_LIGHT_CODE);
+  savePref(DARK_CODE_PREF, DEFAULT_DARK_CODE);
   setCodeFont(""); // This call also tells the editor and the terminal.
 }
 

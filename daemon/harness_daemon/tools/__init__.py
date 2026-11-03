@@ -8,6 +8,8 @@ from .edit import EditTool
 from .glob import GlobTool
 from .grep import GrepTool
 from .preview import preview_tools
+from .office import OfficeEditTool
+from .progress import UpdatePlanTool, WrapUpTool
 from .read import ReadTool
 from .shell import ShellInfo, detect_shell
 from .skill import SkillTool
@@ -15,7 +17,7 @@ from .write import WriteTool
 
 
 def default_tools() -> list[Tool]:
-    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool()]
+    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool(), OfficeEditTool(), UpdatePlanTool(), WrapUpTool()]
 
 
 __all__ = [
@@ -24,6 +26,7 @@ __all__ = [
     "EditTool",
     "GlobTool",
     "GrepTool",
+    "OfficeEditTool",
     "ReadTool",
     "ShellInfo",
     "SkillTool",
@@ -35,5 +38,7 @@ __all__ = [
     "detect_shell",
     "preview_tools",
     "truncate",
+    "UpdatePlanTool",
+    "WrapUpTool",
     "WriteTool",
 ]

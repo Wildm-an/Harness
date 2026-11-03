@@ -7,6 +7,8 @@ import type { Submission } from "./PromptBox";
 import { Markdown } from "./Markdown";
 import { PermissionCard } from "./PermissionCard";
 import { ToolGroup } from "./ToolGroup";
+import { PlanBlock, WrapUpBox } from "./ProgressBlocks";
+import { isProgressTool, latestPlan, latestWrapUp } from "../lib/progress";
 
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
@@ -225,6 +227,7 @@ export function MessageList({
   onRemoveQueued = () => {},
   onRewind = () => {},
   onFork = () => {},
+  onAction,
   emptyHint,
 }: {
   items: ChatItem[];
@@ -237,6 +240,7 @@ export function MessageList({
   onRemoveQueued?: (id: string) => void;
   onRewind?: (messageId: string, options: RewindOptions) => void;
   onFork?: (messageId: string) => void;
+  onAction?: (message: string) => void; // A button of the end-of-turn box: the message is the next prompt.
   emptyHint: React.ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -253,6 +257,10 @@ export function MessageList({
     }
   }, [items, queued]);
 
+  // The task list and the end-of-turn box of the agent (update_plan and wrap_up).
+  const plan = latestPlan(items);
+  const wrap = latestWrapUp(items);
+
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -267,7 +275,7 @@ export function MessageList({
     <div className="messages" ref={scroller} onScroll={onScroll} aria-live="polite">
       <div className="column">
         {items.length === 0 && queued.length === 0 && <div className="empty-hint">{emptyHint}</div>}
-        {groupTools(items).map((item) => {
+        {groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name)))).map((item) => {
           switch (item.kind) {
             case "user":
               return <UserMessage key={item.id} item={item} running={running} onRewind={onRewind} onFork={onFork} />;
@@ -297,6 +305,8 @@ export function MessageList({
               return <SummaryCard key={item.id} item={item} />;
           }
         })}
+        {plan && <PlanBlock steps={plan} running={running} />}
+        {wrap && !running && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} />}
         {queued.map((item) => (
           <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
         ))}

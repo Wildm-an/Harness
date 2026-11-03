@@ -24,10 +24,9 @@ export function formatTokens(n: number): string {
   return `${k < 10 ? k.toFixed(1).replace(/\.0$/, "") : Math.round(k)}k tokens`;
 }
 
-/** The model name without its provider: "BugsAI/qwen3" -> "qwen3". */
-export function modelName(label: string): string {
-  return label.split("/").pop() || label;
-}
+import { modelName } from "../lib/modelName";
+
+export { modelName };
 
 /** The output tokens of the turn: the count of the endpoint, and an estimate for the reply that streams now. */
 export function turnTokens(turn: TurnInfo | null, items: ChatItem[]): number {

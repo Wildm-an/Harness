@@ -11,6 +11,7 @@ const LABELS: Record<string, string> = {
   read: "Read",
   edit: "Update",
   write: "Write",
+  office_edit: "Office edit",
   glob: "Glob",
   grep: "Search",
   bash: "Bash",

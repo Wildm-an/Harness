@@ -70,7 +70,49 @@ export function defaultLayout(): LayoutNode {
  * left, and the chat with the agent at the right.
  */
 export function ideLayout(): LayoutNode {
-  return split("row", [split("column", [group(["editor"]), group(["terminal"])], [0.72, 0.28]), group(["chat"])], [0.7, 0.3]);
+  return ideLayoutFor(DEFAULT_IDE_OPTIONS);
+}
+
+/** The arrangements of the IDE view (Settings > Appearance > IDE view), from Cursor, OpenCode, and Hermes. */
+export type IdePreset = "classic" | "focus" | "wideTerminal" | "review";
+
+export interface IdeLayoutOptions {
+  preset: IdePreset;
+  chatSide: "left" | "right";
+  chatShare: number; // The share of the window width for the chat: 0.2 to 0.5.
+  terminalShare: number; // The share of the height for the terminal: 0.15 to 0.5.
+}
+
+export const DEFAULT_IDE_OPTIONS: IdeLayoutOptions = { preset: "classic", chatSide: "right", chatShare: 0.3, terminalShare: 0.28 };
+
+const clampShare = (n: number, min: number, max: number, fallback: number) =>
+  Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+
+/**
+ * The IDE layout of the options:
+ * - classic: the editor with the terminal under it, and the chat at the side.
+ * - focus: the editor and the chat. No terminal.
+ * - wideTerminal: the editor and the chat, and the terminal under both, at the full width.
+ * - review: the editor and the Changes pane with the terminal under them, and the chat at the side.
+ */
+export function ideLayoutFor(options: IdeLayoutOptions): LayoutNode {
+  const chat = clampShare(options.chatShare, 0.2, 0.5, DEFAULT_IDE_OPTIONS.chatShare);
+  const term = clampShare(options.terminalShare, 0.15, 0.5, DEFAULT_IDE_OPTIONS.terminalShare);
+  const withChat = (work: LayoutNode): LayoutNode =>
+    options.chatSide === "left"
+      ? split("row", [group(["chat"]), work], [chat, 1 - chat])
+      : split("row", [work, group(["chat"])], [1 - chat, chat]);
+  const underTerminal = (work: LayoutNode): LayoutNode => split("column", [work, group(["terminal"])], [1 - term, term]);
+  switch (options.preset) {
+    case "focus":
+      return withChat(group(["editor"]));
+    case "wideTerminal":
+      return underTerminal(withChat(group(["editor"])));
+    case "review":
+      return withChat(underTerminal(split("row", [group(["editor"]), group(["diff"])], [0.6, 0.4])));
+    default:
+      return withChat(underTerminal(group(["editor"])));
+  }
 }
 
 /** One window for each pane of a group: the chat on the left, the other panes in a column. */

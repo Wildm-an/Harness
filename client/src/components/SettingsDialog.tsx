@@ -12,8 +12,11 @@ import {
   CHAT_FONT_MAX,
   CHAT_FONT_MIN,
   CODE_FONT_MAX,
+  SYSTEM_CODE_FONT,
   ACCENT_PRESETS,
   DARK_CODE_THEMES,
+  DEFAULT_DARK_CODE,
+  DEFAULT_LIGHT_CODE,
   LIGHT_CODE_THEMES,
   accentColor,
   appearance as savedAppearance,
@@ -41,6 +44,9 @@ import {
   type LightCodeTheme,
   type TranscriptWidth,
 } from "../lib/theme";
+import { CHAT_WIDTHS, IDE_PRESETS, TERMINAL_HEIGHTS, ideOptions, setIdeOptions } from "../lib/ideLayout";
+import { IdeSketch } from "./IdeSketch";
+import { DEFAULT_IDE_OPTIONS, type IdeLayoutOptions } from "../layout/model";
 import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
 import { compareVersions } from "../lib/version";
@@ -250,6 +256,7 @@ const SHORTCUTS: [string, string][] = [
   ["Diff", "Ctrl+Shift+D"],
   ["Files", "Ctrl+Shift+F"],
   ["Next permission mode", "Shift+Tab"],
+  ["Add files to the prompt", "Ctrl+U"],
   ["Back and forward", "Alt+Left, Alt+Right"],
   ["New browser tab", "Ctrl+T"],
   ["New terminal tab", "Ctrl+Shift+T"],
@@ -292,6 +299,9 @@ export function AppearanceSettings() {
   const [width, setWidth] = useState<TranscriptWidth>(transcriptWidth);
   const [dense, setDense] = useState<Density>(savedDensity);
   const [mono, setMono] = useState(codeFont);
+  const [monoKind, setMonoKind] = useState<"default" | "system" | "custom">(() =>
+    codeFont() === "" ? "default" : codeFont() === SYSTEM_CODE_FONT ? "system" : "custom",
+  );
   const [lightCode, setLightCode] = useState<LightCodeTheme>(lightCodeTheme);
   const [darkCode, setDarkCode] = useState<DarkCodeTheme>(darkCodeTheme);
   const [accent, setAccent] = useState(accentColor);
@@ -300,14 +310,24 @@ export function AppearanceSettings() {
     setAccent(accentColor());
   };
 
+  const [ide, setIde] = useState<IdeLayoutOptions>(ideOptions);
+  const changeIde = (patch: Partial<IdeLayoutOptions>) => {
+    const next = { ...ide, ...patch };
+    setIde(next);
+    setIdeOptions(next);
+  };
+
   const reset = () => {
     resetAppearance();
+    setIde({ ...DEFAULT_IDE_OPTIONS });
+    setIdeOptions({ ...DEFAULT_IDE_OPTIONS });
     setAccent(accentColor());
     setFont(interfaceFont());
     setFontSize(chatFontSize());
     setWidth(transcriptWidth());
     setDense(savedDensity());
     setMono(codeFont());
+    setMonoKind("default");
     setLightCode(lightCodeTheme());
     setDarkCode(darkCodeTheme());
   };
@@ -434,27 +454,103 @@ export function AppearanceSettings() {
         />
       </div>
 
+      <h3 className="settings-section">IDE view</h3>
+      <p className="help settings-note">
+        How the IDE view arranges its panes. A change applies to all projects. You can still drag and resize the panes.
+      </p>
+
+      <div className="setting-block">
+        <span className="setting-label">Layout</span>
+        <div className="ide-presets" role="radiogroup" aria-label="IDE layout">
+          {IDE_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              role="radio"
+              aria-checked={ide.preset === p.id}
+              className={`ide-preset${ide.preset === p.id ? " active" : ""}`}
+              onClick={() => changeIde({ preset: p.id })}
+            >
+              <IdeSketch preset={p.id} chatSide={ide.chatSide} />
+              <span className="ide-preset-label">{p.label}</span>
+              <span className="ide-preset-help">{p.help}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <Row label="Chat side" help="The side of the window for the chat with the agent." htmlFor="setting-chat-side">
+        <select id="setting-chat-side" value={ide.chatSide} onChange={(e) => changeIde({ chatSide: e.target.value === "left" ? "left" : "right" })}>
+          <option value="right">Right</option>
+          <option value="left">Left</option>
+        </select>
+      </Row>
+
+      <Row label="Chat width" help="The first width of the chat. Drag the edge to change it later." htmlFor="setting-chat-width">
+        <select id="setting-chat-width" value={ide.chatShare} onChange={(e) => changeIde({ chatShare: Number(e.target.value) })}>
+          {CHAT_WIDTHS.map(([n, text]) => (
+            <option key={n} value={n}>
+              {text}
+            </option>
+          ))}
+        </select>
+      </Row>
+
+      <Row label="Terminal height" help="The first height of the terminal. The Focus layout has no terminal." htmlFor="setting-terminal-height">
+        <select
+          id="setting-terminal-height"
+          value={ide.terminalShare}
+          disabled={ide.preset === "focus"}
+          onChange={(e) => changeIde({ terminalShare: Number(e.target.value) })}
+        >
+          {TERMINAL_HEIGHTS.map(([n, text]) => (
+            <option key={n} value={n}>
+              {text}
+            </option>
+          ))}
+        </select>
+      </Row>
+
       <h3 className="settings-section">Code appearance</h3>
 
-      <Row label="Code font" help="The font of code blocks, the editor, and the terminal. Empty: JetBrains Mono." htmlFor="setting-code-font">
-        <TextField
-          id="setting-code-font"
-          value={mono}
-          placeholder="e.g. JetBrains Mono"
-          maxLength={CODE_FONT_MAX}
-          onSave={(v) => {
-            setCodeFont(v);
+      <Row label="Code font" help="The font of code blocks, the editor, and the terminal." htmlFor="setting-code-font-kind">
+        <select
+          id="setting-code-font-kind"
+          value={monoKind}
+          onChange={(e) => {
+            const kind = e.target.value;
+            setMonoKind(kind === "custom" ? "custom" : kind === "system" ? "system" : "default");
+            if (kind === "custom") return; // The text field shows. The font changes when a name is saved.
+            setCodeFont(kind === "system" ? SYSTEM_CODE_FONT : "");
             setMono(codeFont());
           }}
-        />
+        >
+          <option value="default">JetBrains Mono (default)</option>
+          <option value="system">System font</option>
+          <option value="custom">Custom…</option>
+        </select>
       </Row>
+      {monoKind === "custom" && (
+        <Row label="Custom code font" help="The name of a font on this computer." htmlFor="setting-code-font">
+          <TextField
+            id="setting-code-font"
+            value={mono === SYSTEM_CODE_FONT ? "" : mono}
+            placeholder="e.g. Fira Code"
+            maxLength={CODE_FONT_MAX}
+            onSave={(v) => {
+              setCodeFont(v);
+              setMono(codeFont());
+            }}
+          />
+        </Row>
+      )}
 
       <Row label="Light code theme" help="The colors of the editor and the diff view in the light theme." htmlFor="setting-light-code">
         <select
           id="setting-light-code"
           value={lightCode}
           onChange={(e) => {
-            const next = LIGHT_CODE_THEMES.find(([id]) => id === e.target.value)?.[0] ?? "harness-light";
+            const next = LIGHT_CODE_THEMES.find(([id]) => id === e.target.value)?.[0] ?? DEFAULT_LIGHT_CODE;
             setLightCode(next);
             setLightCodeTheme(next);
           }}
@@ -472,7 +568,7 @@ export function AppearanceSettings() {
           id="setting-dark-code"
           value={darkCode}
           onChange={(e) => {
-            const next = DARK_CODE_THEMES.find(([id]) => id === e.target.value)?.[0] ?? "harness-dark";
+            const next = DARK_CODE_THEMES.find(([id]) => id === e.target.value)?.[0] ?? DEFAULT_DARK_CODE;
             setDarkCode(next);
             setDarkCodeTheme(next);
           }}

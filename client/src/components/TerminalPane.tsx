@@ -34,6 +34,16 @@ function terminalTheme(): ITheme {
   };
 }
 
+/**
+ * The terminal takes the focus only when no other field has it, or when the focus is in the
+ * terminal pane already. In the IDE view the editor and the terminal show together: a shell that
+ * starts must not take the keys from the editor or the prompt box.
+ */
+function mayTakeFocus(): boolean {
+  const a = document.activeElement;
+  return !a || a === document.body || a.closest(".terminal-pane, .win-tabs") !== null;
+}
+
 /** The text that the terminal shows when the shell stops. */
 export function exitNotice(code: number | null): string {
   const how = code === null ? "" : ` with exit code ${code}`;
@@ -93,6 +103,20 @@ function sessionTabs(sessionKey: string): SessionTabs {
 function forgetAll(): void {
   for (const s of kept.values()) for (const k of s.tabs) k.term.dispose();
   kept.clear();
+}
+
+/**
+ * Forget the terminal tabs of a session. A session that moves to another folder (session.move)
+ * stops its shells in the daemon: the pane then opens a new shell in the new folder.
+ */
+export function forgetSessionTerminals(sessionKey: string): void {
+  const s = kept.get(sessionKey);
+  if (!s) return;
+  for (const k of s.tabs) {
+    k.element.remove();
+    k.term.dispose();
+  }
+  kept.delete(sessionKey);
 }
 
 export function TerminalPane({
@@ -162,7 +186,7 @@ export function TerminalPane({
             k.replaying = false;
           });
         }
-        if (k.key === s.active) k.term.focus();
+        if (k.key === s.active && mayTakeFocus()) k.term.focus();
       } else if (msg.type === "term.output") {
         const k = byId(msg.id);
         if (k && msg.seq > k.seen) {
@@ -218,7 +242,7 @@ export function TerminalPane({
     // correct size. The focus goes into the active terminal.
     const frame = window.requestAnimationFrame(() => {
       for (const k of s.tabs) open(s, k);
-      s.tabs.find((k) => k.key === s.active)?.term.focus();
+      if (mayTakeFocus()) s.tabs.find((k) => k.key === s.active)?.term.focus();
     });
     return () => {
       window.cancelAnimationFrame(frame);
@@ -231,7 +255,8 @@ export function TerminalPane({
     };
   }, [conn, tabs, tabs?.tabs.length]);
 
-  // Show the screen of the active tab. It gets its size when it shows.
+  // Show the screen of the active tab. It gets its size and the focus when it shows. Only a change
+  // of the tab runs this: after each render, the focus would leave the editor and the prompt box.
   useEffect(() => {
     if (!tabs) return;
     for (const k of tabs.tabs) k.element.hidden = k.key !== tabs.active;
@@ -240,10 +265,11 @@ export function TerminalPane({
     const frame = window.requestAnimationFrame(() => {
       const next = size(k);
       if (k.id && !k.stopped) send({ type: "term.resize", id: k.id, ...next });
-      k.term.focus();
+      if (mayTakeFocus()) k.term.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- size and send read the current tab.
+  }, [tabs, tabs?.active, tabs?.tabs.length]);
 
   const addTab = () => {
     if (!tabs || tabs.tabs.length >= MAX_TABS) return;

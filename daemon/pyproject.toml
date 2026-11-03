@@ -19,6 +19,11 @@ dependencies = [
     "huggingface_hub>=0.25",  # The Cookbook model browser and downloads.
     "mcp>=2.2",  # The MCP client (stdio, streamable HTTP, and SSE).
     "pywinpty>=2.0; sys_platform == 'win32'",  # The terminal pane on Windows (ConPTY).
+    # Documents for the agent (documents.py): read PDF, Word, PowerPoint, and Excel files, and edit the last three.
+    "pypdf>=4",
+    "python-docx>=1.1",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

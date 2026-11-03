@@ -41,6 +41,7 @@ export function toolKind(item: ToolItem): Kind {
       return "read";
     case "edit":
     case "write":
+    case "office_edit":
       return "edit";
     case "grep":
     case "glob":
@@ -67,6 +68,11 @@ export function toolAction(item: ToolItem): ToolAction {
       return { verb: pick("Read", "Reading"), object: baseName(text(a.path) || "a file"), mono: false };
     case "edit":
       return { verb: pick("Edited", "Editing"), object: baseName(text(a.path) || "a file"), mono: false };
+    case "office_edit": {
+      // A Word, PowerPoint, or Excel file (daemon tools/office.py).
+      const made = a.create === true;
+      return { verb: pick(made ? "Created" : "Edited", made ? "Creating" : "Editing"), object: baseName(text(a.path) || "a document"), mono: false };
+    }
     case "write": {
       const created = !!item.diff && parseUnifiedDiff(item.diff).isNewFile;
       return { verb: pick(created ? "Created" : "Wrote", "Writing"), object: baseName(text(a.path) || "a file"), mono: false };

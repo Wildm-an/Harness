@@ -349,9 +349,10 @@ Function ${UN}HarnessDark
     SetCtlColors $R8 ${HARNESS_TEXT} ${HARNESS_BG}
     Goto next
   progress:
-    ; With no theme, the bar colors apply: the accent color of the app on dark gray.
+    ; With no theme, the bar colors apply: the default accent color of the app (white) on dark gray.
     System::Call 'uxtheme::SetWindowTheme(p R8, w "", w "")'
-    SendMessage $R8 0x409 0 0x003F61C6 ; PBM_SETBARCOLOR: RGB(198, 97, 63)
+    SendMessage $R8 0x409 0 0x00F5F9FA ; PBM_SETBARCOLOR: RGB(250, 249, 245), the white accent
+    ; (--accent-fill in the dark theme, lib/theme.ts).
     SendMessage $R8 0x2001 0 0x002E3030 ; PBM_SETBKCOLOR: RGB(48, 48, 46), --surface
     Goto next
   done:

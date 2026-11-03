@@ -79,8 +79,8 @@ describe("the appearance defaults", () => {
   it("use the default values when no preference is saved", () => {
     expect(interfaceFont()).toBe("default");
     expect(transcriptWidth()).toBe("default");
-    expect(lightCodeTheme()).toBe("harness-light");
-    expect(darkCodeTheme()).toBe("harness-dark");
+    expect(lightCodeTheme()).toBe("vs");
+    expect(darkCodeTheme()).toBe("vs-dark");
   });
 
   it("keep the default transcript width of the CSS", () => {

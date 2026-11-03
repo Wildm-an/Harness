@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { ChevronRight, File, Folder, FolderOpen, LoaderCircle } from "lucide-react";
+import { isEditableFile } from "./paths";
 import type { TreeEntry } from "./useEditor";
 
 /** The files of the session folder. The daemon applies the .gitignore files. */
@@ -35,15 +36,22 @@ export const FileTree = memo(function FileTree({
     }
     return entries.map((entry) => {
       const open = expanded.has(entry.path);
+      // A binary file cannot open in the editor: it shows grayed out, and a click does nothing.
+      // aria-disabled, not disabled: a disabled button gets no hover, so it would show no hint.
+      const blocked = entry.type === "file" && !isEditableFile(entry.path);
       return (
         <li key={entry.path}>
           <button
             type="button"
-            className={`tree-item${entry.path === active ? " active" : ""}`}
+            className={`tree-item${entry.path === active ? " active" : ""}${blocked ? " blocked" : ""}`}
             style={{ paddingLeft: 8 + depth * 14 }}
-            onClick={() => (entry.type === "dir" ? onToggle(entry.path) : onOpen(entry.path))}
+            onClick={() => {
+              if (entry.type === "dir") onToggle(entry.path);
+              else if (!blocked) onOpen(entry.path);
+            }}
             aria-expanded={entry.type === "dir" ? open : undefined}
-            title={entry.path}
+            aria-disabled={blocked || undefined}
+            title={blocked ? "Binary file" : entry.path}
           >
             {entry.type === "dir" ? (
               <>

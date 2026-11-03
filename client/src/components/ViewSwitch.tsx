@@ -32,7 +32,6 @@ export function ViewSwitch({ value, onChange }: { value: ViewMode; onChange: (mo
           aria-checked={value === v.mode}
           aria-label={v.label}
           tabIndex={value === v.mode ? 0 : -1}
-          title={v.label}
           className={`view-switch-option${value === v.mode ? " active" : ""}`}
           onClick={() => onChange(v.mode)}
         >

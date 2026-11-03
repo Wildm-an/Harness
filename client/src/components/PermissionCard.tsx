@@ -43,6 +43,12 @@ function describe(item: PermissionItem): { action: string; prefix?: string; obje
   if (item.tool === "write" && item.diff && parseUnifiedDiff(item.diff).isNewFile) return { action: "create", object: summary, detail: null };
   if (item.tool === "write") return { action: "overwrite", object: summary, detail: null };
   if (item.tool === "edit") return { action: "edit", object: summary, detail: null };
+  if (item.tool === "office_edit") {
+    // A Word, PowerPoint, or Excel file: the summary of the input names the file first.
+    const input = item.input as { path?: unknown; create?: unknown } | null;
+    const path = typeof input?.path === "string" ? input.path : summary;
+    return { action: input?.create === true ? "create" : "edit", object: path, detail: null };
+  }
   return { action: "use", object: item.tool, detail: summary || null };
 }
 

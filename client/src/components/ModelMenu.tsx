@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Cable, Check, ChevronDown, Cpu, LoaderCircle, TriangleAlert } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
+import { modelName } from "../lib/modelName";
 
 export interface ModelList {
   items: string[]; // "provider/model", from the connections that are on.
@@ -94,10 +95,11 @@ export function ModelMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={value ? `The model: ${value}. Click to select another model.` : "The default model of the daemon. Click to select a model."}
+        title={value ? `The model: ${modelName(value)}. Click to select another model.` : "The default model of the daemon. Click to select a model."}
       >
         <Cpu size={13} aria-hidden />
-        <span className="prompt-chip-text mono">{value || "Default model"}</span>
+        {/* Only the model name: the menu shows the provider of each model. */}
+        <span className="prompt-chip-text mono">{value ? modelName(value) : "Default model"}</span>
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && (

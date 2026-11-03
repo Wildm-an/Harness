@@ -511,7 +511,10 @@ export type ClientMessage =
   | { type: "fs.read"; path: string }
   | { type: "fs.write"; path: string; content: string; base_hash: string | null }
   | { type: "fs.unwatch"; path: string }
+  | { type: "fs.create"; path: string; kind: "file" | "dir" } // New file or New folder of the editor.
   | { type: "fs.search"; query: string; regex?: boolean; case?: boolean; glob?: string }
+  // Editor autocomplete: the model writes the text at the cursor (daemon completions.py).
+  | { type: "editor.complete"; id: string; path: string; prefix: string; suffix: string }
   | { type: "server.list" }
   | { type: "server.save"; servers: ServerConfigJson[] }
   | { type: "server.start"; name: string }
@@ -582,8 +585,10 @@ export type DaemonMessage =
   | { type: "server.log"; name: string; stream: "stdout" | "stderr"; text: string }
   | { type: "server.logs"; name: string; lines: { stream: "stdout" | "stderr"; text: string }[] }
   | { type: "fs.tree"; path: string; items: { name: string; path: string; type: "file" | "dir" }[] }
+  | { type: "editor.completion"; id: string; text: string | null } // null: no completion.
   | { type: "fs.content"; path: string; content: string; hash: string }
   | { type: "fs.saved"; path: string; hash: string }
+  | { type: "fs.created"; path: string; kind: "file" | "dir" }
   | { type: "fs.conflict"; path: string; disk_hash: string | null }
   | {
       type: "fs.results";

@@ -30,6 +30,9 @@ datas = [
     # The Playwright driver: node and the Playwright package. Chromium is not in the
     # bundle. harness-daemon --install-browser installs it.
     *collect_data_files("playwright", include_py_files=False),
+    # The empty Word and PowerPoint documents that office_edit uses for a new file (documents.py).
+    *collect_data_files("docx"),
+    *collect_data_files("pptx"),
 ]
 
 binaries = []

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Archive, ArchiveRestore, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
 import type { RunningSession, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
+import { modelName } from "../lib/modelName";
 
 export interface SessionActions {
   onResume: (id: string) => void;
@@ -218,7 +219,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
           onClick={() => !active && actions.onResume(session.id)}
           disabled={disabled}
           aria-current={active ? "true" : undefined}
-          title={`${title}\n${session.provider}/${session.model}${session.branch ? `\nWorktree: ${session.branch}` : ""}`}
+          title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}`}
         >
           <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />
           <span className="side-session-title">{title}</span>

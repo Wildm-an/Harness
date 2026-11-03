@@ -64,7 +64,7 @@ import {
   closePane,
   defaultLayout,
   findGroupOf,
-  ideLayout,
+  ideLayoutFor,
   openPane,
   parseLayout,
   togglePane,
@@ -86,7 +86,7 @@ import {
   shortcutPane,
 } from "./layout/shortcuts";
 import { emptyHistory, placeOf, samePlace, step, visit, type NavHistory, type Place } from "./layout/history";
-import { TerminalPane } from "./components/TerminalPane";
+import { TerminalPane, forgetSessionTerminals } from "./components/TerminalPane";
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
 import { UpdateToast } from "./components/UpdateToast";
@@ -104,8 +104,10 @@ import { BrowserPane, clearBrowserData, keepCookies } from "./browser/BrowserPan
 import { AllowedSites } from "./components/AllowedSites";
 import { openLink, setPaneOpener } from "./lib/openLink";
 import { railShown, setRailShown } from "./lib/sessionRail";
-import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } from "./lib/viewMode";
+import { inlineEditPrompt, layoutKey, type ViewMode } from "./lib/viewMode";
+import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { ViewSwitch } from "./components/ViewSwitch";
+import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { ServerMenu } from "./servers/ServerMenu";
 import { ServersPane } from "./servers/ServersPane";
@@ -113,7 +115,7 @@ import { useServers } from "./servers/useServers";
 import type { AgentFrame, ClientMessage, GitBranches, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
-import { normalizePath } from "./editor/paths";
+import { normalizePath, openFolderBlocked } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
@@ -143,7 +145,8 @@ import {
   setLastConnectionId,
   type Connection,
 } from "./lib/connections";
-import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openLocalPath, pickFolder, revealInExplorer } from "./lib/tauri";
+import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openLocalPath, pickFiles, pickFolder, revealInExplorer } from "./lib/tauri";
+import { filesPromptText } from "./lib/fileRefs";
 import { FolderMenu } from "./components/FolderMenu";
 import type { SessionActions } from "./components/SessionRow";
 
@@ -172,7 +175,7 @@ const BROWSER_FILE_RE = /\.(html?|pdf|png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|o
 
 /** The saved layout of a project in a view, or the default layout of the view. */
 function loadLayout(connectionId: string, cwd: string, mode: ViewMode): LayoutNode {
-  const fallback = mode === "ide" ? ideLayout : defaultLayout;
+  const fallback = () => (mode === "ide" ? ideLayoutFor(ideOptions()) : defaultLayout());
   try {
     return parseLayout(JSON.parse(loadPref(layoutKey(connectionId, cwd, mode), "null"))) ?? fallback();
   } catch {
@@ -281,7 +284,7 @@ export default function App() {
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null); // The context breakdown.
   // The IDE view starts with the sidebar hidden. The Code view shows it again (switchView).
   const [sidebarOpen, setSidebarOpen] = useState(
-    () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches && viewMode() !== "ide",
+    () => loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches,
   );
   const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebar(Number(loadPref("sidebar.width", String(SIDEBAR_DEFAULT)))));
   const [session, setSession] = useState<ActiveSession | null>(null);
@@ -290,15 +293,16 @@ export default function App() {
   // The next prompt that the model predicts after a turn, for the session that got it.
   const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
-  const [layout, setLayout] = useState<LayoutNode>(() => (viewMode() === "ide" ? ideLayout() : defaultLayout()));
-  // The Code view or the IDE view (the switch in the title bar). Each view has its own layout.
-  const [view, setView] = useState<ViewMode>(viewMode);
+  const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
+  // The Code view or the IDE view (the switch in the title bar). Each view has its own layout. The
+  // app always opens in the Code view, and each new session starts in it (newSession, startSession).
+  const [view, setView] = useState<ViewMode>("code");
   const viewRef = useRef(view);
   viewRef.current = view;
   // The IDE view hides the sessions sidebar. This is the sidebar state of the Code view.
-  const sidebarBeforeIde = useRef<boolean | null>(
-    viewMode() === "ide" ? loadPref("sidebar.open", "1") === "1" && !window.matchMedia(NARROW_QUERY).matches : null,
-  );
+  const [ideStart, setIdeStart] = useState(0); // A new number: the start screen starts an empty session.
+  const sidebarBeforeIde = useRef<boolean | null>(null);
+  const ideStarting = useRef(false); // The IDE switch on the start screen starts this session: it stays in the IDE view.
   const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
   const [promptInsert, setPromptInsert] = useState<{ text: string; key: number; replace?: boolean } | null>(null);
   const [browserRequest, setBrowserRequest] = useState<{ url: string; key: number } | null>(null);
@@ -317,6 +321,15 @@ export default function App() {
   const rulesSaving = useRef(false);
   const sessionRef = useRef<ActiveSession | null>(null);
   sessionRef.current = session;
+
+  // Settings > Appearance > IDE view changed: the open session shows the new IDE layout at once.
+  useEffect(() => {
+    const onChange = () => {
+      if (viewRef.current === "ide" && sessionRef.current) setLayout(ideLayoutFor(ideOptions()));
+    };
+    window.addEventListener(IDE_LAYOUT_EVENT, onChange);
+    return () => window.removeEventListener(IDE_LAYOUT_EVENT, onChange);
+  }, []);
   // The Providers screen.
   const [providers, setProviders] = useState<{ items: ProviderItem[]; path: string } | null>(null);
   const [providerTest, setProviderTest] = useState<ProviderTest | null>(null);
@@ -495,6 +508,10 @@ export default function App() {
             setAgentFrame(null);
             setMcpStatus(null);
             setLayout(loadLayout(currentRef.current?.id ?? "local", msg.cwd, viewRef.current));
+          } else if (sessionRef.current.cwd !== msg.cwd) {
+            // The session moved to another folder: the daemon stopped its shells. The terminal
+            // pane opens a new shell in the new folder.
+            forgetSessionTerminals(msg.session_id);
           }
           setSession({
             id: msg.session_id,
@@ -1066,6 +1083,21 @@ export default function App() {
   const openConnections = () => openSettings("computers");
 
   /** The native dialog for this computer. The daemon folder picker for a remote daemon. */
+  /** Ctrl+U in a prompt box: pick files on this computer, and get their references for the prompt. */
+  const addFiles = async (cwd: string): Promise<string | null> => {
+    if (currentRef.current?.kind !== "local" || !isTauri()) {
+      dispatch({ type: "notice", level: "info", text: "Type @ in the prompt box to add a file of the project." });
+      return null;
+    }
+    try {
+      const files = await pickFiles(cwd || undefined);
+      return files.length ? filesPromptText(files, cwd) : null;
+    } catch (e) {
+      dispatch({ type: "notice", level: "error", text: errorText(e) });
+      return null;
+    }
+  };
+
   const browseFolder = (currentPath: string): Promise<string | null> => {
     if (currentRef.current?.kind === "local" && isTauri()) return pickFolder();
     return new Promise((resolve) => setPicker({ resolve, initial: currentPath, listing: null, error: null }));
@@ -1091,6 +1123,8 @@ export default function App() {
     setBusy(true);
     setStartError(null);
     firstPrompt.current = prompt;
+    if (!ideStarting.current) switchViewRef.current("code"); // A new session starts in the Code view.
+    ideStarting.current = false;
     conn.send({ type: "session.new", cwd, model, permission_mode: mode, ...(worktree ? { worktree } : {}) });
   };
 
@@ -1120,6 +1154,7 @@ export default function App() {
   }, [shownId]);
 
   const newSession = () => {
+    switchViewRef.current("code"); // A new session starts in the Code view.
     conn.leaveSession(); // A running turn of the session continues in the background.
     setSession(null);
     dispatch({ type: "clear" });
@@ -1449,7 +1484,14 @@ export default function App() {
   const switchView = (mode: ViewMode) => {
     if (mode === view) return;
     setView(mode);
-    setViewMode(mode);
+    // On the start screen, the IDE view starts an empty session in the selected project, so the
+    // file tree, the editor, and the terminal show at once.
+    if (mode === "ide" && screen === "start") {
+      ideStarting.current = true;
+      setIdeStart((n) => n + 1);
+    } else if (mode === "code") {
+      ideStarting.current = false;
+    }
     if (session) setLayout(loadLayout(currentRef.current?.id ?? "local", session.cwd, mode));
     if (mode === "ide") {
       sidebarBeforeIde.current = sidebarOpen;
@@ -1459,6 +1501,8 @@ export default function App() {
       sidebarBeforeIde.current = null;
     }
   };
+  const switchViewRef = useRef(switchView);
+  switchViewRef.current = switchView;
   const [sideFloating, setSideFloating] = useState(false);
   const [sideFocus, setSideFocus] = useState(0);
   const sideDocked = findGroupOf(layout, "side") !== null;
@@ -1761,6 +1805,7 @@ export default function App() {
         onRemoveQueued={removeQueued}
         onRewind={rewind}
         onFork={fork}
+        onAction={(message) => submitOrQueue({ kind: "prompt", text: message })}
         emptyHint={
           <>
             <p>
@@ -1788,6 +1833,7 @@ export default function App() {
             commands={commands}
             onRequestCommands={requestCommands}
             insert={promptInsert}
+            onAddFiles={() => addFiles(session?.cwd ?? "")}
             sessions={mentionSessions}
             fileMatches={fileMatches}
             onFindFiles={(query) => sendSafely({ type: "fs.find", query })}
@@ -1882,6 +1928,8 @@ export default function App() {
           agentLines={agentLines}
           onReference={addReference}
           onInlineEdit={(reference, instruction) => submitOrQueue({ kind: "prompt", text: inlineEditPrompt(reference, instruction) })}
+          onOpenFolder={() => void changeFolder()}
+          openFolderBlocked={openFolderBlocked({ connected: status === "open", running: chat.running, worktree: !!session?.worktree })}
         />
       ),
     },
@@ -2255,6 +2303,7 @@ export default function App() {
           </div>
           {screen === "chat" && (
             <div className="topbar-actions">
+              {view === "ide" && <IdeLayoutMenu onOpenSettings={() => openSettings("appearance")} />}
               <ServerMenu
                 api={servers}
                 onOpenInBrowser={(s) => void openServer(s)}
@@ -2357,6 +2406,8 @@ export default function App() {
             recentSessions={recent}
             fileMatches={fileMatches}
             onFindFiles={(query, cwd) => sendSafely({ type: "fs.find", query, cwd })}
+            startRequest={ideStart}
+            onAddFiles={addFiles}
           />
         )}
         {sitesOpen && (

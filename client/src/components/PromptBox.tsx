@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CornerDownLeft, FileText, Folder, LoaderCircle, MessageSquare, Square } from "lucide-react";
 import type { CommandItem } from "../daemon/protocol";
+import { isAddFilesShortcut } from "../lib/fileRefs";
 import { busySend, type BusySend } from "./SettingsDialog";
 import {
   filterSessions,
@@ -79,6 +80,7 @@ export function PromptBox({
   onSubmit,
   onInterrupt,
   insert,
+  onAddFiles,
   below,
   sessions = [],
   fileMatches = null,
@@ -116,6 +118,8 @@ export function PromptBox({
   onFindFiles?: (query: string) => void; // Asks the daemon for the files that match an "@" query.
   // Text to add, for example "@src/app.py:10-25" from the editor. replace: the text replaces the box text (a rewind).
   insert?: { text: string; key: number; replace?: boolean } | null;
+  // Ctrl+U, "Add files or photos": the user picks files. The text (references) goes in at the caret. null: nothing.
+  onAddFiles?: () => Promise<string | null>;
   below?: React.ReactNode; // A row under the box, on the right: the model menu.
   running: boolean;
   disabled: boolean;
@@ -133,6 +137,43 @@ export function PromptBox({
   const [mentionActive, setMentionActive] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState<number | null>(null); // The start of a closed "@" token.
   const pendingCaret = useRef<number | null>(null);
+
+  // The row under the box (the mode and the model): when their names do not fit side by side, the
+  // row shows only their icons. It shows the names again when the width that they need is free.
+  const belowRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  const neededWidth = useRef(0);
+  const checkBelow = useRef(() => {});
+  checkBelow.current = () => {
+    const row = belowRef.current;
+    if (!row) return;
+    if (compact) {
+      if (row.clientWidth >= neededWidth.current) setCompact(false);
+      return;
+    }
+    const cut = [...row.querySelectorAll<HTMLElement>(".prompt-chip-text")].reduce(
+      (sum, el) => sum + Math.max(0, el.scrollWidth - el.clientWidth),
+      0,
+    );
+    // A chip wider than its menu box goes over the next item, for example the context ring.
+    const spill = [...row.querySelectorAll<HTMLElement>(".model-menu")].reduce((sum, menu) => {
+      const chip = menu.querySelector<HTMLElement>(".prompt-chip");
+      return sum + (chip ? Math.max(0, chip.offsetWidth - menu.clientWidth) : 0);
+    }, 0);
+    const over = Math.max(0, row.scrollWidth - row.clientWidth) + spill;
+    if (cut + over > 1) {
+      neededWidth.current = row.clientWidth + cut + over;
+      setCompact(true);
+    }
+  };
+  useLayoutEffect(() => checkBelow.current()); // The names can change, for example after /model.
+  useEffect(() => {
+    const row = belowRef.current;
+    if (!row) return;
+    const observer = new ResizeObserver(() => checkBelow.current());
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [below !== undefined]);
   const mentionList = useRef<HTMLUListElement>(null);
   const sessionRefs = useRef(new Map<string, string>()); // The session names in the prompt, and their ids.
 
@@ -259,6 +300,20 @@ export function PromptBox({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (onAddFiles && isAddFilesShortcut(e.nativeEvent)) {
+      e.preventDefault();
+      const at = area.current?.selectionStart ?? text.length;
+      void onAddFiles().then((refs) => {
+        if (!refs) return;
+        const before = text.slice(0, at);
+        const after = text.slice(at);
+        const added = `${before && !/\s$/.test(before) ? " " : ""}${refs}${after.startsWith(" ") ? "" : " "}`;
+        pendingCaret.current = before.length + added.length;
+        change(before + added + after);
+        area.current?.focus();
+      });
+      return;
+    }
     if (mention && mentionItems.length > 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -450,7 +505,7 @@ export function PromptBox({
                 ? `${BUSY_HINTS[busySend()]} Esc interrupts the agent.`
                 : suggestion
                   ? suggestion
-                  : (placeholder ?? "Ask the agent. Type / for commands and skills, @ for files.")
+                  : (placeholder ?? "Type / for commands and skills, @ for files.")
             }
             onChange={(e) => change(e.target.value, e.target.selectionStart)}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
@@ -486,7 +541,11 @@ export function PromptBox({
           )}
       </div>
       </div>
-      {below && <div className="prompt-below">{below}</div>}
+      {below && (
+        <div className={`prompt-below${compact ? " compact" : ""}`} ref={belowRef}>
+          {below}
+        </div>
+      )}
     </div>
   );
 }

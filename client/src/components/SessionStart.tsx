@@ -21,6 +21,7 @@ import { PromptBox, type Submission } from "./PromptBox";
 import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
 import { WorktreeMenu, type WorktreeChoice } from "./WorktreeMenu";
+import { modelName } from "../lib/modelName";
 
 function loadWorktreeChoice(key: string): WorktreeChoice {
   try {
@@ -298,6 +299,8 @@ export function SessionStart({
   onFindFiles,
   branches,
   onRequestBranches,
+  startRequest = 0,
+  onAddFiles,
 }: {
   projects: ProjectItem[] | null; // null: loading.
   sessions: { cwd: string | null; items: SessionSummary[] };
@@ -324,6 +327,10 @@ export function SessionStart({
   onDeleteProject: (id: string) => void;
   onListSessions: (cwd: string) => void;
   selectProject?: { id: string; key: number } | null; // A project to select now: a new key selects it again.
+  // A new number starts an empty session in the selected project, with the selected model, mode,
+  // and worktree choice (the switch to the IDE view). It waits until the project list is loaded.
+  startRequest?: number;
+  onAddFiles?: (cwd: string) => Promise<string | null>; // Ctrl+U in the prompt box: references to files.
 }) {
   const [selectedId, setSelectedId] = useState(() => loadPref(`project.${prefScope}`, ""));
   const [form, setForm] = useState<{ draft: ProjectDraft; key: number } | null>(null);
@@ -385,6 +392,15 @@ export function SessionStart({
     return false;
   };
 
+  // The switch to the IDE view: start an empty session, so that the files show at once.
+  const handledStart = useRef(startRequest);
+  useEffect(() => {
+    if (startRequest === handledStart.current || !canStart) return;
+    handledStart.current = startRequest;
+    start({ kind: "prompt", text: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- start reads the current choices.
+  }, [startRequest, canStart]);
+
   const recent = selected && sessions.cwd === selected.path ? sessions.items : [];
   // The 3 newest sessions show. "Show more" shows all of them, in a list that scrolls under the prompt box.
   const [allRecent, setAllRecent] = useState(false);
@@ -404,6 +420,7 @@ export function SessionStart({
         <h1 id="start-title">What do you want to work on?</h1>
 
         <PromptBox
+          onAddFiles={onAddFiles && selected ? () => onAddFiles(selected.path) : undefined}
           running={false}
           disabled={!selected}
           busy={busy}
@@ -488,7 +505,7 @@ export function SessionStart({
                 <button type="button" className="recent-item" onClick={() => onResume(s.id)} disabled={busy}>
                   <span className="recent-title">{s.title ?? "Untitled session"}</span>
                   <span className="recent-meta">
-                    <span className="mono">{`${s.provider}/${s.model}`}</span>
+                    <span className="mono">{modelName(s.model)}</span>
                     <span>
                       <Clock size={12} aria-hidden /> {relativeTime(s.updated_at)}
                     </span>

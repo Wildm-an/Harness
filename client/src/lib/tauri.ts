@@ -28,6 +28,14 @@ export async function pickFolder(): Promise<string | null> {
   return typeof result === "string" ? result : null;
 }
 
+/** Shows the file dialog for one or more files, starting in ``folder``. Returns [] if the user cancels. */
+export async function pickFiles(folder?: string): Promise<string[]> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({ directory: false, multiple: true, defaultPath: folder });
+  if (Array.isArray(result)) return result;
+  return typeof result === "string" ? [result] : [];
+}
+
 /** Shows the file dialog for one file. Returns null if the user cancels. */
 export async function pickFile(filters: { name: string; extensions: string[] }[]): Promise<string | null> {
   const { open } = await import("@tauri-apps/plugin-dialog");

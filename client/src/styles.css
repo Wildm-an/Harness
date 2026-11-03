@@ -7451,3 +7451,431 @@ input.setting-text-input {
   color: var(--text-muted);
   font-size: 11.5px;
 }
+
+/* The autocomplete switch in the editor status bar: muted when off, the accent color when on. */
+.autocomplete-toggle:not(.on) {
+  opacity: 0.6;
+}
+
+.autocomplete-toggle.on svg {
+  color: var(--accent);
+}
+
+/* The IDE layout choices on the Appearance page: a small drawing of each layout. */
+.ide-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ide-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  font: 12px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ide-preset:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ide-preset.active {
+  border-color: var(--text-muted);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.ide-preset:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.ide-preset-label {
+  margin-top: 4px;
+  color: var(--text);
+  font-weight: 500;
+  font-size: 12.5px;
+}
+
+.ide-preset-help {
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.ide-sketch {
+  display: grid;
+  grid-template-rows: 2fr 1fr;
+  gap: 3px;
+  height: 52px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.ide-sketch > span {
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+
+.ide-sketch .ide-sketch-c {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.ide-sketch .ide-sketch-t {
+  background: var(--border);
+}
+
+.ide-sketch .ide-sketch-d {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+@media (max-width: 720px) {
+  .ide-presets {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* A binary file in the file tree: the editor cannot open it (FileTree.tsx). */
+.tree-item.blocked {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tree-item.blocked:hover {
+  background: transparent;
+}
+
+/* Narrow panes (for example the chat of the IDE view): each pane is a size container, so its
+   menus and popovers fit in the pane. The pane hides what goes past its edges. */
+.pane-content {
+  container-type: inline-size;
+}
+
+.pane-content .menu {
+  max-width: calc(100cqw - 16px);
+}
+
+.pane-content .menu.context-panel {
+  width: min(340px, calc(100cqw - 16px));
+}
+
+.pane-content .model-dropdown {
+  width: min(400px, calc(100cqw - 56px)); /* The context ring is to the right of the model name. */
+}
+
+.pane-content .mode-dropdown {
+  width: min(380px, calc(100cqw - 24px));
+}
+
+/* The model name gets shorter, and the context ring keeps its size. */
+.prompt-chip-text {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.prompt-below-right .model-menu {
+  flex: 0 1 auto;
+}
+
+.context-ring-wrap {
+  flex: none;
+}
+
+/* The edge on the right of the file sidebar of the editor (FileSidebarResizer.tsx). */
+.editor-side {
+  position: relative;
+}
+
+.file-sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  width: 8px;
+  cursor: col-resize;
+  outline: none;
+}
+
+.file-sidebar-resizer:hover,
+.file-sidebar-resizer:focus-visible,
+.resizing-sidebar .file-sidebar-resizer {
+  background: linear-gradient(to right, transparent 3px, var(--border-strong) 3px, var(--border-strong) 5px, transparent 5px);
+}
+
+/* New file and New folder: the name field at the top of the file tree (EditorPane.tsx). */
+.new-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 6px 2px;
+  padding: 0 6px;
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.new-entry-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.new-entry-error {
+  margin: 2px 8px 4px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* The language of the open file in the editor status bar (LanguageMenu.tsx). It opens upward. */
+.language-menu {
+  position: relative;
+}
+
+.language-menu > .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.menu.language-dropdown {
+  top: auto;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 260px;
+  max-height: min(360px, 60vh);
+}
+
+.language-filter {
+  min-height: 28px;
+  font-size: 12.5px;
+}
+
+.language-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.language-list button {
+  width: 100%;
+}
+
+.language-id {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* The language menu opens above the editor status bar, so the bar must not clip it. The file path
+   in the bar still gets shorter with "…". */
+.editor-status {
+  overflow: visible;
+}
+
+.editor-status > .mono {
+  min-width: 0;
+}
+
+/* The task list of the agent under the messages (ProgressBlocks.tsx), as in Claude Code. */
+.plan-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: var(--chat-font-size, 14px);
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.plan-step.completed {
+  color: var(--text-muted);
+}
+
+.plan-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.plan-circle {
+  box-sizing: border-box;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+}
+
+.plan-circle.dashed {
+  border-style: dashed;
+}
+
+/* The box at the end of a turn: the recap, a question, and the answer buttons. */
+.wrapup-box {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: var(--chat-font-size, 14px);
+  line-height: 1.55;
+}
+
+.wrapup-recap {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.wrapup-ask {
+  margin: 10px 0 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.wrapup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* The Files sidebar head: all the action buttons when they fit, else one "..." menu with the same
+   actions. The sidebar is a size container. Its minimum width keeps the Files and Search switch and
+   the "..." button in view. */
+.editor-side {
+  container: fileside / inline-size;
+  min-width: 120px;
+}
+
+.side-actions-full {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.side-actions-more {
+  position: relative;
+  display: none;
+}
+
+.menu.side-more-menu {
+  left: 0;
+  right: auto;
+  min-width: 180px;
+}
+
+@container fileside (max-width: 236px) {
+  .side-actions-full {
+    display: none;
+  }
+
+  .side-actions-more {
+    display: block;
+  }
+}
+
+/* xterm.css paints the viewport black. The terminal fits whole rows only, so the space under the
+   last row showed as a black band. It takes the color of the terminal (terminalTheme in TerminalPane.tsx). */
+.terminal-pane .xterm,
+.terminal-pane .xterm-viewport,
+.terminal-pane .xterm-scrollable-element {
+  background-color: var(--surface-sunken) !important;
+}
+
+/* The row under the prompt box when the mode and the model names do not fit side by side
+   (PromptBox.tsx): only the icons show. The hover hint of each chip still names it. */
+.prompt-below.compact .prompt-chip-text,
+.prompt-below.compact .prompt-chip > svg:last-child {
+  display: none;
+}
+
+.prompt-below.compact .prompt-chip {
+  padding: 0 8px;
+}
+
+/* The mode and model chips get narrower with their row: the name ends with "...", and then the
+   row shows only the icons (PromptBox.tsx). A chip never covers the context ring. */
+.prompt-below .model-menu {
+  display: flex;
+  min-width: 0;
+}
+
+.prompt-below .model-menu > .prompt-chip {
+  max-width: min(260px, 100%);
+}
+
+/* The Layout menu of the IDE view, to the left of the Servers menu (IdeLayoutMenu.tsx). */
+.ide-layout-menu {
+  position: relative;
+}
+
+.topbar-actions .ide-layout-menu > .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 8px;
+}
+
+.menu.ide-layout-dropdown {
+  right: 0;
+  left: auto;
+  width: 280px;
+}
+
+.ide-layout-item {
+  align-items: center;
+}
+
+.ide-layout-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.ide-layout-help {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.ide-sketch.small {
+  flex: none;
+  width: 44px;
+  height: 30px;
+  gap: 2px;
+  padding: 2px;
+}
+
+.ide-sketch.small > span {
+  border-radius: 2px;
+}
