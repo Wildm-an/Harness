@@ -3,6 +3,51 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.36 (2026-11-03)
+
+### New session page
+
+- The new session page looks like the Claude new session page. A block in the center shows the
+  3 most recent project folders, "Open folder…", "New project…", and "Show more". The prompt box
+  is at the bottom of the window, at the same place as in a session.
+- The block shows when the app opens, after "New session", and after the "+" of a project. The
+  "+" of a project puts the check mark on that project.
+- "Show more" shows all the project folders.
+- "New project…" asks for a folder name and a location, and makes the folder. The location stays
+  the same for each new project until you change it.
+- In the IDE view, the same block shows in the editor. A folder from it starts an empty session.
+- The page no longer shows the recent sessions. The sidebar shows them.
+
+### Files
+
+- On macOS, a rename that changes only the case of a name works.
+
+## 0.1.35 (2026-11-02)
+
+### Previews
+
+- The Preview pane shows PDF and Word files. A click in the file tree, or the show_document tool
+  of the agent, opens a file.
+
+### Files
+
+- The file tree menu has "Copy path" (Shift+Alt+C) and "Rename…" (F2).
+
+### Updates
+
+- The update popup has an "Update now" button, and it shows the download progress.
+
+### IDE view
+
+- The IDE view uses a VS Code layout by default: the files at the left, the editor with the
+  terminal under it, and the chat at the right. The terminal opens again at its last place.
+
+### Session rail
+
+- The folded Context section shows the percent in use. The open section shows the usage.
+- "Keep computer awake" is in the Environment section.
+- In the Code view, the rail closes when the Preview or the Browser pane opens.
+
 ## 0.1.34 (2026-11-02)
 
 ### Documents
