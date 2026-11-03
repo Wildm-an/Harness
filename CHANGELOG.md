@@ -3,6 +3,39 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.37 (2026-11-03)
+
+### Capabilities
+
+- A new "Capabilities" item under "New session" in the sidebar opens one page with the skills and
+  the MCP servers. It replaces the Skills and MCP panes. `/skills` and `/mcp` open it.
+- Each row shows the name, a short description, and a status: "Enabled", "Command only", or
+  "Agent only" for a skill, and "Connected", "Connecting", "Failed", "Disabled", or
+  "Not connected" for an MCP server. A red dot on the sidebar item shows a failed server.
+- A filter finds skills and servers by name, description, command, or tool name.
+- A skill row opens the skill. A server row shows its command or URL, its error, and its tools.
+  "Reload all", the restart button of each server, and "Edit mcp.json" stay.
+- With no session, the page shows the skills and the configured servers of the selected project.
+
+### New session page
+
+- "Open folder…" and "New project…" are small text buttons under the folder block.
+- The folder block stays after a folder pick, until you start the session. The prompt box gets
+  the focus.
+- In the IDE view, the Files pane, the editor, the terminal, and the chat show at once. A folder
+  from the block in the editor moves the empty session to that folder.
+- A switch back to the Code view before a prompt removes the empty session and shows the new
+  session page again. The app opens in the view that you used last.
+
+### Sidebar
+
+- When the sidebar is hidden, the pointer on the sidebar toggle shows the sidebar over the view.
+- The sidebar is at least 216px wide, so the Code / IDE switch fits.
+
+### Connections
+
+- Each endpoint in Settings > Connections has a copy button after its URL.
+
 ## 0.1.36 (2026-11-03)
 
 ### New session page
