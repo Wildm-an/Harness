@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import socket
+import stat
 import threading
 import time
 
@@ -637,3 +639,48 @@ def test_the_editor_creates_files_and_folders(daemon, project, fake_model):
     c.send({"type": "fs.create", "path": "x", "kind": "link"})
     assert "'kind'" in c.until("error")[0]["message"]
     c.close()
+
+
+def test_the_editor_deletes_files_and_folders(daemon, project, fake_model, tmp_path, monkeypatch):
+    from harness_daemon import trash
+    monkeypatch.setattr(trash, "_recycle_windows", lambda path: False)  # Keep the Recycle Bin clean.
+    (project / "src" / "deep").mkdir(parents=True)
+    (project / "src" / "deep" / "a.py").write_text("a")
+    (project / "notes.txt").write_text("n")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep")
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "fs.read", "path": "notes.txt"})
+    c.until("fs.content")
+    c.send({"type": "fs.delete", "path": "notes.txt"})
+    gone = c.until("fs.deleted")[0]
+    assert (gone["path"], gone["kind"], gone["trash"]) == ("notes.txt", "file", False)
+    assert not (project / "notes.txt").exists()
+    c.send({"type": "fs.delete", "path": "src\\deep"})  # A folder goes with its contents. Windows separators too.
+    assert c.until("fs.deleted")[0]["kind"] == "dir" and not (project / "src" / "deep").exists()
+    # The session folder, a path outside the project, and a missing file are errors.
+    for path, error in [(".", "Give a file"), ("../outside.txt", "outside the project"), ("missing.txt", "does not exist")]:
+        c.send({"type": "fs.delete", "path": path})
+        assert error in c.until("error")[0]["message"]
+    assert outside.read_text() == "keep"
+    c.close()
+
+
+def test_trash_deletes_read_only_files_and_links(tmp_path, monkeypatch):
+    from harness_daemon import trash
+    monkeypatch.setattr(trash, "_recycle_windows", lambda path: False)
+    folder = tmp_path / "f"
+    folder.mkdir()
+    (folder / "ro.txt").write_text("x")
+    os.chmod(folder / "ro.txt", stat.S_IREAD)
+    assert trash.delete(folder) is False and not folder.exists()
+    target = tmp_path / "target.txt"
+    target.write_text("t")
+    link = tmp_path / "link.txt"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return  # Windows without the right to make links.
+    trash.delete(link)
+    assert not os.path.lexists(link) and target.read_text() == "t"  # The target stays.

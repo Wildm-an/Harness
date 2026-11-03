@@ -512,6 +512,7 @@ export type ClientMessage =
   | { type: "fs.write"; path: string; content: string; base_hash: string | null }
   | { type: "fs.unwatch"; path: string }
   | { type: "fs.create"; path: string; kind: "file" | "dir" } // New file or New folder of the editor.
+  | { type: "fs.delete"; path: string } // Delete of the file tree. A folder goes with its contents.
   | { type: "fs.search"; query: string; regex?: boolean; case?: boolean; glob?: string }
   // Editor autocomplete: the model writes the text at the cursor (daemon completions.py).
   | { type: "editor.complete"; id: string; path: string; prefix: string; suffix: string }
@@ -589,6 +590,8 @@ export type DaemonMessage =
   | { type: "fs.content"; path: string; content: string; hash: string }
   | { type: "fs.saved"; path: string; hash: string }
   | { type: "fs.created"; path: string; kind: "file" | "dir" }
+  // trash: the item is in the Recycle Bin of the daemon computer. false: the delete is permanent.
+  | { type: "fs.deleted"; path: string; kind: "file" | "dir"; trash: boolean }
   | { type: "fs.conflict"; path: string; disk_hash: string | null }
   | {
       type: "fs.results";

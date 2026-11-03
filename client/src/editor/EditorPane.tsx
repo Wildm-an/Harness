@@ -28,7 +28,9 @@ import { newEntryProblem, newEntryStart, selectionReference } from "./paths";
 import { LanguageMenu, languageItems } from "./LanguageMenu";
 import { SearchPanel } from "./SearchPanel";
 import { FileSidebarResizer, saveFileSidebarWidth, savedFileSidebarWidth } from "./FileSidebarResizer";
-import { modelUri, type EditorApi, type OpenFile } from "./useEditor";
+import { modelUri, type EditorApi, type OpenFile, type TreeEntry } from "./useEditor";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { deleteText } from "./paths";
 
 const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
   automaticLayout: true,
@@ -144,6 +146,7 @@ export function EditorPane({
     { label: "Hide the sidebar", icon: PanelLeftClose, run: () => setSidebar(null) },
   ];
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<TreeEntry | null>(null); // Delete of the file tree asks first.
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const apiRef = useRef(api);
   apiRef.current = api;
@@ -417,7 +420,14 @@ export function EditorPane({
           )}
           <div className="editor-side-body">
             {sidebar === "files" ? (
-              <FileTree tree={api.tree} expanded={api.expanded} active={api.active} onToggle={api.toggleDir} onOpen={(p) => api.openFile(p)} />
+              <FileTree
+                tree={api.tree}
+                expanded={api.expanded}
+                active={api.active}
+                onToggle={api.toggleDir}
+                onOpen={(p) => api.openFile(p)}
+                onDelete={setConfirmDelete}
+              />
             ) : (
               <SearchPanel search={api.search} onSearch={api.runSearch} onOpen={(p, line) => api.openFile(p, line)} />
             )}
@@ -620,6 +630,19 @@ export function EditorPane({
           </div>
         )}
       </div>
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete ${confirmDelete.name}?`}
+          confirmLabel="Delete"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            api.deleteEntry(confirmDelete.path);
+            setConfirmDelete(null);
+          }}
+        >
+          {deleteText(confirmDelete, api.files)}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

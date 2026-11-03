@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePath, openFolderBlocked, selectionReference } from "./paths";
+import { deleteText, normalizePath, openFolderBlocked, selectionReference } from "./paths";
 import { parsePathRef } from "../lib/openPath";
 
 describe("editor paths", () => {
@@ -36,5 +36,24 @@ describe("open folder", () => {
     expect(openFolderBlocked({ connected: false, running: false, worktree: false })).toMatch(/Connect/);
     expect(openFolderBlocked({ connected: true, running: false, worktree: true })).toMatch(/worktree/);
     expect(openFolderBlocked({ connected: true, running: true, worktree: false })).toMatch(/end of the turn/);
+  });
+});
+
+describe("the delete question", () => {
+  it("names a file or a folder, and the Recycle Bin", () => {
+    expect(deleteText({ path: "a.py", type: "file" }, [])).toMatch(/^The file goes to the Recycle Bin/);
+    expect(deleteText({ path: "src", type: "dir" }, [])).toMatch(/^The folder and all the files in it go/);
+  });
+
+  it("counts the open files with unsaved changes in the item", () => {
+    const open = [
+      { path: "src/a.py", dirty: true },
+      { path: "src/b.py", dirty: true },
+      { path: "srcx/c.py", dirty: true }, // Not in src.
+      { path: "src/d.py", dirty: false },
+    ];
+    expect(deleteText({ path: "src", type: "dir" }, open)).toContain("2 open files have unsaved changes");
+    expect(deleteText({ path: "src/a.py", type: "file" }, open)).toContain("An open file has unsaved changes");
+    expect(deleteText({ path: "src/d.py", type: "file" }, open)).not.toContain("unsaved");
   });
 });

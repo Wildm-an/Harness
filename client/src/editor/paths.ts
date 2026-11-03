@@ -75,3 +75,16 @@ export function newEntryStart(activePath: string | null): string {
   const at = activePath ? activePath.lastIndexOf("/") : -1;
   return at > 0 ? `${activePath!.slice(0, at)}/` : "";
 }
+
+/**
+ * The text of the Delete question of the file tree. The daemon moves the item to the Recycle Bin
+ * on Windows. Other systems have no trash for the daemon, so there the delete is permanent.
+ */
+export function deleteText(entry: { path: string; type: "file" | "dir" }, open: { path: string; dirty: boolean }[]): string {
+  const inside = (p: string) => p === entry.path || p.startsWith(`${entry.path}/`);
+  const what = entry.type === "dir" ? "The folder and all the files in it go" : "The file goes";
+  const parts = [`${what} to the Recycle Bin when the daemon runs on Windows. On other systems, the delete cannot be undone.`];
+  const unsaved = open.filter((f) => f.dirty && inside(f.path)).length;
+  if (unsaved > 0) parts.push(unsaved === 1 ? "An open file has unsaved changes. They are lost." : `${unsaved} open files have unsaved changes. They are lost.`);
+  return parts.join(" ");
+}

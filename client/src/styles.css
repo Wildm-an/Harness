@@ -5838,6 +5838,16 @@ mark.word-del {
   color: var(--danger);
 }
 
+/* The right-click menu of a file tree item. It shows at the mouse, so it does not use the menu position. */
+.menu.tree-menu {
+  position: fixed;
+  right: auto;
+}
+
+.tree-item.menu-open {
+  background: var(--hover);
+}
+
 .session-menu-confirm {
   padding: 8px 8px 4px;
 }

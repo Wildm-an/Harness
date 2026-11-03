@@ -55,7 +55,7 @@ from .tools.base import ToolError
 from .tools.grep import search_project
 from .tools.search import find_paths
 from .tunnels import TUNNELS, TunnelError
-from . import worktrees
+from . import trash, worktrees
 from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
@@ -2595,6 +2595,36 @@ async def on_fs_create(conn: Connection, msg: dict[str, Any]) -> None:
     except OSError as e:
         raise ProtocolError(f"Could not create {rel}: {e.strerror or e}") from None
     await conn.send({"type": "fs.created", "path": rel, "kind": kind})
+
+
+@handler("fs.delete")
+async def on_fs_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    """Delete of the editor file tree: {"path"}. A folder goes with its contents. On Windows the
+    item goes to the Recycle Bin. The reply is "fs.deleted" {"path", "kind", "trash"}."""
+    session = conn.require_session()
+    raw = _text_arg(msg, "path").strip().replace("\\", "/").strip("/")
+    if not raw or raw == ".":
+        raise ProtocolError("Give a file or a folder in the project.")
+    link = Path(session.cwd) / raw
+    if link.is_symlink():
+        # Remove the link itself, not its target. Its folder must be in the project.
+        resolve_in_cwd(session.cwd, str(Path(raw).parent) if Path(raw).parent != Path(".") else ".")
+        path = link
+    else:
+        path = resolve_in_cwd(session.cwd, raw)
+    if path == Path(session.cwd).resolve():
+        raise ProtocolError("The session folder itself cannot be deleted here.")
+    if not os.path.lexists(path):
+        raise ProtocolError(f"{raw} does not exist.")
+    rel = raw if path is link else relpath(session.cwd, path)
+    kind = "dir" if path.is_dir() and not path.is_symlink() else "file"
+    try:
+        to_trash = await asyncio.to_thread(trash.delete, path)
+    except OSError as e:
+        raise ProtocolError(f"Could not delete {rel}: {e.strerror or e}") from None
+    for watched in [w for w in conn.watched if w == rel or w.startswith(rel + "/")]:
+        conn.watched.pop(watched, None)  # The editor closes these files. No change reports for them.
+    await conn.send({"type": "fs.deleted", "path": rel, "kind": kind, "trash": to_trash})
 
 
 @handler("fs.unwatch")

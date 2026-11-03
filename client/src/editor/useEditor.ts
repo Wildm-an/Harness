@@ -82,6 +82,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   const revealKey = useRef(0);
   const [createError, setCreateError] = useState<string | null>(null); // New file or New folder failed.
   const openFileRef = useRef<(path: string) => void>(() => {});
+  const closeFileRef = useRef<(path: string) => void>(() => {});
   // The editor autocomplete request that waits for the daemon. A new request ends the old one.
   const completion = useRef<{ id: string; resolve: (text: string | null) => void } | null>(null);
   const completionCount = useRef(0);
@@ -216,6 +217,16 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           if (msg.kind === "file") openFileRef.current(msg.path);
           return;
         }
+        case "fs.deleted": {
+          // Close the tabs of the item and of the files in it, forget its listings, and list its folder again.
+          const gone = (p: string) => p === msg.path || p.startsWith(`${msg.path}/`);
+          for (const f of filesRef.current) if (gone(f.path)) closeFileRef.current(f.path);
+          setTree((t) => Object.fromEntries(Object.entries(t).filter(([dir]) => !gone(dir))));
+          setExpanded((set) => new Set([...set].filter((dir) => !gone(dir))));
+          listDir(msg.path.includes("/") ? msg.path.slice(0, msg.path.lastIndexOf("/")) : ".");
+          setCreateError(null);
+          return;
+        }
         case "fs.conflict":
           patchFile(msg.path, { saving: false, notice: { kind: "conflict", hash: msg.disk_hash } });
           return;
@@ -243,8 +254,8 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             setFiles((list) => list.map((f) => (f.saving ? { ...f, saving: false, error: msg.message } : f)));
           } else if (msg.ref === "fs.search") {
             setSearch((s) => ({ ...s, busy: false, error: msg.message }));
-          } else if (msg.ref === "fs.create") {
-            setCreateError(msg.message);
+          } else if (msg.ref === "fs.create" || msg.ref === "fs.delete") {
+            setCreateError(msg.message); // The error line under the file tree head.
           } else if (msg.ref === "fs.list") {
             setTree((t) => Object.fromEntries(Object.entries(t).filter(([, v]) => v !== "loading")));
           }
@@ -293,6 +304,17 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
         return next;
       });
       setCompare((c) => (c?.path === path ? null : c));
+    },
+    [send],
+  );
+
+  closeFileRef.current = closeFile;
+
+  /** Delete of the file tree: the daemon deletes the file or the folder, and fs.deleted updates the tree. */
+  const deleteEntry = useCallback(
+    (path: string): boolean => {
+      setCreateError(null);
+      return send({ type: "fs.delete", path });
     },
     [send],
   );
@@ -398,6 +420,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
 
   return {
     createEntry,
+    deleteEntry,
     createError,
     clearCreateError: () => setCreateError(null),
     complete,
