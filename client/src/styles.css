@@ -1241,6 +1241,43 @@ textarea:focus-visible {
   color: var(--text-muted);
 }
 
+/* The block and the small text buttons under it. */
+.recent-folders-wrap {
+  width: min(400px, 100%);
+}
+
+.recent-folders-wrap > .recent-folders {
+  width: 100%;
+}
+
+/* "Open folder…" on the left and "New project…" on the right, under the block. */
+.recent-folders-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 4px 0;
+}
+
+.recent-folders-actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: 12.5px var(--font-sans);
+  cursor: pointer;
+}
+
+.recent-folders-actions > button:hover,
+.recent-folders-actions > button:focus-visible {
+  color: var(--text);
+  background: var(--surface-2);
+  outline: none;
+}
+
 .recent-folders-status {
   display: flex;
   align-items: center;

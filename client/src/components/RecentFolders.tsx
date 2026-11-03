@@ -1,7 +1,8 @@
 // The folder block of the start screen, as in Claude: when the app opens, the recent project folders
-// show in the center. The user selects the folder to work in. "Show more" shows all the project
-// folders, "Open folder…" adds a folder, and "New project…" makes a new folder in a location that
-// stays the same until the user changes it. The IDE view shows the same block in the editor.
+// show in the center. The user selects the folder to work in. "Show more" under the folders shows all
+// the project folders. Under the block, "Open folder…" (left) adds a folder, and "New project…" (right)
+// makes a new folder in a location that stays the same until the user changes it. The IDE view shows
+// the same block in the editor.
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, Folder, FolderOpen, FolderPlus, LoaderCircle, TriangleAlert } from "lucide-react";
@@ -207,59 +208,66 @@ export function RecentFolders({
     );
   }
 
+  // The box holds the folders and "Show more". "Open folder…" and "New project…" are small text
+  // buttons under the box. The arrow keys move through all of them.
   return (
-    <div className="recent-folders" ref={ref} role="menu" aria-label="Choose a folder to work in" onKeyDown={onKeyDown}>
-      {projects === null ? (
-        <p className="recent-folders-status" role="status">
-          <LoaderCircle size={14} className="spin" aria-hidden /> Loading the folders
-        </p>
-      ) : (
-        <div id="recent-folders-list" className="recent-folders-list" style={{ maxHeight: `${SCROLL_AFTER * 34}px` }}>
-          {shown.map((p) => {
-            const checked = p.id === selectedId;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                role="menuitemradio"
-                aria-checked={checked}
-                disabled={!p.exists}
-                title={p.exists ? p.path : `${p.path}: the folder does not exist.`}
-                onClick={() => onPick(p.id)}
-              >
-                {p.exists ? <Folder size={15} aria-hidden /> : <TriangleAlert size={15} aria-hidden />}
-                <span className="recent-folders-name">
-                  {p.name}
-                  {hints.get(p.id) && <span className="project-hint"> · {hints.get(p.id)}</span>}
-                </span>
-                {checked && <Check size={15} className="recent-folders-check" aria-hidden />}
-              </button>
-            );
-          })}
+    <div className="recent-folders-wrap" ref={ref} onKeyDown={onKeyDown}>
+      {(projects === null || items.length > 0) && (
+        <div className="recent-folders" role="menu" aria-label="Choose a folder to work in">
+          {projects === null ? (
+            <p className="recent-folders-status" role="status">
+              <LoaderCircle size={14} className="spin" aria-hidden /> Loading the folders
+            </p>
+          ) : (
+            <div id="recent-folders-list" className="recent-folders-list" style={{ maxHeight: `${SCROLL_AFTER * 34}px` }}>
+              {shown.map((p) => {
+                const checked = p.id === selectedId;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={checked}
+                    disabled={!p.exists}
+                    title={p.exists ? p.path : `${p.path}: the folder does not exist.`}
+                    onClick={() => onPick(p.id)}
+                  >
+                    {p.exists ? <Folder size={15} aria-hidden /> : <TriangleAlert size={15} aria-hidden />}
+                    <span className="recent-folders-name">
+                      {p.name}
+                      {hints.get(p.id) && <span className="project-hint"> · {hints.get(p.id)}</span>}
+                    </span>
+                    {checked && <Check size={15} className="recent-folders-check" aria-hidden />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {items.length > shown.length || all ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="recent-folders-more"
+              aria-expanded={all}
+              aria-controls="recent-folders-list"
+              onClick={() => setAll((v) => !v)}
+            >
+              {all ? "Show less" : "Show more"}
+              {all ? <ChevronUp size={13} aria-hidden /> : <ChevronDown size={13} aria-hidden />}
+            </button>
+          ) : null}
         </div>
       )}
-      {items.length > 0 && <div className="menu-sep" role="separator" />}
-      <button type="button" role="menuitem" onClick={onOpenFolder}>
-        <FolderOpen size={15} aria-hidden />
-        <span className="recent-folders-name">Open folder…</span>
-      </button>
-      <button type="button" role="menuitem" className="recent-folders-new" onClick={() => setCreating(true)}>
-        <FolderPlus size={15} aria-hidden />
-        <span className="recent-folders-name">New project…</span>
-      </button>
-      {items.length > shown.length || all ? (
-        <button
-          type="button"
-          role="menuitem"
-          className="recent-folders-more"
-          aria-expanded={all}
-          aria-controls="recent-folders-list"
-          onClick={() => setAll((v) => !v)}
-        >
-          {all ? "Show less" : "Show more"}
-          {all ? <ChevronUp size={13} aria-hidden /> : <ChevronDown size={13} aria-hidden />}
+      <div className="recent-folders-actions">
+        <button type="button" onClick={onOpenFolder}>
+          <FolderOpen size={13} aria-hidden />
+          Open folder…
         </button>
-      ) : null}
+        <button type="button" className="recent-folders-new" onClick={() => setCreating(true)}>
+          <FolderPlus size={13} aria-hidden />
+          New project…
+        </button>
+      </div>
       {error && (
         <p className="form-error recent-folders-error" role="alert">
           {error}
