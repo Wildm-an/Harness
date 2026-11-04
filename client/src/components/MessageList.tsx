@@ -323,6 +323,20 @@ export function MessageList({
   const plan = latestPlan(items);
   const wrap = latestWrapUp(items);
 
+  // During a turn, the tool calls at the end of the chat go into the working line, as in Claude Code:
+  // its caret shows them. When the turn ends, they are a group line again.
+  // An answered permission card after the tools stays in the chat.
+  const shown = groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name))));
+  let at = shown.length - 1;
+  while (at >= 0 && shown[at].kind === "permission") {
+    const card = shown[at] as Extract<ChatItem, { kind: "permission" }>;
+    if (!card.decision && !card.expired) break;
+    at--;
+  }
+  const tail = shown[at];
+  const liveTools = running && tail?.kind === "tools" ? tail.items : [];
+  if (liveTools.length > 0) shown.splice(at, 1);
+
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -344,7 +358,7 @@ export function MessageList({
     >
       <div className="column">
         {items.length === 0 && queued.length === 0 && <div className="empty-hint">{emptyHint}</div>}
-        {groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name)))).map((item) => {
+        {shown.map((item) => {
           switch (item.kind) {
             case "user":
               if (item.origin === "task") return <TaskNote key={item.id} item={item} />;
@@ -381,7 +395,7 @@ export function MessageList({
         })}
         {plan && <PlanBlock steps={plan.steps} running={running && plan.current} />}
         {wrap && !running && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} />}
-        {running && <WorkingLine turn={turn} items={items} model={model} />}
+        {running && <WorkingLine turn={turn} items={items} model={model} tools={liveTools} reviewId={reviewId} onReview={onReview} />}
         {queued.map((item) => (
           <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
         ))}

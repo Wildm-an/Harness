@@ -1,12 +1,13 @@
 // The working line at the bottom of the chat during a turn, as in the Claude app: animated dots, what the
 // agent does now (the step of its task list in progress, or "Writing…"), and the time of the turn. The caret
-// shows the details: "1.1k tokens · 1 running task · Waiting for qwen3…". It scrolls with the chat.
+// shows the details: "1.1k tokens · 1 running task · Waiting for qwen3…", and the tool calls at the end of the
+// chat (the chat does not show them as a line during the turn). It scrolls with the chat.
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
-import type { ChatItem, TurnInfo } from "../chat/state";
+import type { ChatItem, ToolItem, TurnInfo } from "../chat/state";
 import { latestPlan } from "../lib/progress";
-import { toolLabel } from "./ToolCard";
+import { ToolCard, toolLabel } from "./ToolCard";
 
 /** "8s", "1m 11s", or "1h 2m". */
 export function formatElapsed(ms: number): string {
@@ -59,7 +60,21 @@ export function currentStep(items: ChatItem[]): string | null {
   return plan.steps.find((s) => s.status === "in_progress")?.content ?? null;
 }
 
-export function WorkingLine({ turn, items, model }: { turn: TurnInfo | null; items: ChatItem[]; model: string }) {
+export function WorkingLine({
+  turn,
+  items,
+  model,
+  tools = [],
+  reviewId = null,
+  onReview = () => {},
+}: {
+  turn: TurnInfo | null;
+  items: ChatItem[];
+  model: string;
+  tools?: ToolItem[]; // The tool calls at the end of the chat. The caret shows them, as in Claude Code.
+  reviewId?: string | null;
+  onReview?: (toolId: string) => void;
+}) {
   const mounted = useRef(Date.now()); // A turn with no start time (for example a skill) counts from here.
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState(false);
@@ -78,37 +93,46 @@ export function WorkingLine({ turn, items, model }: { turn: TurnInfo | null; ite
   if (label !== text) details.push(text);
 
   return (
-    <div className="working" title="Esc to interrupt">
-      <span className="working-dots" aria-hidden>
-        <span />
-        <span />
-        <span />
-        <span />
-      </span>
-      <span className="working-text" aria-hidden>
-        {label}
-      </span>
-      <span className="working-time" aria-hidden>
-        {formatElapsed(now - (turn?.startedAt ?? mounted.current))}
-      </span>
-      <button
-        type="button"
-        className={`working-more${open ? " open" : ""}`}
-        aria-expanded={open}
-        aria-label={open ? "Hide the details" : "Show the details"}
-        onClick={() => setOpen(!open)}
-      >
-        <ChevronRight size={13} aria-hidden />
-      </button>
-      {open && (
-        <span className="working-details" aria-hidden>
-          {details.join(" · ")}
+    <div className="working-wrap">
+      <div className="working" title="Esc to interrupt">
+        <span className="working-dots" aria-hidden>
+          <span />
+          <span />
+          <span />
+          <span />
         </span>
+        <span className="working-text" aria-hidden>
+          {label}
+        </span>
+        <span className="working-time" aria-hidden>
+          {formatElapsed(now - (turn?.startedAt ?? mounted.current))}
+        </span>
+        <button
+          type="button"
+          className={`working-more${open ? " open" : ""}`}
+          aria-expanded={open}
+          aria-label={open ? "Hide the details" : "Show the details"}
+          onClick={() => setOpen(!open)}
+        >
+          <ChevronRight size={13} aria-hidden />
+        </button>
+        {open && (
+          <span className="working-details" aria-hidden>
+            {details.join(" · ")}
+          </span>
+        )}
+        {/* Screen readers get the status only, not the time each second. */}
+        <span className="sr-only" role="status">
+          {label}
+        </span>
+      </div>
+      {open && tools.length > 0 && (
+        <div className="tool-group-list working-tools">
+          {tools.map((item) => (
+            <ToolCard key={item.id} item={item} reviewing={reviewId === item.id} onReview={onReview} />
+          ))}
+        </div>
       )}
-      {/* Screen readers get the status only, not the time each second. */}
-      <span className="sr-only" role="status">
-        {label}
-      </span>
     </div>
   );
 }

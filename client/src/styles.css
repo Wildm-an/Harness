@@ -6238,6 +6238,11 @@ input.tree-rename-input[aria-invalid="true"] {
   transform: rotate(90deg);
 }
 
+/* The tool calls of the turn, under the working line when its caret is open. */
+.working-tools {
+  margin: 0 0 8px;
+}
+
 /* The sizes of the Claude prompt boxes. They follow the density (Settings > General). The session
    prompt is 36px high with 13px text. The start screen prompt is larger: 44px high with 14px text. */
 :root {
