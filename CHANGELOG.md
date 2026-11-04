@@ -3,6 +3,26 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.41 (2026-11-04)
+
+### The agent
+
+- The agent can show an interactive visual (HTML or SVG) in the chat with the new tool
+  `show_visual`. The chat shows it as a "Made a visual" item in a sandboxed frame, and a button
+  in the visual can send the next prompt.
+
+### Working line
+
+- During a turn, the last tool calls show only in the dropdown of the working line, as in
+  Claude Code. When the turn ends, they show as a group line in the chat again.
+- The loader of the working line is now a turning gyroscope: 3 rings with comet tails, in the
+  accent color. It is still when "reduce motion" is on.
+
+### Sidebar
+
+- The status mark of a session is now a smaller dot at the right end of the row. An idle session
+  has no mark. On hover, the ⋮ button takes its place.
+
 ## 0.1.40 (2026-11-04)
 
 ### Sidebar
