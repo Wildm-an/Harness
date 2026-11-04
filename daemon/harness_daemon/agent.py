@@ -25,6 +25,7 @@ from typing import Any, Awaitable, Callable
 
 from .config import ConfigError, load_settings
 from .context import CHARS_PER_TOKEN, COMPACT_AT, KEEP_TURNS, estimate_tokens, split_turns, summarize, trim_tool_outputs
+from .created import before_call, created_files
 from .files import file_hash, relpath
 from .auto_mode import AutoReviewer
 from .permissions import Approver, PermissionGate
@@ -65,7 +66,7 @@ SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 
 # Fields of stored messages that only the client uses. The model does not get them.
 # The model gets the "image" of a tool result in a separate message. See Agent.messages.
-CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin", "images")
+CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin", "images", "created")
 # A user message with images, for a model with no image input.
 NO_IMAGE_NOTE = ("[The user attached {count} image(s). This model cannot read images, so you cannot see them. "
                  "Tell the user, if the images are important for the task.]")
@@ -587,7 +588,8 @@ class Agent:
                     in_flight = call["id"]
                     result = await self._run_tool_call(call)
                     in_flight = None
-                    self._add_tool_result(call["id"], result.output, result.is_error, result.diff, result.image)
+                    self._add_tool_result(call["id"], result.output, result.is_error, result.diff, result.image,
+                                          result.created)
                     open_calls.pop(0)
                     if result is _DENIED_RESULT or result.stop_turn:
                         stop = "denied"
@@ -986,12 +988,14 @@ class Agent:
         await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
 
     def _add_tool_result(self, call_id: str, output: str, is_error: bool, diff: str | None = None,
-                         image: str | None = None) -> None:
+                         image: str | None = None, created: list[str] | None = None) -> None:
         message = {"role": "tool", "tool_call_id": call_id, "content": output, "is_error": is_error}
         if diff:
             message["diff"] = diff
         if image:
             message["image"] = image
+        if created:
+            message["created"] = list(created)
         self.history.append(message)
 
     def _close_open_calls(self, open_calls: list[dict[str, str]], output: str) -> None:
@@ -1004,14 +1008,20 @@ class Agent:
         args, parse_error = _parse_arguments(call["arguments"])
         await self.emit({"type": "tool.start", "id": call_id, "name": name, "input": args if args is not None else call["arguments"]})
 
+        # The new PDF and Word files of the call get a card in the chat (created.py).
+        snapshot = await asyncio.to_thread(before_call, self.cwd, name, args) if args is not None else None
         result = await self._execute(name, args, parse_error, call_id)
         if result is not _DENIED_RESULT:
             result.output = truncate(result.output, int(self.settings["max_output_chars"]))
+            if snapshot is not None:
+                result.created = await asyncio.to_thread(created_files, self.cwd, snapshot, result.changed_paths)
         event = {"type": "tool.result", "id": call_id, "output": result.output, "is_error": result.is_error}
         if result.diff:
             event["diff"] = result.diff
         if result.image:
             event["image"] = result.image
+        if result.created:
+            event["created"] = result.created
         await self.emit(event)
         for path in result.changed_paths:
             await self.emit({"type": "fs.changed", "path": relpath(self.cwd, path), "hash": file_hash(path), "by": "agent"})

@@ -3,6 +3,15 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Chat
+
+- When the agent makes a new PDF or Word file, a card shows in the chat after the tool call, with
+  the file name and an "Open" button. "Open" shows the file in the Preview pane. This also works
+  for files that a command makes, for example the scripts of the `docx` and `pdf` skills. The
+  cards show again when you open the session later.
+
 ## 0.1.42 (2026-11-04)
 
 ### Skills

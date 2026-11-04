@@ -37,6 +37,8 @@ export type ChatItem =
   // exit_plan_mode: the plan of the agent in plan mode.
   | { kind: "plan"; id: string; plan: string; decision?: PlanDecision; mode?: PermissionMode; expired?: boolean }
   | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string }
+  // A new PDF or Word file of a tool call (daemon created.py): a card with "Open" for the Preview pane.
+  | { kind: "file"; id: string; path: string; toolId: string }
   | { kind: "summary"; id: string; text: string | null; removed: number; trimmed: number; reason: string };
 
 export interface ContextUse {
@@ -155,6 +157,11 @@ function parseArgs(raw: string): unknown {
   }
 }
 
+/** The cards of the new files of a tool call. They go right after the tool call. */
+function fileCards(toolId: string, created: string[] | undefined): ChatItem[] {
+  return (created ?? []).map((path) => ({ kind: "file", id: `file-${toolId}-${path}`, path, toolId }));
+}
+
 /** Converts stored OpenAI-format messages to chat items. */
 export function historyToItems(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
@@ -177,6 +184,7 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
       if (index >= 0) {
         const status: ToolStatus = msg.is_error ? "error" : "done";
         items[index] = { ...(items[index] as ToolItem), output: msg.content, status, diff: msg.diff, image: msg.image };
+        items.splice(index + 1, 0, ...fileCards(msg.tool_call_id, msg.created));
       }
     }
   }
@@ -214,6 +222,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         diff: msg.diff,
         image: msg.image,
       };
+      items.splice(index + 1, 0, ...fileCards(msg.id, msg.created));
       return { ...state, items };
     }
     case "permission.request": {

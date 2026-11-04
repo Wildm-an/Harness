@@ -25,7 +25,8 @@ export type HistoryMessage =
   | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task"; images?: string[] } // images: pasted images (data URLs).
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
-  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string };
+  // created: the new PDF and Word files of the call. The chat shows a card with "Open" for each one.
+  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string; created?: string[] };
 
 export interface PermissionRequest {
   request_id: string;
@@ -773,7 +774,7 @@ export type DaemonMessage =
   | { type: "token"; text: string }
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
-  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string }
+  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[] }
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }

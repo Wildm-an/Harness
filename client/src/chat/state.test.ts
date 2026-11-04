@@ -9,6 +9,28 @@ const run = (...msgs: DaemonMessage[]): ChatState =>
 const usage = { prompt_tokens: 1, completion_tokens: 1, last_prompt_tokens: 1, context_tokens: 500, context_length: 8000 };
 
 describe("chatReducer", () => {
+  it("puts a file card after a tool call that made a new PDF or Word file", () => {
+    const s = run(
+      { type: "tool.start", id: "c1", name: "bash", input: { command: "python build.py" } },
+      { type: "tool.start", id: "c2", name: "read", input: { path: "a.py" } },
+      { type: "tool.result", id: "c1", output: "ok", is_error: false, created: ["out/report.docx", "out/report.pdf"] },
+      { type: "tool.result", id: "c2", output: "x", is_error: false },
+    );
+    expect(s.items.map((i) => i.kind)).toEqual(["user", "tool", "file", "file", "tool"]);
+    expect(s.items[2]).toMatchObject({ kind: "file", path: "out/report.docx", toolId: "c1" });
+  });
+
+  it("shows the file cards again when the session opens", () => {
+    const items = historyToItems([
+      { role: "user", content: "make a memo" },
+      { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "office_edit", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "c1", content: "Created memo.docx", created: ["memo.docx"] },
+      { role: "assistant", content: "Done." },
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["user", "tool", "file", "assistant"]);
+    expect(items[2]).toMatchObject({ path: "memo.docx" });
+  });
+
   it("puts nothing in the chat for a model switch, but keeps its warnings", () => {
     const s = run({
       type: "command.result",

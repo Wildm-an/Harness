@@ -39,6 +39,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 import uvicorn
@@ -188,6 +189,12 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
         return {"text": "I will find the Python files and the uses of `add`.", "tool_calls": [
             {"name": "glob", "arguments": {"pattern": "**/*.py"}},
             {"name": "grep", "arguments": {"pattern": "add", "output": "content"}}]}
+    if "memo" in text.lower() and "office_edit" in tools:
+        # A new Word file: the chat shows a file card with "Open" (the daemon sends it as "created").
+        return {"text": "I will write the memo as a Word file.", "tool_calls": [{"name": "office_edit", "arguments": {
+            "path": f"docs/memo-{int(time.time())}.docx", "create": True, "edits": [
+                {"op": "insert_paragraph", "after": 0, "text": "Memo", "style": "Title"},
+                {"op": "insert_paragraph", "after": 1, "text": "The demo agent wrote this file."}]}}]}
     if "create" in text.lower():
         return {"text": "I will create a test file.", "tool_calls": [{"name": "write", "arguments": {
             "path": "tests/test_app.py",

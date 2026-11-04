@@ -13,6 +13,7 @@ import { PlanBlock, WrapUpBox } from "./ProgressBlocks";
 import { isProgressTool, latestPlan, latestWrapUp } from "../lib/progress";
 import { WorkingLine } from "./WorkingLine";
 import { VisualBlock } from "./VisualBlock";
+import { FileCard } from "./FileCard";
 import { isVisualItem, visualOf } from "../lib/visual";
 import type { TurnInfo } from "../chat/state";
 
@@ -398,6 +399,8 @@ export function MessageList({
               return <Notice key={item.id} item={item} />;
             case "summary":
               return <SummaryCard key={item.id} item={item} />;
+            case "file":
+              return <FileCard key={item.id} path={item.path} />;
           }
         })}
         {plan && <PlanBlock steps={plan.steps} running={running && plan.current} />}
