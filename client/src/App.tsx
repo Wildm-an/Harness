@@ -2558,6 +2558,7 @@ export default function App() {
       projects={projects ?? []}
       onNewSession={fromSidebar(newSession)}
       onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
+      onRemoveProject={deleteProject}
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
       head={titleNav(true)}

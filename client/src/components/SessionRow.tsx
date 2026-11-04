@@ -67,9 +67,10 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
   close.current = onClose;
 
   // The focus goes into the menu when it is visible: a hidden button cannot take the focus.
+  // The delete confirm focuses Delete, so Enter deletes the session (the user asked for this).
   const placed = pos !== null;
   useEffect(() => {
-    if (placed) ref.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    if (placed) ref.current?.querySelector<HTMLButtonElement>(confirm ? "button.btn-danger" : "button")?.focus({ preventScroll: true });
   }, [confirm, placed]);
 
   useEffect(() => {

@@ -79,7 +79,8 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
   6. Remove: "Archive" (Ctrl+Alt+A), "Delete".
 
   Harness now uses the single keys P, U, R, A, D in this menu. Change them to the Ctrl+Alt chords above.
-- **S8.** Archive asks first only when the session has uncommitted changes: "Archive session with uncommitted changes?" with "Archive anyway". Delete always asks first.
+- **S8.** Archive asks first only when the session has uncommitted changes: "Archive session with uncommitted changes?" with "Archive anyway". Delete always asks first. The focus starts on the "Delete" button of that question, so Enter deletes the session (the user asked for this).
+- **S13.** The project menu has "Remove from sidebar" under "Archive all" (the user asked for this). It is available only for a saved project with no sessions in the list. The folder, its files, and its sessions stay.
 - **S9.** A drag of a row shows a label pill: "Open in split view", "Release to unpin", "Move to {label}".
 - **S12.** The edge at the right of the sidebar changes its width, from 216px to 384px (the widest sidebar of the Claude app, the user asked for it). The default is 264px. A double-click sets the default.
 - **S11.** A folded project still shows the open session and its sessions that are running, awaiting input, or unread, under the project name (the user asked for this). The other sessions show when the project opens.

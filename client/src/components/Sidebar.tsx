@@ -199,7 +199,7 @@ interface DropSpot {
   after: boolean;
 }
 
-function ProjectSection({ group, hint, pr, open, activeId, running, unread, disabled, onToggle, actions, onNewSession, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove, canMove, onSort }: {
+function ProjectSection({ group, hint, pr, open, activeId, running, unread, disabled, onToggle, actions, onNewSession, onRemove, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove, canMove, onSort }: {
   group: ProjectGroup;
   hint: string | null; // The parent folder, if another project has the same name.
   pr: PrStatus | null; // The pull request of the folder branch. null: "Show PR status" is off, or no data.
@@ -211,6 +211,7 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
   onToggle: () => void;
   actions: SessionActions;
   onNewSession: () => void;
+  onRemove: (projectId: string) => void; // Remove the saved project from the list.
   dragging: boolean; // The user drags this project.
   drop: "before" | "after" | null; // The line that shows where the dragged project goes.
   onDragStart: () => void;
@@ -308,6 +309,12 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
               disabled: disabled || toArchive.length === 0,
               separatorBefore: true,
             },
+            // Only a saved project with no session in the list can go. The folder and its files stay.
+            {
+              label: "Remove from sidebar",
+              onClick: () => group.projectId && onRemove(group.projectId),
+              disabled: disabled || !group.projectId || group.sessions.length > 0,
+            },
           ]}
         />
       )}
@@ -375,6 +382,7 @@ export function Sidebar({
   settings,
   onNewSession,
   onNewSessionIn,
+  onRemoveProject,
   actions,
   newSessionKey,
   head,
@@ -396,6 +404,7 @@ export function Sidebar({
   settings: React.ReactNode; // The Settings button, on the right of the computer button.
   onNewSession: () => void;
   onNewSessionIn: (group: ProjectGroup) => void;
+  onRemoveProject: (projectId: string) => void; // Remove a saved project with no sessions from the list.
   actions: SessionActions; // Open, pin, mark as unread, rename, and delete a session.
   newSessionKey?: string; // "Ctrl+N".
   head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
@@ -600,6 +609,7 @@ export function Sidebar({
                 onToggle={() => toggle(g)}
                 actions={actions}
                 onNewSession={() => onNewSessionIn(g)}
+                onRemove={onRemoveProject}
                 dragging={g.key === dragKey}
                 drop={dragKey && dragKey !== g.key && dropSpot?.key === g.key ? (dropSpot.after ? "after" : "before") : null}
                 onDragStart={() => setDragKey(g.key)}
