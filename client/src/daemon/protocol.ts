@@ -284,7 +284,7 @@ export interface ProjectItem {
 
 // -- MCP servers (SPEC.md section 5.7) --
 
-export type McpState = "starting" | "connected" | "failed" | "disabled" | "stopped";
+export type McpState = "starting" | "connected" | "failed" | "disabled" | "stopped" | "needs_auth" | "authenticating";
 
 export interface McpServerItem {
   name: string;
@@ -296,6 +296,24 @@ export interface McpServerItem {
   server_name: string | null;
   tools: { name: string; agent_name: string; description: string }[];
   log?: string[]; // The last lines of the server output, for a failed server.
+  oauth?: boolean; // The server uses OAuth (an http or sse server with no Authorization header).
+  signed_in?: boolean; // Harness has OAuth tokens for the server.
+  auth_url?: string; // The sign-in page, while the state is "authenticating".
+  connector?: string | null; // The connector that gives the token (connectors.py), for example "github".
+}
+
+/** A connector of the Connectors tab: an MCP server that Harness sets up with a token (connectors.py). */
+export interface ConnectorItem {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  installed: boolean; // The server entry is in ~/.harness/mcp.json.
+  source: "gh" | "token" | null; // The token source: the GitHub CLI, or a pasted token. null: not connected.
+  login: string | null; // The account of the token.
+  gh_available: boolean; // The GitHub CLI is signed in on the daemon computer.
+  token_url: string; // The page where the user makes a token.
+  token_help: string;
 }
 
 export interface McpStatus {
@@ -582,6 +600,13 @@ export type ClientMessage =
   | { type: "mcp.list" }
   | { type: "mcp.restart"; name?: string }
   | { type: "mcp.init" }
+  | { type: "mcp.auth"; name: string }
+  | { type: "mcp.auth_code"; name: string; url: string }
+  | { type: "mcp.auth_cancel"; name: string }
+  | { type: "mcp.logout"; name: string }
+  | { type: "connectors.list" }
+  | { type: "connectors.connect"; id: string; source: "gh" | "token"; token?: string }
+  | { type: "connectors.disconnect"; id: string }
   | { type: "plugins.list" }
   | { type: "plugins.reload" }
   | { type: "plugins.install"; source: string; replace?: boolean }
@@ -703,6 +728,8 @@ export type DaemonMessage =
   | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[] }
   | ({ type: "mcp" } & McpStatus)
   | { type: "mcp.init"; path: string; created: boolean }
+  | { type: "mcp.auth_url"; name: string; url: string }
+  | { type: "connectors"; items: ConnectorItem[] }
   | { type: "capabilities"; cwd: string | null; live: boolean; skills: CommandItem[]; mcp: McpStatus }
   | ({ type: "plugins" } & PluginsStatus)
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }

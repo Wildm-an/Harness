@@ -152,6 +152,8 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 | `harness_daemon/agent.py` | The agent loop. |
 | `harness_daemon/providers.py` | Providers, the tool support check, and the streaming model client. |
 | `harness_daemon/mcp_client.py` | The MCP client: the configuration, the connections in their own thread, and the `mcp__*` tools. |
+| `harness_daemon/mcp_auth.py` | OAuth for HTTP and SSE MCP servers: the token store, the callback listener, and the provider of the MCP SDK. |
+| `harness_daemon/connectors.py` | The connectors of the Connectors tab: GitHub with the GitHub CLI token or a personal access token. |
 | `harness_daemon/cookbook/` | The Cookbook: `hosts.py` (hosts, SSH, the host script runner), `hostscript.py` (runs on the host), `gguf.py` (the GGUF header), `fit.py` (the fit calculator), `hub.py` (the Hugging Face browser), `service.py` (downloads and serve control). |
 | `harness_daemon/provider_config.py` | Changes to `providers.json` from the Providers screen, the client keys, and the connection test. |
 | `harness_daemon/tools/` | The `read`, `glob`, `grep`, `edit`, `write`, `bash`, `skill`, and `preview_*` tools. |
@@ -242,8 +244,51 @@ The agent uses the tools of MCP servers (SPEC.md section 5.7). The servers come 
 - `timeout` sets the seconds for one tool call. The default is 120.
 - Each tool of a server is a tool of the agent: `mcp__<server>__<tool>`. Each call needs approval. "Always" adds a rule for that tool. The rule `mcp__<server>__*` allows all the tools of one server.
 - The servers connect when a session opens. The first turn waits for them up to 20 seconds. A server that sends `tools/list_changed` updates the tools of the agent.
+- `oauth` controls OAuth for an `http` or `sse` server (`harness_daemon/mcp_auth.py`). See "OAuth" below.
 - The output of a stdio server goes to `~/.harness/logs/mcp-<server>.log`. The MCP panel shows its last lines when the server fails.
 - `/mcp` opens the MCP panel: the servers, their state, their tools, restart, and a button that creates and opens `.harness/mcp.json`.
+
+### OAuth
+
+An `http` or `sse` server with no `Authorization` header uses OAuth when it asks for it (HTTP 401). The flow is OAuth 2.1 with PKCE, from the MCP SDK.
+
+1. The session connects. The server needs a sign-in, so its state is "Needs authentication". Harness does not open a browser at this step.
+2. Click "Authenticate" on the MCP servers tab. The browser opens the sign-in page of the server.
+3. After the sign-in, the browser goes to `http://127.0.0.1:<port>/callback` on the daemon computer. The server connects.
+4. A remote daemon: the browser is on another computer, so the callback page does not open. Copy the URL from the address bar and paste it into the field under the row.
+
+The tokens and the client registration are in `~/.harness/mcp-auth.json`. Only your user can read the file. Harness refreshes a token that expires. "Clear authentication" removes the tokens of one server. The sign-in waits 5 minutes.
+
+The `oauth` key:
+
+| Value | Meaning |
+|---|---|
+| missing or `true` | OAuth is on, if the headers have no `Authorization`. |
+| `false` | OAuth is off. |
+| `{ "client_id": "...", "client_secret": "${SECRET}" }` | A client that you registered. Use it for a server with no dynamic client registration. |
+| `"scopes": ["repo", "read:org"]` | The scopes to ask for. These replace the scopes that the server suggests. |
+| `"callback_port": 33418` | A fixed port for the redirect URI `http://127.0.0.1:<port>/callback`. With no value, Harness picks a free port and keeps it for each server. |
+
+The token requests ask for JSON (`Accept: application/json`), so GitHub OAuth apps work.
+
+### Connectors
+
+The Connectors tab of the Capabilities page sets up an MCP server in one step (`harness_daemon/connectors.py`). It needs no session. A connector:
+
+1. Gets a token. GitHub has two sources: "Use GitHub CLI" (the token of `gh auth login` on the daemon computer) or a personal access token that you paste.
+2. Checks the token with the API of the service (`GET https://api.github.com/user`) and keeps the account name.
+3. Keeps the token in `~/.harness/mcp-auth.json`. For the GitHub CLI, it keeps only the source, and reads `gh auth token` again at each connection.
+4. Adds this entry to `~/.harness/mcp.json`, for all your projects:
+
+```json
+"github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "connector": "github" }
+```
+
+At each connection, the MCP client adds `Authorization: Bearer <token>`. A server with a `connector` key does not use OAuth. With no token, or with a token that the service refuses (HTTP 401), the server state is "Needs authentication" and its row has a "Connect" button that opens the Connectors tab.
+
+"Disconnect" removes the token and the entry. If `mcp.json` already has a server named `github` that is not from the connector, Harness does not change it and shows an error.
+
+Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh` or `token`, `token`), and `connectors.disconnect` (`id`). The reply is `connectors` with the items. The items never include the token.
 
 ## Cookbook
 
