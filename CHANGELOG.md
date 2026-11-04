@@ -3,6 +3,50 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.38 (2026-11-03)
+
+### Background work
+
+- When a background task ends, the agent gets a note and continues, as in Claude Code. The note
+  goes into the running turn, or it starts a new turn, also for a session in the background.
+- New tools: `agent` (a subagent, also in the background), `monitor` (each new output line of a
+  command is a note), and `schedule_wakeup` (a turn after a delay).
+- The session rail shows all running tasks with their kind: Command, Monitor, Agent, or Wakeup.
+- Settings > General > "Subagents" turns the agent tool off.
+
+### Browser
+
+- The dev servers are in the Browser pane. The Servers pane and the Servers menu of the title bar
+  are gone. An empty tab lists the servers of `.harness/launch.json` with play buttons.
+- "Annotate" opens a bar at the bottom of the pane: select an element, pen, shapes (line, arrow,
+  rectangle, ellipse, step), text, and color. "Add to prompt" puts a screenshot of the page with
+  the marks into the prompt box (desktop app).
+
+### Prompt box and chat
+
+- Paste or drop a screenshot: it shows as a thumbnail, and a model with image input gets it.
+- An element note of the browser shows as a small chip. Remove a chip or an image with its x, or
+  with Backspace at the start of the box.
+- Each session keeps its own unsent prompt.
+- The chat follows the agent only at the bottom. A round button goes back down, with three dots
+  while the agent works.
+
+### Settings
+
+- General > "Agent instructions": how to think, do research, and speak. Only the agent that you
+  talk to gets them.
+- Providers (was Connections) > "Choose the model by network": a default model, and a local model
+  for a computer with no connection.
+
+### Window and layout
+
+- Closing the app while an agent works asks first: "Quit anyway", "Wait for the agent", or
+  "Cancel".
+- The session rail closes when a pane opens, and opens again when the last pane closes.
+- The Capabilities page has tabs: Skills, MCP servers, and Connections.
+- A folded project shows its running, waiting, and unread sessions.
+- The sidebar is at most 384px wide. The title bar has a line under it.
+
 ## 0.1.37 (2026-11-03)
 
 ### Capabilities
