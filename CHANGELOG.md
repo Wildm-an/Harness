@@ -3,6 +3,37 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Skills
+
+- Harness now comes with four built-in skills: `docx` (Word), `xlsx` (Excel), `pptx`
+  (PowerPoint), and `pdf`. The agent loads one when a task matches. Each skill has instructions
+  and scripts: build helpers, tracked changes and comments in Word, a formula check for Excel,
+  template decks for PowerPoint, PDF form filling, and page images for a visual check. The
+  scripts run with your Python. An added skill with the same name replaces a built-in skill.
+- The `office_edit` tool tells the agent to load these skills for work that is larger than a
+  small edit.
+- Eight more built-in skills for work on code and on Harness itself:
+  - `init` makes or improves the `HARNESS.md` of a project.
+  - `run` starts the app of the project and checks a change, with evidence.
+  - `debug` finds the cause of a bug step by step: reproduce, isolate, diagnose, fix, verify.
+  - `code-review` and `security-review` review the changes for bugs and for vulnerabilities.
+  - `simplify` cleans up the changed code and runs the tests.
+  - `skill-creator` and `mcp-builder` help you make skills and MCP servers. They are Anthropic
+    skills under the Apache License 2.0, changed for Harness (see `MODIFICATIONS.md` in each).
+
+### Capabilities page
+
+- The tabs are now in this order: Skills, Connectors, Plugins, MCP servers. "Connections" is now
+  "Connectors".
+- The Skills tab has two choices: "Built-in skills" and "Added skills". Each opens its list.
+
+### Sidebar
+
+- The title of a running session now shimmers, as in the Claude app, and the row shows no status
+  mark. A session that waits for your approval still shows a yellow dot.
+
 ## 0.1.41 (2026-11-04)
 
 ### The agent

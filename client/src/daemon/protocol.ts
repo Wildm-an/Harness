@@ -180,6 +180,7 @@ export interface CommandItem {
   "argument-hint": string;
   source: string;
   builtin: boolean;
+  bundled?: boolean; // A skill that comes with Harness (the Built-in skills list of the Capabilities page).
   path?: string;
   "user-invocable"?: boolean;
   "model-invocable"?: boolean;

@@ -36,5 +36,9 @@ harness-daemon = "harness_daemon.__main__:main"
 [tool.setuptools]
 packages = ["harness_daemon", "harness_daemon.tools", "harness_daemon.cookbook", "harness_daemon.plugins"]
 
+[tool.setuptools.package-data]
+# The bundled skills (skills.py): SKILL.md files, reference files, and scripts for the agent.
+harness_daemon = ["builtin_skills/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

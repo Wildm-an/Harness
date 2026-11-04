@@ -1,5 +1,6 @@
 // A session row of the sidebar, and its menu: a ⋮ button that shows when the pointer is on the row.
-// A status mark at the right end shows a running, waiting, or unread session. An idle session has no mark.
+// The title of a running session shimmers, as in Claude. A status mark at the right end shows a waiting
+// or unread session. An idle or running session has no mark.
 // The menu has the keys of Claude: P (pin), U (mark as unread), R (rename), and D (delete).
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -172,9 +173,11 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
   const [renaming, setRenaming] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
   const title = session.title ?? "Untitled session";
-  // The mark shows at the right end of the row, only when the session is not idle. The ⋮ button
-  // takes its place on hover (the user asked for this).
-  const shown = state.kind !== "idle";
+  // The mark shows at the right end of the row, only when the session waits for input or has an unread
+  // response. The ⋮ button takes its place on hover. A running session has no mark: its title shimmers
+  // (the user asked for both).
+  const shown = state.kind === "awaiting" || state.kind === "unread";
+  const working = state.kind === "running";
 
   const act = (action: MenuAction) => {
     setMenu(false);
@@ -219,13 +222,14 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
       ) : (
         <button
           type="button"
-          className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}`}
+          className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}${working ? " working" : ""}`}
           onClick={() => !active && actions.onResume(session.id)}
           disabled={disabled}
           aria-current={active ? "true" : undefined}
           title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}`}
         >
           <span className="side-session-title">{title}</span>
+          {working && <span className="sr-only">Running</span>}
           {session.branch && <GitBranch size={12} className="side-session-branch" aria-label="Worktree" />}
           {shown && <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />}
         </button>

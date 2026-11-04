@@ -12,6 +12,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_openai import FakeModel  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def no_bundled_skills(tmp_path, monkeypatch):
+    """The tests see only the skills that they make. test_bundled_skills.py checks the bundled skills."""
+    import harness_daemon.skills as skills
+    monkeypatch.setattr(skills, "BUNDLED_SKILLS_DIR", tmp_path / "no-bundled-skills")
+
+
 @pytest.fixture(scope="session")
 def fake_model_server():
     server = FakeModel().start()

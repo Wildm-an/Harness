@@ -731,9 +731,9 @@ textarea:focus-visible {
   padding-right: calc(var(--side-row-h) + 4px);
 }
 
-/* The state of a session, at the right end of the row, where the ⋮ button shows on hover: a pulsing
-   gray dot when a turn runs, a yellow dot when the turn awaits input, and a blue dot for an unread
-   response (a turn that ended while the user was in another session). An idle session has no mark. */
+/* The state of a session, at the right end of the row, where the ⋮ button shows on hover: a yellow dot
+   when the turn awaits input, and a blue dot for an unread response (a turn that ended while the user was
+   in another session). An idle or running session has no mark. The title of a running session shimmers. */
 .side-session-status {
   position: absolute;
   top: 50%;
@@ -752,11 +752,6 @@ textarea:focus-visible {
   visibility: hidden;
 }
 
-.side-session-status.running {
-  background: var(--text-muted);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
 .side-session-status.awaiting {
   background: var(--warning);
 }
@@ -771,6 +766,40 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A running session: a light band moves across the muted title, as in the Claude app. */
+.side-session.working .side-session-title {
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--text-muted) 35%,
+    var(--text) 50%,
+    var(--text-muted) 65%,
+    var(--text-muted) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: title-shimmer 2.2s linear infinite;
+}
+
+@keyframes title-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-session.working .side-session-title {
+    animation: none;
+    background: none;
+    color: var(--text-muted);
+  }
 }
 
 .side-more {
@@ -2186,6 +2215,11 @@ textarea:focus-visible {
   margin-bottom: 24px;
 }
 
+/* The filter of a skill list: under the list title. */
+.cap-section .skills-search.cap-search {
+  margin-bottom: 12px;
+}
+
 .cap-section + .cap-section {
   margin-top: 28px;
 }
@@ -2396,6 +2430,11 @@ textarea:focus-visible {
 
 .cap-note {
   margin-top: 10px;
+}
+
+/* "Skills": back from the Built-in or Added skills list to the two choices. */
+.cap-back {
+  margin-bottom: 10px;
 }
 
 .cap-view-head {

@@ -26,6 +26,9 @@ MAX_BODY_CHARS = 60_000
 MAX_DESCRIPTION_CHARS = 1024
 
 
+BUNDLED_SKILLS_DIR = Path(__file__).parent / "builtin_skills"
+
+
 def claude_home() -> Path:
     """The Claude Code configuration folder. CLAUDE_CONFIG_DIR replaces ~/.claude."""
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -36,8 +39,8 @@ class Skill:
     name: str
     description: str
     path: Path  # The SKILL.md file.
-    source: str  # "user", "project", or "plugin"
-    origin: str  # ".harness" or ".claude", or the plugin name for a plugin skill
+    source: str  # "bundled", "user", "project", or "plugin"
+    origin: str  # ".harness" or ".claude", the plugin name for a plugin skill, or "Harness" for a bundled skill
     disable_model_invocation: bool = False
     user_invocable: bool = True
     allowed_tools: tuple[str, ...] = ()
@@ -54,8 +57,13 @@ class Skill:
         return not self.disable_model_invocation
 
     @property
+    def bundled(self) -> bool:
+        """A skill that comes with Harness (builtin_skills/)."""
+        return self.source == "bundled"
+
+    @property
     def source_label(self) -> str:
-        return f"{self.source} ({self.origin})"
+        return "built-in (Harness)" if self.bundled else f"{self.source} ({self.origin})"
 
     def body(self) -> str:
         _, body = split_frontmatter(self.path.read_text(encoding="utf-8", errors="replace"))
@@ -72,6 +80,7 @@ class Skill:
             "model-invocable": self.model_invocable,
             "context": self.context,
             "builtin": False,
+            "bundled": self.bundled,
         }
 
 
@@ -189,10 +198,13 @@ KNOWN_FIELDS = {
 def skill_roots(cwd: Path | None, plugin_roots: list[tuple[Path, str]] | None = None) -> list[tuple[Path, str, str]]:
     """The skill folders, from the lowest to the highest priority.
 
-    A project skill wins over a user skill, and a user skill wins over a plugin skill.
-    In the same scope, .harness wins over .claude.
+    A project skill wins over a user skill, a user skill wins over a plugin skill, and a plugin
+    skill wins over a bundled skill. In the same scope, .harness wins over .claude.
+    The bundled skills (docx, xlsx, pptx, pdf) come with Harness. A user can replace one with a
+    skill of the same name.
     """
-    roots = [(path, "plugin", plugin) for path, plugin in plugin_roots or []]
+    roots = [(BUNDLED_SKILLS_DIR, "bundled", "Harness")]
+    roots += [(path, "plugin", plugin) for path, plugin in plugin_roots or []]
     roots += [
         (claude_home() / "skills", "user", ".claude"),
         (harness_home() / "skills", "user", ".harness"),

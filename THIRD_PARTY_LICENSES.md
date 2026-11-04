@@ -165,6 +165,7 @@ The Python package `playwright 1.63.0` is Apache-2.0 (see section 3).
 | `header.bmp`, `sidebar.bmp`, `nsis/brand/*.bmp` | MIT | Yes | The project made them (`nsis/make_images.py`). |
 | App icons (`client/src-tauri/icons`, `client/public`, `client/assets`) | MIT | Yes | The project made them (`client/assets/make_icon.py`). |
 | Daemon wheel (`binaries/daemon-wheel/harness_daemon-*.whl`) | MIT | Yes | The code of the project. The app sends it to remote daemons. |
+| Built-in skills `skill-creator` and `mcp-builder` (`daemon/harness_daemon/builtin_skills/`) | Apache-2.0 | Yes | Anthropic skills, changed for Harness. Each folder keeps `LICENSE.txt` and lists the changes in `MODIFICATIONS.md`. The other built-in skills are the code of the project (MIT). |
 | Microsoft Edge WebView2 bootstrapper | Microsoft terms | Not applicable | Not in the installer. The installer downloads it from Microsoft only when WebView2 is missing (`downloadBootstrapper`, the default). |
 
 The Linux AppImage contains copies of system libraries from the build machine, for example WebKitGTK, GTK, and GLib.

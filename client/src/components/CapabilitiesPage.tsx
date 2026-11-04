@@ -12,7 +12,9 @@ import {
   CircleX,
   FileCog,
   FileText,
+  FolderPlus,
   LoaderCircle,
+  Package,
   Plug,
   RefreshCw,
   Search,
@@ -64,9 +66,9 @@ export function mcpSummary(item: McpServerItem): string {
 
 const CAP_TABS: [CapTab, string][] = [
   ["skills", "Skills"],
-  ["mcp", "MCP servers"],
+  ["connections", "Connectors"],
   ["plugins", "Plugins"],
-  ["connections", "Connections"],
+  ["mcp", "MCP servers"],
 ];
 
 /** True when each word of the filter is in one of the fields. Case does not matter. */
@@ -162,6 +164,37 @@ function SkillView({ detail, onBack }: { detail: SkillDetail; onBack: () => void
   );
 }
 
+/** The two lists of the Skills tab: the skills that come with Harness, and the skills that the user added. */
+export type SkillGroup = "builtin" | "added";
+
+const SKILL_GROUPS: { id: SkillGroup; title: string; desc: string; icon: LucideIcon }[] = [
+  { id: "builtin", title: "Built-in skills", desc: "Skills that come with Harness: documents, code review, debugging, and skill and MCP server tools.", icon: Package },
+  { id: "added", title: "Added skills", desc: "Skills from your skill folders, the project, and the plugins.", icon: FolderPlus },
+];
+
+/** The skills of a group. A built-in skill has "bundled": true. */
+export function skillsOfGroup(items: CommandItem[], group: SkillGroup): CommandItem[] {
+  return items.filter((i) => (group === "builtin") === (i.bundled === true));
+}
+
+function SkillGroupRow({ title, desc, icon: Icon, count, onOpen }: { title: string; desc: string; icon: LucideIcon; count: number | null; onOpen: () => void }) {
+  return (
+    <li className="cap-item">
+      <button type="button" className="cap-row" onClick={onOpen}>
+        <span className="cap-icon" aria-hidden>
+          <Icon size={15} />
+        </span>
+        <span className="cap-text">
+          <span className="cap-name">{title}</span>
+          <span className="cap-desc">{desc}</span>
+        </span>
+        {count !== null && <span className="cap-count">{count}</span>}
+        <ChevronRight size={14} aria-hidden className="cap-go" />
+      </button>
+    </li>
+  );
+}
+
 function SectionHead({ id, title, count, children }: { id: string; title: string; count?: string; children?: React.ReactNode }) {
   return (
     <div className="cap-section-head">
@@ -252,7 +285,7 @@ function McpRow({ item, live, busy, onRestart }: { item: McpServerItem; live: bo
   );
 }
 
-/** The tabs of the page. Connections is a placeholder: the user adds it later. */
+/** The tabs of the page. Connectors ("connections") is a placeholder: the user adds it later. */
 export type CapTab = "skills" | "mcp" | "plugins" | "connections";
 
 /** The saved tab, or "skills" for an unknown value. */
@@ -292,7 +325,10 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   onEditConfig: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const shownSkills = useMemo(() => (skills ?? []).filter((i) => matches(query, i.name, i.description)), [skills, query]);
+  const [skillGroup, setSkillGroup] = useState<SkillGroup | null>(null);
+  const groupSkills = useMemo(() => (skills && skillGroup ? skillsOfGroup(skills, skillGroup) : []), [skills, skillGroup]);
+  const shownSkills = useMemo(() => groupSkills.filter((i) => matches(query, i.name, i.description)), [groupSkills, query]);
+  const group = SKILL_GROUPS.find((g) => g.id === skillGroup);
   const shownServers = useMemo(
     () => (mcp?.items ?? []).filter((i) => matches(query, i.name, i.target, ...i.tools.map((t) => t.agent_name || t.name))),
     [mcp, query],
@@ -303,6 +339,16 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
     plugins?.bundles.filter((b) => b.problem || b.rows.some((r) => r.state === "failed")).length ?? 0;
   const folderName = folder?.split(/[\\/]/).filter(Boolean).pop() ?? null;
   const filtering = query.trim() !== "";
+
+  const filterField = (
+    <div className="skills-search cap-search">
+      <Search size={14} aria-hidden />
+      <label htmlFor="capabilities-filter" className="sr-only">
+        {tab === "skills" ? "Filter the skills" : "Filter the MCP servers"}
+      </label>
+      <input id="capabilities-filter" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter" spellCheck={false} />
+    </div>
+  );
 
   let body: React.ReactNode;
   if (skillDetail === "loading") {
@@ -316,38 +362,72 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   } else {
     body = (
       <>
-        {(tab === "skills" || tab === "mcp") && (
-          <div className="skills-search cap-search">
-            <Search size={14} aria-hidden />
-            <label htmlFor="capabilities-filter" className="sr-only">
-              {tab === "skills" ? "Filter the skills" : "Filter the MCP servers"}
-            </label>
-            <input id="capabilities-filter" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter" spellCheck={false} />
-          </div>
+        {tab === "mcp" && filterField}
+
+        {tab === "skills" && !group && (
+          <section className="cap-section" aria-labelledby="cap-skills">
+            <SectionHead id="cap-skills" title="Skills" />
+            {skills === null ? (
+              <p className="cap-empty">
+                <LoaderCircle size={14} className="spin" aria-hidden /> Loading the skills.
+              </p>
+            ) : (
+              <ul className="cap-list">
+                {SKILL_GROUPS.map((g) => (
+                  <SkillGroupRow
+                    key={g.id}
+                    title={g.title}
+                    desc={g.desc}
+                    icon={g.icon}
+                    count={skillsOfGroup(skills, g.id).length}
+                    onOpen={() => {
+                      setQuery("");
+                      setSkillGroup(g.id);
+                    }}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
         )}
 
-        {tab === "skills" && (
-        <section className="cap-section" aria-labelledby="cap-skills">
-          <SectionHead id="cap-skills" title="Skills" count={skills && skills.length > 0 ? String(skills.length) : undefined} />
-          {skills === null ? (
-            <p className="cap-empty">
-              <LoaderCircle size={14} className="spin" aria-hidden /> Loading the skills.
-            </p>
-          ) : skills.length === 0 ? (
-            <p className="cap-empty">
-              No skills are installed. Put each skill in a folder with a <code>SKILL.md</code> file, in <code>.harness/skills/</code> or{" "}
-              <code>.claude/skills/</code> of the project, or in <code>~/.harness/skills/</code> or <code>~/.claude/skills/</code>.
-            </p>
-          ) : shownSkills.length === 0 ? (
-            <p className="cap-empty">No skill matches the filter.</p>
-          ) : (
-            <ul className="cap-list">
-              {shownSkills.map((item) => (
-                <SkillRow key={item.name} item={item} onOpen={() => onOpenSkill(item.name)} />
-              ))}
-            </ul>
-          )}
-        </section>
+        {tab === "skills" && group && (
+          <section className="cap-section" aria-labelledby="cap-skills">
+            <button type="button" className="btn btn-small cap-back" onClick={() => setSkillGroup(null)}>
+              <ArrowLeft size={14} aria-hidden />
+              Skills
+            </button>
+            <SectionHead id="cap-skills" title={group.title} count={groupSkills.length > 0 ? String(groupSkills.length) : undefined} />
+            {groupSkills.length > 0 && filterField}
+            {skills === null ? (
+              <p className="cap-empty">
+                <LoaderCircle size={14} className="spin" aria-hidden /> Loading the skills.
+              </p>
+            ) : groupSkills.length === 0 ? (
+              group.id === "added" ? (
+                <p className="cap-empty">
+                  No skills are added. Put each skill in a folder with a <code>SKILL.md</code> file, in <code>.harness/skills/</code> or{" "}
+                  <code>.claude/skills/</code> of the project, or in <code>~/.harness/skills/</code> or <code>~/.claude/skills/</code>.
+                </p>
+              ) : (
+                <p className="cap-empty">No built-in skills are available. An added skill with the same name replaces a built-in skill.</p>
+              )
+            ) : shownSkills.length === 0 ? (
+              <p className="cap-empty">No skill matches the filter.</p>
+            ) : (
+              <ul className="cap-list">
+                {shownSkills.map((item) => (
+                  <SkillRow key={item.name} item={item} onOpen={() => onOpenSkill(item.name)} />
+                ))}
+              </ul>
+            )}
+            {group.id === "builtin" && !filtering && groupSkills.length > 0 && (
+              <p className="help cap-note">
+                The agent uses these skills when a task matches. Their scripts run with your Python. An added skill with the same name replaces a
+                built-in skill.
+              </p>
+            )}
+          </section>
         )}
 
         {tab === "mcp" && (
@@ -428,9 +508,9 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
 
         {tab === "connections" && (
           <section className="cap-section" aria-labelledby="cap-connections">
-            <SectionHead id="cap-connections" title="Connections" />
+            <SectionHead id="cap-connections" title="Connectors" />
             <div className="cap-empty">
-              <p>Connections are not ready yet. This tab will show the apps and services that the agent can connect to.</p>
+              <p>Connectors are not ready yet. This tab will show the apps and services that the agent can connect to.</p>
             </div>
           </section>
         )}

@@ -31,7 +31,10 @@ class OfficeEditTool(Tool):
         "Excel: set {cell, value, sheet?} (a value that starts with = is a formula); "
         "set_rows {start, rows: [[value, ...], ...], sheet?}; add_sheet {name}; "
         "rename_sheet {sheet, name}; delete_sheet {sheet}.\n"
-        "Numbers start at 1. A replace keeps the formatting when the text is in one run."
+        "Numbers start at 1. A replace keeps the formatting when the text is in one run.\n"
+        "This tool is for small changes. To make a formatted document, a deck, or a workbook with "
+        "formulas, or for tracked changes, comments, charts, or a template, load the docx, pptx, or "
+        "xlsx skill first."
     )
     parameters = {
         "type": "object",

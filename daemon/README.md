@@ -174,16 +174,35 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 
 The daemon loads skills in the Claude Code `SKILL.md` format from these folders. A later folder has priority:
 
-1. `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR/skills/`)
-2. `~/.harness/skills/`
-3. `<project>/.claude/skills/`
-4. `<project>/.harness/skills/`
+1. `harness_daemon/builtin_skills/`: the built-in skills (see below)
+2. The skill folders of the plugins
+3. `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR/skills/`)
+4. `~/.harness/skills/`
+5. `<project>/.claude/skills/`
+6. `<project>/.harness/skills/`
 
 - The system prompt lists the name and the description of each skill that the model can start. The model loads the body with the `skill` tool.
 - The user starts a skill with `/name arguments`. The daemon puts the body in the turn directly.
 - The `read`, `glob`, and `grep` tools can read the skill folders, so a skill can use its reference files. The `edit` and `write` tools cannot change them.
 - `allowed-tools` rules apply until the end of the turn in which the skill starts.
 - A skill with `context: fork` runs in a subagent with a new context. Only its final report goes back to the main conversation.
+
+### Built-in skills
+
+Harness comes with these skills, in `harness_daemon/builtin_skills/`:
+
+| Skills | Purpose |
+|---|---|
+| `docx`, `xlsx`, `pptx`, `pdf` | Word, Excel, PowerPoint, and PDF files. Each has a `SKILL.md`, a `scripts/` folder, and a `reference/` folder. |
+| `init`, `run`, `debug`, `code-review`, `security-review`, `simplify` | Work on code. Each is a `SKILL.md` only. |
+| `skill-creator`, `mcp-builder` | Make skills and MCP servers. Anthropic skills under the Apache License 2.0, changed for Harness. Each keeps `LICENSE.txt` and lists the changes in `MODIFICATIONS.md`. |
+ The shared folder `_office/` has `ooxml.py` (unpack, pack, and check an Office file) and `render.py` (an Office file or a PDF to PNG pages, with LibreOffice and pypdfium2). `_office/` has no `SKILL.md`, so it is not a skill.
+
+- The agent runs the scripts with the Python of the user, not with the Python of the daemon. The skills tell the agent to check and install the libraries (python-docx, openpyxl, python-pptx, pypdf, pdfplumber, reportlab, pypdfium2).
+- A skill body must not contain `$` followed by a digit: the daemon replaces `$1` with an argument. Put text such as `$B$2` in a reference file. `tests/test_bundled_skills.py` checks this, the length of each description, and the script paths.
+- The document skills and the code skills are new work for Harness. They do not copy the proprietary Anthropic skills, whose license does not permit copies. Only `skill-creator` and `mcp-builder` come from Anthropic, under the Apache License 2.0.
+- The system prompt lists the description of each built-in skill. Each description is at most 300 characters, so the 12 skills add about 800 tokens to the system prompt.
+- The Capabilities page shows them under "Built-in skills" (`"bundled": true` in the skill summary).
 
 ## Settings
 

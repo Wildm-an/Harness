@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matches, mcpSummary, skillStatus } from "./CapabilitiesPage";
+import { matches, mcpSummary, skillStatus, skillsOfGroup } from "./CapabilitiesPage";
 import { placeOf } from "../layout/history";
 import { findGroupOf, parseLayout } from "../layout/model";
 import type { CommandItem, McpServerItem } from "../daemon/protocol";
@@ -63,5 +63,13 @@ describe("the Capabilities page", () => {
     expect(layout).not.toBeNull();
     expect(findGroupOf(layout!, "chat")).not.toBeNull();
     expect(JSON.stringify(layout)).not.toMatch(/"skills"|"mcp"/);
+  });
+});
+
+describe("skillsOfGroup", () => {
+  it("puts the bundled skills in Built-in and all other skills in Added", () => {
+    const items = [skill({ name: "docx", bundled: true }), skill({ name: "greet" }), skill({ name: "mine", bundled: false })];
+    expect(skillsOfGroup(items, "builtin").map((i) => i.name)).toEqual(["docx"]);
+    expect(skillsOfGroup(items, "added").map((i) => i.name)).toEqual(["greet", "mine"]);
   });
 });

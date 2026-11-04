@@ -65,7 +65,7 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
   | State | Tooltip | Mark |
   |---|---|---|
   | Idle | — | no mark |
-  | Running | "Running" | grey pulse |
+  | Running | "Running" (screen readers) | no mark: the title shimmers, as in Claude (the user asked for this) |
   | Waiting | "Awaiting input" or "Awaiting answer" | yellow dot |
   | Unread | "Unread response" | accent (blue) dot |
   | Error | — | warning icon |
@@ -94,7 +94,7 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
 Claude shows skills and connectors on separate tabs of its "Customize" page. The Hermes dashboard shows them on separate "Skills" and "MCP" pages. The user asked for one page that shows both (`CapabilitiesPage.tsx`). The plugins are on the same page.
 
 - **K1.** The "Capabilities" nav item is under "New session". It shows at all times, also with no session. A red dot shows when an MCP server failed. The page is a full screen in the main area, as the new session page. Back and Forward include it. `/skills` and `/mcp` also open it.
-- **K2.** The page has the title "Capabilities", one line that names the project folder, then the tabs "Skills", "MCP servers", "Plugins", and "Connections" (the user asked for tabs). The user asked for the plugins on this page, not in Settings. The Plugins tab has the install field, the installed plugins, and "Reload". It shows a count, and a red dot when a plugin failed. `/plugins` opens it. The Skills and MCP servers tabs have a "Filter" field and a count. A failed MCP server puts a red dot on its tab. Connections is a placeholder for later. The page opens on the last tab. `/skills` and `/mcp` open their own tab. The filter finds each word in the name, the description, the command or URL, or the tool names.
+- **K2.** The page has the title "Capabilities", one line that names the project folder, then the tabs "Skills", "Connectors", "Plugins", and "MCP servers", in this order (the user asked for tabs and for this order). The user asked for the plugins on this page, not in Settings. The Plugins tab has the install field, the installed plugins, and "Reload". It shows a count, and a red dot when a plugin failed. `/plugins` opens it. The Skills and MCP servers tabs have a "Filter" field and a count. A failed MCP server puts a red dot on its tab. Connectors is a placeholder for later. The Skills tab first shows two choices, "Built-in skills" (the skills that come with Harness) and "Added skills" (all other skills), each with its count. A click opens that list, with a "Skills" button to go back, and the "Filter" field under the list title (the user asked for this). The page opens on the last tab. `/skills` and `/mcp` open their own tab. The filter finds each word in the name, the description, the command or URL, or the tool names.
 - **K3.** Each row shows an icon, the name, a short description, and a status pill. A skill row also shows its source. The description of an MCP server is "{n} tools · {transport} · {scope}". A failed server shows its error.
 - **K4.** Status pills:
 

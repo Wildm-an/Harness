@@ -210,6 +210,7 @@ Also accept `${HARNESS_SKILL_DIR}` and `${HARNESS_PROJECT_DIR}` with the same va
 
 The daemon scans these folders on the machine where it runs:
 
+0. The built-in skills of Harness (`harness_daemon/builtin_skills/`): `docx`, `xlsx`, `pptx`, `pdf`, `init`, `run`, `debug`, `code-review`, `security-review`, `simplify`, `skill-creator`, and `mcp-builder`. They have the lowest priority: a plugin, user, or project skill with the same name replaces one.
 1. `~/.harness/skills/`
 2. `~/.claude/skills/`
 3. `<project>/.harness/skills/`
