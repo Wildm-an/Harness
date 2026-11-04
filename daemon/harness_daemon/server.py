@@ -75,6 +75,10 @@ from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
 from .titles import summarize_title
+from .agents import agent_folders, discover_agents
+from .memory import MemoryStore
+from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
+from .web import set_key as set_web_key
 
 log = logging.getLogger("harness.daemon")
 
@@ -96,6 +100,8 @@ BUILTIN_COMMANDS: dict[str, str] = {
     "plugins": "Open the Plugins screen: install, turn on or off, and remove plugins.",
     "servers": "Show the dev servers in the Browser pane.",
     "preview": "Start the default server and open it in the Browser pane.",
+    "memory": "List the memories of the agent for this project, and the folder of the memory files.",
+    "agents": "List the agent types of the agent tool: built-in, and the files in .claude/agents and .harness/agents.",
     "help": "List the commands.",
 }
 
@@ -505,6 +511,19 @@ class LiveSession:
             self.requests.pop(request_id, None)
             await self.conn.send_running()
 
+    async def set_mode(self, mode: str) -> None:
+        """The user accepted a plan in this mode: save it as the mode picker does, and tell the client."""
+        session = self.session
+        assert session is not None
+        path = project_settings_path(session.cwd)
+        data = read_json(path, {})
+        data["permission_mode"] = mode
+        write_json(path, data)
+        session.agent.reload_settings(load_settings(session.cwd))
+        values = {k: session.agent.settings.get(k) for k in CLIENT_SETTINGS}
+        values["permission_mode"] = _permission_mode(session.agent.settings)
+        await self.send({"type": "settings", **values})
+
     async def stop_turn(self) -> None:
         if self.turn is not None and not self.turn.done():
             self.turn.cancel()
@@ -581,6 +600,9 @@ class LiveSession:
                               on_notify=self.wake_soon)
         session.agent.enable_tasks(self.tasks)
         session.agent.on_notes_returned = self.return_notes
+        session.agent.on_mode = self.set_mode
+        if session.agent.command_hooks is not None:
+            session.agent.command_hooks.session_id = session.id  # The hooks get it on stdin.
         self.terminal = TerminalHost(session.cwd, self.send,
                                      on_exit=lambda: asyncio.ensure_future(self.conn.close_if_done(self)))
         # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
@@ -1876,6 +1898,18 @@ async def on_hf_token(conn: Connection, msg: dict[str, Any]) -> None:
     await conn.send({"type": "hf.token", "set": COOKBOOK.hub.token is not None})
 
 
+@handler("web.key")
+async def on_web_key(conn: Connection, msg: dict[str, Any]) -> None:
+    """An API key of a web search provider, from the keychain of the client. The daemon keeps it in memory only."""
+    provider, key = msg.get("provider"), msg.get("key")
+    if provider not in WEB_KEY_PROVIDERS:
+        raise ProtocolError(f"'provider' must be one of: {', '.join(WEB_KEY_PROVIDERS)}.")
+    if key is not None and not isinstance(key, str):
+        raise ProtocolError("'key' must be a string or null.")
+    set_web_key(provider, key)
+    await conn.send({"type": "web.key", "provider": provider, "set": provider in WEB_KEYS})
+
+
 @handler("hf.search")
 async def on_hf_search(conn: Connection, msg: dict[str, Any]) -> None:
     _background(conn, "hf.search", lambda: COOKBOOK.search(msg))
@@ -2110,6 +2144,44 @@ async def on_permission_reply(conn: Connection, msg: dict[str, Any]) -> None:
     fut.set_result(decision)
 
 
+def _open_request(conn: Connection, request_id: str, kind: str) -> asyncio.Future:
+    live = conn.require_live()
+    fut = live.pending.get(request_id)
+    request = live.requests.get(request_id)
+    if fut is None or fut.done() or request is None or request.get("kind") != kind:
+        raise ProtocolError(f"No open {kind} request: {request_id}")
+    return fut
+
+
+@handler("question.reply")
+async def on_question_reply(conn: Connection, msg: dict[str, Any]) -> None:
+    """The answers to a question card: {"request_id", "answers": {question: answer}}. Null answers: skipped."""
+    request_id = _text_arg(msg, "request_id")
+    answers = msg.get("answers")
+    if answers is not None and (not isinstance(answers, dict)
+                                or not all(isinstance(k, str) and isinstance(v, str) for k, v in answers.items())):
+        raise ProtocolError("'answers' must be an object of question texts and answer texts, or null.")
+    fut = _open_request(conn, request_id, "question")
+    fut.set_result({"answers": {k: v.strip()[:2000] for k, v in (answers or {}).items() if v.strip()}})
+
+
+@handler("plan.reply")
+async def on_plan_reply(conn: Connection, msg: dict[str, Any]) -> None:
+    """The decision on a plan card: {"request_id", "decision": accept | revise | reject, "mode"?, "feedback"?}."""
+    request_id = _text_arg(msg, "request_id")
+    decision = msg.get("decision")
+    if decision not in ("accept", "revise", "reject"):
+        raise ProtocolError("'decision' must be accept, revise, or reject.")
+    mode = msg.get("mode")
+    if decision == "accept" and mode not in (None, *[m for m in MODES if m != "plan"]):
+        raise ProtocolError(f"'mode' must be one of: {', '.join(m for m in MODES if m != 'plan')}.")
+    feedback = msg.get("feedback")
+    if feedback is not None and not isinstance(feedback, str):
+        raise ProtocolError("'feedback' must be a string.")
+    fut = _open_request(conn, request_id, "plan")
+    fut.set_result({"decision": decision, "mode": mode, "feedback": (feedback or "")[:USER_TEXT_LIMIT]})
+
+
 # -- commands ------------------------------------------------------------------
 
 
@@ -2141,6 +2213,21 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
             commands.setdefault(c.name, c.description)
         lines = [f"/{n} - {d}" for n, d in commands.items()]
         await result(text="\n".join(lines), items=[{"name": n, "description": d} for n, d in commands.items()])
+    elif name == "memory":
+        cwd = conn.session.cwd if conn.session is not None else None
+        if cwd is None:
+            raise ProtocolError("Open a session first: each project has its own memory.")
+        store = MemoryStore(cwd)
+        items = store.items()
+        lines = [f"{i['name']} - {i['description']}" for i in items] or ["No memories yet."]
+        await result(text="\n".join(lines) + f"\n\nMemory folder: {store.dir}", items=items, path=str(store.dir))
+    elif name == "agents":
+        cwd = conn.session.cwd if conn.session is not None else None
+        found = discover_agents(cwd)
+        lines = [f"{a.name} ({a.source}) - {a.description}" for a in found.values()]
+        folders = ", ".join(str(f) for f, _ in agent_folders(cwd))
+        await result(text="\n".join(lines) + f"\n\nAgent files: {folders}",
+                     items=[a.summary() for a in found.values()])
     elif name == "clear":
         session = conn.require_session()
         conn.require_idle()
@@ -2425,6 +2512,9 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "auto_model": (bool,),
     "online_model": (str, type(None)),
     "offline_model": (str, type(None)),
+    "web_search": (str,),
+    "auto_memory": (bool,),
+    "web_search_url": (str, type(None)),
     "instructions_thinking": (str, type(None)),
     "instructions_research": (str, type(None)),
     "instructions_speaking": (str, type(None)),
@@ -2465,6 +2555,13 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"The type of '{key}' must be {' or '.join('null' if k is type(None) else k.__name__ for k in kinds)}.")
         if key == "permission_mode" and value not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+        if key == "web_search" and value not in WEB_PROVIDERS:
+            raise ProtocolError(f"'web_search' must be one of: {', '.join(WEB_PROVIDERS)}.")
+        if key == "web_search_url" and isinstance(value, str) and value.strip():
+            try:
+                normalize_url(value)
+            except WebError as e:
+                raise ProtocolError(f"'web_search_url': {e}") from None
         if key in USER_INT_LIMITS:
             low, high = USER_INT_LIMITS[key]
             if not low <= value <= high:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatElapsed, formatTokens, modelName, turnTokens, workingStatus } from "./WorkingLine";
+import { currentStep, formatElapsed, formatTokens, modelName, turnTokens, workingStatus } from "./WorkingLine";
 import { chatReducer, emptyChat, type ChatItem } from "../chat/state";
 
 describe("the working line", () => {
@@ -23,6 +23,19 @@ describe("the working line", () => {
       .toEqual({ tasks: 0, text: "Writing…" });
     const ask: ChatItem = { kind: "permission", id: "r", tool: "edit", input: {}, diff: null, rule: "edit(a)" };
     expect(workingStatus([tool("edit", "running"), ask], "m").text).toBe("Waiting for your approval…");
+    const question: ChatItem = { kind: "question", id: "q", questions: [] };
+    expect(workingStatus([question], "m").text).toBe("Waiting for your answer…");
+  });
+
+  it("shows the step of the task list that is in progress", () => {
+    const plan = (status: "in_progress" | "completed"): ChatItem => ({
+      kind: "tool", id: "p", name: "update_plan", status: "done",
+      input: { items: [{ content: "Read the code", status: "completed" }, { content: "Fix the bug", status }] },
+    });
+    const user: ChatItem = { kind: "user", id: "u", text: "go" };
+    expect(currentStep([user, plan("in_progress")])).toBe("Fix the bug");
+    expect(currentStep([user, plan("completed")])).toBeNull();
+    expect(currentStep([plan("in_progress"), user])).toBeNull(); // A plan of an older turn.
   });
 
   it("adds an estimate for the reply that streams now", () => {

@@ -41,6 +41,15 @@ export const loadHfToken = (connectionId: string) => loadProviderKey(connectionI
 export const saveHfToken = (connectionId: string, token: string) => saveProviderKey(connectionId, "__huggingface__", token);
 export const deleteHfToken = (connectionId: string) => deleteProviderKey(connectionId, "__huggingface__");
 
+/** A web search provider that needs an API key (daemon web.py). */
+export type WebKeyProvider = "brave" | "tavily";
+export const WEB_KEY_PROVIDERS: WebKeyProvider[] = ["brave", "tavily"];
+
+/** The API key of a web search provider. It uses the same storage as the provider keys. */
+export const loadWebKey = (connectionId: string, p: WebKeyProvider) => loadProviderKey(connectionId, `__web_${p}__`);
+export const saveWebKey = (connectionId: string, p: WebKeyProvider, key: string) => saveProviderKey(connectionId, `__web_${p}__`, key);
+export const deleteWebKey = (connectionId: string, p: WebKeyProvider) => deleteProviderKey(connectionId, `__web_${p}__`);
+
 /** Moves a key to a new provider name. */
 export async function renameProviderKey(connectionId: string, from: string, to: string): Promise<void> {
   const key = await loadProviderKey(connectionId, from);

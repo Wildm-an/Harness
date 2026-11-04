@@ -3,6 +3,33 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### The agent
+
+- New tools `web_search` and `web_fetch`, as in Claude Code. Search uses DuckDuckGo with no key,
+  or Brave Search, Tavily, or a SearXNG server (Settings > General > Web). A fetch asks for each
+  host, and a page becomes text in the Markdown form.
+- The agent can ask you questions while it works (`ask_user_question`). A card shows 2 to 4
+  options with number keys, "Something else", "Skip", and "Next" / "Submit".
+- In plan mode, the agent gives its plan for approval (`exit_plan_mode`). The plan card has
+  "Reject", "Revise…", "Accept", and "Accept and allow edits" with a menu of the other modes.
+- Agent types for the agent tool: `general-purpose`, `Explore` (read-only search), `Plan`
+  (read-only architect), and custom agents from `.claude/agents` or `.harness/agents`. `/agents`
+  lists them.
+- Hooks in the settings files, in the form of Claude Code hooks: `SessionStart`,
+  `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`.
+- Auto memory: the agent keeps notes about you and the project between sessions, with the
+  `memory` tool. `/memory` lists them. Settings > General > "Auto memory" turns it off.
+- The `read` tool shows images to a model that accepts images.
+- Scheduled prompts with a cron expression: `cron_create`, `cron_list`, and `cron_delete`. A
+  recurring one ends after 7 days. The task lists show them as "Scheduled".
+
+### Chat
+
+- The working line is at the bottom of the chat, as in the Claude app: dots, the step of the task
+  list in progress (or what the agent does), the time, and a caret that shows the details.
+
 ## 0.1.38 (2026-11-03)
 
 ### Background work

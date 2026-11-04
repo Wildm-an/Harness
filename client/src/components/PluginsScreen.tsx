@@ -134,32 +134,27 @@ function BundleItem({
 
 const PLACEHOLDER = "A folder, or a git URL (https://…, github:user/repo#tag)";
 
+/** The Plugins tab of the Capabilities page. */
 export function PluginsScreen({
-  embedded = false,
   status,
   error,
   busy,
-  hasSession,
   onInstall,
   onRemove,
   onSetBundle,
   onSetPlugin,
   onReload,
   onBrowse,
-  onReturn,
 }: {
-  embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
   status: PluginsStatus | null;
   error: string | null;
   busy: boolean;
-  hasSession: boolean;
   onInstall: (source: string, replace: boolean) => void;
   onRemove: (name: string) => void;
   onSetBundle: (name: string, enabled: boolean) => void;
   onSetPlugin: (id: string, enabled: boolean) => void;
   onReload: () => void;
   onBrowse: (initial?: string) => Promise<string | null>;
-  onReturn: () => void;
 }) {
   const [source, setSource] = useState("");
 
@@ -173,18 +168,18 @@ export function PluginsScreen({
   };
 
   return (
-    <div className={embedded ? "settings-embed plugins-screen" : "start-screen plugins-screen"}>
-      <section className="panel connections plugins" aria-labelledby="plugins-title">
-        <div className="panel-head">
-          <h1 id="plugins-title">
-            <Puzzle size={20} aria-hidden /> Plugins
-          </h1>
-          <span className="spacer" />
-          {!embedded && (
-            <button type="button" className="btn btn-ghost" onClick={onReturn}>
-              {hasSession ? "Back to the session" : "Back"}
-            </button>
-          )}
+    <section className="cap-section plugins" aria-labelledby="cap-plugins">
+        <div className="cap-section-head">
+          <h2 id="cap-plugins">Plugins</h2>
+          {status && status.bundles.length > 0 && <span className="cap-count">{status.bundles.length}</span>}
+          <span className="cap-section-actions">
+            {busy && <LoaderCircle size={14} className="spin" aria-label="Busy" />}
+            {status?.loaded && (
+              <button type="button" className="btn btn-small" onClick={onReload} disabled={busy} title="Load the plugins again, after a change to a plugin file">
+                <RefreshCw size={12} aria-hidden /> Reload
+              </button>
+            )}
+          </span>
         </div>
         <p className="help providers-intro">
           Plugins add tools, / commands, skills, prompt text, hooks, MCP servers, and model providers. The plugins are in{" "}
@@ -230,11 +225,6 @@ export function PluginsScreen({
 
         <div className="list-head">
           <span>Installed plugins</span>
-          {status?.loaded && (
-            <button type="button" className="icon-btn ghost" onClick={onReload} disabled={busy} aria-label="Load the plugins again" title="Load the plugins again, after a change to a plugin file">
-              <RefreshCw size={16} aria-hidden />
-            </button>
-          )}
         </div>
         {status === null ? (
           <p className="pane-empty">
@@ -282,7 +272,6 @@ export function PluginsScreen({
             .
           </p>
         )}
-      </section>
-    </div>
+    </section>
   );
 }

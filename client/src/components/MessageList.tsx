@@ -1,14 +1,18 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
 import type { ChatItem } from "../chat/state";
-import type { Decision } from "../daemon/protocol";
+import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import type { Submission } from "./PromptBox";
 import { Markdown } from "./Markdown";
 import { PermissionCard } from "./PermissionCard";
+import { QuestionCard } from "./QuestionCard";
+import { PlanCard } from "./PlanCard";
 import { ToolGroup } from "./ToolGroup";
 import { PlanBlock, WrapUpBox } from "./ProgressBlocks";
 import { isProgressTool, latestPlan, latestWrapUp } from "../lib/progress";
+import { WorkingLine } from "./WorkingLine";
+import type { TurnInfo } from "../chat/state";
 
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
@@ -253,12 +257,16 @@ export function MessageList({
   reviewId,
   onDecide,
   onReview,
+  onAnswer = () => {},
+  onPlan = () => {},
   onSendNow = () => {},
   onRemoveQueued = () => {},
   onRewind = () => {},
   onFork = () => {},
   onAction,
   emptyHint,
+  turn = null,
+  model = "",
 }: {
   items: ChatItem[];
   queued?: QueuedItem[]; // The messages that wait for the running turn.
@@ -266,12 +274,16 @@ export function MessageList({
   reviewId: string | null; // The item that the diff review pane shows.
   onDecide: (requestId: string, decision: Decision) => void;
   onReview: (itemId: string) => void;
+  onAnswer?: (requestId: string, answers: Record<string, string> | null) => void; // A question card.
+  onPlan?: (requestId: string, decision: PlanDecision, mode?: PermissionMode, feedback?: string) => void; // A plan card.
   onSendNow?: (id: string) => void;
   onRemoveQueued?: (id: string) => void;
   onRewind?: (messageId: string, options: RewindOptions) => void;
   onFork?: (messageId: string) => void;
   onAction?: (message: string) => void; // A button of the end-of-turn box: the message is the next prompt.
   emptyHint: React.ReactNode;
+  turn?: TurnInfo | null; // The running turn: the working line at the bottom shows its time.
+  model?: string;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -357,6 +369,10 @@ export function MessageList({
                   onReview={onReview}
                 />
               );
+            case "question":
+              return <QuestionCard key={item.id} item={item} onAnswer={onAnswer} />;
+            case "plan":
+              return <PlanCard key={item.id} item={item} onDecide={onPlan} />;
             case "notice":
               return <Notice key={item.id} item={item} />;
             case "summary":
@@ -365,6 +381,7 @@ export function MessageList({
         })}
         {plan && <PlanBlock steps={plan.steps} running={running && plan.current} />}
         {wrap && !running && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} />}
+        {running && <WorkingLine turn={turn} items={items} model={model} />}
         {queued.map((item) => (
           <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
         ))}

@@ -11,7 +11,7 @@ export interface ToolAction {
   mono: boolean; // The object is code, for example a command.
 }
 
-type Kind = "command" | "read" | "edit" | "search" | "skill" | "tool";
+type Kind = "command" | "read" | "edit" | "search" | "web" | "fetch" | "skill" | "tool";
 
 const MAX_OBJECT = 90;
 
@@ -26,6 +26,11 @@ function text(value: unknown): string {
 /** The file name of a path: "src/app.py" -> "app.py". */
 export function baseName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+/** A URL with no scheme and no "www.": "https://www.example.com/docs" -> "example.com/docs". */
+export function urlLabel(url: string): string {
+  return url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "") || "a page";
 }
 
 function short(value: string): string {
@@ -46,6 +51,10 @@ export function toolKind(item: ToolItem): Kind {
     case "grep":
     case "glob":
       return "search";
+    case "web_search":
+      return "web";
+    case "web_fetch":
+      return "fetch";
     case "skill":
       return "skill";
     default:
@@ -81,8 +90,18 @@ export function toolAction(item: ToolItem): ToolAction {
       return { verb: pick("Searched for", "Searching for"), object: short(text(a.pattern)), mono: true };
     case "glob":
       return { verb: pick("Found files", "Finding files"), object: short(text(a.pattern)), mono: true };
+    case "web_search":
+      return { verb: pick("Searched the web for", "Searching the web for"), object: short(text(a.query)), mono: false };
+    case "web_fetch":
+      return { verb: pick("Fetched", "Fetching"), object: short(urlLabel(text(a.url))), mono: false };
     case "skill":
       return { verb: pick("Ran skill", "Running skill"), object: `/${text(a.name) || "skill"}`, mono: false };
+    case "ask_user_question": {
+      const n = Array.isArray(a.questions) ? a.questions.length : 1;
+      return { verb: pick("Asked", "Asking"), object: n === 1 ? "a question" : `${n} questions`, mono: false };
+    }
+    case "exit_plan_mode":
+      return { verb: pick("Proposed", "Proposing"), object: "a plan", mono: false };
     case "show_document":
       // The agent opened a PDF or Word file in the Preview pane (daemon tools/document.py).
       return { verb: pick("Opened preview of", "Opening preview of"), object: baseName(text(a.path) || "a document"), mono: false };
@@ -127,6 +146,10 @@ export function groupSummary(items: ToolItem[]): string {
         return single ? `${single.verb.toLowerCase()} ${single.object}` : `changed ${n} files`;
       case "search":
         return n === 1 ? "searched the code" : `searched the code ${n} times`;
+      case "web":
+        return n === 1 ? "searched the web" : `searched the web ${n} times`;
+      case "fetch":
+        return single ? `fetched ${single.object}` : `fetched ${n} pages`;
       case "skill":
         return single ? `ran skill ${single.object}` : `ran ${n} skills`;
       case "tool":

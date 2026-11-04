@@ -779,3 +779,104 @@ def test_the_default_model_follows_the_network(daemon, harness_home, project, fa
     c.send({"type": "session.new", "cwd": str(project), "model": ""})
     assert c.until("session.ready")[0]["model"] == "fake/other-model"
     c.close()
+
+
+def test_web_search_settings_and_keys(daemon, harness_home, project, fake_model):
+    c = Client(daemon)
+    c.send({"type": "user_settings.get"})
+    assert c.until("user_settings")[0]["values"]["web_search"] == "duckduckgo"
+    c.send({"type": "user_settings.set", "values": {"web_search": "searxng", "web_search_url": "http://localhost:8888"}})
+    got = c.until("user_settings")[0]["values"]
+    assert (got["web_search"], got["web_search_url"]) == ("searxng", "http://localhost:8888")
+    c.send({"type": "user_settings.set", "values": {"web_search": "google"}})
+    assert "must be one of" in c.until("error")[0]["message"]
+    c.send({"type": "user_settings.set", "values": {"web_search_url": "ftp://x"}})
+    assert "web_search_url" in c.until("error")[0]["message"]
+    c.send({"type": "web.key", "provider": "brave", "key": "secret"})
+    assert c.until("web.key")[0] == {"type": "web.key", "provider": "brave", "set": True}
+    c.send({"type": "web.key", "provider": "brave", "key": None})
+    assert c.until("web.key")[0]["set"] is False
+    c.send({"type": "web.key", "provider": "google", "key": "x"})
+    assert "provider" in c.until("error")[0]["message"]
+    c.close()
+
+
+QUESTION = {"question": "Which database?", "header": "Database",
+            "options": [{"label": "SQLite (Recommended)", "description": "One file."}, {"label": "Postgres"}]}
+
+
+def test_a_question_card_waits_for_the_answers(daemon, project, fake_model):
+    fake_model.script(
+        {"tool_calls": [{"name": "ask_user_question", "arguments": {"questions": [QUESTION]}}]},
+        {"text": "SQLite it is."},
+    )
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "set up the database"})
+    request = c.until("permission.request")[0]
+    assert request["kind"] == "question" and request["questions"][0]["options"][0]["label"] == "SQLite (Recommended)"
+    c.send({"type": "plan.reply", "request_id": request["request_id"], "decision": "accept"})
+    assert "No open plan request" in c.until("error")[0]["message"]
+    c.send({"type": "question.reply", "request_id": request["request_id"], "answers": {"Which database?": "SQLite (Recommended)"}})
+    c.until("turn.end")
+    result = next(m for m in fake_model.requests[-1]["messages"] if m["role"] == "tool")
+    assert '"Which database?" = "SQLite (Recommended)"' in result["content"]
+    c.close()
+
+
+def test_a_skipped_question_lets_the_agent_choose(daemon, project, fake_model):
+    fake_model.script(
+        {"tool_calls": [{"name": "ask_user_question", "arguments": {"questions": [QUESTION]}}]},
+        {"text": "I chose SQLite."},
+    )
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "set up the database"})
+    request = c.until("permission.request")[0]
+    c.send({"type": "question.reply", "request_id": request["request_id"], "answers": None})
+    c.until("turn.end")
+    result = next(m for m in fake_model.requests[-1]["messages"] if m["role"] == "tool")
+    assert "skipped the questions" in result["content"]
+    c.close()
+
+
+def test_plan_approval_changes_the_mode_and_starts_the_work(daemon, project, fake_model):
+    (project / ".harness").mkdir()
+    (project / ".harness" / "settings.json").write_text(json.dumps({"permission_mode": "plan"}))
+    fake_model.script(
+        {"tool_calls": [{"name": "exit_plan_mode", "arguments": {"plan": "1. Change hello.py."}}]},
+        {"tool_calls": [{"name": "edit", "arguments": {"path": "hello.py", "old_string": "'hello'", "new_string": "'hey'"}}]},
+        {"text": "Done."},
+    )
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "plan the change"})
+    request = c.until("permission.request")[0]
+    assert (request["kind"], request["plan"]) == ("plan", "1. Change hello.py.")
+    assert "exit_plan_mode" in [t["function"]["name"] for t in fake_model.requests[-1]["tools"]]
+    c.send({"type": "plan.reply", "request_id": request["request_id"], "decision": "accept", "mode": "acceptEdits"})
+    settings = c.until("settings")[0]
+    assert settings["permission_mode"] == "acceptEdits"
+    c.until("turn.end")
+    assert "'hey'" in (project / "hello.py").read_text()  # acceptEdits: the edit ran with no question.
+    assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "acceptEdits"
+    assert "exit_plan_mode" not in [t["function"]["name"] for t in fake_model.requests[-1]["tools"]]
+    c.close()
+
+
+def test_a_rejected_plan_stops_the_turn_and_keeps_plan_mode(daemon, project, fake_model):
+    (project / ".harness").mkdir()
+    (project / ".harness" / "settings.json").write_text(json.dumps({"permission_mode": "plan"}))
+    fake_model.script(
+        {"tool_calls": [{"name": "exit_plan_mode", "arguments": {"plan": "1. Delete all."}}]},
+    )
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "plan it"})
+    request = c.until("permission.request")[0]
+    c.send({"type": "plan.reply", "request_id": request["request_id"], "decision": "reject"})
+    end = c.until("turn.end")[0]
+    assert end["stop_reason"] == "denied"
+    assert len([r for r in fake_model.requests if r.get("tools")]) == 1
+    assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "plan"
+    c.close()

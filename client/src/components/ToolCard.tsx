@@ -43,6 +43,7 @@ export function toolSummary(name: string, input: unknown): string {
     if (name === "skill" && typeof args.name === "string") {
       return typeof args.arguments === "string" && args.arguments ? `${args.name} ${args.arguments}` : args.name;
     }
+    if (typeof args.query === "string") return args.query; // web_search
     if (typeof args.pattern === "string") {
       const where = [args.path, args.glob].filter((v) => typeof v === "string" && v).join(" ");
       return where ? `${args.pattern}  in ${where}` : args.pattern;

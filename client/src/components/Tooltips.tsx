@@ -34,6 +34,9 @@ export function Tooltips() {
     let timer: number | undefined;
     let hiddenAt = 0;
     let watch: MutationObserver | null = null;
+    // The parents of the element that also have a title. The system shows their tip when the
+    // element has no title, so this layer removes their titles too, and puts them back after.
+    let muted: { el: HTMLElement; tip: string }[] = [];
 
     const hide = () => {
       window.clearTimeout(timer);
@@ -49,6 +52,8 @@ export function Tooltips() {
       watch = null;
       // A new title from React while the pointer was on the element stays as React set it.
       if (current && !current.hasAttribute("title") && tip) current.setAttribute("title", tip);
+      for (const m of muted) if (!m.el.hasAttribute("title")) m.el.setAttribute("title", m.tip);
+      muted = [];
       current = null;
       tip = "";
     };
@@ -62,6 +67,10 @@ export function Tooltips() {
       current = el;
       tip = el.getAttribute("title") ?? "";
       el.removeAttribute("title");
+      for (let p = el.parentElement?.closest<HTMLElement>("[title]"); p; p = p.parentElement?.closest<HTMLElement>("[title]")) {
+        muted.push({ el: p, tip: p.getAttribute("title") ?? "" });
+        p.removeAttribute("title");
+      }
       // React can change the title while the pointer is on the element. Take the new text.
       watch = new MutationObserver(() => {
         const next = el.getAttribute("title");
@@ -78,6 +87,8 @@ export function Tooltips() {
     const onOver = (e: PointerEvent) => {
       const target = e.target instanceof Element ? e.target : null;
       if (!target) return;
+      // Put back the muted titles first, so a parent with a title can show its own tip.
+      if (current && !current.contains(target)) release();
       const found = target.closest<HTMLElement>("[title]");
       const next = found?.closest("[data-native-tip]") ? null : found;
       if (current && current.contains(target) && (!next || !current.contains(next))) return;

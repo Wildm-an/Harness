@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { CircleCheck, CircleSlash, CircleX, LoaderCircle, Square } from "lucide-react";
 import type { TaskDetail, TaskItem, TaskKind } from "../daemon/protocol";
 
-const TASK_KINDS: Record<TaskKind, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup" };
+const TASK_KINDS: Record<TaskKind, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup", cron: "Scheduled" };
 
 function elapsed(task: TaskItem, now: number): string {
   const seconds = Math.max(0, Math.round((task.ended_at ?? now / 1000) - task.started_at));
@@ -76,7 +76,7 @@ export function TasksPane({
   if (items.length === 0) {
     return (
       <p className="pane-empty">
-        No background tasks. The agent starts a task when it runs a long command in the background, watches a command with a monitor, gives work to a background agent, or sets a wakeup.
+        No background tasks. The agent starts a task when it runs a long command in the background, watches a command with a monitor, gives work to a background agent, sets a wakeup, or schedules a prompt.
       </p>
     );
   }

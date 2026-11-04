@@ -1,10 +1,11 @@
 // The Settings dialog (Ctrl+,), as in the DeepSeek Harness and Claude apps: a list of pages on the
-// left, and the page on the right. General and Appearance are here. Plugins, Local Models,
-// Providers, and Computers are the screens that the sidebar opened before.
+// left, and the page on the right. General and Appearance are here. Local Models, Providers, and
+// Computers are the screens that the sidebar opened before. Plugins are on the Capabilities page.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, Puzzle, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
-import type { PermissionMode, UserSettings } from "../daemon/protocol";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import type { PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
+import type { WebKeyProvider } from "../lib/providerKeys";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
 import {
@@ -53,12 +54,11 @@ import { useLinksInPane } from "../lib/openLink";
 import { compareVersions } from "../lib/version";
 import { availableVersion, checkAtStart, checkForUpdate, installUpdate, setCheckAtStart, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "appearance" | "plugins" | "models" | "connections" | "computers" | "changelog";
+export type SettingsPage = "general" | "appearance" | "models" | "connections" | "computers" | "changelog";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
   { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "plugins", label: "Plugins", icon: Puzzle },
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "connections", label: "Providers", icon: Cable },
   { id: "computers", label: "Computers", icon: Monitor },
@@ -597,9 +597,13 @@ export function GeneralSettings({
   appVersion,
   daemonVersion,
   error,
+  webKeys,
+  onSaveWebKey,
   onSet,
 }: {
   error: string | null; // The daemon did not save a setting.
+  webKeys?: Record<WebKeyProvider, boolean>; // The web search API keys in the keychain.
+  onSaveWebKey?: (provider: WebKeyProvider, key: string | null) => void;
   values: UserSettings | null; // null: loading, or not connected.
   connected: boolean;
   appVersion: string | null;
@@ -682,6 +686,10 @@ export function GeneralSettings({
         <Switch checked={values?.subagents !== false} label="Subagents" disabled={off} onChange={(on) => set({ subagents: on })} />
       </Row>
 
+      <Row label="Auto memory" help="The agent keeps notes about you and the project between sessions. /memory lists them.">
+        <Switch checked={values?.auto_memory !== false} label="Auto memory" disabled={off} onChange={(on) => set({ auto_memory: on })} />
+      </Row>
+
       <Row label="Check the app after UI changes" help="The agent opens the preview and checks each change to the UI.">
         <Switch checked={values?.auto_verify ?? false} label="Check the app after UI changes" disabled={off} onChange={(on) => set({ auto_verify: on })} />
       </Row>
@@ -734,6 +742,47 @@ export function GeneralSettings({
         </div>
       ))}
 
+      <h3 className="settings-section">Web</h3>
+      <Row label="Web search" help="The search provider of the agent. Off: the agent cannot search the web, but it can fetch pages." htmlFor="setting-web-search">
+        <select
+          id="setting-web-search"
+          value={values?.web_search ?? "duckduckgo"}
+          disabled={off}
+          onChange={(e) => set({ web_search: e.target.value as WebSearchProvider })}
+        >
+          {WEB_SEARCH_OPTIONS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </Row>
+      {(values?.web_search === "brave" || values?.web_search === "tavily") && (
+        <Row
+          label="API key"
+          help={`The key of ${values.web_search === "brave" ? "Brave Search" : "Tavily"}. The app keeps it in the keychain of this computer.`}
+          htmlFor="setting-web-key"
+        >
+          <KeyField
+            id="setting-web-key"
+            saved={!!webKeys?.[values.web_search]}
+            disabled={off || !onSaveWebKey}
+            onSave={(key) => onSaveWebKey?.(values.web_search as WebKeyProvider, key)}
+          />
+        </Row>
+      )}
+      {values?.web_search === "searxng" && (
+        <Row label="SearXNG URL" help="A SearXNG server with the JSON format on." htmlFor="setting-web-url">
+          <TextField
+            id="setting-web-url"
+            value={values?.web_search_url ?? ""}
+            placeholder="http://localhost:8080"
+            disabled={off}
+            onSave={(v) => set({ web_search_url: v || null })}
+          />
+        </Row>
+      )}
+
       <h3 className="settings-section">Browser</h3>
       <Row label="Open links in" help="Where a link in the chat opens, for example a link that the agent lists. Applies to this computer." htmlFor="setting-open-links">
         <select id="setting-open-links" value={linksInPane ? "pane" : "system"} onChange={(e) => setLinksInPane(e.target.value === "pane")}>
@@ -768,6 +817,52 @@ export function GeneralSettings({
         )}
       </p>
     </div>
+  );
+}
+
+// The search providers of the web_search tool (daemon web.py).
+export const WEB_SEARCH_OPTIONS: [WebSearchProvider, string][] = [
+  ["duckduckgo", "DuckDuckGo (no key)"],
+  ["brave", "Brave Search"],
+  ["tavily", "Tavily"],
+  ["searxng", "SearXNG"],
+  ["off", "Off"],
+];
+
+/** An API key field. A saved key shows as dots. It saves when the focus leaves it, or on Enter. */
+function KeyField({ id, saved, disabled, onSave }: {
+  id: string;
+  saved: boolean;
+  disabled?: boolean;
+  onSave: (key: string | null) => void;
+}) {
+  const [text, setText] = useState("");
+  const save = () => {
+    if (!text.trim()) return;
+    onSave(text.trim());
+    setText("");
+  };
+  return (
+    <span className="setting-key">
+      <input
+        id={id}
+        type="password"
+        className="setting-text-input mono"
+        value={text}
+        placeholder={saved ? "••••••••  Saved" : "Paste the API key"}
+        disabled={disabled}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => e.key === "Enter" && save()}
+      />
+      {saved && (
+        <button type="button" className="btn btn-small" disabled={disabled} onClick={() => onSave(null)}>
+          Remove
+        </button>
+      )}
+    </span>
   );
 }
 

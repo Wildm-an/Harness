@@ -1,6 +1,6 @@
 // Chat state. The reducer turns daemon events into items for the message list.
 
-import type { Decision, DaemonMessage, HistoryMessage, PermissionRequest, StopReason, Usage } from "../daemon/protocol";
+import type { AskQuestion, Decision, DaemonMessage, HistoryMessage, PermissionMode, PermissionRequest, PlanDecision, StopReason, Usage } from "../daemon/protocol";
 
 export type ToolStatus = "running" | "done" | "error";
 
@@ -32,6 +32,10 @@ export type ChatItem =
       background?: boolean; // A background subagent asks: the end of the turn does not expire the card.
       agent?: string;
     }
+  // ask_user_question (daemon tools/interact.py). answers: null when the user skipped.
+  | { kind: "question"; id: string; questions: AskQuestion[]; answers?: Record<string, string> | null; expired?: boolean }
+  // exit_plan_mode: the plan of the agent in plan mode.
+  | { kind: "plan"; id: string; plan: string; decision?: PlanDecision; mode?: PermissionMode; expired?: boolean }
   | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string }
   | { kind: "summary"; id: string; text: string | null; removed: number; trimmed: number; reason: string };
 
@@ -62,6 +66,8 @@ export type ChatAction =
   | { type: "user"; text: string; startsTurn: boolean; messageId?: string; images?: string[] }
   | { type: "disconnected" }
   | { type: "decide"; requestId: string; decision: Decision }
+  | { type: "answer"; requestId: string; answers: Record<string, string> | null }
+  | { type: "plan"; requestId: string; decision: PlanDecision; mode?: PermissionMode }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string }
   | {
       type: "load";
@@ -85,7 +91,7 @@ const STOP_NOTICES: Partial<Record<StopReason, string>> = {
   interrupted: "The turn was interrupted.",
   denied: "The tool call was denied. The agent waits for your instructions.",
   max_tool_calls: "The turn stopped at the tool call limit.",
-  blocked: "A plugin ended the turn.",
+  blocked: "A plugin or a hook ended the turn.",
 };
 
 function endStreaming(items: ChatItem[]): ChatItem[] {
@@ -98,7 +104,29 @@ function endStreaming(items: ChatItem[]): ChatItem[] {
 
 /** Marks the permission cards with no decision as expired. */
 function expirePermissions(items: ChatItem[]): ChatItem[] {
-  return items.map((i) => (i.kind === "permission" && !i.decision && !i.expired && !i.background ? { ...i, expired: true } : i));
+  return items.map((i) => {
+    if (i.kind === "permission" && !i.decision && !i.expired && !i.background) return { ...i, expired: true };
+    if (i.kind === "question" && i.answers === undefined && !i.expired) return { ...i, expired: true };
+    if (i.kind === "plan" && !i.decision && !i.expired) return { ...i, expired: true };
+    return i;
+  });
+}
+
+/** The card of a request: a permission card, a question card, or a plan card. */
+export function requestCard(r: PermissionRequest): ChatItem {
+  if (r.kind === "question") return { kind: "question", id: r.request_id, questions: r.questions ?? [] };
+  if (r.kind === "plan") return { kind: "plan", id: r.request_id, plan: r.plan ?? "" };
+  return {
+    kind: "permission",
+    id: r.request_id,
+    tool: r.tool,
+    input: r.input,
+    diff: r.diff,
+    rule: r.rule,
+    reason: r.reason ?? (r.background && r.agent ? `The background agent "${r.agent}" asks.` : r.reason),
+    background: r.background,
+    agent: r.agent,
+  };
 }
 
 function updateItem(items: ChatItem[], id: string, kind: ChatItem["kind"], patch: Partial<ChatItem>): ChatItem[] {
@@ -107,6 +135,8 @@ function updateItem(items: ChatItem[], id: string, kind: ChatItem["kind"], patch
 
 export type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 export type PermissionItem = Extract<ChatItem, { kind: "permission" }>;
+export type QuestionItem = Extract<ChatItem, { kind: "question" }>;
+export type PlanItem = Extract<ChatItem, { kind: "plan" }>;
 
 /** The index of the newest running tool card for a call id, or -1. */
 function lastRunningTool(items: ChatItem[], callId: string): number {
@@ -187,17 +217,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       return { ...state, items };
     }
     case "permission.request": {
-      const card: ChatItem = {
-        kind: "permission",
-        id: msg.request_id,
-        tool: msg.tool,
-        input: msg.input,
-        diff: msg.diff,
-        rule: msg.rule,
-        reason: msg.reason ?? (msg.background && msg.agent ? `The background agent "${msg.agent}" asks.` : msg.reason),
-        background: msg.background,
-        agent: msg.agent,
-      };
+      const card = requestCard(msg);
       const last = state.items[state.items.length - 1];
       // A background agent asks while the main agent writes: the card goes before the reply, so the reply stays one message.
       if (msg.background && last?.kind === "assistant" && last.streaming) {
@@ -287,6 +307,10 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     case "decide":
       return { ...state, items: updateItem(state.items, action.requestId, "permission", { decision: action.decision }) };
+    case "answer":
+      return { ...state, items: updateItem(state.items, action.requestId, "question", { answers: action.answers }) };
+    case "plan":
+      return { ...state, items: updateItem(state.items, action.requestId, "plan", { decision: action.decision, mode: action.mode }) };
     case "notice":
       return { ...state, items: [...state.items, { kind: "notice", id: nextId("notice"), level: action.level, text: action.text }] };
     case "load": {
@@ -299,7 +323,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         live.push({ kind: "assistant", id: nextId("assistant"), text: action.partial, streaming: true });
       }
       for (const r of action.requests ?? []) { // A background subagent can ask when no turn runs.
-        live.push({ kind: "permission", id: r.request_id, tool: r.tool, input: r.input, diff: r.diff, rule: r.rule, reason: r.reason, background: r.background, agent: r.agent });
+        live.push(requestCard(r));
       }
       return {
         running: action.running ?? false,

@@ -10,6 +10,10 @@ Behavior:
 - The notes of background tasks ("<task-notification>") -> a short text reply.
 - A user message that contains "background" -> a bash tool call with run_in_background (needs approval).
 - A user message that contains "helper" -> an agent tool call with run_in_background.
+- A user message that contains "ask" -> an ask_user_question call with two questions.
+- In plan mode, a user message that contains "plan" -> an exit_plan_mode call with a plan.
+- A user message that contains "web" -> web_search, then web_fetch of the first result.
+- A user message that contains "slow" -> a task list with a step in progress, then a slow reply.
 - A user message that contains "run" -> a bash tool call (needs approval).
 - A skill that the user started with /name -> a short text reply.
 - "use the skill <name> <arguments>" -> a skill tool call.
@@ -81,6 +85,14 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
         step = preview_step(last_tool_name(messages), last["content"], tools)
         if step:
             return step
+        name = last_tool_name(messages)
+        if name == "web_search":
+            found = re.search(r"https?://\S+", last["content"])
+            if found:
+                return {"text": "I will read the first result.", "tool_calls": [
+                    {"name": "web_fetch", "arguments": {"url": found.group(0)}}]}
+        if name == "update_plan" and any("slow" in (m.get("content") or "") for m in messages if m["role"] == "user"):
+            return {"text": " ".join(["This reply comes slowly, so that the working line shows the step."] * 6), "delay": 0.25}
         output = last["content"]
         preview = "\n".join(output.splitlines()[:8])
         return {"text": (
@@ -92,6 +104,26 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
     text = last.get("content") or ""
     if "<task-notification>" in text:
         return {"text": "A background task sent a notification. I read it: the work is **done**."}
+    if "ask" in text.lower() and "ask_user_question" in tools:
+        return {"text": "I need two choices from you.", "tool_calls": [{"name": "ask_user_question", "arguments": {"questions": [
+            {"question": "Which database should the app use?", "header": "Database", "options": [
+                {"label": "SQLite (Recommended)", "description": "One file. No server."},
+                {"label": "Postgres", "description": "A server. Better for many users."}]},
+            {"question": "Which features do you want first?", "header": "Features", "multiSelect": True, "options": [
+                {"label": "Sign in"}, {"label": "Search"}, {"label": "Export"}]},
+        ]}}]}
+    if "plan" in text.lower() and "exit_plan_mode" in tools:
+        return {"text": "Here is my plan.", "tool_calls": [{"name": "exit_plan_mode", "arguments": {"plan": (
+            "## Plan\n\n1. Add type hints to `add` in `src/app.py`.\n2. Add a test in `tests/test_app.py`.\n"
+            "3. Run the tests.")}}]}
+    if "web" in text.lower() and "web_search" in tools:
+        return {"text": "I will search the web.", "tool_calls": [{"name": "web_search", "arguments": {
+            "query": "python asyncio TaskGroup", "count": 3}}]}
+    if "slow" in text.lower():
+        return {"text": "", "tool_calls": [{"name": "update_plan", "arguments": {"items": [
+            {"content": "Read the code", "status": "completed"},
+            {"content": "Check the working line", "status": "in_progress"},
+            {"content": "Report", "status": "pending"}]}}]}
     if "background" in text.lower():
         return {"text": "I will start the build in the background.", "tool_calls": [{"name": "bash", "arguments": {
             "command": "sleep 4 && echo build ok", "run_in_background": True, "description": "Built the app"}}]}
@@ -135,7 +167,7 @@ async def stream(reply: dict):
     yield _chunk({"role": "assistant", "content": ""})
     for word in re.findall(r"\S+\s*|\n", reply.get("text", "")):
         yield _chunk({"content": word})
-        await asyncio.sleep(0.03)
+        await asyncio.sleep(reply.get("delay", 0.03))
     for index, call in enumerate(reply.get("tool_calls", [])):
         yield _chunk({"tool_calls": [{"index": index, "id": f"call_demo_{index}", "type": "function",
                                       "function": {"name": call["name"], "arguments": json.dumps(call["arguments"])}}]})

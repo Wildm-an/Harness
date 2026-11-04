@@ -125,13 +125,13 @@ export function railTasks(tasks: TaskItem[]): TaskItem[] {
   return [...running, ...sorted.filter((t) => t.status !== "running").slice(0, MAX_ENDED_IN_RAIL)];
 }
 
-const KIND_NAMES: Record<NonNullable<TaskItem["kind"]>, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup" };
+const KIND_NAMES: Record<NonNullable<TaskItem["kind"]>, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup", cron: "Scheduled" };
 const STATE_NAMES: Record<TaskItem["status"], string> = { running: "Running", done: "Done", failed: "Failed", stopped: "Stopped" };
 
 /** The detail line of a task: "Agent · Running", or "Wakeup · in 4 min" for a wakeup that waits. */
 export function taskDetailText(task: TaskItem, nowMs: number): string {
   const kind = KIND_NAMES[task.kind ?? "shell"];
-  if (task.kind === "wakeup" && task.status === "running" && task.wake_at) {
+  if ((task.kind === "wakeup" || task.kind === "cron") && task.status === "running" && task.wake_at) {
     const seconds = Math.max(0, Math.round(task.wake_at - nowMs / 1000));
     return `${kind} · in ${seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`}`;
   }

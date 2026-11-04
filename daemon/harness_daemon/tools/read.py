@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
+from pathlib import Path
 from typing import Any
 
 from ..documents import DocumentError, is_document, old_format_note, read_document
@@ -9,6 +12,42 @@ from .base import Tool, ToolContext, ToolError, ToolResult, get_int
 
 MAX_LINE_CHARS = 2000
 DEFAULT_LIMIT = 2000
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+MAX_IMAGE_BYTES = 5_000_000  # The largest image that goes to the model as it is.
+MAX_IMAGE_SIDE = 1568  # A larger image becomes smaller, if Pillow is installed (as the images of the prompt box).
+
+
+def _image_result(path: Path, image_input: bool, shown: str) -> ToolResult:
+    """An image file for the model: a data URL. A large image becomes smaller, if Pillow is there."""
+    if not image_input:
+        raise ToolError(f"{shown} is an image. The model of this session does not accept images.")
+    data = path.read_bytes()
+    mime = IMAGE_TYPES[path.suffix.lower()]
+    size = None
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as img:
+            size = img.size
+            if max(img.size) > MAX_IMAGE_SIDE or len(data) > MAX_IMAGE_BYTES:
+                img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+                out = io.BytesIO()
+                if img.mode in ("RGBA", "LA", "P"):
+                    img.save(out, "PNG", optimize=True)
+                    mime = "image/png"
+                else:
+                    img.convert("RGB").save(out, "JPEG", quality=85)
+                    mime = "image/jpeg"
+                data = out.getvalue()
+    except ImportError:
+        pass
+    except Exception as e:  # noqa: BLE001 - a bad image file gives a clear error.
+        raise ToolError(f"{shown} is not a valid image: {e}") from None
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ToolError(f"{shown} is too large for the model: {len(data) // 1_000_000} MB. The limit is 5 MB.")
+    note = f" {size[0]}x{size[1]} pixels." if size else ""
+    return ToolResult(f"(The image {shown}: {mime}, {max(len(data) // 1000, 1)} KB.{note})",
+                      image=f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}")
 
 
 class ReadTool(Tool):
@@ -18,7 +57,8 @@ class ReadTool(Tool):
         "For a large file, use offset and limit to read one part. "
         "It also reads PDF, Word (.docx), PowerPoint (.pptx), and Excel (.xlsx) files as text with "
         "numbered parts: paragraphs [P1], table cells, slides and shapes [2.1], and cells such as B4. "
-        "Use office_edit to change a Word, PowerPoint, or Excel file."
+        "Use office_edit to change a Word, PowerPoint, or Excel file. "
+        "It shows a PNG, JPEG, GIF, or WebP image to a model that accepts images."
     )
     parameters = {
         "type": "object",
@@ -39,6 +79,8 @@ class ReadTool(Tool):
             raise ToolError(f"{args['path']} is a folder, not a file.")
         if not path.exists():
             raise ToolError(f"File not found: {args['path']}")
+        if path.suffix.lower() in IMAGE_TYPES:
+            return await asyncio.to_thread(_image_result, path, ctx.image_input, args["path"])
         if is_document(path):
             try:
                 text = await asyncio.to_thread(read_document, path, args.get("pages"))

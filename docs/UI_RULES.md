@@ -38,7 +38,7 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 
 1. A "Search" field. It opens the command menu (Ctrl+K). The key hint shows on hover or focus.
 2. "New session" (Ctrl+N), with a round "+" icon.
-3. Nav items. Claude shows "Routines" and "Customize". Harness shows "Capabilities" here (the user asked for this name). It opens the Capabilities page with the skills and the MCP servers (section 3.4). Plugins and permission rules are not on this page yet. See section 9.
+3. Nav items. Claude shows "Routines" and "Customize". Harness shows "Capabilities" here (the user asked for this name). It opens the Capabilities page with the skills, the MCP servers, and the plugins (section 3.4). Permission rules are not on this page yet. See section 9.
 4. "Pinned". Show the first 20 items, then "Show more". The empty text is "Tip: you can drag sessions here to pin them".
 5. The session sections (projects, date groups, or custom sections).
 6. A bottom tray: the update strip (section 7.4), then the account button. The account button opens a menu with "Settings", "View changelog", "Keyboard shortcuts", "Get help".
@@ -87,10 +87,10 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
 
 ### 3.4 Capabilities page
 
-Claude shows skills and connectors on separate tabs of its "Customize" page. The Hermes dashboard shows them on separate "Skills" and "MCP" pages. The user asked for one page that shows both (`CapabilitiesPage.tsx`).
+Claude shows skills and connectors on separate tabs of its "Customize" page. The Hermes dashboard shows them on separate "Skills" and "MCP" pages. The user asked for one page that shows both (`CapabilitiesPage.tsx`). The plugins are on the same page.
 
 - **K1.** The "Capabilities" nav item is under "New session". It shows at all times, also with no session. A red dot shows when an MCP server failed. The page is a full screen in the main area, as the new session page. Back and Forward include it. `/skills` and `/mcp` also open it.
-- **K2.** The page has the title "Capabilities", one line that names the project folder, then the tabs "Skills", "MCP servers", and "Connections" (the user asked for tabs). The Skills and MCP servers tabs have a "Filter" field and a count. A failed MCP server puts a red dot on its tab. Connections is a placeholder for later. The page opens on the last tab. `/skills` and `/mcp` open their own tab. The filter finds each word in the name, the description, the command or URL, or the tool names.
+- **K2.** The page has the title "Capabilities", one line that names the project folder, then the tabs "Skills", "MCP servers", "Plugins", and "Connections" (the user asked for tabs). The user asked for the plugins on this page, not in Settings. The Plugins tab has the install field, the installed plugins, and "Reload". It shows a count, and a red dot when a plugin failed. `/plugins` opens it. The Skills and MCP servers tabs have a "Filter" field and a count. A failed MCP server puts a red dot on its tab. Connections is a placeholder for later. The page opens on the last tab. `/skills` and `/mcp` open their own tab. The filter finds each word in the name, the description, the command or URL, or the tool names.
 - **K3.** Each row shows an icon, the name, a short description, and a status pill. A skill row also shows its source. The description of an MCP server is "{n} tools · {transport} · {scope}". A failed server shows its error.
 - **K4.** Status pills:
 
@@ -238,6 +238,8 @@ Harness has no "+" button now. Add it.
 - **M15.** The working line shows: the label, "·", the time, "·", "{tokens} tokens", and "{count} running tasks" when tasks run.
 - **M16.** Labels: "Thinking…", then "Still thinking…", "Thinking more…" as time goes on. After it: "Thought for {seconds}s". Other labels: "Connecting…", "Running tools…", "Working…", "Stopping…", "Retrying ({attempt}/{maxRetries})", "Compacting session…".
 - **M17.** Compaction notices: "Compacted session · saved {tokens} tokens", "Compaction failed".
+- **M17a.** Harness puts the working line at the bottom of the chat, after the task list, as the Claude app does (the user asked for this). It scrolls with the chat: nothing shows above the prompt box. It shows four pulsing accent dots, the step of the task list in progress (or "Writing…", "Running {tool}…", "Waiting for {model}…", "Waiting for your approval…", "Waiting for your answer…"), the time in muted text, and a caret. The caret shows the details: "{tokens} tokens", "{count} running tasks", and the status when a step shows (`WorkingLine.tsx`).
+- **M17b.** The question card and the plan card (M11–M14) are in the chat as permission cards are. A question card shows one question at a time with a header chip, the options with number badges, then "Something else" (a text field). One choice goes to the next question at once. A multiple choice has checkboxes. The foot has "{current} of {total}", "Back", "Skip", and "Next" / "Submit". An answered card shows the header and the answer of each question. The plan card shows the plan as Markdown in a box. An accepted plan sets the mode of the project.
 
 ### 6.7 Error cards
 
@@ -306,7 +308,7 @@ Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 
 ### 7.4 Updates and notifications
 
-- **V8.** An update shows as a strip at the bottom of the sidebar, not as a toast: "Relaunch to update · v{version}". Other states: "Update available", "Downloading update...". If sessions run, ask before the relaunch. Harness now uses a toast (`UpdateToast.tsx`). Change it to the strip.
+- **V8.** An update shows as a strip at the bottom of the sidebar, not as a toast: "Relaunch to update · v{version}". Other states: "Update available", "Downloading update...". If sessions run, ask before the relaunch. Harness now uses a toast (`UpdateToast.tsx`) at the bottom right of the app (the user asked for this place), with the version and daemon update toasts above it. Change it to the strip later.
 - **V9.** Help > "Check for Updates…" checks for an update.
 - **V10.** System notifications have three types: permission request, question, task complete. Titles: "Claude needs your input to continue", "Claude is waiting for your input", "Claude finished a task". On Windows, flash the taskbar button when the app is not in focus.
 - **V10a.** When the user closes the app while the agent works on this computer, a dialog asks first, as in the Claude app: "Harness is still working", "The agent is working in {n} session(s). Quitting now will interrupt that work.", with "Quit anyway", "Wait for the agent", and "Cancel". Only a running turn counts: an idle session, a session that waits for an answer, and a background command do not. A remote daemon does not ask: its turns go on. "Wait for the agent" shows "Harness quits when the agent is done." and closes the app when the last turn ends.
@@ -368,7 +370,7 @@ Notes:
 - **G1.** Settings is a page with a left nav in groups and a search field. Claude groups: "Account", "Customize" (Plugins, Skills, Connectors), "Products" (Claude Code), "This computer" (System, Extensions, Developer).
 - **G2.** Harness groups, in this order:
   1. "Claude Code": the page with sections in G3.
-  2. "Customize": "Plugins", "Permission rules". The skills and the MCP servers are not in Settings: they are on the Capabilities page (section 3.4).
+  2. "Customize": "Permission rules". The skills, the MCP servers, and the plugins are not in Settings: they are on the Capabilities page (section 3.4).
   3. "Models": "Providers" (the model providers) and "Local models". These are Harness-only (P6). The user asked for the name "Providers" (it was "Connections").
   4. "This computer": "System", "Computers" (remote daemons).
   5. The changelog moves to the account menu ("View changelog").
@@ -407,6 +409,8 @@ Notes:
 | Update check | Help > "Check for Updates…" and the sidebar strip | menu item | General > Updates |
 | Keyboard shortcuts | Help > "Keyboard Shortcuts" (Ctrl+/), a dialog | dialog | General table |
 | Model by network | not in Claude | switch "Choose the model by network", then "Default model" and "Local model" lists | Providers page, at the top (the user asked for this). On: a new session with "Default model" uses the default model when its provider answers (a 1.5 s connection check of the daemon), else the local model, with a warning in the chat. Off: the model is manual. The lists are off while the switch is off. The local list has only the models of providers on this computer. |
+| Web search | not a Claude setting (Claude Code has its own search) | select "Web search": "DuckDuckGo (no key)" (default), "Brave Search", "Tavily", "SearXNG", "Off", then "API key" (Brave, Tavily: in the keychain) or "SearXNG URL" | General > Web. Off removes `web_search`. `web_fetch` stays. |
+| Auto memory | Claude Code: auto memory | switch, default on | General > The agent > "Auto memory". Off removes the memory tool and the memory part of the prompt. `/memory` lists the memories. |
 | Subagents | Claude has "Dynamic workflows" ("Let Claude run several agents at once on complex tasks. Uses your limit faster.") | switch, default on | General > The agent > "Subagents". Off removes the agent tool. Harness has no workflows: the switch is for subagents (the user asked for it). |
 | Agent instructions | not in the Code tab (claude.ai has "personal preferences") | four text areas: "How to think", "How to do research", "How to speak", "Other instructions" | General > Agent instructions (the user asked for this location). Only the session agent gets them, not a subagent. |
 | Tool call limit, command timeout, shell | not in Claude (Claude Code `settings.json`) | — | General > The agent; keep in "Claude Code" > "General" |

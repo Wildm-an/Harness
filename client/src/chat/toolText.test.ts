@@ -41,6 +41,15 @@ describe("the text of tool calls", () => {
       .toBe("Read 2 files, 1 failed");
   });
 
+  it("names the web searches and the fetched pages", () => {
+    expect(toolAction(tool("web_search", { query: "vite 6 release" }))).toEqual({ verb: "Searched the web for", object: "vite 6 release", mono: false });
+    expect(toolAction(tool("web_fetch", { url: "https://www.example.com/docs/" }))).toEqual({ verb: "Fetched", object: "example.com/docs", mono: false });
+    expect(toolAction(tool("web_fetch", { url: "https://a.org" }, { status: "running" })).verb).toBe("Fetching");
+    const items = [tool("web_search", { query: "a" }), tool("web_fetch", { url: "https://a.org/x" }), tool("web_fetch", { url: "https://b.org" })];
+    expect(groupSummary(items)).toBe("Searched the web, fetched 2 pages");
+    expect(groupSummary([tool("web_fetch", { url: "https://a.org/x" })])).toBe("Fetched a.org/x");
+  });
+
   it("adds the changed lines of a group", () => {
     expect(diffTotals([tool("edit", { path: "bash.py" }, { diff: CHANGE }), tool("write", { path: "n" }, { diff: NEW_FILE })]))
       .toEqual({ added: 4, removed: 1 });

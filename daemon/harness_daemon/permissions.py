@@ -59,8 +59,8 @@ DECISIONS = ("allow_once", "allow_always", "deny")
 MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 EDIT_TOOLS = ("edit", "write")
 
-PLAN_BLOCK = ("Plan mode is on, so you cannot change files. Read and search the project, then give the user "
-              "a plan and stop. The user changes the mode to start the work.")
+PLAN_BLOCK = ("Plan mode is on, so you cannot change files. Read and search the project, then call "
+              "exit_plan_mode with your plan. The user approves the plan to start the work.")
 
 # The approver gets a request and returns one of DECISIONS.
 Approver = Callable[[dict[str, Any]], Awaitable[str]]

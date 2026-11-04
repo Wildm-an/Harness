@@ -200,3 +200,26 @@ def test_user_instructions_from_the_settings(project):
     assert prompt.index("# User instructions") < prompt.index("# Project instructions")
     # A subagent does not get them: the user does not talk to it.
     assert "# User instructions" not in build_system_prompt(ctx, "fake/m", user_facing=False)
+
+
+# -- read: images ---------------------------------------------------------------
+
+
+def test_read_shows_an_image_to_a_model_with_image_input(project):
+    from harness_daemon.tools import ReadTool
+
+    PIL = pytest.importorskip("PIL.Image")
+    PIL.new("RGB", (3000, 1000), "red").save(project / "big.png")
+    ctx = make_ctx(project)
+    with pytest.raises(ToolError, match="does not accept images"):
+        run(ReadTool().run({"path": "big.png"}, ctx))
+    ctx.image_input = True
+    result = run(ReadTool().run({"path": "big.png"}, ctx))
+    assert result.image.startswith("data:image/jpeg;base64,") and "3000x1000 pixels" in result.output
+    import base64
+    import io
+    small = PIL.open(io.BytesIO(base64.b64decode(result.image.split(",", 1)[1])))
+    assert max(small.size) == 1568
+    (project / "bad.png").write_bytes(b"not an image")
+    with pytest.raises(ToolError, match="not a valid image"):
+        run(ReadTool().run({"path": "bad.png"}, ctx))

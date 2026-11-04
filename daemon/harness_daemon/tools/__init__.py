@@ -14,11 +14,13 @@ from .progress import UpdatePlanTool, WrapUpTool
 from .read import ReadTool
 from .shell import ShellInfo, detect_shell
 from .skill import SkillTool
+from .web import WebFetchTool, WebSearchTool
 from .write import WriteTool
 
 
 def default_tools() -> list[Tool]:
-    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool(), OfficeEditTool(), ShowDocumentTool(), UpdatePlanTool(), WrapUpTool()]
+    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool(), OfficeEditTool(), ShowDocumentTool(), UpdatePlanTool(), WrapUpTool(),
+            WebSearchTool(), WebFetchTool()]
 
 
 __all__ = [
@@ -42,5 +44,7 @@ __all__ = [
     "truncate",
     "UpdatePlanTool",
     "WrapUpTool",
+    "WebFetchTool",
+    "WebSearchTool",
     "WriteTool",
 ]

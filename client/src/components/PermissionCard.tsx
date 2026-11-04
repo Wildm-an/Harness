@@ -40,6 +40,8 @@ function describe(item: PermissionItem): { action: string; prefix?: string; obje
     const name = (item.input as { name?: unknown } | null)?.name;
     return { action: "start", prefix: "the server", object: typeof name === "string" ? name : summary, detail: summary };
   }
+  if (item.tool === "web_fetch") return { action: "fetch", object: summary, detail: null };
+  if (item.tool === "web_search") return { action: "search the web for", object: summary, detail: null };
   if (item.tool === "write" && item.diff && parseUnifiedDiff(item.diff).isNewFile) return { action: "create", object: summary, detail: null };
   if (item.tool === "write") return { action: "overwrite", object: summary, detail: null };
   if (item.tool === "edit") return { action: "edit", object: summary, detail: null };

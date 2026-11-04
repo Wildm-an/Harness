@@ -36,6 +36,7 @@ import type {
   ProviderFields,
   ProviderItem,
   PermissionMode,
+  PlanDecision,
   RunningSession,
   PrStatus,
   SessionSummary,
@@ -50,9 +51,14 @@ import {
   renameProviderKey,
   saveHfToken,
   saveProviderKey,
+  WEB_KEY_PROVIDERS,
+  deleteWebKey,
+  loadWebKey,
+  saveWebKey,
+  type WebKeyProvider,
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
-import { CapabilitiesPage, type CapTab } from "./components/CapabilitiesPage";
+import { CapabilitiesPage, toCapTab, type CapTab } from "./components/CapabilitiesPage";
 import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
@@ -100,7 +106,6 @@ import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog,
 import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
 import { base64ToBytes, isPreviewFile, shownDocument, type PreviewDoc } from "./preview/document";
-import { WorkingLine } from "./components/WorkingLine";
 import { WindowControls, hasWindowControls } from "./components/WindowControls";
 import { SIDEBAR_DEFAULT, SidebarResizer, clampSidebar } from "./components/SidebarResizer";
 import { saveLastMode } from "./components/ModeMenu";
@@ -365,10 +370,7 @@ export default function App() {
   const capsFallback = useRef(false); // An older daemon: the page asks for the skills and the MCP servers one at a time.
   const openCapabilitiesRef = useRef<(tab?: CapTab) => void>(() => {});
   // The tab of the Capabilities page. The page opens on the last tab.
-  const [capsTab, setCapsTabState] = useState<CapTab>(() => {
-    const saved = loadPref("capabilitiesTab", "skills");
-    return saved === "mcp" || saved === "connections" ? saved : "skills";
-  });
+  const [capsTab, setCapsTabState] = useState<CapTab>(() => toCapTab(loadPref("capabilitiesTab", "skills")));
   const setCapsTab = (tab: CapTab) => {
     setCapsTabState(tab);
     savePref("capabilitiesTab", tab);
@@ -440,10 +442,6 @@ export default function App() {
       setSettingsError(null);
       try {
         if (page === "general" || page === "connections") conn.send({ type: "user_settings.get" }); // Providers: the model by network.
-        if (page === "plugins") {
-          setPluginError(null);
-          conn.send({ type: "plugins.list" });
-        }
         if (page === "connections") {
           setProviderError(null);
           setProviderTest(null);
@@ -506,6 +504,8 @@ export default function App() {
 
 
   const [hfTokenSaved, setHfTokenSaved] = useState(false);
+  // The web search API keys in the keychain (Settings > General > Web).
+  const [webKeysSaved, setWebKeysSaved] = useState<Record<WebKeyProvider, boolean>>({ brave: false, tavily: false });
   // The MCP servers of the Capabilities page.
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
@@ -519,8 +519,8 @@ export default function App() {
   const [pluginError, setPluginError] = useState<string | null>(null);
   const [pluginBusy, setPluginBusy] = useState(false);
 
-  /** Opens the Plugins page of the Settings dialog. The message handler calls it too. */
-  const showPlugins = useCallback(() => openSettings("plugins"), [openSettings]);
+  /** Opens the Plugins tab of the Capabilities page. The message handler calls it too. */
+  const showPlugins = useCallback(() => openCapabilitiesRef.current("plugins"), []);
 
   /** Sends the keys from the keychain that the daemon does not have. */
   const syncProviderKeys = useCallback(
@@ -915,6 +915,15 @@ export default function App() {
           if (token) conn.send({ type: "hf.token", token });
         })
         .catch(() => setHfTokenSaved(false));
+      // The API keys of the web search providers, from the keychain.
+      for (const provider of WEB_KEY_PROVIDERS) {
+        void loadWebKey(connectionId, provider)
+          .then((key) => {
+            setWebKeysSaved((s) => ({ ...s, [provider]: !!key }));
+            if (key) conn.send({ type: "web.key", provider, key });
+          })
+          .catch(() => setWebKeysSaved((s) => ({ ...s, [provider]: false })));
+      }
     }
     const current = sessionRef.current;
     if (current) {
@@ -1387,6 +1396,23 @@ export default function App() {
     }
   };
 
+  /** Saves or removes a web search API key: the keychain of this computer, and the memory of the daemon. */
+  const saveWebKeyValue = async (provider: WebKeyProvider, key: string | null) => {
+    const connectionId = currentRef.current?.id ?? "local";
+    try {
+      if (key) await saveWebKey(connectionId, provider, key);
+      else await deleteWebKey(connectionId, provider);
+    } catch (e) {
+      dispatch({ type: "notice", level: "error", text: `The keychain failed: ${errorText(e)}` });
+    }
+    setWebKeysSaved((s) => ({ ...s, [provider]: !!key }));
+    try {
+      conn.send({ type: "web.key", provider, key });
+    } catch {
+      // The next connection sends the key.
+    }
+  };
+
   // The start screen shows the models of the connections that are on.
   useEffect(() => {
     if (screen !== "start" || status !== "open") return;
@@ -1468,6 +1494,32 @@ export default function App() {
       try {
         conn.send({ type: "permission.reply", request_id: requestId, decision });
         dispatch({ type: "decide", requestId, decision });
+      } catch (e) {
+        dispatch({ type: "notice", level: "error", text: errorText(e) });
+      }
+    },
+    [conn],
+  );
+
+  /** The answers of a question card. null: the user skipped. */
+  const answerQuestion = useCallback(
+    (requestId: string, answers: Record<string, string> | null) => {
+      try {
+        conn.send({ type: "question.reply", request_id: requestId, answers });
+        dispatch({ type: "answer", requestId, answers });
+      } catch (e) {
+        dispatch({ type: "notice", level: "error", text: errorText(e) });
+      }
+    },
+    [conn],
+  );
+
+  /** The decision on a plan card. An accepted plan also changes the mode: the daemon replies with "settings". */
+  const decidePlan = useCallback(
+    (requestId: string, decision: PlanDecision, mode?: PermissionMode, feedback?: string) => {
+      try {
+        conn.send({ type: "plan.reply", request_id: requestId, decision, mode, feedback });
+        dispatch({ type: "plan", requestId, decision, mode });
       } catch (e) {
         dispatch({ type: "notice", level: "error", text: errorText(e) });
       }
@@ -1740,8 +1792,11 @@ export default function App() {
     setMcpStatus(null);
     setCapsLive(session !== null);
     setCapsFolder(session?.cwd ?? folder);
+    setPluginError(null);
+    setSettingsPage(null);
     setScreen("capabilities");
     sendSafely({ type: "capabilities.list", ...(folder ? { cwd: folder } : {}) });
+    sendSafely({ type: "plugins.list" }); // The Plugins tab, and its count.
   };
   openCapabilitiesRef.current = openCapabilities;
 
@@ -2014,6 +2069,10 @@ export default function App() {
         running={chat.running}
         reviewId={paneVisible("diff") ? reviewId : null}
         onDecide={decide}
+        onAnswer={answerQuestion}
+        turn={chat.turn}
+        model={session?.model ?? ""}
+        onPlan={decidePlan}
         onReview={toggleReview}
         onSendNow={sendNow}
         onRemoveQueued={removeQueued}
@@ -2038,7 +2097,6 @@ export default function App() {
       />
       <div className="composer">
         <div className="column">
-          {chat.running && <WorkingLine turn={chat.turn} items={chat.items} model={session?.model ?? ""} />}
           <PromptBox
             draftKey={session?.id ?? null}
             running={chat.running}
@@ -2567,7 +2625,7 @@ export default function App() {
         <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">
           {/* With the sidebar hidden, the title bar has the switch only in the IDE view (the user asked for this). */}
           {!sidebarOpen && titleNav(view === "ide")}
-          <div className="topbar-title" title={session?.cwd}>
+          <div className="topbar-title">
             {screen === "chat" && session && (
               <>
                 <span className="topbar-name">
@@ -2690,6 +2748,29 @@ export default function App() {
             onBack={backToSkills}
             onRestart={restartMcp}
             onEditConfig={() => sendSafely({ type: "mcp.init" })}
+            plugins={plugins}
+            pluginsTab={
+              <PluginsScreen
+                status={plugins}
+                error={pluginError}
+                busy={pluginBusy}
+                onInstall={(source, replace) => {
+                  setPluginError(null);
+                  if (sendSafely({ type: "plugins.install", source, replace })) setPluginBusy(true);
+                }}
+                onRemove={(name) => {
+                  setPluginError(null);
+                  if (sendSafely({ type: "plugins.remove", name })) setPluginBusy(true);
+                }}
+                onSetBundle={(name, enabled) => sendSafely({ type: "plugins.set_bundle", name, enabled })}
+                onSetPlugin={(id, enabled) => sendSafely({ type: "plugins.set_plugin", id, enabled })}
+                onReload={() => {
+                  setPluginError(null);
+                  if (sendSafely({ type: "plugins.reload" })) setPluginBusy(true);
+                }}
+                onBrowse={(initial) => browseFolder(initial ?? hello?.home ?? "")}
+              />
+            }
           />
         )}
         {screen === "start" && (
@@ -2784,35 +2865,12 @@ export default function App() {
                 appVersion={appVersion}
                 daemonVersion={userSettingsInfo?.version ?? null}
                 error={settingsError}
+                webKeys={webKeysSaved}
+                onSaveWebKey={(provider, key) => void saveWebKeyValue(provider, key)}
                 onSet={(values) => {
                   setSettingsError(null);
                   sendSafely({ type: "user_settings.set", values });
                 }}
-              />
-            )}
-            {settingsPage === "plugins" && (
-              <PluginsScreen
-                embedded
-                status={plugins}
-                error={pluginError}
-                busy={pluginBusy}
-                hasSession={session !== null}
-                onInstall={(source, replace) => {
-                  setPluginError(null);
-                  if (sendSafely({ type: "plugins.install", source, replace })) setPluginBusy(true);
-                }}
-                onRemove={(name) => {
-                  setPluginError(null);
-                  if (sendSafely({ type: "plugins.remove", name })) setPluginBusy(true);
-                }}
-                onSetBundle={(name, enabled) => sendSafely({ type: "plugins.set_bundle", name, enabled })}
-                onSetPlugin={(id, enabled) => sendSafely({ type: "plugins.set_plugin", id, enabled })}
-                onReload={() => {
-                  setPluginError(null);
-                  if (sendSafely({ type: "plugins.reload" })) setPluginBusy(true);
-                }}
-                onBrowse={(initial) => browseFolder(initial ?? hello?.home ?? "")}
-                onReturn={() => setSettingsPage(null)}
               />
             )}
             {settingsPage === "models" && (

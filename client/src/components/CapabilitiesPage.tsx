@@ -1,7 +1,7 @@
-// The Capabilities page: the skills and the MCP servers in one list, as the "Customize" page of the
-// Claude app and the Skills and MCP pages of the Hermes dashboard show them. The "Capabilities" item
-// in the sidebar opens it. Each row shows the name, a short description, and the status. A skill row
-// opens the skill. An MCP row opens its tools, its target, and its error.
+// The Capabilities page: the skills, the MCP servers, and the plugins on tabs, as the "Customize" page
+// of the Claude app and the Skills and MCP pages of the Hermes dashboard show them. The "Capabilities"
+// item in the sidebar opens it. Each row shows the name, a short description, and the status. A skill
+// row opens the skill. An MCP row opens its tools, its target, and its error.
 
 import { memo, useMemo, useState } from "react";
 import {
@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { SlashIcon } from "./SlashIcon";
 import { Markdown } from "./Markdown";
-import type { CommandItem, McpServerItem, McpState, McpStatus, SkillDetail } from "../daemon/protocol";
+import type { CommandItem, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
 
 export type CapabilityStatus = "connected" | "connecting" | "failed" | "disabled" | "stopped" | "enabled" | "command" | "model";
 
@@ -65,6 +65,7 @@ export function mcpSummary(item: McpServerItem): string {
 const CAP_TABS: [CapTab, string][] = [
   ["skills", "Skills"],
   ["mcp", "MCP servers"],
+  ["plugins", "Plugins"],
   ["connections", "Connections"],
 ];
 
@@ -252,7 +253,12 @@ function McpRow({ item, live, busy, onRestart }: { item: McpServerItem; live: bo
 }
 
 /** The tabs of the page. Connections is a placeholder: the user adds it later. */
-export type CapTab = "skills" | "mcp" | "connections";
+export type CapTab = "skills" | "mcp" | "plugins" | "connections";
+
+/** The saved tab, or "skills" for an unknown value. */
+export function toCapTab(value: string): CapTab {
+  return value === "mcp" || value === "plugins" || value === "connections" ? value : "skills";
+}
 
 export const CapabilitiesPage = memo(function CapabilitiesPage({
   tab,
@@ -263,6 +269,8 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   skillDetail,
   mcp,
   mcpBusy,
+  plugins,
+  pluginsTab,
   onOpenSkill,
   onBack,
   onRestart,
@@ -276,6 +284,8 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   skillDetail: SkillDetail | null | "loading";
   mcp: McpStatus | null;
   mcpBusy: boolean;
+  plugins: PluginsStatus | null; // For the count and the red dot of the tab.
+  pluginsTab: React.ReactNode; // The content of the Plugins tab (PluginsScreen).
   onOpenSkill: (name: string) => void;
   onBack: () => void;
   onRestart: (name?: string) => void;
@@ -289,6 +299,8 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   );
   const connected = mcp?.items.filter((i) => i.state === "connected").length ?? 0;
   const failed = mcp?.items.filter((i) => i.state === "failed").length ?? 0;
+  const pluginsFailed =
+    plugins?.bundles.filter((b) => b.problem || b.rows.some((r) => r.state === "failed")).length ?? 0;
   const folderName = folder?.split(/[\\/]/).filter(Boolean).pop() ?? null;
   const filtering = query.trim() !== "";
 
@@ -304,7 +316,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   } else {
     body = (
       <>
-        {tab !== "connections" && (
+        {(tab === "skills" || tab === "mcp") && (
           <div className="skills-search cap-search">
             <Search size={14} aria-hidden />
             <label htmlFor="capabilities-filter" className="sr-only">
@@ -412,6 +424,8 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
         </section>
         )}
 
+        {tab === "plugins" && pluginsTab}
+
         {tab === "connections" && (
           <section className="cap-section" aria-labelledby="cap-connections">
             <SectionHead id="cap-connections" title="Connections" />
@@ -432,10 +446,10 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
           <p className="help">
             {folderName ? (
               <>
-                The skills and the MCP servers {live ? "of this session" : "for new sessions"} in <span title={folder ?? undefined}>{folderName}</span>.
+                The skills, MCP servers, and plugins {live ? "of this session" : "for new sessions"} in <span title={folder ?? undefined}>{folderName}</span>.
               </>
             ) : (
-              "Your skills and MCP servers. Open a project to see its skills and servers too."
+              "Your skills, MCP servers, and plugins. Open a project to see its skills and servers too."
             )}
           </p>
         </header>
@@ -456,6 +470,8 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
                 {id === "skills" && skills && skills.length > 0 && <span className="cap-tab-count">{skills.length}</span>}
                 {id === "mcp" && mcp && mcp.items.length > 0 && <span className="cap-tab-count">{mcp.items.length}</span>}
                 {id === "mcp" && failed > 0 && <span className="cap-tab-dot" role="img" aria-label={`${failed} failed`} />}
+                {id === "plugins" && plugins && plugins.bundles.length > 0 && <span className="cap-tab-count">{plugins.bundles.length}</span>}
+                {id === "plugins" && pluginsFailed > 0 && <span className="cap-tab-dot" role="img" aria-label={`${pluginsFailed} failed`} />}
               </button>
             ))}
           </div>

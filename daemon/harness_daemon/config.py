@@ -31,6 +31,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "prompt_suggestions": True,  # After a turn, the model suggests the next prompt (suggestions.py).
     "subagents": True,  # The agent tool: the agent can start subagents, also several at once in the background.
     # The agent instructions of the user (Settings > General). The system prompt includes them (prompt.py).
+    "auto_memory": True,  # The agent keeps notes between sessions (memory.py).
+    "web_search": "duckduckgo",  # The search provider of web_search (web.py): duckduckgo, brave, tavily, searxng, or off.
+    "web_search_url": None,  # The URL of a SearXNG server, for "searxng".
     "instructions_thinking": None,
     "instructions_research": None,
     "instructions_speaking": None,

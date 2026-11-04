@@ -112,7 +112,7 @@ export function SessionRail({
   const shownTasks = railTasks(tasks);
   // The time of a wakeup counts down.
   const [now, setNow] = useState(() => Date.now());
-  const waiting = tasks.some((t) => t.kind === "wakeup" && t.status === "running");
+  const waiting = tasks.some((t) => (t.kind === "wakeup" || t.kind === "cron") && t.status === "running");
   useEffect(() => {
     if (!waiting) return;
     setNow(Date.now());

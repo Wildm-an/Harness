@@ -25,6 +25,13 @@ class ToolContext:
     preview: Any = None
     # The background tasks of the session (tasks.py). None outside a session, for example in a subagent.
     tasks: Any = None
+    # The model of the session accepts images. A tool can then give an image to the model.
+    image_input: bool = False
+    # Ask the user and wait for the reply: a question card or a plan card (tools/interact.py).
+    # None in a subagent: it has no user to ask.
+    ask: Any = None
+    # Change the permission mode of the session, for example after the user accepts a plan.
+    set_mode: Any = None
 
     def resolve(self, path: Any, read_only: bool = False) -> Path:
         try:
@@ -41,6 +48,7 @@ class ToolResult:
     changed_paths: list[Path] = field(default_factory=list)
     diff: str | None = None  # A unified diff of a file change, for the client.
     image: str | None = None  # A data URL of an image for the model, for example a screenshot.
+    stop_turn: bool = False  # The turn stops after this result, for example when the user rejects a plan.
 
 
 @dataclass

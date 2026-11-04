@@ -45,6 +45,11 @@ from .tools import (
     preview_tools,
     truncate,
 )
+from .tools.interact import AskUserQuestionTool, ExitPlanModeTool
+from .agents import DEFAULT_TYPE as DEFAULT_AGENT_TYPE, AgentType, discover_agents
+from .hooks import CommandHooks, HookOutcome
+from .memory import MemoryStore
+from .tools.memory import MemoryTool
 
 log = logging.getLogger("harness.agent")
 
@@ -108,6 +113,10 @@ class Agent:
         # True: the user talks to this agent, so its prompt has the agent instructions of the user.
         # A subagent gets False: the agent that made it tells it how to act.
         self.user_facing = user_facing
+        self.role_prompt: str | None = None  # A subagent: the prompt of its agent type (agents.py).
+        self.command_hooks: CommandHooks | None = None  # The hooks of the settings files (hooks.py).
+        # The auto memory of the project (memory.py). Only the agent that the user talks to has it.
+        self.memory: MemoryStore | None = None
         self.client = client
         self.image_input = image_input  # The model accepts images, for example screenshots.
         self.emit = emit
@@ -116,11 +125,25 @@ class Agent:
         if read_roots is None:
             read_roots = tuple(s.dir for s in self.skills.values())
         self.ctx = ToolContext(cwd=self.cwd, settings=self.settings, shell=detect_shell(self.settings.get("shell")),
-                               read_roots=read_roots)
+                               read_roots=read_roots, image_input=image_input)
+        self.command_hooks = CommandHooks(self.cwd, self.ctx.shell)
         tool_list = list(tools if tools is not None else default_tools())
         if any(s.model_invocable for s in self.skills.values()):
             tool_list.append(SkillTool(self.skills, self._activate_skill, self.run_fork))
         self.tools = {t.name: t for t in tool_list}
+        # The web_search tool, also while the "web_search" setting is "off" and the agent does not have it.
+        self._web_search = self.tools.get("web_search")
+        self._sync_web_search()
+        # The agent that the user talks to can ask questions, and can give a plan for approval in plan mode.
+        self.on_mode: Callable[[str], Awaitable[None]] | None = None  # The session saves a new mode.
+        if self.user_facing:
+            self.tools[AskUserQuestionTool.name] = AskUserQuestionTool()
+            self.ctx.ask = self._ask_user
+            self.ctx.set_mode = self._set_mode
+        self._sync_plan_tool()
+        if self.user_facing:
+            self.memory = MemoryStore(self.cwd)
+        self._sync_memory_tool()
         self.plugins: PluginHost | None = None
         self.hooks = Hooks()
         self._plugin_tools: list[str] = []  # The names of the plugin tools in self.tools.
@@ -160,6 +183,11 @@ class Agent:
             self._plugin_sections(), user_facing=self.user_facing)
         if self.settings.get("permission_mode") == "plan":
             self.system_prompt += PLAN_MODE_NOTE
+        if self.role_prompt:
+            self.system_prompt += "\n\n" + self.role_prompt  # The prompt of the agent type of a subagent.
+        memory = self._memory_prompt()
+        if memory:
+            self.system_prompt += "\n\n" + memory
         self._known_tokens = None
 
     def set_client(self, client: ModelClient, context_length: int | None = None,
@@ -170,6 +198,7 @@ class Agent:
             self.context_source = context_source or "default"
         if image_input is not None:
             self.image_input = image_input
+            self.ctx.image_input = image_input
             self._sync_preview_tools()
         self._rebuild_prompt()
 
@@ -190,6 +219,52 @@ class Agent:
         if self.user_facing and self.ctx.tasks is not None and self.settings.get("subagents", True) is not False:
             self.tools[AgentTool.name] = AgentTool(self.run_subagent)
         self._known_tokens = None  # The tool schemas are part of the request size.
+
+    def _memory_on(self) -> bool:
+        return self.memory is not None and self.settings.get("auto_memory", True) is not False
+
+    def _memory_prompt(self) -> str | None:
+        if not self._memory_on():
+            return None
+        assert self.memory is not None
+        return self.memory.prompt()
+
+    def _sync_memory_tool(self) -> None:
+        """The setting "auto_memory" off removes the memory tool and the memory part of the prompt."""
+        self.tools.pop(MemoryTool.name, None)
+        if self._memory_on():
+            assert self.memory is not None
+            self.tools[MemoryTool.name] = MemoryTool(self.memory)
+        self._known_tokens = None
+
+    def _sync_plan_tool(self) -> None:
+        """exit_plan_mode is only in plan mode, and only for the agent that the user talks to."""
+        self.tools.pop(ExitPlanModeTool.name, None)
+        if self.user_facing and self.settings.get("permission_mode") == "plan":
+            self.tools[ExitPlanModeTool.name] = ExitPlanModeTool()
+        self._known_tokens = None
+
+    async def _ask_user(self, request: dict[str, Any]) -> Any:
+        """A question card or a plan card. The reply is a dict, or a text if the turn stopped."""
+        return await self.gate.approver(request)
+
+    async def _set_mode(self, mode: str) -> None:
+        """The user accepted a plan in this mode. The session saves it and tells the client."""
+        if self.on_mode is not None:
+            await self.on_mode(mode)
+        else:
+            self.settings["permission_mode"] = mode
+            self._sync_plan_tool()
+            self._rebuild_prompt()
+
+    def _sync_web_search(self) -> None:
+        """The "web_search" setting "off" removes the web_search tool."""
+        if self._web_search is None:
+            return
+        self.tools.pop(self._web_search.name, None)
+        if self.settings.get("web_search") != "off":
+            self.tools[self._web_search.name] = self._web_search
+        self._known_tokens = None
 
     def enable_preview(self, host: Any) -> None:
         """Add the preview tools. ``host`` is the preview host of the session (preview.py)."""
@@ -245,6 +320,9 @@ class Agent:
         self.settings.clear()
         self.settings.update(settings)
         self._sync_agent_tool()
+        self._sync_web_search()
+        self._sync_plan_tool()
+        self._sync_memory_tool()
         self._rebuild_prompt()
 
     def clear(self) -> None:
@@ -276,6 +354,9 @@ class Agent:
             sizes[kind] += text_tokens(text)
         if self.settings.get("permission_mode") == "plan":
             sizes["system"] += text_tokens(PLAN_MODE_NOTE)
+        memory = self._memory_prompt()
+        if memory:
+            sizes["instructions"] += text_tokens(memory)
         schemas = self.tool_schemas()
         mcp = [s for name, s in zip(self.tools, schemas) if name.startswith("mcp__")]
         plugin = [s for name, s in zip(self.tools, schemas) if name in self._plugin_tools]
@@ -393,6 +474,15 @@ class Agent:
         Stop reasons: ``end``, ``max_tool_calls``, ``denied``, ``interrupted``, ``error``.
         """
         text = (await self.hooks.emit("turn.start", TurnEvent(text, self.cwd))).text
+        if self.user_facing and origin != "task" and self.command_hooks is not None:
+            hooked = await self._prompt_hooks(text)
+            if hooked is None:
+                usage0 = {"prompt_tokens": 0, "completion_tokens": 0, "last_prompt_tokens": 0}
+                await self.emit({"type": "turn.end", "usage": self._usage(usage0), "stop_reason": "blocked"})
+                return "blocked"
+            if hooked != text:
+                display = display or text
+                text = hooked
         message = user_message(text, display, message_id, origin)
         if images:
             message["images"] = list(images)
@@ -403,6 +493,7 @@ class Agent:
         turn = self.turn_number
         step = 0
         continuations = 0
+        stop_hooks = 0  # The times that a Stop hook made the turn continue.
         new_messages = [message]  # The new user messages of the next step, for step.before.
         self.in_turn = True
         self._cancel_turn = False
@@ -469,6 +560,16 @@ class Agent:
                             continuations += 1
                             new_messages = [self._add_steered(t) for t in stopping.steered]
                             continue
+                    # A Stop hook of the settings can make the agent continue.
+                    if (self.user_facing and self.command_hooks is not None and stop_hooks < MAX_STEER_CONTINUATIONS
+                            and self.command_hooks.has("Stop")):
+                        outcome = await self.command_hooks.run("Stop", {"stop_hook_active": stop_hooks > 0,
+                                                                        "permission_mode": self._mode()})
+                        await self._hook_errors(outcome)
+                        if outcome.blocked:
+                            stop_hooks += 1
+                            new_messages = [self._add_steered(f"A Stop hook asks you to continue: {outcome.blocked}")]
+                            continue
                     break
 
                 open_calls = list(response.tool_calls)
@@ -488,7 +589,7 @@ class Agent:
                     in_flight = None
                     self._add_tool_result(call["id"], result.output, result.is_error, result.diff, result.image)
                     open_calls.pop(0)
-                    if result is _DENIED_RESULT:
+                    if result is _DENIED_RESULT or result.stop_turn:
                         stop = "denied"
                         self._close_open_calls(open_calls, SKIPPED_AFTER_DENY)
                         break
@@ -522,6 +623,53 @@ class Agent:
         await self.hooks.emit("turn.end", TurnEvent(text, self.cwd, stop))
         await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
         return stop
+
+    # -- the hooks of the settings files (hooks.py) ----------------------------------------------------
+
+    def _mode(self) -> str:
+        return str(self.settings.get("permission_mode") or "default")
+
+    async def _hook_errors(self, outcome: HookOutcome) -> None:
+        for error in outcome.errors:
+            await self.emit({"type": "notice", "level": "warning", "text": error})
+
+    async def _prompt_hooks(self, text: str) -> str | None:
+        """SessionStart (before the first prompt) and UserPromptSubmit. None: a hook blocked the prompt."""
+        hooks = self.command_hooks
+        assert hooks is not None
+        context: list[str] = []
+        if not any(m.get("role") == "user" for m in self.history) and hooks.has("SessionStart"):
+            start = await hooks.run("SessionStart", {"source": "startup", "permission_mode": self._mode()})
+            await self._hook_errors(start)
+            context += start.context
+        if hooks.has("UserPromptSubmit"):
+            submit = await hooks.run("UserPromptSubmit", {"prompt": text, "permission_mode": self._mode()})
+            await self._hook_errors(submit)
+            if submit.blocked:
+                await self.emit({"type": "error", "message": f"A UserPromptSubmit hook blocked the prompt: {submit.blocked}"})
+                return None
+            context += submit.context
+        if not context:
+            return text
+        return text + "\n\n" + "\n\n".join(f"<hook-context>\n{c}\n</hook-context>" for c in context)
+
+    async def _tool_hooks(self, event: str, name: str, args: dict[str, Any],
+                          result: ToolResult | None = None) -> HookOutcome | None:
+        hooks = self.command_hooks
+        if hooks is None or not hooks.has(event):
+            return None
+        tool_input = dict(args)
+        if isinstance(args.get("path"), str):
+            try:
+                tool_input.setdefault("file_path", str(self.ctx.resolve(args["path"], read_only=True)))
+            except ToolError:
+                pass
+        payload: dict[str, Any] = {"tool_input": tool_input, "permission_mode": self._mode()}
+        if result is not None:
+            payload["tool_response"] = {"output": result.output, "is_error": result.is_error}
+        outcome = await hooks.run(event, payload, name)
+        await self._hook_errors(outcome)
+        return outcome
 
     # -- plugin events of the loop ----------------------------------------------------------------
 
@@ -649,10 +797,20 @@ class Agent:
         text = f"{lead} Follow the skill instructions.\n\n{render_skill(skill, args, self.cwd)}"
         return await self.run_turn(text, display=display, allow=skill.allowed_tools)
 
-    def _subagent(self, emit: Emit, allow: list[str], approver: Approver | None = None) -> "Agent":
-        """A subagent with a new context, the tools of this agent, and no agent tool of its own."""
+    def _subagent(self, emit: Emit, allow: list[str], approver: Approver | None = None,
+                  kind: AgentType | None = None) -> "Agent":
+        """A subagent with a new context, the tools of this agent, and no agent tool of its own.
+
+        ``kind``: the agent type (agents.py). It gives the prompt, the tools, and the model of the subagent.
+        """
+        client = self.client
+        if kind is not None and kind.model:
+            try:
+                client = ModelClient(*resolve_model(kind.model))
+            except ConfigError as e:
+                raise ModelError(f"The agent type {kind.name} uses the model {kind.model}: {e}") from None
         sub = Agent(
-            cwd=self.cwd, client=self.client, emit=emit, approver=approver or self.gate.approver,
+            cwd=self.cwd, client=client, emit=emit, approver=approver or self.gate.approver,
             settings=self.settings, context_length=self.context_length,
             session_allow=allow, read_roots=self.ctx.read_roots,
             image_input=self.image_input, plugins=self.plugins, user_facing=False,
@@ -662,6 +820,12 @@ class Agent:
         sub.set_mcp_tools(self.mcp_tools())
         # Auto mode checks the calls of the subagent with the messages of the user in this session.
         sub.gate.auto = self.gate.auto
+        if kind is not None:
+            for name in [n for n in sub.tools if not kind.allows(n)]:
+                del sub.tools[name]
+            if kind.prompt:
+                sub.role_prompt = kind.prompt
+                sub._rebuild_prompt()
         return sub
 
     @staticmethod
@@ -687,16 +851,21 @@ class Agent:
             raise ModelError(f"The skill {skill.name} failed in its subagent.")
         return report or f"The skill {skill.name} ended with no report (stop reason: {stop})."
 
-    async def run_subagent(self, prompt: str, description: str, background: bool) -> str:
+    async def run_subagent(self, prompt: str, description: str, background: bool,
+                           agent_type: str = DEFAULT_AGENT_TYPE) -> str:
         """The agent tool: run a task in a subagent with a new context.
 
         In the foreground, return its report. In the background, start a task (tasks.py) and return
         at once: the report comes to this agent as a note when the subagent ends.
         """
         label = description.strip() or "subagent"
+        types = discover_agents(self.cwd)
+        kind = types.get(agent_type) or next((t for n, t in types.items() if n.lower() == agent_type.lower()), None)
+        if kind is None:
+            raise ModelError(f"Unknown agent type: {agent_type}. The types are: {', '.join(types)}.")
         text = f"{prompt.strip()}\n\n{FORK_REPORT_REQUEST}"
         if not background:
-            sub = self._subagent(self._forward(label), [])
+            sub = self._subagent(self._forward(label), [], kind=kind)
             stop = await sub.run_turn(text)
             if stop == "interrupted":
                 raise asyncio.CancelledError()
@@ -721,7 +890,7 @@ class Agent:
                 # The card stays open after the turn of the main agent ends.
                 return await self.gate.approver({**request, "agent": label, "background": True})
 
-            sub = self._subagent(log, [], approve)
+            sub = self._subagent(log, [], approve, kind)
             stop = await sub.run_turn(text)
             report = self._report(sub) or f"(no report, stop reason: {stop})"
             task.result = report
@@ -864,17 +1033,29 @@ class Agent:
             call = await self.hooks.emit("tool.after", call)
             return call.result if isinstance(call.result, ToolResult) else ToolResult(str(call.result))
         args = call.args
+        ran = False
         try:
             tool.validate(args)
             approval = await tool.prepare(args, self.ctx)
-            allowed = await self.gate.check(tool, args, approval, force=call.asked)
-            if isinstance(allowed, str):  # The permission mode blocked the action. The turn continues.
-                return ToolResult(allowed, is_error=True)
-            if not allowed:
-                return _DENIED_RESULT
-            if name in FILE_TOOLS:
-                self._checkpoint(args)
-            call.result = await tool.run(args, self.ctx)
+            pre = await self._tool_hooks("PreToolUse", name, args)
+            if pre is not None and pre.blocked:
+                call.result = ToolResult(f"A PreToolUse hook blocked this tool call: {pre.blocked}", is_error=True)
+            else:
+                if pre is not None and pre.decision == "allow" and call.asked is None:
+                    # The hook allows the call with no question. A deny rule still denies it.
+                    allowed: bool | str = not (approval is not None and self.gate.rules.denies(
+                        approval.tool or tool.name, approval.key))
+                else:
+                    asked = call.asked or ("A PreToolUse hook asks for approval." if pre is not None and pre.decision == "ask" else None)
+                    allowed = await self.gate.check(tool, args, approval, force=asked)
+                if isinstance(allowed, str):  # The permission mode blocked the action. The turn continues.
+                    return ToolResult(allowed, is_error=True)
+                if not allowed:
+                    return _DENIED_RESULT
+                if name in FILE_TOOLS:
+                    self._checkpoint(args)
+                call.result = await tool.run(args, self.ctx)
+                ran = True
         except ToolError as e:
             call.result = ToolResult(str(e), is_error=True)
         except OSError as e:
@@ -882,6 +1063,12 @@ class Agent:
         except Exception as e:  # noqa: BLE001 - a tool bug gives an error result. The turn continues.
             log.exception("The tool %s failed", name)
             call.result = ToolResult(f"The tool failed: {type(e).__name__}: {e}", is_error=True)
+        if ran and isinstance(call.result, ToolResult):
+            post = await self._tool_hooks("PostToolUse", name, args, call.result)
+            if post is not None:
+                if post.blocked:
+                    call.result.output += f"\n\n[A PostToolUse hook says: {post.blocked}]"
+                call.contexts.extend(post.context)
         call = await self.hooks.emit("tool.after", call)
         self._step_contexts.extend(call.contexts)
         return call.result if isinstance(call.result, ToolResult) else ToolResult(str(call.result))
@@ -912,8 +1099,10 @@ def user_message(text: str, display: str | None, message_id: str | None,
 
 PLAN_MODE_NOTE = """
 
-Plan mode is on. Do not change files. Read and search the project, then give the user a plan:
-the steps, and the files that each step changes. Then stop. The user changes the mode to start the work."""
+Plan mode is on. Do not change files. Read and search the project, and ask the user with
+ask_user_question if a choice is not clear. Then call exit_plan_mode with the plan: the steps, and
+the files that each step changes. The user accepts the plan (then you start the work), asks for
+changes, or rejects it."""
 
 
 def _parse_arguments(raw: str) -> tuple[dict[str, Any] | None, str | None]:

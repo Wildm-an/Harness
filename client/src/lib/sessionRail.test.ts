@@ -121,5 +121,7 @@ describe("the background tasks of the rail", () => {
     const wakeup = { ...task("c", "running", 1), kind: "wakeup" as const, wake_at: 1000 };
     expect(taskDetailText(wakeup, 760_000)).toBe("Wakeup · in 4 min");
     expect(taskDetailText(wakeup, 970_000)).toBe("Wakeup · in 30s");
+    const cron = { ...task("d", "running", 1), kind: "cron" as const, wake_at: 1000 };
+    expect(taskDetailText(cron, 760_000)).toBe("Scheduled · in 4 min");
   });
 });

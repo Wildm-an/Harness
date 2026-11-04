@@ -36,7 +36,22 @@ export interface PermissionRequest {
   reason?: string | null; // Why a plugin asks for approval.
   agent?: string; // A background subagent asks. Its card stays open after the turn ends.
   background?: boolean;
+  // A request that is not a permission (daemon tools/interact.py): a question card or a plan card.
+  kind?: "question" | "plan";
+  questions?: AskQuestion[];
+  plan?: string; // Markdown.
 }
+
+/** A question of ask_user_question: 2 to 4 options. */
+export interface AskQuestion {
+  question: string;
+  header: string;
+  options: { label: string; description: string }[];
+  multiSelect: boolean;
+}
+
+/** The decision on a plan card. "accept" also sets the permission mode. */
+export type PlanDecision = "accept" | "revise" | "reject";
 
 /** A session with a running turn. waiting: the turn waits for a permission decision. */
 export interface RunningSession {
@@ -119,6 +134,7 @@ export interface UserSettings {
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
   subagents?: boolean; // false: the agent cannot start subagents (the agent tool).
+  auto_memory?: boolean; // false: no memory tool and no memory in the prompt (daemon memory.py).
   // The model by network (Settings > Providers): on, a new session uses online_model, or offline_model with no connection.
   auto_model?: boolean;
   online_model?: string | null;
@@ -128,10 +144,15 @@ export interface UserSettings {
   instructions_research?: string | null;
   instructions_speaking?: string | null;
   instructions_other?: string | null;
+  // The search provider of the web_search tool (daemon web.py). "off": the agent has no web_search tool.
+  web_search?: WebSearchProvider;
+  web_search_url?: string | null; // The SearXNG server.
 }
 
+export type WebSearchProvider = "duckduckgo" | "brave" | "tavily" | "searxng" | "off";
+
 /** A background task: a command that the agent runs with bash and run_in_background. */
-export type TaskKind = "shell" | "monitor" | "agent" | "wakeup";
+export type TaskKind = "shell" | "monitor" | "agent" | "wakeup" | "cron"; // cron: a scheduled prompt (cron_create).
 
 export interface TaskItem {
   id: string;
@@ -142,7 +163,9 @@ export interface TaskItem {
   started_at: number; // Epoch seconds.
   ended_at: number | null;
   returncode: number | null;
-  wake_at?: number | null; // wakeup: the time of the end (epoch seconds).
+  wake_at?: number | null; // wakeup: the time of the end. cron: the next time. Epoch seconds.
+  schedule?: string | null; // cron: the cron expression.
+  recurring?: boolean; // cron: it fires more than one time.
 }
 
 export interface TaskDetail extends TaskItem {
@@ -516,6 +539,9 @@ export type ClientMessage =
   | { type: "session.fork"; id: string }
   | { type: "command"; name: string; args: string }
   | { type: "permission.reply"; request_id: string; decision: Decision }
+  // The answers of a question card, by question text. null: the user skipped the questions.
+  | { type: "question.reply"; request_id: string; answers: Record<string, string> | null }
+  | { type: "plan.reply"; request_id: string; decision: PlanDecision; mode?: PermissionMode; feedback?: string }
   | { type: "interrupt" }
   | { type: "ping" } // The reply is "pong". The client checks that the connection is alive.
   // Install the wheel of the daemon of the app (base64), then restart. Only for a remote daemon.
@@ -567,6 +593,7 @@ export type ClientMessage =
   | { type: "cookbook.ssh_key" }
   | { type: "cookbook.hardware"; host: string; refresh?: boolean }
   | { type: "hf.token"; token: string | null }
+  | { type: "web.key"; provider: "brave" | "tavily"; key: string | null }
   | { type: "hf.search"; query: string; filters: HfSearchFilters; sort: string; page: number; host: string }
   | { type: "hf.model"; repo_id: string; host: string }
   | { type: "hf.download"; repo_id: string; files: string[]; host: string }
@@ -680,6 +707,7 @@ export type DaemonMessage =
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }
   | { type: "hardware"; host: string; info: HardwareInfo }
   | { type: "hf.token"; set: boolean }
+  | { type: "web.key"; provider: "brave" | "tavily"; set: boolean }
   | { type: "hf.results"; items: HfItem[]; page: number; has_more: boolean; query: string; hardware: boolean }
   | ({ type: "hf.detail" } & HfDetail)
   | { type: "downloads"; items: DownloadItem[] }

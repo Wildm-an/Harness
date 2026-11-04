@@ -108,7 +108,7 @@ describe("chatReducer", () => {
     s = chatReducer(s, { type: "daemon", msg: { type: "notice", level: "info", text: "A plugin added a message: more" } });
     expect(s.items.at(-1)).toMatchObject({ kind: "notice", level: "info", text: "A plugin added a message: more" });
     s = chatReducer(s, { type: "daemon", msg: { type: "turn.end", usage, stop_reason: "blocked" } });
-    expect(s.items.at(-1)).toMatchObject({ kind: "notice", text: "A plugin ended the turn." });
+    expect(s.items.at(-1)).toMatchObject({ kind: "notice", text: "A plugin or a hook ended the turn." });
   });
 
   it("stops the turn on disconnect", () => {

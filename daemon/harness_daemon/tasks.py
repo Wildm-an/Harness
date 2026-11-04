@@ -9,6 +9,8 @@ The kinds of task:
 - ``agent``: a subagent that the agent starts with the ``agent`` tool and ``run_in_background``.
 - ``wakeup``: a timer that the agent starts with ``schedule_wakeup``. At the end, its prompt goes to
   the agent.
+- ``cron``: a scheduled prompt that the agent starts with ``cron_create``. At each time of its cron
+  expression, its prompt goes to the agent. A recurring one ends after 7 days.
 
 The agent reads the output with ``task_output`` and stops a task with ``task_stop``. The client shows
 the tasks in the Background tasks pane and in the session rail. When a task ends (or a monitor writes
@@ -37,7 +39,7 @@ STOP_WAIT = 5  # Seconds: after the kill, the time for the shell to end.
 MAX_NOTE_CHARS = 4000  # The output of a monitor in one note. The start of a long output goes away.
 MAX_REPORT_CHARS = 20_000  # The report of a background subagent in its note.
 
-TASK_KINDS = ("shell", "monitor", "agent", "wakeup")
+TASK_KINDS = ("shell", "monitor", "agent", "wakeup", "cron")
 
 OnChange = Callable[[], None]
 # The work of an "agent" or a "wakeup" task. It returns the exit code (0: done) and can add output.
@@ -61,7 +63,10 @@ class BackgroundTask:
     returncode: int | None = None
     stopped: bool = False  # The user or the agent stopped it.
     timed_out: bool = False  # A monitor that ran for its full time.
-    wake_at: float | None = None  # wakeup: the time of the end (epoch seconds).
+    wake_at: float | None = None  # wakeup: the time of the end. cron: the next time. Epoch seconds.
+    schedule: str = ""  # cron: the cron expression.
+    recurring: bool = False  # cron: it fires more than one time.
+    fires: list[str] = field(default_factory=list)  # cron: the times that fired, with no note yet.
     output: str = ""
     result: str = ""  # agent: the report.
     dropped: int = 0  # Characters of output that went away (the start of a long output).
@@ -123,7 +128,8 @@ class BackgroundTask:
     def summary(self) -> dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "command": self.command, "description": self.description,
                 "status": self.status, "started_at": self.started_at, "ended_at": self.ended_at,
-                "returncode": self.returncode, "wake_at": self.wake_at}
+                "returncode": self.returncode, "wake_at": self.wake_at,
+                "schedule": self.schedule or None, "recurring": self.recurring}
 
 
 class TaskHost:
@@ -286,6 +292,10 @@ class TaskHost:
         """
         notes: list[tuple[str, str]] = []
         for task in list(self.tasks.values()):
+            if task.kind == "cron" and task.fires:
+                when, task.fires = task.fires[-1], []
+                notes.append((f"The scheduled task {task.id} ({task.label}) is due ({when}, cron "
+                              f"'{task.schedule}'). Its prompt:\n{task.command}", f"Scheduled task: {task.label}"))
             if task.kind == "monitor":
                 lines = task.take_new_lines().rstrip("\n")
                 if lines.strip():
@@ -302,6 +312,12 @@ class TaskHost:
     def _end_note(self, task: BackgroundTask) -> tuple[str, str] | None:
         how = ("was stopped" if task.stopped else "ran for its full time and was stopped" if task.timed_out
                else f"ended with exit code {task.returncode}")
+        if task.kind == "cron":
+            # A one-time task gave its prompt when it fired. A recurring task that ran 7 days ends.
+            if task.stopped or not task.recurring or task.returncode != 0:
+                return None
+            return (f"The recurring task {task.id} ({task.label}) ended after 7 days. Make it again with "
+                    "cron_create if the user still wants it.", f"Scheduled task ended: {task.label}")
         if task.kind == "wakeup":
             if task.stopped:
                 return None
@@ -339,6 +355,12 @@ class TaskHost:
     def _notify(self) -> None:
         if self.on_notify is not None:
             self.on_notify()
+
+    def fire(self, task: BackgroundTask, when: str) -> None:
+        """A cron task is due: its prompt goes to the agent as a note."""
+        task.fires.append(when)
+        self._notify()
+        self._changed()
 
     def _ended(self) -> None:
         self._notify()  # First: the session stays open for the note.

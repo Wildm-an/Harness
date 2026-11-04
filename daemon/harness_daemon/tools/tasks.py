@@ -16,7 +16,8 @@ WAKEUP_MIN = 60  # Seconds.
 WAKEUP_MAX = 3600
 
 # Runs a subagent: (prompt, description, background). Returns the report, or the task id in the background.
-RunSubagent = Callable[[str, str, bool], Awaitable[str]]
+# (prompt, description, background, agent type) -> the report, or the task id in the background.
+RunSubagent = Callable[[str, str, bool, str], Awaitable[str]]
 
 
 def _host(ctx: ToolContext) -> Any:
@@ -180,6 +181,120 @@ class ScheduleWakeupTool(Tool):
         return ToolResult(f"The wakeup {task.id} is set for {delay} seconds from now. Stop it with task_stop.")
 
 
+CRON_MAX_AGE = 7 * 24 * 3600  # A recurring task ends after 7 days, as in Claude Code.
+
+
+class CronCreateTool(Tool):
+    name = "cron_create"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "cron": {"type": "string", "description": "5 fields in local time: minute hour day-of-month month "
+                                                      "day-of-week, for example '*/10 * * * *' or '0 9 * * 1-5'."},
+            "prompt": {"type": "string", "description": "The message that you get at each time."},
+            "recurring": {"type": "boolean", "description": "True (default): at each time, for 7 days. False: one time only."},
+            "description": {"type": "string", "description": "The task in 3 to 8 words, for the user."},
+        },
+        "required": ["cron", "prompt"],
+    }
+
+    def describe(self, ctx: ToolContext) -> str:
+        return ("Schedule a prompt with a cron expression: at each time, you get the prompt as a notification, "
+                "in the running turn or in a new turn. Use it when the user asks for work at set times, for "
+                "example \"check the deploy every 10 minutes\" or \"run the report at 9:00 on weekdays\". A "
+                "recurring task ends after 7 days. Use schedule_wakeup for one check after a delay. The tasks "
+                "stay only while the session is open. List them with cron_list and stop one with cron_delete.")
+
+    async def prepare(self, args: dict[str, Any], ctx: ToolContext) -> None:
+        from ..cron import CronError, parse_cron
+
+        try:
+            parse_cron(str(args.get("cron") or ""))
+        except CronError as e:
+            raise ToolError(str(e)) from None
+        _text(args, "prompt")
+        return None
+
+    async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        import datetime as dt
+
+        from ..cron import parse_cron
+        from ..tasks import TaskError
+
+        cron = parse_cron(str(args.get("cron")))
+        prompt = _text(args, "prompt")
+        recurring = args.get("recurring") is not False
+        description = str(args.get("description") or "").strip() or prompt.splitlines()[0][:60]
+        host = _host(ctx)
+        first = cron.next_after(dt.datetime.now())
+        assert first is not None
+
+        async def job(task: Any) -> int:
+            at = first
+            while at is not None:
+                if recurring and at.timestamp() > task.started_at + CRON_MAX_AGE:
+                    task.append("The task ended after 7 days.\n")
+                    return 0
+                task.wake_at = at.timestamp()
+                host._changed()
+                await asyncio.sleep(max(0.0, at.timestamp() - time.time()))
+                when = at.strftime("%Y-%m-%d %H:%M")
+                task.append(f"{when}: the prompt went to the agent.\n")
+                host.fire(task, when)
+                if not recurring:
+                    return 0
+                at = cron.next_after(at)
+            return 1
+
+        try:
+            task = host.start_job("cron", prompt, description, job, wake_at=first.timestamp())
+        except TaskError as e:
+            raise ToolError(str(e)) from e
+        task.schedule, task.recurring = cron.text, recurring
+        how = "at each time of the schedule, for 7 days" if recurring else "one time"
+        return ToolResult(f"The scheduled task {task.id} runs {how}. The first time is "
+                          f"{first.strftime('%Y-%m-%d %H:%M')} (local time). Stop it with cron_delete.")
+
+
+class CronListTool(Tool):
+    name = "cron_list"
+    description = "List the scheduled tasks of this session (cron_create): the id, the schedule, the next time, and the prompt."
+    parameters = {"type": "object", "properties": {}}
+
+    async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        import datetime as dt
+
+        tasks = [t for t in _host(ctx).tasks.values() if t.kind == "cron" and t.ended_at is None]
+        if not tasks:
+            return ToolResult("No scheduled tasks.")
+        lines = []
+        for t in tasks:
+            next_time = dt.datetime.fromtimestamp(t.wake_at).strftime("%Y-%m-%d %H:%M") if t.wake_at else "?"
+            lines.append(f"- {t.id}: '{t.schedule}' ({'recurring' if t.recurring else 'one time'}), next {next_time}: {t.label}")
+        return ToolResult("\n".join(lines))
+
+
+class CronDeleteTool(Tool):
+    name = "cron_delete"
+    description = "Stop a scheduled task of cron_create, with its id."
+    parameters = {"type": "object", "properties": {"id": {"type": "string", "description": "The task id."}},
+                  "required": ["id"]}
+
+    async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        from ..tasks import TaskError
+
+        host = _host(ctx)
+        task_id = _text(args, "id")
+        task = host.tasks.get(task_id)
+        if task is None or task.kind != "cron":
+            raise ToolError(f"No scheduled task with the id {task_id}. Use cron_list.")
+        try:
+            await host.stop(task_id)
+        except TaskError as e:
+            raise ToolError(str(e)) from e
+        return ToolResult(f"The scheduled task {task_id} is stopped.")
+
+
 class AgentTool(Tool):
     name = "agent"
     parameters = {
@@ -189,6 +304,7 @@ class AgentTool(Tool):
             "description": {"type": "string", "description": "The task in 3 to 5 words, for the user."},
             "run_in_background": {"type": "boolean", "description": "Return at once. The report comes to you as a "
                                                                     "notification when the subagent ends. Optional."},
+            "subagent_type": {"type": "string", "description": "The agent type. Default: general-purpose."},
         },
         "required": ["prompt", "description"],
     }
@@ -197,9 +313,22 @@ class AgentTool(Tool):
         self.run_subagent = run
 
     def describe(self, ctx: ToolContext) -> str:
-        return ("Give a task to a subagent with a new context and the same tools. It returns a report. Use it "
-                "for a search or a review of many files, or for independent work. With run_in_background, "
-                "you can continue your work while the subagent runs. Do not do the same work at the same time.")
+        from ..agents import discover_agents
+
+        types = "\n".join(f"- {a.name}: {a.description}" for a in discover_agents(ctx.cwd).values())
+        return ("Give a task to a subagent with a new context. It returns a report. Use it for a search or a "
+                "review of many files, or for independent work. With run_in_background, you can continue your "
+                "work while the subagent runs. Do not do the same work at the same time. Several agents in one "
+                "step run at the same time. Select the agent type with subagent_type:\n" + types)
+
+    def schema(self, ctx: ToolContext) -> dict[str, Any]:
+        from ..agents import discover_agents
+
+        schema = super().schema(ctx)
+        props = dict(schema["function"]["parameters"]["properties"])
+        props["subagent_type"] = {**props["subagent_type"], "enum": list(discover_agents(ctx.cwd))}
+        schema["function"]["parameters"] = {**schema["function"]["parameters"], "properties": props}
+        return schema
 
     async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         from ..providers import ModelError
@@ -207,8 +336,9 @@ class AgentTool(Tool):
         prompt = _text(args, "prompt")
         description = _description(args)
         background = args.get("run_in_background") is True
+        kind = str(args.get("subagent_type") or "").strip() or "general-purpose"
         try:
-            result = await self.run_subagent(prompt, description, background)
+            result = await self.run_subagent(prompt, description, background, kind)
         except ModelError as e:
             raise ToolError(str(e)) from e
         if background:
@@ -218,7 +348,8 @@ class AgentTool(Tool):
 
 
 def task_tools(run_subagent: RunSubagent | None = None) -> list[Tool]:
-    tools: list[Tool] = [TaskOutputTool(), TaskStopTool(), MonitorTool(), ScheduleWakeupTool()]
+    tools: list[Tool] = [TaskOutputTool(), TaskStopTool(), MonitorTool(), ScheduleWakeupTool(),
+                         CronCreateTool(), CronListTool(), CronDeleteTool()]
     if run_subagent is not None:
         tools.append(AgentTool(run_subagent))
     return tools

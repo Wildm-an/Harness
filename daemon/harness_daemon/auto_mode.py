@@ -226,6 +226,8 @@ def fast_path(tool: str, key: str) -> bool:
         return not is_protected_path(key)
     if tool == "preview_navigate":
         return (urlparse(key).hostname or "").lower() in LOCAL_HOSTS
+    if tool == "web_fetch":
+        return key.removeprefix("domain:").lower() in LOCAL_HOSTS
     return False
 
 
