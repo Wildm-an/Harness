@@ -389,7 +389,9 @@ def test_commands(daemon, project, fake_model):
     assert "/clear" in c.until("command.result")[0]["text"]
 
     c.send({"type": "command", "name": "model", "args": "fake/other-model"})
-    assert c.until("command.result")[0]["model"] == "fake/other-model"
+    switched = c.until("command.result")[0]
+    assert switched["model"] == "fake/other-model"
+    assert "text" not in switched  # A switch shows only in the model label, not in the chat.
     c.send({"type": "prompt", "text": "hi"})
     c.until("turn.end")
     assert fake_model.requests[-1]["model"] == "other-model"
@@ -402,6 +404,66 @@ def test_commands(daemon, project, fake_model):
 
     c.send({"type": "command", "name": "nope", "args": ""})
     assert "Unknown command" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_session_with_a_removed_provider_opens(daemon, project, fake_model, harness_home):
+    """An old session whose provider is gone opens with its stored model. A prompt fails with a
+    clear error. A switch to an available model works for the next turn."""
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.close()
+    providers = json.loads((harness_home / "providers.json").read_text())
+    (harness_home / "providers.json").write_text(json.dumps({"other": providers["fake"]}))
+
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    ready = c.until("session.ready")[0]
+    assert ready["model"] == "fake/test-model"
+    assert ready["model_unavailable"] == "Unknown provider: fake"
+    assert ready["warnings"] == []  # The chat prompt of the client tells the user.
+
+    c.send({"type": "prompt", "text": "hi"})
+    error, _ = c.until("error")
+    assert "Unknown provider: fake" in error["message"]
+    c.until("turn.end")
+
+    fake_model.script({"text": "one"})
+    c.send({"type": "command", "name": "model", "args": "other/test-model"})
+    assert c.until("command.result")[0]["model"] == "other/test-model"
+    c.send({"type": "prompt", "text": "hi"})
+    c.until("turn.end")
+    assert fake_model.requests[-1]["model"] == "test-model"
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    resumed = c.until("session.ready")[0]
+    assert resumed["model"] == "other/test-model" and resumed["model_unavailable"] is None
+    c.close()
+
+
+def test_removed_provider_switches_by_network(daemon, project, fake_model, harness_home):
+    """With "Preferred providers" on, an old session whose provider is gone gets the model
+    by network when it opens. The chat shows nothing: only the model label changes."""
+    c = Client(daemon)
+    first = c.new_session(project)
+    c.close()
+    providers = json.loads((harness_home / "providers.json").read_text())
+    (harness_home / "providers.json").write_text(json.dumps({"other": providers["fake"]}))
+    (harness_home / "settings.json").write_text(json.dumps({
+        "auto_model": True, "online_model": "other/online-model", "offline_model": "other/local-model"}))
+
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    ready = c.until("session.ready")[0]
+    assert ready["model"] == "other/online-model"
+    assert ready["model_unavailable"] is None and ready["warnings"] == []
+    c.close()
+
+    c = Client(daemon)  # The new model is saved: the next open does not switch again.
+    c.until("auth.ok")
+    c.send({"type": "session.resume", "session_id": first["session_id"]})
+    assert c.until("session.ready")[0]["model"] == "other/online-model"
     c.close()
 
 

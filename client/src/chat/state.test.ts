@@ -9,6 +9,24 @@ const run = (...msgs: DaemonMessage[]): ChatState =>
 const usage = { prompt_tokens: 1, completion_tokens: 1, last_prompt_tokens: 1, context_tokens: 500, context_length: 8000 };
 
 describe("chatReducer", () => {
+  it("puts nothing in the chat for a model switch, but keeps its warnings", () => {
+    const s = run({
+      type: "command.result",
+      name: "model",
+      text: "The model is now demo/other.", // An older daemon sends this text.
+      model: "demo/other",
+      warnings: ["The model other does not support tool calls."],
+      context_length: 4096,
+    });
+    expect(s.items.map((i) => i.kind)).toEqual(["user", "notice"]);
+    expect(s.items[1]).toMatchObject({ level: "warning" });
+  });
+
+  it("shows the text of /model with no model change", () => {
+    const s = run({ type: "command.result", name: "model", text: "Model: demo/x. Providers: demo." });
+    expect(s.items[1]).toMatchObject({ kind: "notice", level: "info", text: "Model: demo/x. Providers: demo." });
+  });
+
   it("joins streamed tokens into one assistant item", () => {
     const s = run({ type: "token", text: "Hel" }, { type: "token", text: "lo" });
     expect(s.items.map((i) => i.kind)).toEqual(["user", "assistant"]);

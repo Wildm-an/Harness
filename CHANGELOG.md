@@ -56,6 +56,19 @@ this file on its Changelog page.
 - The title of a running session now shimmers, as in the Claude app, and the row shows no status
   mark. A session that waits for your approval still shows a yellow dot.
 
+### Session model
+
+- An old session now opens when the provider of its model is gone or off. Before, the session
+  did not open.
+- When no provider gives the model of a session, a prompt in the chat asks you to switch to an
+  available model. Select a model and click "Switch", or click "Not now". The new model applies
+  to the next turn. A prompt with the old model fails with a clear error.
+- With "Preferred providers" on, the session switches to the default model (or the local model
+  with no connection) and does not ask.
+- "Choose the model by network" in Settings > Providers is now "Preferred providers".
+- A model switch no longer adds a message to the chat. Only the model label under the prompt box
+  changes. A warning about the new model (for example, no API key) still shows.
+
 ## 0.1.41 (2026-11-04)
 
 ### The agent

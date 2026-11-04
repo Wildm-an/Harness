@@ -680,6 +680,7 @@ export type DaemonMessage =
       session_id: string;
       cwd: string;
       model: string;
+      model_unavailable?: string | null; // Why the stored model cannot run: its provider is gone or off.
       title: string | null;
       warnings: string[];
       history: HistoryMessage[];

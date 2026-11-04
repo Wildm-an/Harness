@@ -143,6 +143,8 @@ import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
+import { ModelUnavailable } from "./components/ModelUnavailable";
+import { isModelUnavailable, networkModel, proposedModel } from "./lib/modelAvailability";
 import { ModelChoice } from "./components/ModelChoice";
 import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
@@ -238,6 +240,7 @@ interface ActiveSession {
   id: string;
   cwd: string;
   model: string;
+  modelUnavailable: string | null; // Why the daemon cannot use the stored model (its provider is gone or off).
   title: string | null;
   project: string | null; // The name of the saved project.
   worktree: SessionWorktree | null; // The session works in this git worktree.
@@ -321,6 +324,8 @@ export default function App() {
   const [archiveAsk, setArchiveAsk] = useState<{ id: string; branch: string } | null>(null); // A worktree with changes.
   // The next prompt that the model predicts after a turn, for the session that got it.
   const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
+  // "Not now" on the unavailable model prompt, by "session id model". The prompt shows again after a restart.
+  const [modelAskDismissed, setModelAskDismissed] = useState<Set<string>>(() => new Set());
   const [chat, dispatch] = useReducer(chatReducer, emptyChat);
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
   // The last place and size of each closed pane, per view. A pane that opens again goes back there.
@@ -575,6 +580,9 @@ export default function App() {
             setAgentFrame(null);
             setMcpStatus(null);
             setLayout(loadLayout(currentRef.current?.id ?? "local", msg.cwd, viewRef.current));
+            // When no provider gives the model of the session, the model by network replaces it, or the chat asks.
+            requestModels();
+            sendSafely({ type: "user_settings.get" });
           } else if (sessionRef.current.cwd !== msg.cwd) {
             // The session moved to another folder: the daemon stopped its shells. The terminal
             // pane opens a new shell in the new folder.
@@ -584,6 +592,7 @@ export default function App() {
             id: msg.session_id,
             cwd: msg.cwd,
             model: msg.model,
+            modelUnavailable: msg.model_unavailable ?? null,
             title: msg.title,
             project: msg.project?.name ?? null,
             worktree: msg.worktree ?? null,
@@ -858,7 +867,7 @@ export default function App() {
           break;
         case "command.result":
           if (msg.name === "model" && msg.model) {
-            setSession((s) => (s ? { ...s, model: msg.model! } : s));
+            setSession((s) => (s ? { ...s, model: msg.model!, modelUnavailable: null } : s));
           }
           if (msg.action === "open_panel" && msg.panel === "servers") {
             // The dev servers are in the Browser pane: an empty tab lists them.
@@ -1305,6 +1314,25 @@ export default function App() {
     sendSafely({ type: "models.list" });
   }
 
+  /** Switch the model of the session. The model label under the prompt box shows it: the chat shows nothing. */
+  const switchModel = (spec: string) => {
+    sendSafely({ type: "command", name: "model", args: spec });
+  };
+
+  // No provider gives the model of the session. With "Preferred providers" on, the model by
+  // network replaces it with no question. Else the chat asks the user (ModelUnavailable).
+  const modelGone = !!session && isModelUnavailable(session.model, models, session.modelUnavailable);
+  const autoModel = modelGone ? networkModel(status === "open" ? userSettings : null, models) : null;
+  const autoSwitched = useRef<Set<string>>(new Set()); // "session id model": one try for each.
+  useEffect(() => {
+    if (!session || !autoModel || autoModel === session.model || chat.running || status !== "open") return;
+    const key = `${session.id} ${session.model}`;
+    if (autoSwitched.current.has(key)) return;
+    autoSwitched.current.add(key);
+    switchModel(autoModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- switchModel uses only the connection.
+  }, [session?.id, session?.model, autoModel, chat.running, status]);
+
   /** Opens the start screen with a project selected. A folder that is not a saved project becomes one. */
   const newSessionIn = async (projectId: string | null, name: string, path: string) => {
     try {
@@ -1389,7 +1417,7 @@ export default function App() {
   const selectProviderModel = (spec: string) => {
     setSettingsPage(null);
     if (sessionRef.current) {
-      sendSafely({ type: "command", name: "model", args: spec });
+      switchModel(spec);
       setScreen("chat");
     } else {
       savePref(`model.${currentRef.current?.id ?? "local"}`, spec);
@@ -2112,6 +2140,25 @@ export default function App() {
         onAnswer={answerQuestion}
         turn={chat.turn}
         model={session?.model ?? ""}
+        footer={
+          session &&
+          !chat.running &&
+          !modelAskDismissed.has(`${session.id} ${session.model}`) &&
+          modelGone &&
+          !autoModel && (
+            <ModelUnavailable
+              model={session.model}
+              reason={session.modelUnavailable}
+              models={models}
+              proposed={proposedModel(models, [loadPref(`model.${currentRef.current?.id ?? "local"}`, "")])}
+              disabled={status !== "open"}
+              onRequestModels={requestModels}
+              onSwitch={switchModel}
+              onDismiss={() => setModelAskDismissed((d) => new Set(d).add(`${session.id} ${session.model}`))}
+              onManage={showProviders}
+            />
+          )
+        }
         onPlan={decidePlan}
         onReview={toggleReview}
         onSendNow={sendNow}
@@ -2166,7 +2213,7 @@ export default function App() {
                   up
                   alignRight
                   onOpen={requestModels}
-                  onSelect={(spec) => submit({ kind: "command", name: "model", args: spec })}
+                  onSelect={switchModel}
                   onManage={showProviders}
                 />
                 {chat.context && (

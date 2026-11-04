@@ -65,11 +65,12 @@ export function ModelChoice({ values, models, providers, onRequestModels, onSet 
       <div className="setting-row">
         <div className="setting-text">
           <span className="setting-label" id="model-choice-title">
-            Choose the model by network
+            Preferred providers
           </span>
           <span className="setting-help">
             On: a new session with "Default model" uses the default model. With no connection to its provider (for example with no Wi-Fi), it uses the
-            local model. Off: you choose the model for each session. Applies to new sessions.
+            local model. An old session whose model is not available changes to one of these models when it opens. Off: you choose the model for
+            each session.
           </span>
         </div>
         <div className="setting-control">
@@ -77,7 +78,7 @@ export function ModelChoice({ values, models, providers, onRequestModels, onSet 
             type="button"
             role="switch"
             aria-checked={auto}
-            aria-label="Choose the model by network"
+            aria-label="Preferred providers"
             disabled={off}
             className={`switch${auto ? " on" : ""}`}
             onClick={() => onSet({ auto_model: !auto })}

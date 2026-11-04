@@ -270,7 +270,9 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: msg.level, text: msg.text }] };
     case "command.result": {
       const notices: ChatItem[] = [];
-      if (msg.text) notices.push({ kind: "notice", id: nextId("notice"), level: "info", text: msg.text });
+      // A model switch shows only in the model label under the prompt box. An older daemon sends a text for it.
+      const switched = msg.name === "model" && !!msg.model;
+      if (msg.text && !switched) notices.push({ kind: "notice", id: nextId("notice"), level: "info", text: msg.text });
       for (const w of msg.warnings ?? []) notices.push({ kind: "notice", id: nextId("notice"), level: "warning", text: w });
       const items = msg.name === "clear" ? notices : [...state.items, ...notices];
       const context =

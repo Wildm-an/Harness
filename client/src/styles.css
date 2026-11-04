@@ -9289,6 +9289,27 @@ textarea.setting-textarea:disabled {
   margin-top: 10px;
 }
 
+/* The prompt for a session whose model no provider gives now. It uses the end-of-turn box style. */
+.model-unavailable .wrapup-ask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 0;
+}
+
+.model-unavailable .wrapup-ask > svg {
+  flex: none;
+  color: var(--warning);
+}
+
+.model-unavailable .wrapup-recap {
+  margin-top: 6px;
+}
+
+.model-unavailable .wrapup-actions {
+  align-items: center;
+}
+
 /* The Files sidebar head: all the action buttons when they fit, else one "..." menu with the same
    actions. The sidebar is a size container. Its minimum width keeps the Files and Search switch and
    the "..." button in view. */

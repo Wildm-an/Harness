@@ -53,6 +53,7 @@ from .providers import (
     model_capabilities,
     resolve_context_length,
     resolve_model,
+    stored_model,
 )
 from .tools.base import ToolError
 from .tools.document import check_preview_file
@@ -847,7 +848,11 @@ class Connection:
             raise ProtocolError("A turn is running. Send 'interrupt' first, or wait for 'turn.end'.")
 
     async def make_agent(self, live: LiveSession, cwd: Path, provider_name: str | None, model: str | None,
-                         history: list[dict] | None = None, summary: str | None = None) -> tuple[Agent, list[str]]:
+                         history: list[dict] | None = None, summary: str | None = None,
+                         stored: bool = False) -> tuple[Agent, list[str]]:
+        """``stored``: the model of a saved session. A provider that is gone or off does not stop the
+        session. With "auto_model" on, the session gets the model by network. Else (or if that model
+        is not available too) the client asks the user to switch to an available model."""
         settings = load_settings(cwd)
         await self.drop_start_plugins()  # The session loads its own plugins.
         # The plugins load first: a plugin can register the provider of the model.
@@ -855,8 +860,21 @@ class Connection:
         await plugins.load()
         try:
             spec, note = (model, None) if model else await default_model_for_network(settings)
-            provider, model_name = resolve_model(spec, provider_name)
-            warnings, context, images = await self.model_checks(provider, model_name, settings)
+            provider, model_name = (stored_model if stored and model else resolve_model)(spec, provider_name)
+            if provider.unavailable and settings.get("auto_model"):
+                network, network_note = await default_model_for_network(settings)
+                try:
+                    provider, model_name = resolve_model(network)
+                    note = network_note  # The local model, because the online model did not answer.
+                except ConfigError:
+                    pass  # No model by network: the client asks the user.
+            if provider.unavailable:  # No endpoint to check. The first request gives the error.
+                configured = settings.get("context_length")
+                warnings, images = [], False
+                context = (ContextInfo(int(configured), "settings") if configured
+                           else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default"))
+            else:
+                warnings, context, images = await self.model_checks(provider, model_name, settings)
             if note:
                 warnings.insert(0, note)  # The local model, because the online model did not answer.
             agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=live.send,
@@ -917,6 +935,8 @@ class Connection:
             "session_id": s.id,
             "cwd": str(s.cwd),
             "model": s.agent.client.label,
+            # Why the stored model cannot run (its provider is gone or off), else None. The client asks to switch.
+            "model_unavailable": s.agent.client.provider.unavailable,
             "title": s.title,
             "warnings": warnings,
             "history": s.agent.history,
@@ -1276,7 +1296,11 @@ async def _open_stored(conn: Connection, session_id: str) -> None:
         cwd = work = _project_dir(row["cwd"])
     history = conn.storage.load_messages(session_id)
     live = LiveSession(conn)
-    agent, warnings = await conn.make_agent(live, work, row["provider"], row["model"], history, row["summary"])
+    agent, warnings = await conn.make_agent(live, work, row["provider"], row["model"], history, row["summary"],
+                                            stored=True)
+    if (agent.client.provider.name, agent.client.model) != (row["provider"], row["model"]):
+        # The model by network replaced a model that is not available. Keep it for the next open.
+        conn.storage.update_session(session_id, provider=agent.client.provider.name, model=agent.client.model)
     conn.storage.touch_project(str(cwd))
     live.session = Session(conn.storage, session_id, agent, title=row["title"], project_dir=cwd, worktree=worktree)
     await conn.open_session(live)
@@ -2229,7 +2253,8 @@ async def on_session_fork(conn: Connection, msg: dict[str, Any]) -> None:
     summary = source.agent.summary
     client = source.agent.client
     live = LiveSession(conn)
-    agent, warnings = await conn.make_agent(live, source.cwd, client.provider.name, client.model, history, summary)
+    agent, warnings = await conn.make_agent(live, source.cwd, client.provider.name, client.model, history, summary,
+                                            stored=True)
     session_id = conn.storage.create_session(str(source.cwd), agent.client.provider.name, agent.client.model)
     conn.storage.append_messages(session_id, history)
     title = f"{source.title} (fork)" if source.title else None
@@ -2361,8 +2386,8 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
         warnings, context, images = await conn.model_checks(provider, model, session.agent.settings)
         session.agent.set_client(ModelClient(provider, model), context.length, images, context.source)
         conn.storage.update_session(session.id, provider=provider.name, model=model)
-        await result(text=f"The model is now {session.agent.client.label}.", model=session.agent.client.label,
-                     warnings=warnings, context_length=context.length, context_source=context.source,
+        # No text: the client shows the switch only in the model label under the prompt box.
+        await result(model=session.agent.client.label, warnings=warnings, context_length=context.length, context_source=context.source,
                      image_input=images)
     elif name == "compact":
         await conn.start_turn(conn.run_compact)

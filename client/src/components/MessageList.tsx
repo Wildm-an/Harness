@@ -269,6 +269,7 @@ export function MessageList({
   emptyHint,
   turn = null,
   model = "",
+  footer,
 }: {
   items: ChatItem[];
   queued?: QueuedItem[]; // The messages that wait for the running turn.
@@ -286,6 +287,7 @@ export function MessageList({
   emptyHint: React.ReactNode;
   turn?: TurnInfo | null; // The running turn: the working line at the bottom shows its time.
   model?: string;
+  footer?: React.ReactNode; // A prompt at the end of the chat, for example "The model is not available".
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -404,6 +406,7 @@ export function MessageList({
         {queued.map((item) => (
           <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
         ))}
+        {footer}
         {away && items.length > 0 && (
           <div className="scroll-bottom-wrap">
             <button

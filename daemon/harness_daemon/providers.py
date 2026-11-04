@@ -96,6 +96,8 @@ class Provider:
     models: dict[str, dict[str, Any]] = field(default_factory=dict, hash=False, compare=False)
     ssh: SshTarget | None = None
     key_missing: str | None = None  # Why the configured API key is not available, if it is not.
+    # Why the provider cannot run, for a stored session whose provider is gone or off. Each request fails with it.
+    unavailable: str | None = None
 
     @property
     def root_url(self) -> str:
@@ -200,6 +202,17 @@ def resolve_model(spec: str | None, provider_name: str | None = None) -> tuple[P
     if not providers:
         raise ConfigError("All providers are off. Turn one on in the Connections screen.")
     return next(iter(providers.values())), spec
+
+
+def stored_model(spec: str, provider_name: str | None) -> tuple[Provider, str]:
+    """The provider and the model of a stored session. If the provider is gone or off, a placeholder
+    provider with the same name keeps the model label: the session opens, and its requests fail."""
+    try:
+        return resolve_model(spec, provider_name)
+    except ConfigError as e:
+        if not provider_name:
+            raise
+        return Provider(name=provider_name, base_url="", unavailable=str(e)), spec
 
 
 async def model_capabilities(provider: Provider, model: str) -> list[str] | None:
@@ -543,6 +556,9 @@ class ModelClient:
         A new tunnel can have a new local port. The pooled connections of a client belong to the
         event loop that opened them, so a new loop (for example a new asyncio.run) gets a new client.
         """
+        if self.provider.unavailable:
+            reason = self.provider.unavailable.rstrip(".")
+            raise ModelError(f"{reason}. Select an available model under the prompt box.")
         try:
             current = await endpoint(self.provider)
         except TunnelError as e:
