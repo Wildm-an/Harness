@@ -221,3 +221,31 @@ describe("skills", () => {
     expect(s.items.at(-1)).toMatchObject({ kind: "tool", agent: "research" });
   });
 });
+
+describe("the notes of background tasks", () => {
+  it("start a turn with a note line, not a user message", () => {
+    const s = chatReducer(emptyChat, { type: "daemon", msg: { type: "turn.started", id: "m1", text: "Background task ended: build", origin: "task" } });
+    expect(s.running).toBe(true);
+    expect(s.items[0]).toMatchObject({ kind: "user", origin: "task", text: "Background task ended: build" });
+  });
+
+  it("keep the card of a background subagent open after the turn ends", () => {
+    const request = { type: "permission.request" as const, request_id: "r1", tool: "bash", input: {}, diff: null, rule: null, background: true, agent: "Count files" };
+    const s = run(request, { type: "turn.end", usage, stop_reason: "end" });
+    expect(s.items.find((i) => i.kind === "permission")).toMatchObject({ background: true });
+    expect(s.items.find((i) => i.kind === "permission")).not.toHaveProperty("expired", true);
+  });
+});
+
+describe("a card of a background agent", () => {
+  it("goes before the reply that streams, and names the agent", () => {
+    const s = run(
+      { type: "token", text: "Here is " },
+      { type: "permission.request", request_id: "r2", tool: "bash", input: {}, diff: null, rule: null, background: true, agent: "Read the README" },
+      { type: "token", text: "the result." },
+    );
+    expect(s.items.map((i) => i.kind)).toEqual(["user", "permission", "assistant"]);
+    expect(s.items[2]).toMatchObject({ text: "Here is the result." });
+    expect(s.items[1]).toMatchObject({ reason: 'The background agent "Read the README" asks.' });
+  });
+});

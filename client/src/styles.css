@@ -941,6 +941,9 @@ textarea:focus-visible {
   height: var(--titlebar-height);
   padding: 0 10px 0 16px;
   flex: none;
+  /* A line under the title bar separates it from the chat and the panes, as in the Claude app. */
+  border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
 }
 
 /* The top bar is the title bar of the window. Its height and icons match the Claude app. */
@@ -6260,6 +6263,24 @@ mark.word-del {
   max-width: 80%;
 }
 
+/* The notes of background tasks: a muted line, not a message of the user. */
+.msg-task-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.msg-task-note > svg {
+  flex: none;
+}
+
+.msg-task-note .msg-time {
+  margin-left: auto;
+  margin-right: 0;
+}
+
 .msg-actions {
   display: flex;
   align-items: center;
@@ -6859,6 +6880,25 @@ input.setting-text-input {
   width: 220px;
   min-height: 32px;
   font-size: 12.5px;
+}
+
+textarea.setting-textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  max-height: 320px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+textarea.setting-textarea:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .setting-control .switch:disabled {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, contextShare, foldedValue, needsRailRoom, parseFolded, percentText, prStateText, railShown, sortTasks, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, contextShare, foldedValue, needsRailRoom, parseFolded, percentText, prStateText, railShown, railTasks, sortTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -87,5 +87,23 @@ describe("the room for a pane", () => {
     expect(needsRailRoom(["browser"], ["browser"])).toBe(false);
     expect(needsRailRoom(["preview"], [])).toBe(false);
     expect(needsRailRoom([], ["terminal", "diff"])).toBe(false);
+  });
+});
+
+describe("the background tasks of the rail", () => {
+  it("shows all the running tasks, then three ended tasks", () => {
+    const list = [
+      ...["r1", "r2", "r3", "r4", "r5"].map((id, i) => task(id, "running", i)),
+      ...["e1", "e2", "e3", "e4"].map((id, i) => task(id, "done", 10 + i)),
+    ];
+    expect(railTasks(list).map((t) => t.id)).toEqual(["r5", "r4", "r3", "r2", "r1", "e4", "e3", "e2"]);
+  });
+
+  it("names the kind of each task, and counts down a wakeup", () => {
+    expect(taskDetailText(task("a", "running", 1), 0)).toBe("Command · Running");
+    expect(taskDetailText({ ...task("b", "done", 1), kind: "agent" }, 0)).toBe("Agent · Done");
+    const wakeup = { ...task("c", "running", 1), kind: "wakeup" as const, wake_at: 1000 };
+    expect(taskDetailText(wakeup, 760_000)).toBe("Wakeup · in 4 min");
+    expect(taskDetailText(wakeup, 970_000)).toBe("Wakeup · in 30s");
   });
 });

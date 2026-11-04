@@ -51,19 +51,39 @@ function lastUserIndex(items: ChatItem[]): number {
   return -1;
 }
 
+// The texts that show an interrupted turn: the notice of the chat, and the result of a tool call
+// that the interrupt stopped (daemon agent.py INTERRUPTED). The tool result stays after a reload.
+const INTERRUPT_NOTICE = "The turn was interrupted.";
+const INTERRUPT_OUTPUT = "The user interrupted the turn.";
+
+function isInterrupt(item: ChatItem): boolean {
+  if (item.kind === "notice") return item.text === INTERRUPT_NOTICE;
+  return item.kind === "tool" && item.status === "error" && (item.output ?? "").startsWith(INTERRUPT_OUTPUT);
+}
+
+/** The plan to show, and if it is from the current turn. */
+export interface ShownPlan {
+  steps: PlanStep[];
+  current: boolean; // False: the plan of an older turn. Its step in progress shows no spinner.
+}
+
 /**
- * The plan to show: the newest update_plan of the conversation, if it is from the current turn
- * or still has steps that are not completed. A finished plan of an older turn does not show.
+ * The plan to show: the newest update_plan of the conversation.
+ * - A plan of the current turn always shows.
+ * - A plan of an older turn shows only if it has steps that are not completed and its turn was not
+ *   interrupted. It shows with no spinner, because the current turn did not continue it yet.
  */
-export function latestPlan(items: ChatItem[]): PlanStep[] | null {
+export function latestPlan(items: ChatItem[]): ShownPlan | null {
   const turnStart = lastUserIndex(items);
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
     if (item.kind !== "tool" || item.name !== "update_plan" || item.status === "error") continue;
     const steps = planSteps(item.input);
     if (!steps) continue;
-    if (i > turnStart || steps.some((s) => s.status !== "completed")) return steps;
-    return null;
+    if (i > turnStart) return { steps, current: true };
+    if (steps.every((s) => s.status === "completed")) return null;
+    if (items.slice(i + 1, turnStart).some(isInterrupt)) return null;
+    return { steps, current: false };
   }
   return null;
 }

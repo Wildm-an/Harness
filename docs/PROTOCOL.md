@@ -53,8 +53,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `side.ask` | `id`, `question`, `history` (optional) | A side chat question (Ctrl+;). The model sees the full session (the system prompt, the messages, and the tools) and the earlier side chat messages in `history` (`role`: `user` or `assistant`, `content`). Nothing is added to the session. It can run during a turn. The answer comes as `side.token`, then `side.done` or `side.error`. |
 | `side.cancel` | `id` | Stops the answer of a side chat question. |
 | `user_settings.get` | | The user settings of the daemon (`~/.harness/settings.json`), for the General page of the Settings dialog. It needs no session. The reply is `user_settings`. |
-| `user_settings.set` | `values` | Changes user settings: `permission_mode`, `prompt_suggestions`, `auto_verify`, `max_tool_calls` (1 to 500), `limit_tool_calls` (false: no tool call limit), `bash_timeout` (1 to 3600 seconds), `terminal_shell` (null removes it). The open sessions use the new values at once. The reply is `user_settings`. |
-| `tasks.list` | | The background tasks of the session: the commands that the agent runs with `bash` and `run_in_background`. The reply is `tasks`. |
+| `user_settings.set` | `values` | Changes user settings: `permission_mode`, `prompt_suggestions`, `auto_verify`, `max_tool_calls` (1 to 500), `limit_tool_calls` (false: no tool call limit), `bash_timeout` (1 to 3600 seconds), `terminal_shell` (null removes it), `subagents` (false: the agent tool is not available), `instructions_thinking`, `instructions_research`, `instructions_speaking`, `instructions_other` (agent instructions, 10000 characters or less, null or empty removes them). The system prompt of a session agent includes the agent instructions. A subagent does not get them. The open sessions use the new values at once. The reply is `user_settings`. |
+| `tasks.list` | | The background tasks of the session: the commands of `bash` with `run_in_background` (`shell`), the `monitor` commands, the background subagents of the `agent` tool (`agent`), and the timers of `schedule_wakeup` (`wakeup`). The reply is `tasks`. |
 | `task.get` | `id` | One background task with its output. The reply is `task`. |
 | `task.stop` | `id` | Stops a background task and its child processes. |
 | `session.keep_awake` | `on` | The "Keep computer awake" switch of the session. While it is on, the computer of the daemon does not sleep during a turn or a background task of the session. The daemon does not save it. The reply is `keep_awake`. |
@@ -126,7 +126,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 |---|---|---|
 
 | `auth.ok` | `version`, `host` | The token is correct. `host` has `hostname`, `platform`, `user`, `home`, and `sep` of the daemon computer. |
-| `steer.taken` | `id`, `text` | The `steer` message `id` went into the history. `text` is the text that the user sees. |
+| `steer.taken` | `id`, `text`, `origin` | The `steer` message `id` went into the history. `text` is the text that the user sees. `origin` `task`: the notes of background tasks went into the running turn. |
+| `turn.started` | `id`, `text`, `origin` | The notes of background tasks started a turn with no prompt (`origin` `task`). A task ended, a monitor wrote a line, a background subagent ended, or a wakeup is due. The session can be in the background. `text` is the short text that the chat shows. |
 | `steer.returned` | `ids` | The turn ended before its next step, or no turn ran. The client sends these messages as prompts. |
 | `prompt.fill` | `text` | After a rewind or a fork: the text of the user message. It replaces the text in the prompt box. |
 | `daemon.update` | `state`, `message` | The progress of `daemon.update`: `installing`, `restarting`, or `error`. |
@@ -145,7 +146,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `side.token` | `id`, `text` | A part of the answer of a side chat question. |
 | `side.done` | `id`, `text` | The side chat answer is complete. `text` is all the answer. |
 | `side.error` | `id`, `message` | The side chat question failed. |
-| `tasks` | `items` | The background tasks of the session: `id`, `command`, `description`, `status` (`running`, `done`, `failed`, or `stopped`), `started_at`, `ended_at`, `returncode`. The daemon also sends it when a task starts or ends. |
+| `tasks` | `items` | The background tasks of the session: `id`, `kind` (`shell`, `monitor`, `agent`, or `wakeup`), `command` (the prompt for `agent` and `wakeup`), `description`, `status` (`running`, `done`, `failed`, or `stopped`), `started_at`, `ended_at`, `returncode`, `wake_at` (`wakeup`). The daemon also sends it when a task starts or ends. |
 | `task` | the fields of an item of `tasks`, `output`, `dropped` | Reply to `task.get`. `output` is the kept output (the last 256 K characters). `dropped` is the number of earlier characters that are not kept. |
 | `keep_awake` | `on`, `active` | Reply to `session.keep_awake`. `active` is true while the computer stays awake. `session.ready` has the switch in `keep_awake`. |
 | `user_settings` | `values`, `path`, `version` | The user settings, the path of the settings file, and the version of the daemon. |

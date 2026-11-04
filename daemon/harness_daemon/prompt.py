@@ -42,6 +42,29 @@ AUTO_VERIFY_PROMPT = """
 The user set "Auto-verify". After each change to the user interface, check the app with the \
 preview tools before you stop. Fix the errors that you find. Tell the user the result of the check."""
 
+# The agent instruction settings (Settings > General), with their headings in the system prompt.
+USER_INSTRUCTION_SETTINGS = (
+    ("instructions_thinking", "How to think"),
+    ("instructions_research", "How to do research"),
+    ("instructions_speaking", "How to speak"),
+    ("instructions_other", "Other instructions"),
+)
+
+
+def user_instructions(settings: dict) -> str | None:
+    """The agent instructions of the user, as one prompt section. None: the user wrote no instructions."""
+    sections = []
+    for key, heading in USER_INSTRUCTION_SETTINGS:
+        text = settings.get(key)
+        if isinstance(text, str) and text.strip():
+            sections.append(f"## {heading}\n\n{text.strip()}")
+    if not sections:
+        return None
+    return ("# User instructions\n\nThe user wrote these instructions in the Harness settings. "
+            "Follow them in all projects. The project instructions can change them for one project.\n\n"
+            + "\n\n".join(sections))
+
+
 # Instruction files, in order of priority. The first file that exists is used.
 INSTRUCTION_FILES = ("HARNESS.md", "CLAUDE.md")
 MAX_INSTRUCTION_CHARS = 40_000
@@ -76,9 +99,10 @@ def build_system_prompt(
     summary: str | None = None,
     skills: "list[Skill] | None" = None,
     plugin_sections: list[str] | None = None,
+    user_facing: bool = True,
 ) -> str:
     return "\n\n".join(text for _kind, text in system_prompt_parts(ctx, model, instructions, summary, skills,
-                                                                  plugin_sections))
+                                                                  plugin_sections, user_facing))
 
 
 def system_prompt_parts(
@@ -88,10 +112,12 @@ def system_prompt_parts(
     summary: str | None = None,
     skills: "list[Skill] | None" = None,
     plugin_sections: list[str] | None = None,
+    user_facing: bool = True,
 ) -> list[tuple[str, str]]:
     """The parts of the system prompt, with their kind: system, instructions, skills, plugins, or summary.
 
-    The context breakdown of the client shows the size of each kind.
+    The context breakdown of the client shows the size of each kind. ``user_facing`` False (a subagent)
+    removes the agent instructions of the user: the agent that made the subagent tells it how to act.
     """
     parts: list[tuple[str, str]] = [("system", BASE_PROMPT), ("system", "\n".join([
         "Environment:",
@@ -101,6 +127,9 @@ def system_prompt_parts(
         f"- Date: {datetime.date.today().isoformat()}",
         f"- Model: {model}",
     ]))]
+    personal = user_instructions(ctx.settings) if user_facing else None
+    if personal:
+        parts.append(("instructions", personal))
     if instructions:
         note = " The file is long. Only the first part is shown." if instructions.truncated else ""
         parts.append(("instructions",

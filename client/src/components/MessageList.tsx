@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
+import { Archive, BellRing, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
 import type { ChatItem } from "../chat/state";
 import type { Decision } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
@@ -148,6 +148,17 @@ function RewindMenu({ disabled, onRewind, onOpen }: { disabled: boolean; onRewin
   );
 }
 
+/** The notes of background tasks that the agent got: a line, not a message of the user. */
+const TaskNote = memo(function TaskNote({ item }: { item: UserItem }) {
+  return (
+    <div className="msg-task-note" role="note">
+      <BellRing size={13} aria-hidden />
+      <span>{item.text}</span>
+      {item.ts !== undefined && <span className="msg-time">{relativeTime(item.ts)}</span>}
+    </div>
+  );
+});
+
 /** A user message. On hover: the time, Copy, Rewind, and Fork. */
 const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork }: {
   item: UserItem;
@@ -278,6 +289,7 @@ export function MessageList({
         {groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name)))).map((item) => {
           switch (item.kind) {
             case "user":
+              if (item.origin === "task") return <TaskNote key={item.id} item={item} />;
               return <UserMessage key={item.id} item={item} running={running} onRewind={onRewind} onFork={onFork} />;
             case "assistant":
               return (
@@ -305,7 +317,7 @@ export function MessageList({
               return <SummaryCard key={item.id} item={item} />;
           }
         })}
-        {plan && <PlanBlock steps={plan} running={running} />}
+        {plan && <PlanBlock steps={plan.steps} running={running && plan.current} />}
         {wrap && !running && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} />}
         {queued.map((item) => (
           <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />

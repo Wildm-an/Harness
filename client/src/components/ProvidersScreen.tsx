@@ -634,7 +634,7 @@ export function ProvidersScreen({
     <div className={embedded ? "settings-embed" : "start-screen"}>
       <section className="panel connections providers" aria-labelledby="providers-title">
         <div className="panel-head">
-          <h1 id="providers-title">Connections</h1>
+          <h1 id="providers-title">Providers</h1>
           {!embedded && (
             <button type="button" className="btn btn-ghost" onClick={onReturn}>
               {hasSession ? "Back to the session" : "Back"}
@@ -651,7 +651,7 @@ export function ProvidersScreen({
           </p>
         )}
         <div className="list-head">
-          <span>OpenAI-compatible connections</span>
+          <span>OpenAI-compatible providers</span>
           <button type="button" className="icon-btn ghost" onClick={() => edit(null)} aria-label="Add a provider" title="Add a provider">
             <Plus size={16} aria-hidden />
           </button>

@@ -381,7 +381,7 @@ export default function App() {
   const projectWait = useRef<{ resolve: (id: string) => void; reject: (e: Error) => void } | null>(null);
 
   /** Opens the Providers screen. Uses only refs and state setters: the message handler calls it too. */
-  // The Settings dialog (Ctrl+,): General, Local Models, Connections, and Computers.
+  // The Settings dialog (Ctrl+,): General, Local Models, Providers, and Computers.
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [userSettingsInfo, setUserSettingsInfo] = useState<{ path: string; version: string } | null>(null);
@@ -2006,6 +2006,7 @@ export default function App() {
         <div className="column">
           {chat.running && <WorkingLine turn={chat.turn} items={chat.items} model={session?.model ?? ""} />}
           <PromptBox
+            draftKey={session?.id ?? null}
             running={chat.running}
             disabled={status !== "open"}
             onSubmit={submitOrQueue}

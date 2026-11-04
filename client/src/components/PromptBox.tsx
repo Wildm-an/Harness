@@ -72,6 +72,20 @@ export function insertCommand(text: string, caret: number, start: number, name: 
 
 const MAX_HEIGHT_PX = 280;
 
+// The unsent text of each prompt box key (session). It is kept while the app runs.
+const drafts = new Map<string, string>();
+// The inserts that a prompt box used (see the "insert" prop).
+const appliedInserts = new WeakSet<object>();
+
+export function saveDraft(key: string, text: string): void {
+  if (text) drafts.set(key, text);
+  else drafts.delete(key);
+}
+
+export function draftOf(key: string): string {
+  return drafts.get(key) ?? "";
+}
+
 export function PromptBox({
   running,
   disabled,
@@ -98,7 +112,11 @@ export function PromptBox({
   menuBelow = false,
   boxClassName,
   focusKey,
+  draftKey = null,
 }: {
+  // The unsent text stays with this key, for example the session id. A change of the key keeps the
+  // text for the old key, and shows the text of the new key. null: the text is not kept.
+  draftKey?: string | null;
   // The start screen uses the same box as a session. These props change it for the start screen.
   inputId?: string;
   label?: string; // The label for a screen reader.
@@ -128,7 +146,16 @@ export function PromptBox({
   onSubmit: (s: Submission) => boolean;
   onInterrupt: () => void;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => (draftKey !== null ? drafts.get(draftKey) ?? "" : ""));
+  // A new key (another session) shows the draft of that session. The draft of the old session stays.
+  const [shownKey, setShownKey] = useState(draftKey);
+  if (draftKey !== shownKey) {
+    setShownKey(draftKey);
+    setText(draftKey !== null ? drafts.get(draftKey) ?? "" : "");
+  }
+  useEffect(() => {
+    if (shownKey !== null) saveDraft(shownKey, text);
+  }, [text, shownKey]);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null); // The start of a closed "/" token.
   const area = useRef<HTMLTextAreaElement>(null);
@@ -246,7 +273,10 @@ export function PromptBox({
   }, [disabled, focusKey]);
 
   useEffect(() => {
-    if (!insert) return;
+    // Each insert goes in one time. A box that mounts again (another session, or another view)
+    // does not add the old text again.
+    if (!insert || appliedInserts.has(insert)) return;
+    appliedInserts.add(insert);
     const next = insert.replace ? insert.text : `${text}${text && !/\s$/.test(text) ? " " : ""}${insert.text} `;
     pendingCaret.current = next.length;
     change(next);

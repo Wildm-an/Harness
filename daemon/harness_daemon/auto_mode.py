@@ -281,11 +281,14 @@ def _texts(value: Any) -> list[str]:
 
 
 def user_messages(history: list[dict[str, Any]]) -> list[str]:
-    """The newest direct messages of the user, oldest first. A skill turn shows the text that the user typed."""
+    """The newest direct messages of the user, oldest first. A skill turn shows the text that the user typed.
+
+    A note of a background task (origin "task") is not a message of the user: it can hold command output.
+    """
     out: list[str] = []
     total = 0
     for m in reversed(history):
-        if m.get("role") != "user":
+        if m.get("role") != "user" or m.get("origin") == "task":
             continue
         text = str(m.get("display") or m.get("content") or "")
         text = redact(text[:USER_MESSAGE_CHARS])

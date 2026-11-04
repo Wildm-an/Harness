@@ -546,6 +546,12 @@ def test_user_settings_need_no_session(daemon, harness_home, project, fake_model
     assert (got["prompt_suggestions"], got["max_tool_calls"], got["terminal_shell"]) == (False, 80, "pwsh.exe")
     c.send({"type": "user_settings.set", "values": {"terminal_shell": None}})
     assert c.until("user_settings")[0]["values"]["terminal_shell"] is None
+    c.send({"type": "user_settings.set", "values": {"instructions_speaking": "Line one.\nLine two.\n"}})
+    assert c.until("user_settings")[0]["values"]["instructions_speaking"] == "Line one.\nLine two."
+    c.send({"type": "user_settings.set", "values": {"instructions_speaking": ""}})
+    assert c.until("user_settings")[0]["values"]["instructions_speaking"] is None
+    c.send({"type": "user_settings.set", "values": {"instructions_other": "x" * 10_001}})
+    assert "10000 characters or less" in c.until("error")[0]["message"]
     c.send({"type": "user_settings.set", "values": {"max_tool_calls": True}})
     assert "must be int" in c.until("error")[0]["message"]
     c.send({"type": "user_settings.set", "values": {"bash_timeout": 0}})

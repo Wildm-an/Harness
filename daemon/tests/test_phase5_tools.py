@@ -182,3 +182,21 @@ def test_harness_md_has_priority_over_claude_md(project):
     prompt = build_system_prompt(make_ctx(project), "fake/m", found, summary="Earlier work.")
     assert "HARNESS.md" in prompt and "Use spaces." in prompt and "Use tabs." not in prompt
     assert "# Summary of the earlier conversation" in prompt and "Earlier work." in prompt
+
+
+def test_user_instructions_from_the_settings(project):
+    prompt = build_system_prompt(make_ctx(project), "fake/m")
+    assert "# User instructions" not in prompt
+    ctx = make_ctx(project, instructions_thinking="Plan first.", instructions_speaking="  Use short sentences.  ",
+                   instructions_research="   ")
+    found = load_project_instructions(project)
+    (project / "HARNESS.md").write_text("Use spaces.")
+    prompt = build_system_prompt(ctx, "fake/m", load_project_instructions(project))
+    assert found is None
+    assert "## How to think\n\nPlan first." in prompt
+    assert "## How to speak\n\nUse short sentences." in prompt
+    assert "How to do research" not in prompt and "Other instructions" not in prompt
+    # The user instructions come before the project instructions: the project can change them.
+    assert prompt.index("# User instructions") < prompt.index("# Project instructions")
+    # A subagent does not get them: the user does not talk to it.
+    assert "# User instructions" not in build_system_prompt(ctx, "fake/m", user_facing=False)

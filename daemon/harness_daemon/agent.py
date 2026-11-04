@@ -60,7 +60,7 @@ SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 
 # Fields of stored messages that only the client uses. The model does not get them.
 # The model gets the "image" of a tool result in a separate message. See Agent.messages.
-CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts")
+CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin")
 
 # Called before the first change of a file in the turn of a user message: (message id, path, content or None).
 OnCheckpoint = Callable[[str, str, "bytes | None"], None]
@@ -99,8 +99,12 @@ class Agent:
         image_input: bool = False,
         context_source: str = "default",
         plugins: PluginHost | None = None,
+        user_facing: bool = True,
     ):
         self.cwd = Path(cwd).resolve()
+        # True: the user talks to this agent, so its prompt has the agent instructions of the user.
+        # A subagent gets False: the agent that made it tells it how to act.
+        self.user_facing = user_facing
         self.client = client
         self.image_input = image_input  # The model accepts images, for example screenshots.
         self.emit = emit
@@ -132,8 +136,11 @@ class Agent:
         self.streamed: list[str] = []  # The reply text that streams now. It is not in the history yet.
         self.turn_number = 0
         self.in_turn = False
-        # User messages from the client (the "steer" message) that wait for the next step: (id, text, display).
-        self.user_steer: list[tuple[str, str, str | None]] = []
+        # User messages that wait for the next step: (id, text, display, origin). The client sends them
+        # ("steer"), or a background task does (origin "task").
+        self.user_steer: list[tuple[str, str, str | None, str | None]] = []
+        # The task notes of steer messages that the turn did not take. The session gives them again.
+        self.on_notes_returned: Callable[[list[tuple[str, str]]], None] | None = None
         # The user message of the work now: the prompt of the turn, or the last steer message.
         self.message_id: str | None = None
         self.on_checkpoint: OnCheckpoint | None = None  # The session stores the checkpoints.
@@ -147,7 +154,7 @@ class Agent:
     def _rebuild_prompt(self) -> None:
         self.system_prompt = build_system_prompt(
             self.ctx, self.client.label, self.instructions, self.summary, list(self.skills.values()),
-            self._plugin_sections())
+            self._plugin_sections(), user_facing=self.user_facing)
         if self.settings.get("permission_mode") == "plan":
             self.system_prompt += PLAN_MODE_NOTE
         self._known_tokens = None
@@ -168,8 +175,18 @@ class Agent:
         from .tools.tasks import task_tools
 
         self.ctx.tasks = host
-        self.tools.update({t.name: t for t in task_tools()})
+        self.tools.update({t.name: t for t in task_tools(self.run_subagent if self.user_facing else None)})
+        self._sync_agent_tool()
         self._rebuild_prompt()
+
+    def _sync_agent_tool(self) -> None:
+        """The "subagents" setting off removes the agent tool. A subagent never has it."""
+        from .tools.tasks import AgentTool
+
+        self.tools.pop(AgentTool.name, None)
+        if self.user_facing and self.ctx.tasks is not None and self.settings.get("subagents", True) is not False:
+            self.tools[AgentTool.name] = AgentTool(self.run_subagent)
+        self._known_tokens = None  # The tool schemas are part of the request size.
 
     def enable_preview(self, host: Any) -> None:
         """Add the preview tools. ``host`` is the preview host of the session (preview.py)."""
@@ -224,6 +241,7 @@ class Agent:
         """Use changed settings, for example "auto_verify" from the client."""
         self.settings.clear()
         self.settings.update(settings)
+        self._sync_agent_tool()
         self._rebuild_prompt()
 
     def clear(self) -> None:
@@ -250,7 +268,8 @@ class Agent:
 
         sizes = {"system": 0, "instructions": 0, "skills": 0, "plugins": 0, "summary": 0}
         for kind, text in system_prompt_parts(self.ctx, self.client.label, self.instructions, self.summary,
-                                              list(self.skills.values()), self._plugin_sections()):
+                                              list(self.skills.values()), self._plugin_sections(),
+                                              user_facing=self.user_facing):
             sizes[kind] += text_tokens(text)
         if self.settings.get("permission_mode") == "plan":
             sizes["system"] += text_tokens(PLAN_MODE_NOTE)
@@ -344,17 +363,19 @@ class Agent:
         return [t.schema(self.ctx) for t in self.tools.values()]
 
     async def run_turn(self, text: str, *, display: str | None = None, allow: tuple[str, ...] = (),
-                       message_id: str | None = None) -> str:
+                       message_id: str | None = None, origin: str | None = None) -> str:
         """Run one user turn. Return the stop reason.
 
         ``display`` is the text that the client shows for the user message, for example
         "/review src" when ``text`` holds the skill instructions. ``allow`` holds rules
         that apply for this turn only, for example the allowed-tools of a skill.
 
+        ``origin`` "task": the message is a note of a background task, not a message of the user.
+
         Stop reasons: ``end``, ``max_tool_calls``, ``denied``, ``interrupted``, ``error``.
         """
         text = (await self.hooks.emit("turn.start", TurnEvent(text, self.cwd))).text
-        message = user_message(text, display, message_id)
+        message = user_message(text, display, message_id, origin)
         self.history.append(message)
         self.message_id = message["id"]
         self.gate.turn_allow = list(allow)
@@ -505,32 +526,39 @@ class Agent:
         self.history = self.history[:index]
         self._known_tokens = None
 
-    def steer(self, steer_id: str, text: str, display: str | None = None) -> bool:
+    def steer(self, steer_id: str, text: str, display: str | None = None, origin: str | None = None) -> bool:
         """Add a user message to the running turn. The model reads it at the next step.
 
         Return False if no turn runs: the client then sends the message as a prompt.
         """
         if not self.in_turn:
             return False
-        self.user_steer.append((steer_id, text, display))
+        self.user_steer.append((steer_id, text, display, origin))
         return True
 
     async def _take_user_steer(self) -> list[dict[str, Any]]:
         taken, self.user_steer = self.user_steer, []
         messages: list[dict[str, Any]] = []
-        for steer_id, text, display in taken:
-            message = user_message(text, display, steer_id)
+        for steer_id, text, display, origin in taken:
+            message = user_message(text, display, steer_id, origin)
             self.history.append(message)
             self.message_id = steer_id
             messages.append(message)
-            await self.emit({"type": "steer.taken", "id": steer_id, "text": display or text})
+            event: dict[str, Any] = {"type": "steer.taken", "id": steer_id, "text": display or text}
+            if origin:
+                event["origin"] = origin
+            await self.emit(event)
         return messages
 
     async def _return_user_steer(self) -> None:
         """The turn ended before the next step. The client sends the messages as prompts."""
         left, self.user_steer = self.user_steer, []
-        if left:
-            await self.emit({"type": "steer.returned", "ids": [steer_id for steer_id, _, _ in left]})
+        notes = [(text, display or text) for _, text, display, origin in left if origin == "task"]
+        if notes and self.on_notes_returned is not None:
+            self.on_notes_returned(notes)
+        ids = [steer_id for steer_id, _, _, origin in left if origin != "task"]
+        if ids:
+            await self.emit({"type": "steer.returned", "ids": ids})
 
     def _add_steered(self, text: str) -> dict[str, Any]:
         """Add a user message from a plugin. The client shows it as a notice."""
@@ -601,32 +629,92 @@ class Agent:
         text = f"{lead} Follow the skill instructions.\n\n{render_skill(skill, args, self.cwd)}"
         return await self.run_turn(text, display=display, allow=skill.allowed_tools)
 
-    async def run_fork(self, skill: Skill, args: str) -> str:
-        """Run a skill in a subagent with a new context. Return the report of the subagent."""
-        async def forward(event: dict[str, Any]) -> None:
-            if event["type"] not in SUBAGENT_HIDDEN_EVENTS:
-                await self.emit({**event, "agent": skill.name})
-
+    def _subagent(self, emit: Emit, allow: list[str], approver: Approver | None = None) -> "Agent":
+        """A subagent with a new context, the tools of this agent, and no agent tool of its own."""
         sub = Agent(
-            cwd=self.cwd, client=self.client, emit=forward, approver=self.gate.approver,
+            cwd=self.cwd, client=self.client, emit=emit, approver=approver or self.gate.approver,
             settings=self.settings, context_length=self.context_length,
-            session_allow=list(skill.allowed_tools), read_roots=self.ctx.read_roots,
-            image_input=self.image_input, plugins=self.plugins,
+            session_allow=allow, read_roots=self.ctx.read_roots,
+            image_input=self.image_input, plugins=self.plugins, user_facing=False,
         )
         if self.ctx.preview is not None:
             sub.enable_preview(self.ctx.preview)
         sub.set_mcp_tools(self.mcp_tools())
         # Auto mode checks the calls of the subagent with the messages of the user in this session.
         sub.gate.auto = self.gate.auto
+        return sub
+
+    @staticmethod
+    def _report(sub: "Agent") -> str | None:
+        return next((m["content"] for m in reversed(sub.history)
+                     if m.get("role") == "assistant" and m.get("content")), None)
+
+    def _forward(self, label: str) -> Emit:
+        async def forward(event: dict[str, Any]) -> None:
+            if event["type"] not in SUBAGENT_HIDDEN_EVENTS:
+                await self.emit({**event, "agent": label})
+        return forward
+
+    async def run_fork(self, skill: Skill, args: str) -> str:
+        """Run a skill in a subagent with a new context. Return the report of the subagent."""
+        sub = self._subagent(self._forward(skill.name), list(skill.allowed_tools))
         prompt = f"{render_skill(skill, args, self.cwd)}\n\n{FORK_REPORT_REQUEST}"
         stop = await sub.run_turn(prompt)
         if stop == "interrupted":
             raise asyncio.CancelledError()
-        report = next((m["content"] for m in reversed(sub.history)
-                       if m.get("role") == "assistant" and m.get("content")), None)
+        report = self._report(sub)
         if stop == "error" and not report:
             raise ModelError(f"The skill {skill.name} failed in its subagent.")
         return report or f"The skill {skill.name} ended with no report (stop reason: {stop})."
+
+    async def run_subagent(self, prompt: str, description: str, background: bool) -> str:
+        """The agent tool: run a task in a subagent with a new context.
+
+        In the foreground, return its report. In the background, start a task (tasks.py) and return
+        at once: the report comes to this agent as a note when the subagent ends.
+        """
+        label = description.strip() or "subagent"
+        text = f"{prompt.strip()}\n\n{FORK_REPORT_REQUEST}"
+        if not background:
+            sub = self._subagent(self._forward(label), [])
+            stop = await sub.run_turn(text)
+            if stop == "interrupted":
+                raise asyncio.CancelledError()
+            report = self._report(sub)
+            if stop == "error" and not report:
+                raise ModelError(f"The subagent ({label}) failed.")
+            return report or f"The subagent ended with no report (stop reason: {stop})."
+
+        host = self.ctx.tasks
+        if host is None:
+            raise ModelError("Background agents are not available here. Run the agent without run_in_background.")
+
+        async def job(task: Any) -> int:
+            async def log(event: dict[str, Any]) -> None:
+                # The task output shows the steps of the subagent. The chat does not show them.
+                if event["type"] == "tool.start":
+                    task.append(f"> {event.get('name')}: {_short(event.get('input'))}\n")
+                elif event["type"] == "error":
+                    task.append(f"[Error: {event.get('message')}]\n")
+
+            async def approve(request: dict[str, Any]) -> str:
+                # The card stays open after the turn of the main agent ends.
+                return await self.gate.approver({**request, "agent": label, "background": True})
+
+            sub = self._subagent(log, [], approve)
+            stop = await sub.run_turn(text)
+            report = self._report(sub) or f"(no report, stop reason: {stop})"
+            task.result = report
+            task.append(f"\n{report}\n")
+            return 0 if stop == "end" else 1
+
+        from .tasks import TaskError
+
+        try:
+            task = host.start_job("agent", prompt.strip(), label, job)
+        except TaskError as e:
+            raise ModelError(str(e)) from e
+        return task.id
 
     async def _run_fork_turn(self, skill: Skill, args: str, display: str) -> str:
         self.history.append({"role": "user", "content": f"Run the skill /{skill.name} {args}".strip(),
@@ -782,11 +870,22 @@ class Agent:
 _DENIED_RESULT = ToolResult(DENIED, is_error=True)
 
 
-def user_message(text: str, display: str | None, message_id: str | None) -> dict[str, Any]:
-    """A user message of the history. The id and the time are for the client: rewind and fork use the id."""
+def _short(value: Any, limit: int = 120) -> str:
+    """A short one-line form of tool arguments, for the output of a background agent."""
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def user_message(text: str, display: str | None, message_id: str | None,
+                 origin: str | None = None) -> dict[str, Any]:
+    """A user message of the history. The id and the time are for the client: rewind and fork use the id.
+    ``origin`` "task": the note of a background task. The client shows it as a notification."""
     message: dict[str, Any] = {"role": "user", "content": text}
     if display is not None:
         message["display"] = display
+    if origin:
+        message["origin"] = origin
     message["id"] = message_id or uuid.uuid4().hex
     message["ts"] = time.time()
     return message

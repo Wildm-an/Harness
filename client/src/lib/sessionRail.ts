@@ -100,6 +100,28 @@ export function sortTasks(tasks: TaskItem[]): TaskItem[] {
   });
 }
 
+const MAX_ENDED_IN_RAIL = 3; // The rail shows all running tasks, then this many ended tasks.
+
+/** The tasks of the rail: all the running tasks, then the newest ended tasks. */
+export function railTasks(tasks: TaskItem[]): TaskItem[] {
+  const sorted = sortTasks(tasks);
+  const running = sorted.filter((t) => t.status === "running");
+  return [...running, ...sorted.filter((t) => t.status !== "running").slice(0, MAX_ENDED_IN_RAIL)];
+}
+
+const KIND_NAMES: Record<NonNullable<TaskItem["kind"]>, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup" };
+const STATE_NAMES: Record<TaskItem["status"], string> = { running: "Running", done: "Done", failed: "Failed", stopped: "Stopped" };
+
+/** The detail line of a task: "Agent · Running", or "Wakeup · in 4 min" for a wakeup that waits. */
+export function taskDetailText(task: TaskItem, nowMs: number): string {
+  const kind = KIND_NAMES[task.kind ?? "shell"];
+  if (task.kind === "wakeup" && task.status === "running" && task.wake_at) {
+    const seconds = Math.max(0, Math.round(task.wake_at - nowMs / 1000));
+    return `${kind} · in ${seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`}`;
+  }
+  return `${kind} · ${STATE_NAMES[task.status]}`;
+}
+
 /** "2 running · 3 done", or "None" for an empty list. */
 export function taskSummary(tasks: TaskItem[]): string {
   if (tasks.length === 0) return "None";

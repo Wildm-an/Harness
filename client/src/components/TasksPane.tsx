@@ -1,9 +1,11 @@
-// The Background tasks pane: the commands that the agent runs in the background (bash with
-// run_in_background), with their output. The user can stop a task.
+// The Background tasks pane: the work that runs in the background, with its output: commands (bash
+// with run_in_background), monitors, background agents, and wakeups. The user can stop a task.
 
 import { useEffect, useRef, useState } from "react";
 import { CircleCheck, CircleSlash, CircleX, LoaderCircle, Square } from "lucide-react";
-import type { TaskDetail, TaskItem } from "../daemon/protocol";
+import type { TaskDetail, TaskItem, TaskKind } from "../daemon/protocol";
+
+const TASK_KINDS: Record<TaskKind, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup" };
 
 function elapsed(task: TaskItem, now: number): string {
   const seconds = Math.max(0, Math.round((task.ended_at ?? now / 1000) - task.started_at));
@@ -74,7 +76,7 @@ export function TasksPane({
   if (items.length === 0) {
     return (
       <p className="pane-empty">
-        No background tasks. The agent starts a task when it runs a long command in the background, for example a build or a test run.
+        No background tasks. The agent starts a task when it runs a long command in the background, watches a command with a monitor, gives work to a background agent, or sets a wakeup.
       </p>
     );
   }
@@ -94,7 +96,10 @@ export function TasksPane({
             <StatusIcon status={t.status} />
             <span className="task-text">
               <span className="task-title">{t.description || t.command}</span>
-              {t.description && <span className="task-command mono">{t.command}</span>}
+              <span className="task-command">
+                {TASK_KINDS[t.kind ?? "shell"]}
+                {t.description && <span className="mono"> · {t.command.split("\n")[0]}</span>}
+              </span>
             </span>
             <span className="task-time">{elapsed(t, now)}</span>
             {t.status === "running" && (

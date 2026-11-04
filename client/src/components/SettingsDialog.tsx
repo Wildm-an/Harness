@@ -1,6 +1,6 @@
 // The Settings dialog (Ctrl+,), as in the DeepSeek Harness and Claude apps: a list of pages on the
 // left, and the page on the right. General and Appearance are here. Plugins, Local Models,
-// Connections, and Computers are the screens that the sidebar opened before.
+// Providers, and Computers are the screens that the sidebar opened before.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, Puzzle, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
@@ -59,7 +59,7 @@ const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "plugins", label: "Plugins", icon: Puzzle },
   { id: "models", label: "Local Models", icon: Boxes },
-  { id: "connections", label: "Connections", icon: Cable },
+  { id: "connections", label: "Providers", icon: Cable },
   { id: "computers", label: "Computers", icon: Monitor },
   { id: "changelog", label: "Changelog", icon: ScrollText },
 ];
@@ -675,6 +675,10 @@ export function GeneralSettings({
         <Switch checked={values?.prompt_suggestions ?? true} label="Prompt suggestions" disabled={off} onChange={(on) => set({ prompt_suggestions: on })} />
       </Row>
 
+      <Row label="Subagents" help="Let the agent give tasks to subagents, also several at once in the background. Uses your limit faster.">
+        <Switch checked={values?.subagents !== false} label="Subagents" disabled={off} onChange={(on) => set({ subagents: on })} />
+      </Row>
+
       <Row label="Check the app after UI changes" help="The agent opens the preview and checks each change to the UI.">
         <Switch checked={values?.auto_verify ?? false} label="Check the app after UI changes" disabled={off} onChange={(on) => set({ auto_verify: on })} />
       </Row>
@@ -707,6 +711,26 @@ export function GeneralSettings({
         <TextField id="setting-shell" value={values?.terminal_shell ?? ""} placeholder="pwsh.exe" disabled={off} onSave={(v) => set({ terminal_shell: v || null })} />
       </Row>
 
+      <h3 className="settings-section">Agent instructions</h3>
+      <p className="help settings-note">
+        The agent that you talk to follows these instructions in all projects. A subagent does not get them: its agent tells it how to act. A HARNESS.md or CLAUDE.md file can change them for one project. A change applies at the next turn.
+      </p>
+      {INSTRUCTION_FIELDS.map(([key, label, help, placeholder]) => (
+        <div key={key} className="setting-block">
+          <label className="setting-label" htmlFor={`setting-${key}`}>
+            {label}
+          </label>
+          <span className="setting-help">{help}</span>
+          <TextAreaField
+            id={`setting-${key}`}
+            value={values?.[key] ?? ""}
+            placeholder={placeholder}
+            disabled={off}
+            onSave={(v) => set({ [key]: v || null })}
+          />
+        </div>
+      ))}
+
       <h3 className="settings-section">Keyboard shortcuts</h3>
       <dl className="shortcut-list">
         {SHORTCUTS.map(([action, keys]) => (
@@ -733,6 +757,49 @@ export function GeneralSettings({
         )}
       </p>
     </div>
+  );
+}
+
+type InstructionKey = "instructions_thinking" | "instructions_research" | "instructions_speaking" | "instructions_other";
+
+// The agent instruction settings: the key, the label, the help text, and the placeholder.
+export const INSTRUCTION_FIELDS: [InstructionKey, string, string, string][] = [
+  ["instructions_thinking", "How to think", "How the agent plans and checks its work.", "e.g. Make a plan before you change code. Check each change with the tests."],
+  ["instructions_research", "How to do research", "How the agent finds and checks information.", "e.g. Read the docs of a library before you use it. Give the source of each fact."],
+  ["instructions_speaking", "How to speak", "The style and the length of the replies.", "e.g. Write short sentences. Do not use emoji."],
+  ["instructions_other", "Other instructions", "All other rules for the agent.", "e.g. Do not commit. I make the commits."],
+];
+
+export const INSTRUCTION_MAX = 10_000; // The daemon limit, in characters.
+
+/** A multi-line text field. It saves when the focus leaves it, or on Ctrl+Enter. */
+function TextAreaField({ id, value, placeholder, disabled, onSave }: {
+  id: string;
+  value: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onSave: (v: string) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const save = () => {
+    if (text.trim() !== value) onSave(text.trim());
+  };
+  return (
+    <textarea
+      id={id}
+      className="setting-textarea"
+      value={text}
+      placeholder={placeholder}
+      disabled={disabled}
+      maxLength={INSTRUCTION_MAX}
+      rows={3}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save();
+      }}
+    />
   );
 }
 

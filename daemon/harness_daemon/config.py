@@ -24,6 +24,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "image_input": None,  # True or False overrides the image input check of the model.
     "permission_mode": "default",  # default, acceptEdits, plan, or bypassPermissions (permissions.py).
     "prompt_suggestions": True,  # After a turn, the model suggests the next prompt (suggestions.py).
+    "subagents": True,  # The agent tool: the agent can start subagents, also several at once in the background.
+    # The agent instructions of the user (Settings > General). The system prompt includes them (prompt.py).
+    "instructions_thinking": None,
+    "instructions_research": None,
+    "instructions_speaking": None,
+    "instructions_other": None,
 }
 
 # Keys in the project settings file that are permission rules, not settings.

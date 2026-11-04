@@ -30,6 +30,7 @@ class UpdatePlanTool(Tool):
         "Send the whole list each time: short steps (at most 7 words) in order, each with a status: "
         "pending, in_progress, or completed. Keep exactly one step in_progress while you work. "
         "Call it at the start of the task, and again when a step finishes or the plan changes. "
+        "After the user interrupts you or gives a new instruction, send the new whole list. "
         "Do not use it for a one-step answer."
     )
     parameters = {

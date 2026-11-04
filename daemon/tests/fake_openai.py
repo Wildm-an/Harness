@@ -38,7 +38,17 @@ class FakeModel:
         self.port = 0
 
     def script(self, *replies: dict[str, Any]) -> None:
+        """Add replies. A reply with "when" goes only to a request whose first user message has that text
+        (for example a subagent that runs next to the main agent). The others go in order."""
         self.replies.extend(replies)
+
+    def _pick(self, body: dict[str, Any]) -> int:
+        first_user = next((m.get("content") for m in body.get("messages") or [] if m.get("role") == "user"), "")
+        first_user = first_user if isinstance(first_user, str) else json.dumps(first_user)
+        for i, reply in enumerate(self.replies):
+            if "when" in reply and reply["when"] in first_user:
+                return i
+        return next((i for i, reply in enumerate(self.replies) if "when" not in reply), 0)
 
     @property
     def base_url(self) -> str:
@@ -81,7 +91,7 @@ class FakeModel:
             self.requests.append(body)
             if not self.replies:
                 return JSONResponse({"error": {"message": "No scripted reply."}}, status_code=500)
-            reply = self.replies.pop(0)
+            reply = self.replies.pop(self._pick(body))
             if "error" in reply:  # {"error": "text", "status": 400}: an HTTP error for this request.
                 return JSONResponse({"error": {"message": reply["error"]}}, status_code=reply.get("status", 400))
             return StreamingResponse(_sse(reply), media_type="text/event-stream")

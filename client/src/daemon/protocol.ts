@@ -20,7 +20,9 @@ export interface HistoryToolCall {
 }
 
 export type HistoryMessage =
-  | { role: "user"; content: string; display?: string; id?: string; ts?: number } // ts: epoch seconds. // display: the text that the user typed, for example "/review src".
+  // ts: epoch seconds. display: the text that the user typed, for example "/review src".
+  // origin "task": the notes of background tasks, not a message of the user.
+  | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task" }
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string };
@@ -32,6 +34,8 @@ export interface PermissionRequest {
   diff: string | null;
   rule: string | null; // The rule that "allow_always" adds. null: a plugin asks each time, so there is no "always".
   reason?: string | null; // Why a plugin asks for approval.
+  agent?: string; // A background subagent asks. Its card stays open after the turn ends.
+  background?: boolean;
 }
 
 /** A session with a running turn. waiting: the turn waits for a permission decision. */
@@ -114,17 +118,27 @@ export interface UserSettings {
   limit_tool_calls?: boolean; // false: no tool call limit.
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
+  subagents?: boolean; // false: the agent cannot start subagents (the agent tool).
+  // The agent instructions of the user. The system prompt includes them. null: no instructions.
+  instructions_thinking?: string | null;
+  instructions_research?: string | null;
+  instructions_speaking?: string | null;
+  instructions_other?: string | null;
 }
 
 /** A background task: a command that the agent runs with bash and run_in_background. */
+export type TaskKind = "shell" | "monitor" | "agent" | "wakeup";
+
 export interface TaskItem {
   id: string;
-  command: string;
+  kind?: TaskKind; // A daemon before version 0.1.38 has only shell tasks.
+  command: string; // shell, monitor: the command. agent: the prompt. wakeup: the prompt for the agent.
   description: string;
   status: "running" | "done" | "failed" | "stopped";
   started_at: number; // Epoch seconds.
   ended_at: number | null;
   returncode: number | null;
+  wake_at?: number | null; // wakeup: the time of the end (epoch seconds).
 }
 
 export interface TaskDetail extends TaskItem {
@@ -703,7 +717,9 @@ export type DaemonMessage =
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
   // A steer message went into the history. text: the text that the user sees.
-  | { type: "steer.taken"; id: string; text: string }
+  | { type: "steer.taken"; id: string; text: string; origin?: "task" }
+  // A turn that the daemon started, with no prompt: the notes of background tasks (origin "task").
+  | { type: "turn.started"; id: string; text: string; origin: "task" }
   // The turn ended before the next step, or no turn ran: the client sends these messages as prompts.
   | { type: "steer.returned"; ids: string[] }
   // After a turn: the next prompt that the model predicts. The prompt box shows it. Tab puts it in the box.

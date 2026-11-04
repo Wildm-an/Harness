@@ -7,6 +7,9 @@ Add it to ~/.harness/providers.json:
     "demo": { "base_url": "http://127.0.0.1:11500/v1", "api_key": "demo" }
 
 Behavior:
+- The notes of background tasks ("<task-notification>") -> a short text reply.
+- A user message that contains "background" -> a bash tool call with run_in_background (needs approval).
+- A user message that contains "helper" -> an agent tool call with run_in_background.
 - A user message that contains "run" -> a bash tool call (needs approval).
 - A skill that the user started with /name -> a short text reply.
 - "use the skill <name> <arguments>" -> a skill tool call.
@@ -87,6 +90,15 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
             "- Ask me to `run` a command or to `edit` a file to see a permission request."
         )}
     text = last.get("content") or ""
+    if "<task-notification>" in text:
+        return {"text": "A background task sent a notification. I read it: the work is **done**."}
+    if "background" in text.lower():
+        return {"text": "I will start the build in the background.", "tool_calls": [{"name": "bash", "arguments": {
+            "command": "sleep 4 && echo build ok", "run_in_background": True, "description": "Built the app"}}]}
+    if "helper" in text.lower() and "agent" in tools:
+        return {"text": "I will give the search to a helper agent.", "tool_calls": [{"name": "agent", "arguments": {
+            "prompt": "Read README.md and give a short report.", "description": "Read the README",
+            "run_in_background": True}}]}
     if text.startswith("The user started the skill"):
         name = text.split("/", 1)[1].split()[0].rstrip(".")
         return {"text": f"I follow the instructions of the skill **{name}**. The skill text is in my context."}

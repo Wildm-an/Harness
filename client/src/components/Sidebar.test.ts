@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { filterStatus, folderName, groupByProject, mergeOrder, moveKey, orderGroups, pathKey, sessionState, sortSessions } from "./Sidebar";
+import { filterStatus, folderName, groupByProject, mergeOrder, moveKey, orderGroups, pathKey, sessionState, sessionsToShowFolded, sortSessions } from "./Sidebar";
 import { searchSessions } from "./SessionSearch";
 
 const session = (id: string, cwd: string, updated: number): SessionSummary => ({
@@ -97,5 +97,17 @@ describe("sidebar view", () => {
     expect(searchSessions(named, "fix login").map((x) => x.id)).toEqual(["x"]);
     expect(searchSessions(named, "nothing")).toEqual([]);
     expect(searchSessions(named, "  ")).toHaveLength(2);
+  });
+});
+
+describe("a folded project", () => {
+  it("still shows the sessions that run, wait for input, or have an unread reply", () => {
+    const list = ["idle", "busy", "asks", "new"].map((id, i) => session(id, "/p", i));
+    const running = new Map([
+      ["busy", { session_id: "busy", waiting: false }],
+      ["asks", { session_id: "asks", waiting: true }],
+    ]);
+    expect(sessionsToShowFolded(list, running, new Set(["new"])).map((s) => s.id)).toEqual(["busy", "asks", "new"]);
+    expect(sessionsToShowFolded(list, new Map(), new Set())).toEqual([]);
   });
 });

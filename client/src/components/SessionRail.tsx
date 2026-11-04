@@ -13,7 +13,8 @@ import {
   foldedValue,
   percentText,
   prStateText,
-  sortTasks,
+  railTasks,
+  taskDetailText,
   taskSummary,
   toggleFolded,
   type RailSection,
@@ -25,7 +26,6 @@ export const SESSION_RAIL_ID = "session-rail";
 const NARROW = "(max-width: 900px)";
 const PLACE_ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
 const SERVER_STATES: Record<ServerItem["state"], string> = { stopped: "Stopped", starting: "Starting", running: "Running", crashed: "Crashed" };
-const TASK_STATES: Record<TaskItem["status"], string> = { running: "Running", done: "Done", failed: "Failed", stopped: "Stopped" };
 
 export interface RailEnvironment {
   placeKind: ConnectionKind;
@@ -108,7 +108,17 @@ export function SessionRail({
   const PlaceIcon = PLACE_ICONS[environment.placeKind];
   const share = context ? contextShare(context.tokens, context.length) : 0;
   const level = share >= 0.8 ? "high" : share >= 0.6 ? "mid" : "low";
-  const sortedTasks = sortTasks(tasks);
+  // All the running tasks (commands, monitors, agents, wakeups), then the newest ended tasks.
+  const shownTasks = railTasks(tasks);
+  // The time of a wakeup counts down.
+  const [now, setNow] = useState(() => Date.now());
+  const waiting = tasks.some((t) => t.kind === "wakeup" && t.status === "running");
+  useEffect(() => {
+    if (!waiting) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, [waiting]);
   const branch = environment.worktree?.branch ?? environment.branch;
 
   // Under the environment: the computer of the agent does not sleep while the agent works in this session.
@@ -229,13 +239,13 @@ export function SessionRail({
         <>
           <p className="rail-empty">{taskSummary(tasks)}</p>
           <ul className="rail-list">
-            {sortedTasks.slice(0, 5).map((t) => (
+            {shownTasks.map((t) => (
               <li key={t.id}>
                 <button type="button" className="rail-item" onClick={onShowTasks} title={t.command}>
                   <span className={`rail-dot ${t.status === "running" ? "running" : t.status === "done" ? "stopped" : "crashed"}`} aria-hidden />
                   <span className="rail-item-text">
                     <span className="rail-item-title">{t.description || t.command}</span>
-                    <span className="rail-item-detail">{TASK_STATES[t.status]}</span>
+                    <span className="rail-item-detail">{taskDetailText(t, now)}</span>
                   </span>
                 </button>
               </li>

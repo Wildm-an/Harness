@@ -93,6 +93,7 @@ def test_the_agent_starts_a_background_task(daemon, project, fake_model, monkeyp
         {"tool_calls": [{"name": "bash", "arguments": {"command": "echo bg-task-ok", "run_in_background": True,
                                                        "description": "Printed a line"}}]},
         {"text": "It runs."},
+        {"text": "It ended."},  # The turn that the end of the task starts.
     )
     c.send({"type": "prompt", "text": "Run it in the background"})
     request = c.until("permission.request")[0]
@@ -116,9 +117,79 @@ def test_the_agent_starts_a_background_task(daemon, project, fake_model, monkeyp
         detail = c.until("task")[0]
     assert detail["status"] == "done" and "bg-task-ok" in detail["output"]
 
-    # The next prompt tells the agent that the task ended.
-    fake_model.script({"text": "It ended."})
-    c.send({"type": "prompt", "text": "Is it done?"})
+    # The end of the task starts a turn, as in Claude Code. The user sent no prompt.
+    started = c.until("turn.started")[0]
+    assert started["origin"] == "task" and started["text"] == "Background task ended: Printed a line"
     c.until("turn.end")
-    assert f"The background task {task_id}" in fake_model.requests[-1]["messages"][-1]["content"]
+    note = fake_model.requests[-1]["messages"][-1]["content"]
+    assert f"The background task {task_id}" in note and "<task-notification>" in note
+    c.close()
+
+
+def test_notes_of_monitors_agents_and_wakeups(project):
+    async def main() -> None:
+        notified: list[int] = []
+        host = TaskHost(project, detect_shell(), on_notify=lambda: notified.append(1))
+        monitor = host.start("echo first-line && echo second-line", "Watched two lines", kind="monitor")
+        await host.wait(monitor, 20)
+        await asyncio.sleep(0.1)
+        assert notified
+        texts = [text for text, _ in host.take_notes()]
+        assert "first-line" in texts[0] and "second-line" in texts[0]
+        assert any("The monitor" in t and "ended with exit code 0" in t for t in texts)
+
+        async def report(task: BackgroundTask) -> int:
+            task.result = "Found 3 files."
+            return 0
+
+        agent = host.start_job("agent", "Count the files", "Count files", report)
+        await host.wait(agent, 5)
+        (text, short), = host.take_notes()
+        assert "finished" in text and "Found 3 files." in text and short == "Background agent finished: Count files"
+
+        async def tick(_task: BackgroundTask) -> int:
+            await asyncio.sleep(0.05)
+            return 0
+
+        wakeup = host.start_job("wakeup", "Check the CI run.", "Check CI", tick)
+        await host.wait(wakeup, 5)
+        (text, short), = host.take_notes()
+        assert "Check the CI run." in text and short == "Scheduled wakeup: Check CI"
+
+        # A stopped wakeup gives no note.
+        late = host.start_job("wakeup", "Never", "Later", tick)
+        await host.stop(late.id)
+        assert late.status == "stopped" and host.take_notes() == []
+
+    asyncio.run(main())
+
+
+def test_a_background_agent_reports_in_a_new_turn(daemon, harness_home, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.new_session(project)
+    fake_model.script(
+        {"tool_calls": [{"name": "agent", "arguments": {"prompt": "Count the files", "description": "Count files",
+                                                        "run_in_background": True}}]},
+        {"text": "It runs."},
+        {"when": "Count the files", "text": "There are 3 files."},  # The subagent.
+        {"text": "The agent found 3 files."},  # The turn that the report starts.
+    )
+    c.send({"type": "prompt", "text": "Start a helper"})
+    c.until("turn.end")
+    started = c.until("turn.started")[0]
+    assert started["text"] == "Background agent finished: Count files"
+    c.until("turn.end")
+    note = fake_model.requests[-1]["messages"][-1]["content"]
+    assert "There are 3 files." in note
+    # The subagent does not get the agent tool: it cannot start subagents.
+    sub = next(r for r in fake_model.requests if "Count the files" in str(r["messages"][1].get("content")))
+    assert "agent" not in [t["function"]["name"] for t in sub.get("tools") or []]
+
+    # The "subagents" setting off removes the agent tool at once.
+    c.send({"type": "user_settings.set", "values": {"subagents": False}})
+    assert c.until("user_settings")[0]["values"]["subagents"] is False
+    fake_model.script({"text": "No helpers."})
+    c.send({"type": "prompt", "text": "Any helpers?"})
+    c.until("turn.end")
+    assert "agent" not in [t["function"]["name"] for t in fake_model.requests[-1].get("tools") or []]
     c.close()

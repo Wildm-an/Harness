@@ -5,7 +5,8 @@ import type { Decision, DaemonMessage, HistoryMessage, PermissionRequest, StopRe
 export type ToolStatus = "running" | "done" | "error";
 
 export type ChatItem =
-  | { kind: "user"; id: string; text: string; messageId?: string; ts?: number } // messageId: the daemon id, for rewind and fork. ts: epoch ms.
+  // messageId: the daemon id, for rewind and fork. ts: epoch ms. origin "task": the notes of background tasks.
+  | { kind: "user"; id: string; text: string; messageId?: string; ts?: number; origin?: "task" }
   | { kind: "assistant"; id: string; text: string; streaming: boolean }
   | {
       kind: "tool";
@@ -28,6 +29,8 @@ export type ChatItem =
       reason?: string | null;
       decision?: Decision;
       expired?: boolean; // The turn ended before a decision.
+      background?: boolean; // A background subagent asks: the end of the turn does not expire the card.
+      agent?: string;
     }
   | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string }
   | { kind: "summary"; id: string; text: string | null; removed: number; trimmed: number; reason: string };
@@ -95,7 +98,7 @@ function endStreaming(items: ChatItem[]): ChatItem[] {
 
 /** Marks the permission cards with no decision as expired. */
 function expirePermissions(items: ChatItem[]): ChatItem[] {
-  return items.map((i) => (i.kind === "permission" && !i.decision && !i.expired ? { ...i, expired: true } : i));
+  return items.map((i) => (i.kind === "permission" && !i.decision && !i.expired && !i.background ? { ...i, expired: true } : i));
 }
 
 function updateItem(items: ChatItem[], id: string, kind: ChatItem["kind"], patch: Partial<ChatItem>): ChatItem[] {
@@ -127,7 +130,7 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const msg of history) {
     if (msg.role === "user") {
-      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined });
+      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined, origin: msg.origin });
     } else if (msg.role === "assistant") {
       if (msg.content) items.push({ kind: "assistant", id: nextId("assistant"), text: msg.content, streaming: false });
       for (const call of msg.tool_calls ?? []) {
@@ -183,13 +186,32 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       };
       return { ...state, items };
     }
-    case "permission.request":
+    case "permission.request": {
+      const card: ChatItem = {
+        kind: "permission",
+        id: msg.request_id,
+        tool: msg.tool,
+        input: msg.input,
+        diff: msg.diff,
+        rule: msg.rule,
+        reason: msg.reason ?? (msg.background && msg.agent ? `The background agent "${msg.agent}" asks.` : msg.reason),
+        background: msg.background,
+        agent: msg.agent,
+      };
+      const last = state.items[state.items.length - 1];
+      // A background agent asks while the main agent writes: the card goes before the reply, so the reply stays one message.
+      if (msg.background && last?.kind === "assistant" && last.streaming) {
+        return { ...state, items: [...state.items.slice(0, -1), card, last] };
+      }
+      return { ...state, items: [...endStreaming(state.items), card] };
+    }
+    case "turn.started":
+      // The notes of background tasks started a turn. The client sent no prompt.
       return {
         ...state,
-        items: [
-          ...endStreaming(state.items),
-          { kind: "permission", id: msg.request_id, tool: msg.tool, input: msg.input, diff: msg.diff, rule: msg.rule, reason: msg.reason },
-        ],
+        running: true,
+        turn: state.turn ?? { startedAt: Date.now(), tokens: 0 },
+        items: [...endStreaming(state.items), { kind: "user", id: nextId("user"), text: msg.text, messageId: msg.id, ts: Date.now(), origin: msg.origin }],
       };
     case "turn.usage":
       return state.turn ? { ...state, turn: { ...state.turn, tokens: msg.completion_tokens } } : state;
@@ -221,7 +243,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       };
     }
     case "steer.taken":
-      return { ...state, items: [...endStreaming(state.items), { kind: "user", id: nextId("user"), text: msg.text, messageId: msg.id, ts: Date.now() }] };
+      return { ...state, items: [...endStreaming(state.items), { kind: "user", id: nextId("user"), text: msg.text, messageId: msg.id, ts: Date.now(), origin: msg.origin }] };
     case "error":
       return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: "error", text: msg.message }] };
     case "notice":
@@ -276,8 +298,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (action.running && action.partial) {
         live.push({ kind: "assistant", id: nextId("assistant"), text: action.partial, streaming: true });
       }
-      for (const r of action.running ? action.requests ?? [] : []) {
-        live.push({ kind: "permission", id: r.request_id, tool: r.tool, input: r.input, diff: r.diff, rule: r.rule, reason: r.reason });
+      for (const r of action.requests ?? []) { // A background subagent can ask when no turn runs.
+        live.push({ kind: "permission", id: r.request_id, tool: r.tool, input: r.input, diff: r.diff, rule: r.rule, reason: r.reason, background: r.background, agent: r.agent });
       }
       return {
         running: action.running ?? false,

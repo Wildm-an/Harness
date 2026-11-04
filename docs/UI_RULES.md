@@ -81,6 +81,7 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
   Harness now uses the single keys P, U, R, A, D in this menu. Change them to the Ctrl+Alt chords above.
 - **S8.** Archive asks first only when the session has uncommitted changes: "Archive session with uncommitted changes?" with "Archive anyway". Delete always asks first.
 - **S9.** A drag of a row shows a label pill: "Open in split view", "Release to unpin", "Move to {label}".
+- **S11.** A folded project still shows its sessions that are running, awaiting input, or unread, under the project name (the user asked for this). The other sessions show when the project opens.
 - **S10.** When the sidebar is hidden, the pointer on the sidebar toggle in the title row shows the sidebar over the view (the user asked for this). It goes away a short time after the pointer leaves it, on Esc, or after a choice in it. A menu or a dialog of the sidebar keeps it. The sidebar toggle in it shows the sidebar again in its usual place.
 
 ### 3.4 Capabilities page
@@ -269,6 +270,8 @@ Harness has no "+" button now. Add it.
 - **V6c.** Claude sections, in this order: Environment, Goal, Settings, Context, Usage, Connectors, Progress, Outputs, Pull requests, Servers, Background tasks. Each section folds. The user can hide and reorder sections. The app keeps the shown state and the folded sections.
 - **V6d.** In a narrow window the rail covers the session. Esc or a click outside closes it.
 - **V6e.** Harness shows Environment, Context, Pull requests, Servers, and Background tasks (`SessionRail.tsx`). A section with no data does not show. Harness does not hide or reorder sections yet. Harness has no Settings section: the user asked to keep the mode and model menus only under the prompt box. The Environment section ends with the switch "Keep computer awake" ("Only for this session"), the same switch as in the ⋮ menu: the user asked for it under the environment.
+- **V6v.** The Background tasks section of the rail shows all the running tasks, then the 3 newest ended tasks (the user asked for this). Each row shows the description and "{kind} · {state}": "Command", "Monitor", "Agent", or "Wakeup". A wakeup that waits shows "Wakeup · in {time}".
+- **V6w.** When a background task ends, a monitor writes a line, a background agent ends, or a wakeup is due, the agent gets a note, as in Claude Code. The note goes into the running turn, or it starts a new turn. The chat shows the note as a muted line with a bell icon, not as a user message.
 - **V6s.** The heading of the folded Context section shows the share of the context window in use, for example "Context 57%". The open Context section shows the usage parts (the same list as the context ring, C18), then "Compact this session".
 - **V6u.** Each new session opens the rail in the Code view (the user asked for this). The saved shown state does not change.
 - **V6t.** In the Code view, the rail closes when the Preview pane or the Browser pane opens, so the pane gets the room. The user asked for this. The saved shown state does not change, and the title bar button opens the rail again.
@@ -287,7 +290,7 @@ Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 - **V6m.** The Files sidebar head has "New file…" and "New folder…". A name field opens at the top of the tree, with the folder of the open file as the start. Enter makes the item (the daemon message `fs.create`), and a new file opens in the editor. Esc closes the field. The edge on the right of the sidebar changes its width. A double-click sets the automatic width.
 - **V6n.** The language of the open file is a menu in the editor status bar, with a filter. The choice changes the colors and the editor features of that file. The file on disk does not change.
 - **V6o.** The Files sidebar head shows its action buttons when they fit. A narrow sidebar (236px or less) shows one "⋯" menu with the same actions and their names. The sidebar is at least 120px wide: the Files and Search switch and "⋯" stay in view.
-- **V6p.** The agent shows a task list and an end-of-turn box, as Claude Code does (daemon tools `update_plan` and `wrap_up`). The chat draws the latest plan under the messages: a check mark for a completed step, a spinner for the step in progress, and a dashed circle for a pending step. At the end of a turn it draws a box with the recap, a question, and one or two answer buttons. A button sends its message as the next prompt. The chat does not show these two tools as tool rows.
+- **V6p.** The agent shows a task list and an end-of-turn box, as Claude Code does (daemon tools `update_plan` and `wrap_up`). The chat draws the latest plan under the messages: a check mark for a completed step, a spinner for the step in progress, and a dashed circle for a pending step. At the end of a turn it draws a box with the recap, a question, and one or two answer buttons. A button sends its message as the next prompt. The chat does not show these two tools as tool rows. An unfinished plan of an older turn stays under the messages with no spinner, until the agent sends a new plan. The plan of an interrupted turn does not show after the next prompt.
 - **V6l.** The file tree grays out the files that the editor cannot open (binary files, by extension). A click does nothing. The hover hint is "Binary file". PDF and Word (.docx) files are not gray: a click opens them in the Preview pane (V6q).
 - **V6q.** The Preview pane shows a PDF (pdf.js) or a Word .docx file (docx-preview) of the session folder, read only. Claude Code has no such pane (P6): it is in the ⋮ overflow menu as "Preview", next to "Background tasks", as Claude puts "Artifacts" there. A click on a .pdf or .docx file in the file tree or in the chat opens it. The agent opens it with the tool `show_document`. The window header shows the file name. A PDF has "Zoom out", "Fit to width", and "Zoom in" (also Ctrl+wheel), and both types have "Reload". The renderers are in the app bundle: the pane works offline.
 - **V6i.** In the editor, Ctrl+K opens the inline edit box, as in Cursor: the instruction goes to the agent with the selected lines. Outside the editor, Ctrl+K opens the command menu. Ctrl+L adds the selection to the chat.
@@ -359,7 +362,7 @@ Notes:
 - **G2.** Harness groups, in this order:
   1. "Claude Code": the page with sections in G3.
   2. "Customize": "Plugins", "Permission rules". The skills and the MCP servers are not in Settings: they are on the Capabilities page (section 3.4).
-  3. "Models": "Connections" (model providers) and "Local models". These are Harness-only (P6).
+  3. "Models": "Providers" (the model providers) and "Local models". These are Harness-only (P6). The user asked for the name "Providers" (it was "Connections").
   4. "This computer": "System", "Computers" (remote daemons).
   5. The changelog moves to the account menu ("View changelog").
 - **G3.** The Claude Code page has sections in this order: "General", "Appearance", "Code appearance", "Sessions", "Browser", "Pull requests".
@@ -395,6 +398,8 @@ Notes:
 | Run at startup | This computer > System: "Run on startup" | switch | missing |
 | Update check | Help > "Check for Updates…" and the sidebar strip | menu item | General > Updates |
 | Keyboard shortcuts | Help > "Keyboard Shortcuts" (Ctrl+/), a dialog | dialog | General table |
+| Subagents | Claude has "Dynamic workflows" ("Let Claude run several agents at once on complex tasks. Uses your limit faster.") | switch, default on | General > The agent > "Subagents". Off removes the agent tool. Harness has no workflows: the switch is for subagents (the user asked for it). |
+| Agent instructions | not in the Code tab (claude.ai has "personal preferences") | four text areas: "How to think", "How to do research", "How to speak", "Other instructions" | General > Agent instructions (the user asked for this location). Only the session agent gets them, not a subagent. |
 | Tool call limit, command timeout, shell | not in Claude (Claude Code `settings.json`) | — | General > The agent; keep in "Claude Code" > "General" |
 | Send while working | not a setting (Enter / Ctrl+Enter) | — | General; remove |
 
