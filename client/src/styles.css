@@ -1,23 +1,22 @@
 /*
- * Design tokens. The layout and the colors follow the Claude Code desktop app: neutral gray
- * surfaces in the dark theme (the CDS grays of the Claude app), warm paper surfaces in the light
- * theme, a clay action color, a sidebar of sessions, and a plain transcript.
+ * Design tokens. The layout and the colors follow the Claude Code desktop app: warm neutral
+ * surfaces, a clay action color, a sidebar of sessions, and a plain transcript.
  * --accent is the clay color for text and icons. --accent-fill is the clay color behind
  * text (buttons). --success is green for the states that are good: done, allowed, running.
  * Text contrast is 4.5:1 or more on each surface.
  */
 :root {
   color-scheme: dark;
-  --bg: #151515;
-  --sidebar: #0b0b0b;
-  --surface: #1a1a19;
-  --surface-2: #20201f;
-  --surface-sunken: #0b0b0b;
-  --hover: rgba(240, 239, 236, 0.075);
-  --border: #2c2c2a;
-  --border-strong: #3f3e3c;
-  --text: #f0efec;
-  --text-muted: #a5a49a;
+  --bg: #262624;
+  --sidebar: #1f1e1d;
+  --surface: #30302e;
+  --surface-2: #3a3a37;
+  --surface-sunken: #1f1e1d;
+  --hover: rgba(250, 249, 245, 0.06);
+  --border: #45443f;
+  --border-strong: #5a5852;
+  --text: #faf9f5;
+  --text-muted: #a8a59c;
   --accent: #d97757;
   --accent-hover: #e38b6d;
   --accent-fill: #c6613f;
@@ -35,7 +34,7 @@
   --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
   --violet: #c3a6f0;
   --teal: #6fc8c0;
-  --backdrop: rgba(0, 0, 0, 0.5);
+  --backdrop: rgba(15, 14, 13, 0.6);
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
   --diff-add-bg: rgba(134, 195, 134, 0.14);
@@ -44,7 +43,7 @@
   --diff-del-text: #f6b1aa;
   --diff-add-word: rgba(134, 195, 134, 0.38);
   --diff-del-word: rgba(242, 139, 130, 0.38);
-  --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(165, 164, 154, 0.06) 6px 12px);
+  --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(168, 165, 156, 0.06) 6px 12px);
 
   --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;

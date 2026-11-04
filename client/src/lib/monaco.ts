@@ -45,9 +45,9 @@ monaco.editor.defineTheme("harness-dark", {
     "input.background": "#0f172a",
     "input.border": "#475569",
     "focusBorder": "#38bdf8",
-    "scrollbarSlider.background": "#3f3e3c", // --border-strong of the dark theme.
-    "scrollbarSlider.hoverBackground": "#52514e",
-    "scrollbarSlider.activeBackground": "#52514e",
+    "scrollbarSlider.background": "#5a5852",
+    "scrollbarSlider.hoverBackground": "#6e6c65",
+    "scrollbarSlider.activeBackground": "#6e6c65",
     "diffEditor.insertedTextBackground": "#22c55e24",
     "diffEditor.removedTextBackground": "#f8717124",
     "diffEditor.insertedLineBackground": "#22c55e14",
