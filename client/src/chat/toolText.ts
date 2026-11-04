@@ -102,6 +102,9 @@ export function toolAction(item: ToolItem): ToolAction {
     }
     case "exit_plan_mode":
       return { verb: pick("Proposed", "Proposing"), object: "a plan", mono: false };
+    case "show_visual":
+      // A visual in the chat (daemon tools/visual.py). It shows as a row only when it failed.
+      return { verb: pick("Made", "Making"), object: "a visual", mono: false };
     case "show_document":
       // The agent opened a PDF or Word file in the Preview pane (daemon tools/document.py).
       return { verb: pick("Opened preview of", "Opening preview of"), object: baseName(text(a.path) || "a document"), mono: false };

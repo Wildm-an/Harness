@@ -211,6 +211,7 @@ Harness has no "+" button now. Add it.
   | ExitPlanMode | "Proposed plan" | — | — |
 
 - **M6.** An edit row shows +added and −removed line counts. A click on the file name opens it in the Changes pane.
+- **M6a.** A visual of the agent is its own item in the chat, not a tool row, as the `show_widget` visuals of the Claude app. The agent makes it with the tool `show_visual` (an HTML fragment or an `<svg>`). The header line is "Made a visual" with a caret that folds the visual. The visual is open at first. It shows in a sandboxed iframe (`allow-scripts` only, no same-origin) that gets the height of its content. The frame page comes from the daemon (`/visual-frame`) with its own CSP: inline scripts and three CDNs (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com) can run, and the network is closed. The app gives the theme colors and fonts as CSS variables (`--color-text`, `--color-accent`, and the others in `lib/visual.ts`), and a theme change goes to the visual at once. `sendPrompt(text)` in a click sends the text as the next prompt, as a button of the end-of-turn box. A failed call is a tool row. For a daemon on another computer (not loopback), the frame uses `srcdoc`: the app CSP then blocks its scripts in the installed app.
 
 ### 6.3 Permission card
 

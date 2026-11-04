@@ -131,6 +131,7 @@ import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
 import { MessageList, type QueuedItem, type RewindOptions } from "./components/MessageList";
+import { setVisualDaemon } from "./lib/visual";
 import { SessionSearch } from "./components/SessionSearch";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
 import { compareVersions } from "./lib/version";
@@ -982,6 +983,7 @@ export default function App() {
         const target = await resolveTarget(c);
         const { host, version, updatable } = await conn.connect(target.host, target.port, target.token);
         targetRef.current = target;
+        setVisualDaemon(target.host, target.port);
         setHello(host);
         setDaemonVersion(version);
         setDaemonUpdatable(updatable === true);
@@ -1055,6 +1057,7 @@ export default function App() {
         const target = await resolveTarget(c);
         const { host, version, updatable } = await conn.connect(target.host, target.port, target.token);
         targetRef.current = target;
+        setVisualDaemon(target.host, target.port);
         setHello(host);
         setDaemonVersion(version);
         setDaemonUpdatable(updatable === true);

@@ -13,6 +13,8 @@ Behavior:
 - A user message that contains "ask" -> an ask_user_question call with two questions.
 - In plan mode, a user message that contains "plan" -> an exit_plan_mode call with a plan.
 - A user message that contains "web" -> web_search, then web_fetch of the first result.
+- A user message that contains "visual" -> a show_visual call: three animated loaders, each with a
+  "Use option" button that sends a prompt.
 - A user message that contains "slow" -> a task list with a step in progress, then a slow reply.
 - A user message that contains "run" -> a bash tool call (needs approval).
 - A skill that the user started with /name -> a short text reply.
@@ -77,6 +79,41 @@ def preview_step(name: str | None, output: str, tools: set[str]) -> dict | None:
     return None
 
 
+# The visual of the demo: three animated loaders with the theme colors, and a button for each one.
+LOADERS = """<style>
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius); background: var(--color-surface); }
+.name { color: var(--color-text-muted); font-size: 13px; }
+.dot { fill: var(--color-accent); animation: pulse 1.2s ease-in-out infinite; }
+.dot:nth-child(2) { animation-delay: 0.2s; } .dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+.spin { transform-origin: 20px 20px; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.bar { fill: var(--color-accent); animation: grow 1s ease-in-out infinite; transform-origin: 50% 100%; }
+.bar:nth-child(2) { animation-delay: 0.15s; } .bar:nth-child(3) { animation-delay: 0.3s; }
+@keyframes grow { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+</style>
+<div class="grid">
+  <div class="card">
+    <svg width="60" height="40" viewBox="0 0 60 40"><circle class="dot" cx="12" cy="20" r="6"/><circle class="dot" cx="30" cy="20" r="6"/><circle class="dot" cx="48" cy="20" r="6"/></svg>
+    <span class="name">Dots</span>
+    <button onclick="sendPrompt('Use the dots loader')">Use option</button>
+  </div>
+  <div class="card">
+    <svg width="40" height="40" viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" fill="none" stroke="var(--color-border)" stroke-width="4"/>
+      <circle class="spin" cx="20" cy="20" r="15" fill="none" stroke="var(--color-accent)" stroke-width="4" stroke-linecap="round" stroke-dasharray="30 100"/></svg>
+    <span class="name">Ring</span>
+    <button onclick="sendPrompt('Use the ring loader')">Use option</button>
+  </div>
+  <div class="card">
+    <svg width="40" height="40" viewBox="0 0 40 40"><rect class="bar" x="6" y="8" width="6" height="24" rx="2"/><rect class="bar" x="17" y="8" width="6" height="24" rx="2"/><rect class="bar" x="28" y="8" width="6" height="24" rx="2"/></svg>
+    <span class="name">Bars</span>
+    <button onclick="sendPrompt('Use the bars loader')">Use option</button>
+  </div>
+</div>"""
+
+
 def plan(messages: list[dict], tools: set[str]) -> dict:
     last = messages[-1]
     if last["role"] == "user" and isinstance(last["content"], list):
@@ -91,6 +128,8 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
             if found:
                 return {"text": "I will read the first result.", "tool_calls": [
                     {"name": "web_fetch", "arguments": {"url": found.group(0)}}]}
+        if name == "show_visual":
+            return {"text": "Here are three loaders. Pick one with its **Use option** button."}
         if name == "update_plan" and any("slow" in (m.get("content") or "") for m in messages if m["role"] == "user"):
             return {"text": " ".join(["This reply comes slowly, so that the working line shows the step."] * 6), "delay": 0.25}
         output = last["content"]
@@ -119,6 +158,9 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
     if "web" in text.lower() and "web_search" in tools:
         return {"text": "I will search the web.", "tool_calls": [{"name": "web_search", "arguments": {
             "query": "python asyncio TaskGroup", "count": 3}}]}
+    if "visual" in text.lower() and "show_visual" in tools:
+        return {"text": "I will show you three loader options.", "tool_calls": [{"name": "show_visual", "arguments": {
+            "title": "loader_options", "code": LOADERS}}]}
     if "slow" in text.lower():
         return {"text": "", "tool_calls": [{"name": "update_plan", "arguments": {"items": [
             {"content": "Read the code", "status": "completed"},
