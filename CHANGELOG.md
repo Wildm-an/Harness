@@ -3,6 +3,14 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.40 (2026-11-04)
+
+### Sidebar
+
+- Right-click a project with no sessions and choose "Remove from sidebar" (under "Archive all").
+  The folder and its files stay.
+- The question before you delete a session selects "Delete", so Enter deletes the session.
+
 ## 0.1.39 (2026-11-04)
 
 ### The agent
