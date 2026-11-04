@@ -303,18 +303,32 @@ export interface McpServerItem {
   connector?: string | null; // The connector that gives the token (connectors.py), for example "github".
 }
 
-/** A connector of the Connectors tab: an MCP server that Harness sets up with a token (connectors.py). */
+/** The options of a "device" connector (Outlook). */
+export interface ConnectorOptions {
+  account: "personal" | "work";
+  read_only: boolean;
+}
+
+/**
+ * A connector of the Connectors tab: an MCP server that Harness sets up in one step (connectors.py).
+ * "token" (GitHub): a remote server and a bearer token. "device" (Outlook): a local npm server that signs in
+ * with a Microsoft device code and keeps its own tokens.
+ */
 export interface ConnectorItem {
   id: string;
   name: string;
   description: string;
-  url: string;
+  kind: "token" | "device";
+  url: string; // The MCP server ("token"), or the page of the server ("device").
   installed: boolean; // The server entry is in ~/.harness/mcp.json.
-  source: "gh" | "token" | null; // The token source: the GitHub CLI, or a pasted token. null: not connected.
-  login: string | null; // The account of the token.
-  gh_available: boolean; // The GitHub CLI is signed in on the daemon computer.
-  token_url: string; // The page where the user makes a token.
-  token_help: string;
+  source: "gh" | "token" | "device" | null; // How it signed in. null: not connected.
+  login: string | null; // The account.
+  signing_in: boolean; // A device sign-in waits for the user.
+  gh_available?: boolean; // "token": the GitHub CLI is signed in on the daemon computer.
+  token_url?: string; // "token": the page where the user makes a token.
+  token_help?: string;
+  package?: string; // "device": the npm package, with its version.
+  options?: ConnectorOptions | null; // "device": the options of the sign-in.
 }
 
 export interface McpStatus {
@@ -606,7 +620,8 @@ export type ClientMessage =
   | { type: "mcp.auth_cancel"; name: string }
   | { type: "mcp.logout"; name: string }
   | { type: "connectors.list" }
-  | { type: "connectors.connect"; id: string; source: "gh" | "token"; token?: string }
+  | { type: "connectors.connect"; id: string; source: "gh" | "token" | "device"; token?: string; options?: ConnectorOptions }
+  | { type: "connectors.cancel"; id: string }
   | { type: "connectors.disconnect"; id: string }
   | { type: "plugins.list" }
   | { type: "plugins.reload" }
@@ -732,6 +747,7 @@ export type DaemonMessage =
   | { type: "mcp.init"; path: string; created: boolean }
   | { type: "mcp.auth_url"; name: string; url: string }
   | { type: "connectors"; items: ConnectorItem[] }
+  | { type: "connectors.device_code"; id: string; url: string; code: string }
   | { type: "capabilities"; cwd: string | null; live: boolean; skills: CommandItem[]; mcp: McpStatus }
   | ({ type: "plugins" } & PluginsStatus)
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }

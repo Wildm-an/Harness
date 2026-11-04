@@ -12,6 +12,20 @@ this file on its Changelog page.
   for files that a command makes, for example the scripts of the `docx` and `pdf` skills. The
   cards show again when you open the session later.
 
+### Connectors
+
+- A new Microsoft Outlook connector gives the agent mail, calendar, and contacts. It runs the
+  `@softeria/ms-365-mcp-server` MCP server (MIT) with npx on the daemon computer, so that
+  computer needs Node.js.
+- Choose "Personal account" or "Work or school account", and "Read-only" if the agent must not
+  send, change, or delete. Click "Sign in with Microsoft". Harness shows a code: open
+  microsoft.com/devicelogin and enter it. "Cancel" stops a sign-in that waits.
+- The server keeps its own sign-in in its encrypted cache. "Disconnect" signs out and removes the
+  server.
+- Each connector shows the logo of its service. The GitHub connector and its MCP server row show
+  the GitHub mark. Outlook shows a mail icon, because Microsoft does not permit its product icons
+  without a license.
+
 ## 0.1.42 (2026-11-04)
 
 ### Skills

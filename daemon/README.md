@@ -288,7 +288,25 @@ At each connection, the MCP client adds `Authorization: Bearer <token>`. A serve
 
 "Disconnect" removes the token and the entry. If `mcp.json` already has a server named `github` that is not from the connector, Harness does not change it and shows an error.
 
-Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh` or `token`, `token`), and `connectors.disconnect` (`id`). The reply is `connectors` with the items. The items never include the token.
+#### Microsoft Outlook
+
+The Outlook connector is a local stdio server: `@softeria/ms-365-mcp-server@0.179.1` (MIT) with `--preset outlook`. npx runs it on the daemon computer, so that computer needs Node.js.
+
+1. Choose "Personal account" or "Work or school account", and "Read-only" if you want it.
+2. Click "Sign in with Microsoft". The daemon runs the server with `--login`. The server prints a Microsoft device code, and the row shows it.
+3. Open `https://microsoft.com/devicelogin`, enter the code, and sign in. The server prints the account, and Harness adds the entry:
+
+```json
+"outlook": { "command": "npx", "args": ["-y", "@softeria/ms-365-mcp-server@0.179.1", "--preset", "outlook"],
+             "env": { "MS365_MCP_TENANT_ID": "consumers" }, "connector": "outlook" }
+```
+
+- A personal account sets `MS365_MCP_TENANT_ID=consumers`, because a refresh token from the `common` authority fails at its first refresh. A work account adds `--org-mode` and no tenant.
+- Read-only adds `--read-only`. The server then has no tools that send, change, or delete.
+- The server keeps and refreshes its own tokens, in an encrypted cache on the daemon computer. `mcp-auth.json` keeps only the options and the account name.
+- "Cancel" stops a sign-in that waits. A device code expires after 15 minutes. "Disconnect" runs the server with `--logout`, then removes the record and the entry.
+
+Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, or `device`, `token`, `options`), `connectors.cancel` (`id`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, and `connectors.device_code` (`id`, `url`, `code`) for a device sign-in. The items never include a token.
 
 ## Cookbook
 

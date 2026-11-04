@@ -58,7 +58,7 @@ import {
   type WebKeyProvider,
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
-import { CapabilitiesPage, toCapTab, type CapTab, type ConnectorAction, type McpAuthAction } from "./components/CapabilitiesPage";
+import { CapabilitiesPage, toCapTab, type CapTab, type ConnectorAction, type DeviceCode, type McpAuthAction } from "./components/CapabilitiesPage";
 import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
@@ -519,6 +519,7 @@ export default function App() {
   const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
   const [connectorError, setConnectorError] = useState<{ id: string; message: string } | null>(null);
   const connectorWait = useRef<string | null>(null);
+  const [deviceCode, setDeviceCode] = useState<DeviceCode | null>(null);
   const [pendingEdit, setPendingEdit] = useState<{ path: string; key: number } | null>(null); // A file for the editor.
 
   /** Opens the Cookbook screen (SPEC.md section 7). */
@@ -776,6 +777,11 @@ export default function App() {
         case "connectors":
           setConnectors(msg.items);
           setConnectorBusy(null);
+          setDeviceCode((c) => (c && msg.items.some((i) => i.id === c.id && i.signing_in) ? c : null));
+          return;
+        case "connectors.device_code":
+          // A device sign-in (Outlook): the row shows the code. The user opens the page and enters it.
+          setDeviceCode({ id: msg.id, url: msg.url, code: msg.code });
           return;
         case "mcp.auth_url":
           // The daemon sends it only after the user clicked Authenticate. Open the sign-in page in the browser.
@@ -828,6 +834,7 @@ export default function App() {
           }
           if (msg.ref?.startsWith("connectors.")) {
             setConnectorBusy(null);
+            setDeviceCode(null);
             setConnectorError({ id: connectorWait.current ?? "", message: msg.message });
             return;
           }
@@ -1831,10 +1838,15 @@ export default function App() {
     connectorWait.current = action.id;
     setConnectorError(null);
     setConnectorBusy(action.id);
-    const sent =
-      action.kind === "disconnect"
-        ? sendSafely({ type: "connectors.disconnect", id: action.id })
-        : sendSafely({ type: "connectors.connect", id: action.id, source: action.source, ...(action.source === "token" ? { token: action.token } : {}) });
+    if (action.kind === "cancel") {
+      sendSafely({ type: "connectors.cancel", id: action.id });
+      return;
+    }
+    let sent: boolean;
+    if (action.kind === "disconnect") sent = sendSafely({ type: "connectors.disconnect", id: action.id });
+    else if (action.source === "token") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "token", token: action.token });
+    else if (action.source === "device") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "device", options: action.options });
+    else sent = sendSafely({ type: "connectors.connect", id: action.id, source: "gh" });
     if (!sent) setConnectorBusy(null);
   };
 
@@ -2839,6 +2851,7 @@ export default function App() {
             connectors={connectors}
             connectorBusy={connectorBusy}
             connectorError={connectorError}
+            deviceCode={deviceCode}
             onConnector={connectorAction}
             onEditConfig={() => sendSafely({ type: "mcp.init" })}
             plugins={plugins}

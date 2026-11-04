@@ -1783,17 +1783,28 @@ async def _connector_changed(conn: Connection, connector_id: str) -> None:
 
 @handler("connectors.connect")
 async def on_connectors_connect(conn: Connection, msg: dict[str, Any]) -> None:
-    """Connect a connector: "source" is "gh" (the token of the GitHub CLI) or "token" (with "token")."""
+    """Connect a connector.
+
+    GitHub: "source" is "gh" (the token of the GitHub CLI) or "token" (with "token"). Outlook: "source" is
+    "device", with "options" ({"account": "personal" or "work", "read_only": bool}). The daemon then sends
+    "connectors.device_code" with the URL and the code, and the user signs in in the browser.
+    """
     connector_id = _connector_id(msg)
     source, value = msg.get("source"), msg.get("token")
     if value is not None and not isinstance(value, str):
         raise ProtocolError("'token' must be a string.")
+    options = msg.get("options")
+    if options is not None and not isinstance(options, dict):
+        raise ProtocolError("'options' must be an object.")
     if conn.current is not None and conn.mcp is not None and conn.mcp.is_connected(connector_id):
         conn.require_idle()
 
+    async def on_code(url: str, code: str) -> None:
+        await conn.send({"type": "connectors.device_code", "id": connector_id, "url": url, "code": code})
+
     async def work() -> None:
         try:
-            await connectors.connect(connector_id, str(source), value)
+            await connectors.connect(connector_id, str(source), value, options=options, on_code=on_code)
         except connectors.ConnectorError as e:
             await conn.send(await connectors.items())
             await conn.error(str(e), ref="connectors.connect")
@@ -1805,12 +1816,22 @@ async def on_connectors_connect(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("connectors.disconnect")
 async def on_connectors_disconnect(conn: Connection, msg: dict[str, Any]) -> None:
-    """Remove the token of a connector and its server entry in ~/.harness/mcp.json."""
+    """Sign out (Outlook), and remove the record of a connector and its server entry in ~/.harness/mcp.json."""
     connector_id = _connector_id(msg)
     if conn.current is not None and conn.mcp is not None and conn.mcp.is_connected(connector_id):
         conn.require_idle()
-    connectors.disconnect(connector_id)
-    await _connector_changed(conn, connector_id)
+
+    async def work() -> None:
+        await connectors.disconnect(connector_id)
+        await _connector_changed(conn, connector_id)
+
+    _background(conn, "connectors.disconnect", work)
+
+
+@handler("connectors.cancel")
+async def on_connectors_cancel(conn: Connection, msg: dict[str, Any]) -> None:
+    """Stop a device sign-in that waits for the user. The connect task then sends the error "cancelled"."""
+    connectors.cancel(_connector_id(msg))
 
 
 @handler("mcp.init")

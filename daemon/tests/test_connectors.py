@@ -46,7 +46,7 @@ def test_connect_with_a_token_and_disconnect(harness_home, fake_github):
         True, "token", "octo", True)
     assert "token" not in status
 
-    connectors.disconnect("github")
+    asyncio.run(connectors.disconnect("github"))
     assert "github" not in user_file()["mcpServers"]
     assert connectors.token("github") is None
     assert asyncio.run(connectors.items())["items"][0]["source"] is None
@@ -126,7 +126,7 @@ def test_the_mcp_server_uses_the_token(harness_home, project, fake_github):
             assert s.state == "needs_auth" and "refused the token" in (s.error or ""), s.error
 
             # Disconnect: the server leaves the session.
-            connectors.disconnect("github")
+            await connectors.disconnect("github")
             await manager.restart("github")
             assert "github" not in manager.servers
             assert not any(t.name.startswith("mcp__github__") for t in box["tools"])
@@ -141,7 +141,7 @@ def test_connector_messages(daemon, project, fake_model, fake_github):  # noqa: 
     c.new_session(project)
     c.send({"type": "connectors.list"})
     listing = c.until("connectors")[0]
-    assert [i["id"] for i in listing["items"]] == ["github"]
+    assert [i["id"] for i in listing["items"]] == ["github", "outlook"]
     assert listing["items"][0]["installed"] is False
 
     c.send({"type": "connectors.connect", "id": "github", "source": "token", "token": "wrong"})

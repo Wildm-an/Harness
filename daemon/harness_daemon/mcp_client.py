@@ -15,8 +15,9 @@ same as Claude Code and other MCP clients::
 - ``oauth``: OAuth for an http or sse server (mcp_auth.py). It is on by default when the headers
   have no ``Authorization``. A server that needs a sign-in has the state "needs_auth" until the
   user authenticates it (message ``mcp.auth``).
-- ``connector``: the server comes from a connector (connectors.py). The daemon adds the token of
-  the connector as the ``Authorization`` header at each connection. OAuth is then off.
+- ``connector``: the server comes from a connector (connectors.py). For a "token" connector, the
+  daemon adds the token as the ``Authorization`` header at each connection, and OAuth is off. A
+  "device" connector is a stdio server that keeps its own tokens.
 
 Each MCP tool is a tool of the agent with the name ``mcp__<server>__<tool>``. It needs approval
 by default. The rule ``mcp__<server>__*`` allows all the tools of one server.
@@ -132,6 +133,15 @@ def _parse_server(name: str, raw: Any, scope: str, project: Path | None) -> tupl
     if not isinstance(timeout, (int, float)) or timeout <= 0:
         raise ConfigError(f"MCP server {name}: the timeout must be a positive number of seconds.")
     config = ServerConfig(name=name, scope=scope, transport=kind, disabled=disabled, timeout=float(timeout))
+    connector = raw.get("connector")
+    if connector is not None:
+        known = connectors.CONNECTORS.get(connector) if isinstance(connector, str) else None
+        if known is None:
+            raise ConfigError(f"MCP server {name}: unknown connector {connector!r}.")
+        if (known.kind == "device") != (kind == "stdio"):
+            raise ConfigError(f"MCP server {name}: the connector {connector} needs a "
+                              f"{'stdio' if known.kind == 'device' else 'http'} server.")
+        config.connector = connector
     if kind == "stdio":
         command = raw.get("command")
         if not isinstance(command, str) or not command.strip():
@@ -162,12 +172,7 @@ def _parse_server(name: str, raw: Any, scope: str, project: Path | None) -> tupl
             raise ConfigError(f"MCP server {name}: 'headers' must be an object.")
         config.url = _expand(url, missing)
         config.headers = {str(k): _expand(str(v), missing) for k, v in headers.items()}
-        connector = raw.get("connector")
-        if connector is not None:
-            if connector not in connectors.CONNECTORS:
-                raise ConfigError(f"MCP server {name}: unknown connector {connector!r}.")
-            config.connector = connector
-        else:
+        if config.connector is None:
             config.oauth = mcp_auth.parse_oauth(name, raw.get("oauth"), config.headers, lambda v: _expand(v, missing))
     warnings = [f"MCP server {name}: the environment variable {v} is not set." for v in dict.fromkeys(missing)]
     return config, warnings
@@ -447,7 +452,7 @@ class McpManager:
 
                     auth = self._auth_provider(s, interactive) if c.oauth is not None else None
                     headers = dict(c.headers)
-                    if c.connector is not None:
+                    if c.connector is not None and connectors.get(c.connector).kind == "token":
                         value = await asyncio.to_thread(connectors.token, c.connector)
                         if value is None:
                             raise _ConnectorMissing()

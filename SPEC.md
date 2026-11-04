@@ -177,6 +177,7 @@ Each provider is an entry in `~/.harness/providers.json`:
   - A connector adds an entry with a `connector` key to `~/.harness/mcp.json`. The token stays in `~/.harness/mcp-auth.json`.
   - The daemon adds the token as the `Authorization` header at each connection.
   - GitHub: the token of the GitHub CLI (`gh auth token`) on the daemon computer, or a personal access token. The daemon checks the token with the GitHub API before it keeps it.
+  - Microsoft Outlook: a local stdio server (`@softeria/ms-365-mcp-server`, with an exact version) that npx runs. The daemon runs it with `--login`, and the client shows the Microsoft device code. The server keeps and refreshes its own tokens. The user chooses a personal or a work account, and read-only.
 
 ### 5.8 Plugins
 

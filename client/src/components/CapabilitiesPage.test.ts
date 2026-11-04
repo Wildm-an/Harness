@@ -79,6 +79,8 @@ describe("connectorSummary", () => {
     id: "github",
     name: "GitHub",
     description: "Repositories and issues.",
+    kind: "token",
+    signing_in: false,
     url: "https://api.githubcopilot.com/mcp/",
     installed: false,
     source: null,
@@ -96,5 +98,15 @@ describe("connectorSummary", () => {
   it("shows the account and the token source after it connects", () => {
     expect(connectorSummary(github({ source: "gh", login: "octo", installed: true }))).toBe("@octo · GitHub CLI");
     expect(connectorSummary(github({ source: "token", login: null }))).toBe("Connected · personal access token");
+  });
+
+  it("shows the account type and read-only for a device connector", () => {
+    const outlook = github({ id: "outlook", kind: "device", source: "device", login: "pat@outlook.com" });
+    expect(connectorSummary({ ...outlook, options: { account: "personal", read_only: false } })).toBe(
+      "pat@outlook.com · Personal account",
+    );
+    expect(connectorSummary({ ...outlook, options: { account: "work", read_only: true } })).toBe(
+      "pat@outlook.com · Work or school account · read-only",
+    );
   });
 });

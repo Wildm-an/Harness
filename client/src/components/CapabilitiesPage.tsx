@@ -13,7 +13,6 @@ import {
   FileCog,
   FileText,
   FolderPlus,
-  GitBranch,
   KeyRound,
   LoaderCircle,
   Package,
@@ -26,7 +25,8 @@ import {
 import { SlashIcon } from "./SlashIcon";
 import { Markdown } from "./Markdown";
 import { openExternal } from "../lib/tauri";
-import type { CommandItem, ConnectorItem, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
+import { ConnectorLogo, hasConnectorLogo } from "./ConnectorLogo";
+import type { CommandItem, ConnectorItem, ConnectorOptions, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
 
 export type CapabilityStatus =
   | "connected"
@@ -322,8 +322,8 @@ function McpRow({
     <li className={`cap-item${open ? " open" : ""}`}>
       <div className="cap-row-wrap">
         <button type="button" className="cap-row" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <span className={`cap-icon${status === "failed" ? " bad" : ""}`} aria-hidden>
-            <Plug size={15} />
+          <span className={`cap-icon${status === "failed" ? " bad" : hasConnectorLogo(item.connector) ? " cap-logo" : ""}`} aria-hidden>
+            {item.connector ? <ConnectorLogo id={item.connector} size={16} /> : <Plug size={15} />}
           </span>
           <span className="cap-text">
             <span className="cap-name">{item.name}</span>
@@ -400,30 +400,38 @@ function McpRow({
 export type ConnectorAction =
   | { kind: "connect"; id: string; source: "gh" }
   | { kind: "connect"; id: string; source: "token"; token: string }
+  | { kind: "connect"; id: string; source: "device"; options: ConnectorOptions }
+  | { kind: "cancel"; id: string }
   | { kind: "disconnect"; id: string };
+
+/** The device code of a sign-in that waits for the user (daemon message "connectors.device_code"). */
+export interface DeviceCode {
+  id: string;
+  url: string;
+  code: string;
+}
+
+const ACCOUNT_NAMES: Record<ConnectorOptions["account"], string> = {
+  personal: "Personal account",
+  work: "Work or school account",
+};
 
 /** The short description of a connector: the account and the token source, or what it gives. */
 export function connectorSummary(item: ConnectorItem): string {
   if (!item.source) return item.description;
+  if (item.source === "device") {
+    const parts = [item.login ?? "Connected"];
+    if (item.options) parts.push(ACCOUNT_NAMES[item.options.account]);
+    if (item.options?.read_only) parts.push("read-only");
+    return parts.join(" · ");
+  }
   const source = item.source === "gh" ? "GitHub CLI" : "personal access token";
   return `${item.login ? `@${item.login}` : "Connected"} · ${source}`;
 }
 
-function ConnectorRow({
-  item,
-  busy,
-  error,
-  onAction,
-}: {
-  item: ConnectorItem;
-  busy: boolean;
-  error: string | null;
-  onAction: (action: ConnectorAction) => void;
-}) {
-  const connected = item.source !== null;
-  const [open, setOpen] = useState(!connected);
+/** The sign-in of a "token" connector (GitHub): the GitHub CLI, or a pasted token. */
+function TokenConnect({ item, busy, onAction }: { item: ConnectorItem; busy: boolean; onAction: (action: ConnectorAction) => void }) {
   const [token, setToken] = useState("");
-  const status: CapabilityStatus = busy ? "connecting" : connected ? "linked" : "unlinked";
   const submit = () => {
     const text = token.trim();
     if (!text) return;
@@ -431,11 +439,173 @@ function ConnectorRow({
     setToken("");
   };
   return (
+    <div className="mcp-signin">
+      {item.gh_available ? (
+        <div className="mcp-signin-actions">
+          <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => onAction({ kind: "connect", id: item.id, source: "gh" })}>
+            Use GitHub CLI
+          </button>
+          <span className="help">The token of "gh auth login" on the daemon computer.</span>
+        </div>
+      ) : (
+        <p className="help">
+          To use the GitHub CLI, run <code>gh auth login</code> on the daemon computer. Or paste a token here.
+        </p>
+      )}
+      {item.token_help && <p className="help">{item.token_help}</p>}
+      <form
+        className="field-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <input
+          type="password"
+          className="mono"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="github_pat_…"
+          aria-label={`Personal access token for ${item.name}`}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button type="submit" className="btn" disabled={busy || !token.trim()}>
+          Connect
+        </button>
+      </form>
+      {item.token_url && (
+        <div className="mcp-signin-actions">
+          <button type="button" className="btn btn-small btn-ghost" onClick={() => void openExternal(item.token_url!)}>
+            Create a token
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The sign-in of a "device" connector (Outlook): the account type, read-only, and the device code. */
+function DeviceConnect({
+  item,
+  busy,
+  code,
+  onAction,
+}: {
+  item: ConnectorItem;
+  busy: boolean;
+  code: DeviceCode | null;
+  onAction: (action: ConnectorAction) => void;
+}) {
+  const [account, setAccount] = useState<ConnectorOptions["account"]>("personal");
+  const [readOnly, setReadOnly] = useState(false);
+  const [copied, setCopied] = useState(false);
+  if (busy || item.signing_in) {
+    return (
+      <div className="mcp-signin">
+        {code ? (
+          <>
+            <p className="help">
+              Open <span className="mono">{code.url}</span> and enter this code. Sign in with your Microsoft account. Harness connects when the
+              sign-in completes.
+            </p>
+            <p className="device-code mono" aria-label="Device code">
+              {code.code}
+            </p>
+            <div className="mcp-signin-actions">
+              <button
+                type="button"
+                className="btn btn-small btn-primary"
+                onClick={() =>
+                  void navigator.clipboard.writeText(code.code).then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 1500);
+                  })
+                }
+              >
+                {copied ? "Copied" : "Copy code"}
+              </button>
+              {/^https:\/\//.test(code.url) && (
+                <button type="button" className="btn btn-small" onClick={() => void openExternal(code.url)}>
+                  Open sign-in page
+                </button>
+              )}
+              <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "cancel", id: item.id })}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="help">
+              <LoaderCircle size={13} className="spin" aria-hidden /> Starting the sign-in. The first start downloads the server from npm.
+            </p>
+            <div className="mcp-signin-actions">
+              <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "cancel", id: item.id })}>
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="mcp-signin">
+      <div className="mcp-signin-actions" role="radiogroup" aria-label="Account type">
+        {(Object.keys(ACCOUNT_NAMES) as ConnectorOptions["account"][]).map((value) => (
+          <label key={value} className="checkbox">
+            <input type="radio" name={`${item.id}-account`} checked={account === value} onChange={() => setAccount(value)} />
+            {ACCOUNT_NAMES[value]}
+          </label>
+        ))}
+      </div>
+      <label className="checkbox">
+        <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+        Read-only: the agent can read mail and events, but not send, change, or delete them
+      </label>
+      <div className="mcp-signin-actions">
+        <button
+          type="button"
+          className="btn btn-small btn-primary"
+          onClick={() => onAction({ kind: "connect", id: item.id, source: "device", options: { account, read_only: readOnly } })}
+        >
+          Sign in with Microsoft
+        </button>
+      </div>
+      <p className="help">
+        Harness runs <code>{item.package}</code> with npx on the daemon computer, so the daemon computer needs Node.js. The server keeps its own
+        sign-in in its encrypted cache there.
+      </p>
+    </div>
+  );
+}
+
+function ConnectorRow({
+  item,
+  busy,
+  error,
+  code,
+  onAction,
+}: {
+  item: ConnectorItem;
+  busy: boolean;
+  error: string | null;
+  code: DeviceCode | null;
+  onAction: (action: ConnectorAction) => void;
+}) {
+  const connected = item.source !== null;
+  const [open, setOpen] = useState(!connected);
+  useEffect(() => {
+    if (code) setOpen(true);
+  }, [code]);
+  const status: CapabilityStatus = busy || item.signing_in ? "connecting" : connected ? "linked" : "unlinked";
+  return (
     <li className={`cap-item${open ? " open" : ""}`}>
       <div className="cap-row-wrap">
         <button type="button" className="cap-row" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <span className="cap-icon" aria-hidden>
-            <GitBranch size={15} />
+          <span className={`cap-icon${hasConnectorLogo(item.id) ? " cap-logo" : ""}`} aria-hidden>
+            <ConnectorLogo id={item.id} size={16} />
           </span>
           <span className="cap-text">
             <span className="cap-name">{item.name}</span>
@@ -456,60 +626,22 @@ function ConnectorRow({
               <span>{error}</span>
             </div>
           )}
-          {connected ? (
+          {connected && !busy ? (
             <>
               <p className="help">
                 The MCP server "{item.id}" is in your mcp.json, for all your projects. Each tool call needs approval, unless a rule
                 allows it, for example <code>mcp__{item.id}__*</code>.
               </p>
               <div className="mcp-signin-actions">
-                <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => onAction({ kind: "disconnect", id: item.id })}>
+                <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
                   Disconnect
                 </button>
               </div>
             </>
+          ) : item.kind === "device" ? (
+            <DeviceConnect item={item} busy={busy} code={code} onAction={onAction} />
           ) : (
-            <div className="mcp-signin">
-              {item.gh_available ? (
-                <div className="mcp-signin-actions">
-                  <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => onAction({ kind: "connect", id: item.id, source: "gh" })}>
-                    Use GitHub CLI
-                  </button>
-                  <span className="help">The token of "gh auth login" on the daemon computer.</span>
-                </div>
-              ) : (
-                <p className="help">
-                  To use the GitHub CLI, run <code>gh auth login</code> on the daemon computer. Or paste a token here.
-                </p>
-              )}
-              <p className="help">{item.token_help}</p>
-              <form
-                className="field-row"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  submit();
-                }}
-              >
-                <input
-                  type="password"
-                  className="mono"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="github_pat_…"
-                  aria-label={`Personal access token for ${item.name}`}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <button type="submit" className="btn" disabled={busy || !token.trim()}>
-                  Connect
-                </button>
-              </form>
-              <div className="mcp-signin-actions">
-                <button type="button" className="btn btn-small btn-ghost" onClick={() => void openExternal(item.token_url)}>
-                  Create a token
-                </button>
-              </div>
-            </div>
+            <TokenConnect item={item} busy={busy} onAction={onAction} />
           )}
         </div>
       )}
@@ -543,6 +675,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   connectors,
   connectorBusy,
   connectorError,
+  deviceCode,
   onConnector,
   onEditConfig,
 }: {
@@ -563,6 +696,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   connectors: ConnectorItem[] | null;
   connectorBusy: string | null; // The id of the connector that connects now.
   connectorError: { id: string; message: string } | null;
+  deviceCode: DeviceCode | null;
   onConnector: (action: ConnectorAction) => void;
   onEditConfig: () => void;
 }) {
@@ -775,14 +909,15 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
                     item={item}
                     busy={connectorBusy === item.id}
                     error={connectorError?.id === item.id ? connectorError.message : null}
+                    code={deviceCode?.id === item.id ? deviceCode : null}
                     onAction={onConnector}
                   />
                 ))}
               </ul>
             )}
             <p className="help cap-note">
-              A connector adds an MCP server to <code>~/.harness/mcp.json</code> on the daemon computer, for all your projects. Harness keeps
-              the token in <code>~/.harness/mcp-auth.json</code>, not in mcp.json.
+              A connector adds an MCP server to <code>~/.harness/mcp.json</code> on the daemon computer, for all your projects. mcp.json has no
+              tokens: Harness keeps them in <code>~/.harness/mcp-auth.json</code>, and a local server such as Outlook keeps its own sign-in.
             </p>
           </section>
         )}

@@ -2308,6 +2308,11 @@ textarea:focus-visible {
   color: var(--text-muted);
 }
 
+/* The logo of a connector (ConnectorLogo.tsx) shows in the text color, not the muted color. */
+.cap-icon.cap-logo {
+  color: var(--text);
+}
+
 .cap-icon.bad {
   background: var(--danger-soft);
   color: var(--danger);
@@ -2406,6 +2411,25 @@ textarea:focus-visible {
 
 .mcp-signin .mcp-signin-actions {
   margin-top: 0;
+}
+
+/* The account choice and the read-only box of a device connector (Outlook). */
+.mcp-signin .checkbox {
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* The Microsoft device code. The user copies it or types it on the sign-in page. */
+.device-code {
+  width: fit-content;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 22px;
+  letter-spacing: 0.12em;
+  user-select: all;
 }
 
 .mcp-signin .field-row input {
