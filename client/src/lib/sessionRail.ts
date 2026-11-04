@@ -22,12 +22,28 @@ export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
 const SHOWN_PREF = "sessionRail.shown";
 const FOLDED_PREF = "sessionRail.folded";
 
-/** The panes that need the room of the rail: in the Code view the rail closes when one of them opens. */
-export const ROOM_PANES = ["preview", "browser"] as const;
+/**
+ * The panes that need the room of the rail: all the windows next to the chat. In the Code view the
+ * rail closes when one of them opens, and opens again when all of them are closed.
+ */
+export const ROOM_PANES = ["editor", "files", "browser", "diff", "rules", "terminal", "side", "tasks", "preview"] as const;
 
 /** True when a pane of ROOM_PANES is in ``after`` and was not in ``before``. */
 export function needsRailRoom(before: readonly string[], after: readonly string[]): boolean {
   return ROOM_PANES.some((p) => after.includes(p) && !before.includes(p));
+}
+
+/** The rail state: open or not, and ``auto``: a pane closed it, so it opens again with no pane. */
+export interface RailState {
+  open: boolean;
+  auto: boolean;
+}
+
+/** The rail after a change of the open panes (ROOM_PANES only). A rail that the user closed stays closed. */
+export function railAfterPanes(state: RailState, before: readonly string[], after: readonly string[]): RailState {
+  if (state.open && needsRailRoom(before, after)) return { open: false, auto: true };
+  if (!state.open && state.auto && before.length > 0 && after.length === 0) return { open: true, auto: false };
+  return state;
 }
 
 /** The rail shows by default, as in Claude. */

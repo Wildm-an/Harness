@@ -94,7 +94,7 @@ class PreviewStartTool(_PreviewTool):
         if server.state in ("starting", "running"):
             return None
         config = server.config
-        # The same rule and request input as a start from the Servers pane.
+        # The same rule and request input as a start from the Servers menu of the Browser pane.
         return Approval(key=config.command, rule=f"server({config.command})", tool="server",
                         input={"name": config.name, "command": config.command, "cwd": config.cwd})
 

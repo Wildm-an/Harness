@@ -38,6 +38,9 @@ def _message_chars(m: dict[str, Any]) -> float:
     extra = 0.0
     if "image" in m:  # A stored screenshot. Only the newest one goes to the model.
         m = {k: v for k, v in m.items() if k != "image"}
+    if "images" in m:  # The images that the user pasted in a prompt.
+        extra += len(m["images"] or []) * IMAGE_TOKENS * CHARS_PER_TOKEN
+        m = {k: v for k, v in m.items() if k != "images"}
     content = m.get("content")
     if isinstance(content, list):
         parts = [p for p in content if not (isinstance(p, dict) and p.get("type") == "image_url")]

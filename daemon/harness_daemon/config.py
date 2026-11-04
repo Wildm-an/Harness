@@ -20,6 +20,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "max_output_chars": 20000,
     "shell": None,
     "default_model": None,
+    # The model by network (Settings > Providers). On: a new session with no model uses online_model when
+    # its provider answers, else offline_model (a local model). Off: the model choice is manual.
+    "auto_model": False,
+    "online_model": None,
+    "offline_model": None,
     "auto_verify": False,  # The agent checks the app with the preview tools after each UI change.
     "image_input": None,  # True or False overrides the image input check of the model.
     "permission_mode": "default",  # default, acceptEdits, plan, or bypassPermissions (permissions.py).

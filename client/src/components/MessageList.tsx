@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, BellRing, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
+import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
 import type { ChatItem } from "../chat/state";
 import type { Decision } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
@@ -177,7 +177,16 @@ const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork 
   const messageId = item.messageId;
   return (
     <div className={`msg-user-wrap${menuOpen ? " menu-open" : ""}`}>
-      <div className="msg-user">{item.text}</div>
+      {item.images && item.images.length > 0 && (
+        <div className="msg-user-images">
+          {item.images.map((src, i) => (
+            <a key={i} href={src} target="_blank" rel="noreferrer" title="Open the image">
+              <img src={src} alt={`Image ${i + 1}`} />
+            </a>
+          ))}
+        </div>
+      )}
+      {item.text && <div className="msg-user">{item.text}</div>}
       <div className="msg-actions">
         {item.ts !== undefined && (
           <span className="msg-time" title={new Date(item.ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}>
@@ -224,8 +233,18 @@ function QueuedMessage({ item, onSendNow, onRemove }: { item: QueuedItem; onSend
   );
 }
 
-// Distance from the bottom, in pixels, inside which the list follows new output.
-const FOLLOW_THRESHOLD = 80;
+// Distance from the bottom, in pixels, that still counts as "at the bottom" (rounding of the scroll position).
+const BOTTOM_SLACK = 2;
+
+/**
+ * Follow the agent or not, after a scroll. The list follows new output only when the user is fully
+ * at the bottom. A scroll up stops the follow. The programmatic scrolls of the follow only go down.
+ */
+export function nextFollow(follow: boolean, gap: number, top: number, lastTop: number): boolean {
+  if (gap <= BOTTOM_SLACK) return true;
+  if (top < lastTop - 1) return false;
+  return follow;
+}
 
 export function MessageList({
   items,
@@ -257,8 +276,20 @@ export function MessageList({
   const scroller = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const lastTop = useRef(0);
+  // The "scroll to bottom" button shows when the list does not follow the agent.
+  const [away, setAway] = useState(false);
+  const setFollow = (on: boolean) => {
+    follow.current = on;
+    setAway(!on);
+  };
 
-  // Follow the stream only if the user did not scroll up to read.
+  // Another conversation (for example another session): start at the bottom, and follow it.
+  const firstId = items[0]?.id;
+  useLayoutEffect(() => {
+    setFollow(true);
+  }, [firstId]);
+
+  // Follow the stream only while the user is at the bottom.
   // A layout effect scrolls before paint, so a late scroll event never sees a gap.
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -268,6 +299,14 @@ export function MessageList({
     }
   }, [items, queued]);
 
+  const toBottom = () => {
+    const el = scroller.current;
+    if (!el) return;
+    setFollow(true);
+    const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  };
+
   // The task list and the end-of-turn box of the agent (update_plan and wrap_up).
   const plan = latestPlan(items);
   const wrap = latestWrapUp(items);
@@ -275,15 +314,22 @@ export function MessageList({
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_THRESHOLD;
-    // Only an upward scroll stops the follow. Scrolls to the bottom start it again.
-    if (atBottom) follow.current = true;
-    else if (el.scrollTop < lastTop.current) follow.current = false;
+    const next = nextFollow(follow.current, el.scrollHeight - el.scrollTop - el.clientHeight, el.scrollTop, lastTop.current);
+    if (next !== follow.current) setFollow(next);
     lastTop.current = el.scrollTop;
   };
 
   return (
-    <div className="messages" ref={scroller} onScroll={onScroll} aria-live="polite">
+    <div
+      className="messages"
+      ref={scroller}
+      onScroll={onScroll}
+      // The wheel event comes before the scroll event: the follow stops before the next output can pull the list down.
+      onWheel={(e) => {
+        if (e.deltaY < 0 && follow.current) setFollow(false);
+      }}
+      aria-live="polite"
+    >
       <div className="column">
         {items.length === 0 && queued.length === 0 && <div className="empty-hint">{emptyHint}</div>}
         {groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name)))).map((item) => {
@@ -322,6 +368,27 @@ export function MessageList({
         {queued.map((item) => (
           <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
         ))}
+        {away && items.length > 0 && (
+          <div className="scroll-bottom-wrap">
+            <button
+              type="button"
+              className={`scroll-bottom${running ? " active" : ""}`}
+              onClick={toBottom}
+              aria-label={running ? "Scroll to the agent" : "Scroll to bottom"}
+              title={running ? "Scroll to the agent" : "Scroll to bottom"}
+            >
+              {running ? (
+                <span className="scroll-bottom-dots" aria-hidden>
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              ) : (
+                <ArrowDown size={16} aria-hidden />
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

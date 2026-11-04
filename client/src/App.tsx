@@ -6,7 +6,6 @@ import {
   Files,
   FileText,
   Globe as GlobeIcon,
-  Server,
   FileDiff,
   GitBranch,
   Globe,
@@ -53,7 +52,7 @@ import {
   saveProviderKey,
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
-import { CapabilitiesPage } from "./components/CapabilitiesPage";
+import { CapabilitiesPage, type CapTab } from "./components/CapabilitiesPage";
 import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
@@ -107,16 +106,16 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { BrowserPane, clearBrowserData, keepCookies } from "./browser/BrowserPane";
+import { pendingServerApprovals } from "./browser/ServerBlock";
+import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
 import { AllowedSites } from "./components/AllowedSites";
 import { openLink, setPaneOpener } from "./lib/openLink";
-import { ROOM_PANES, needsRailRoom, railShown, setRailShown } from "./lib/sessionRail";
+import { ROOM_PANES, railAfterPanes, railShown, setRailShown } from "./lib/sessionRail";
 import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } from "./lib/viewMode";
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
-import { ServerMenu } from "./servers/ServerMenu";
-import { ServersPane } from "./servers/ServersPane";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, ClientMessage, GitBranches, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { parseUnifiedDiff } from "./lib/diff";
@@ -130,13 +129,14 @@ import { SessionSearch } from "./components/SessionSearch";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
 import { compareVersions } from "./lib/version";
 import { ChangelogPage } from "./components/ChangelogPage";
-import { PromptBox, type Submission } from "./components/PromptBox";
+import { PromptBox, type PromptAttachment, type Submission } from "./components/PromptBox";
 import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
 import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
+import { ModelChoice } from "./components/ModelChoice";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
 import {
   LOCAL,
@@ -236,10 +236,17 @@ interface ActiveSession {
 }
 
 /** The daemon message of a prompt or a command, and the user message that the chat shows. */
-function submissionMessage(s: Submission): { message: ClientMessage; shown: string; startsTurn: boolean; messageId?: string } {
+function submissionMessage(s: Submission): { message: ClientMessage; shown: string; startsTurn: boolean; messageId?: string; images?: string[] } {
   if (s.kind === "prompt") {
     const id = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; // Rewind and fork find the message by this id.
-    return { message: { type: "prompt", text: s.text, id, ...(s.display ? { display: s.display } : {}) }, shown: s.display ?? s.text, startsTurn: true, messageId: id };
+    const images = s.images?.length ? s.images : undefined;
+    return {
+      message: { type: "prompt", text: s.text, id, ...(s.display ? { display: s.display } : {}), ...(images ? { images } : {}) },
+      shown: s.display ?? s.text,
+      startsTurn: true,
+      messageId: id,
+      images,
+    };
   }
   // /compact runs like a turn: the daemon ends it with turn.end.
   return {
@@ -339,6 +346,8 @@ export default function App() {
   const ideEmptyFor = useRef<string | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
   const [promptInsert, setPromptInsert] = useState<{ text: string; key: number; replace?: boolean } | null>(null);
+  // A block of context for the prompt box, for example a browser annotation (a chip in the box).
+  const [promptAttach, setPromptAttach] = useState<{ item: PromptAttachment; key: number } | null>(null);
   const [browserRequest, setBrowserRequest] = useState<{ url: string; key: number } | null>(null);
   const [previewServer, setPreviewServer] = useState<string | null>(null); // /preview waits for this server.
   const [filesToken, setFilesToken] = useState<string | null>(null);
@@ -352,7 +361,16 @@ export default function App() {
   const [capsFolder, setCapsFolder] = useState<string | null>(null);
   const [capsLive, setCapsLive] = useState(false);
   const capsFallback = useRef(false); // An older daemon: the page asks for the skills and the MCP servers one at a time.
-  const openCapabilitiesRef = useRef<() => void>(() => {});
+  const openCapabilitiesRef = useRef<(tab?: CapTab) => void>(() => {});
+  // The tab of the Capabilities page. The page opens on the last tab.
+  const [capsTab, setCapsTabState] = useState<CapTab>(() => {
+    const saved = loadPref("capabilitiesTab", "skills");
+    return saved === "mcp" || saved === "connections" ? saved : "skills";
+  });
+  const setCapsTab = (tab: CapTab) => {
+    setCapsTabState(tab);
+    savePref("capabilitiesTab", tab);
+  };
   const [instructions, setInstructions] = useState<string | null>(null);
   const [rules, setRules] = useState<Rules | null>(null);
   const [rulesBusy, setRulesBusy] = useState(false);
@@ -419,7 +437,7 @@ export default function App() {
       setSettingsPage(page);
       setSettingsError(null);
       try {
-        if (page === "general") conn.send({ type: "user_settings.get" });
+        if (page === "general" || page === "connections") conn.send({ type: "user_settings.get" }); // Providers: the model by network.
         if (page === "plugins") {
           setPluginError(null);
           conn.send({ type: "plugins.list" });
@@ -593,7 +611,7 @@ export default function App() {
             const first = submissionMessage(firstPrompt.current);
             firstPrompt.current = null;
             conn.send(first.message);
-            dispatch({ type: "user", text: first.shown, startsTurn: first.startsTurn, messageId: first.messageId });
+            dispatch({ type: "user", text: first.shown, startsTurn: first.startsTurn, messageId: first.messageId, images: first.images });
           }
           return;
         }
@@ -823,7 +841,8 @@ export default function App() {
             setSession((s) => (s ? { ...s, model: msg.model! } : s));
           }
           if (msg.action === "open_panel" && msg.panel === "servers") {
-            setLayout((l) => openPane(l, "servers"));
+            // The dev servers are in the Browser pane: an empty tab lists them.
+            setLayout((l) => openPane(l, "browser"));
             if (msg.text) break; // Show the text in the chat too.
             return;
           }
@@ -846,12 +865,12 @@ export default function App() {
           }
           // /mcp and /skills open the Capabilities page.
           if (msg.action === "open_panel" && msg.panel === "mcp") {
-            openCapabilitiesRef.current();
+            openCapabilitiesRef.current("mcp");
             return;
           }
           if (msg.action === "open_panel" && msg.panel === "skills") {
             if (!capsFallback.current) {
-              openCapabilitiesRef.current();
+              openCapabilitiesRef.current("skills");
               return;
             }
             setSkillItems(msg.items ?? []);
@@ -1195,6 +1214,7 @@ export default function App() {
     if (!ideStarting.current) switchViewRef.current("code"); // A new session starts in the Code view.
     ideBlockNext.current = ideStarting.current;
     ideStarting.current = false;
+    railAuto.current = false;
     setRail(true); // Each new session opens with the session rail. The saved preference does not change.
     conn.send({ type: "session.new", cwd, model, permission_mode: mode, ...(worktree ? { worktree } : {}) });
   };
@@ -1374,9 +1394,9 @@ export default function App() {
   const submit = (s: Submission): boolean => {
     setSuggestion(null);
     try {
-      const { message, shown, startsTurn, messageId } = submissionMessage(s);
+      const { message, shown, startsTurn, messageId, images } = submissionMessage(s);
       conn.send(message);
-      dispatch({ type: "user", text: shown, startsTurn, messageId });
+      dispatch({ type: "user", text: shown, startsTurn, messageId, images });
       return true;
     } catch (e) {
       dispatch({ type: "notice", level: "error", text: errorText(e) });
@@ -1393,7 +1413,8 @@ export default function App() {
     const item: QueuedItem = { id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, submission: s, label };
     const mode = busySend(); // Settings > General.
     // Steer: the agent reads the message at its next step. The item waits in the queue until then.
-    if (mode === "steer" && s.kind === "prompt") {
+    // A message with images waits in the queue: a steer message has only text.
+    if (mode === "steer" && s.kind === "prompt" && !s.images?.length) {
       item.steering = sendSafely({ type: "steer", id: item.id, text: s.text, ...(s.display ? { display: s.display } : {}) });
     }
     setQueues((q) => ({ ...q, [session.id]: [...(q[session.id] ?? []), item] }));
@@ -1436,6 +1457,9 @@ export default function App() {
     if (!session) return;
     setQueues((q) => ({ ...q, [session.id]: (q[session.id] ?? []).filter((i) => i.id !== id) }));
   };
+
+  // The questions before the first start of a server command. The empty browser tab shows them too.
+  const serverApprovals = useMemo(() => pendingServerApprovals(chat.items), [chat.items]);
 
   const decide = useCallback(
     (requestId: string, decision: Decision) => {
@@ -1547,20 +1571,27 @@ export default function App() {
   const runningTasks = tasks?.filter((t) => t.status === "running").length ?? 0;
   // The session rail at the right of a session (the title bar button shows or hides it).
   const [rail, setRail] = useState(railShown);
+  // True: a pane closed the rail. It opens again when all the panes are closed.
+  const railAuto = useRef(false);
   const showRail = useCallback((on: boolean) => {
+    railAuto.current = false; // The user decides now.
     setRail(on);
     setRailShown(on);
   }, []);
   const closeRail = useCallback(() => showRail(false), [showRail]);
-  // In the Code view, the rail closes when the Preview or the Browser pane opens, so the pane gets
-  // the room. The saved preference does not change, and the title bar button opens the rail again.
-  // A change of view only records the panes.
+  // In the Code view, the rail closes when a pane opens (the browser, the files, the changes, and the
+  // others), so the pane gets the room. When the last pane closes, the rail opens again. The saved
+  // preference does not change, and the title bar button still opens the rail. A change of view only
+  // records the panes.
   const roomPanes = useRef<{ view: ViewMode; open: string[] } | null>(null);
   useEffect(() => {
     const open = ROOM_PANES.filter((p) => findGroupOf(layout, p) !== null);
     const before = roomPanes.current;
     roomPanes.current = { view, open };
-    if (view === "code" && before?.view === view && needsRailRoom(before.open, open)) setRail(false);
+    if (view !== "code" || before?.view !== view) return;
+    const next = railAfterPanes({ open: rail, auto: railAuto.current }, before.open, open);
+    railAuto.current = next.auto;
+    if (next.open !== rail) setRail(next.open);
   }, [layout, view]);
   // The next launch opens in this view.
   useEffect(() => setViewMode(view), [view]);
@@ -1696,7 +1727,8 @@ export default function App() {
    * Opens the Capabilities page: the skills and the MCP servers of the open session, or with no
    * session, of the folder of the start screen.
    */
-  const openCapabilities = () => {
+  const openCapabilities = (tab?: CapTab) => {
+    if (tab) setCapsTab(tab);
     // The project that the start screen selected (SessionStart saves its id).
     const startId = loadPref(`project.${current?.id ?? "local"}`, "");
     const folder = session ? null : ((projects ?? []).find((p) => p.id === startId && p.exists)?.path ?? null);
@@ -2014,6 +2046,7 @@ export default function App() {
             commands={commands}
             onRequestCommands={requestCommands}
             insert={promptInsert}
+            attach={promptAttach}
             onAddFiles={() => addFiles(session?.cwd ?? "")}
             sessions={mentionSessions}
             fileMatches={fileMatches}
@@ -2189,33 +2222,21 @@ export default function App() {
       render: () => (
         <BrowserPane
           request={browserRequest}
-          servers={servers.items}
+          serverApi={servers}
           agentFrame={agentFrame}
           onOpenServer={(s) => void openServer(s)}
           onOpenAgentPage={openAgentPage}
           onError={browserError}
           onEmpty={() => hidePane("browser")}
-          onShowLogs={() => setLayout((l) => openPane(l, "servers"))}
           autoVerify={session ? autoVerify : null}
           onAutoVerify={changeAutoVerify}
           onManageSites={openSites}
-        />
-      ),
-    },
-    servers: {
-      title: "Servers",
-      icon: Server,
-      closable: true,
-      badge: servers.items.some((s) => s.state === "crashed") ? (
-        <span className="tab-badge" title="A server crashed">!</span>
-      ) : undefined,
-      render: () => (
-        <ServersPane
-          api={servers}
-          autoVerify={autoVerify}
-          onAutoVerify={changeAutoVerify}
-          onOpenInBrowser={(s) => void openServer(s)}
-          onEditConfig={editLaunchConfig}
+          onEditLaunch={editLaunchConfig}
+          serverApprovals={serverApprovals}
+          onDecide={decide}
+          // A note on an element goes into the prompt box as a chip. The Browser pane stays open for more notes.
+          onAnnotate={(note) => setPromptAttach((p) => ({ item: annotationAttachment(note), key: (p?.key ?? 0) + 1 }))}
+          onScreenshot={(image, url) => setPromptAttach((p) => ({ item: screenshotAttachment(image, url), key: (p?.key ?? 0) + 1 }))}
         />
       ),
     },
@@ -2432,7 +2453,7 @@ export default function App() {
     active: screen === "capabilities",
     alert: mcpFailed > 0,
     title: mcpFailed > 0 ? (mcpFailed === 1 ? "1 MCP server failed" : `${mcpFailed} MCP servers failed`) : "Skills and MCP servers",
-    onClick: fromSidebar(openCapabilities),
+    onClick: fromSidebar(() => openCapabilities()),
   };
 
   // The panes of the open session in the sidebar: Permission rules.
@@ -2559,11 +2580,21 @@ export default function App() {
           {screen === "chat" && (
             <div className="topbar-actions">
               {view === "ide" && <IdeLayoutMenu onOpenSettings={() => openSettings("appearance")} />}
-              <ServerMenu
-                api={servers}
-                onOpenInBrowser={(s) => void openServer(s)}
-                onOpenPane={() => setLayout((l) => openPane(l, "servers"))}
-              />
+              {/* The session rail toggle is first, as in the Claude app. The servers are in the Browser pane. */}
+              {view === "code" && (
+                <button
+                  type="button"
+                  className={`icon-btn ghost pane-toggle session-rail-toggle${rail ? " active" : ""}`}
+                  onClick={() => showRail(!rail)}
+                  aria-label="Session rail"
+                  aria-pressed={rail}
+                  aria-expanded={rail}
+                  aria-controls={rail ? SESSION_RAIL_ID : undefined}
+                  title={rail ? "Hide session rail" : "Show session rail"}
+                >
+                  <PanelRight size={16} aria-hidden />
+                </button>
+              )}
               <PaneToggle
                 icon={SquareTerminal}
                 label={`Terminal (${shortcutLabel("terminal")})`}
@@ -2596,20 +2627,6 @@ export default function App() {
                 }}
                 disabled={status !== "open"}
               />
-              {view === "code" && (
-              <button
-                type="button"
-                className={`icon-btn ghost pane-toggle session-rail-toggle${rail ? " active" : ""}`}
-                onClick={() => showRail(!rail)}
-                aria-label="Session rail"
-                aria-pressed={rail}
-                aria-expanded={rail}
-                aria-controls={rail ? SESSION_RAIL_ID : undefined}
-                title={rail ? "Hide session rail" : "Show session rail"}
-              >
-                <PanelRight size={16} aria-hidden />
-              </button>
-              )}
             </div>
           )}
           {hasWindowControls() && <WindowControls />}
@@ -2640,6 +2657,8 @@ export default function App() {
         )}
         {screen === "capabilities" && (
           <CapabilitiesPage
+            tab={capsTab}
+            onTab={setCapsTab}
             folder={capsFolder}
             live={capsLive && session !== null}
             skills={skillItems}
@@ -2789,6 +2808,18 @@ export default function App() {
             {settingsPage === "connections" && (
               <ProvidersScreen
                 embedded
+                modelChoice={
+                  <ModelChoice
+                    values={status === "open" ? userSettings : null}
+                    models={models}
+                    providers={providers?.items ?? null}
+                    onRequestModels={requestModels}
+                    onSet={(values) => {
+                      setSettingsError(null);
+                      sendSafely({ type: "user_settings.set", values });
+                    }}
+                  />
+                }
                 items={providers?.items ?? null}
                 path={providers?.path ?? ""}
                 host={hello?.hostname ?? null}
@@ -2861,7 +2892,7 @@ export default function App() {
                   onOpenPr={openLink}
                   servers={servers.items}
                   onOpenServer={(s) => void openServer(s)}
-                  onShowServers={() => setLayout((l) => openPane(l, "servers"))}
+                  onShowServers={() => setLayout((l) => openPane(l, "browser"))}
                   tasks={tasks ?? []}
                   onShowTasks={() => showPane("tasks")}
                   keepAwake={keepAwake}

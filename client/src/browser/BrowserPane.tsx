@@ -5,24 +5,29 @@ import {
   Bot,
   Check,
   Bug,
-  ChevronDown,
   ChevronRight,
   EllipsisVertical,
   Globe,
   LoaderCircle,
   Monitor,
   RotateCw,
-  Server,
   Smartphone,
+  SquareDashedMousePointer,
   Tablet,
 } from "lucide-react";
-import type { AgentFrame, ServerItem } from "../daemon/protocol";
+import type { AgentFrame, Decision, ServerItem } from "../daemon/protocol";
 import { PaneActions, PaneHeader } from "../layout/Workspace";
 import { WindowTabs } from "../layout/WindowTabs";
 import { useOverlay, useOverlayOpen } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
 import { linksInPane, setLinksInPane } from "../lib/openLink";
 import { browserView, isTauri, openExternal, pickFile, pickSavePath, type Bounds } from "../lib/tauri";
+import { ServerMenu } from "../servers/ServerMenu";
+import type { ServersApi } from "../servers/useServers";
+import { ServerBlock, type ServerApproval } from "./ServerBlock";
+import { annotateCall, annotateScript, parseAnnotation, type Annotation } from "./annotate";
+import { AnnotateBar, COLORS, SHAPES, type AnnotateTool, type ShapeTool } from "./AnnotateBar";
+import { imageToDataUrl } from "../lib/images";
 
 type Device = "desktop" | "tablet" | "phone";
 
@@ -186,28 +191,36 @@ function Menu({ children, label, icon }: { children: (close: () => void) => Reac
 
 export function BrowserPane({
   request,
-  servers,
+  serverApi,
   agentFrame,
   onOpenServer,
   onOpenAgentPage,
   onError,
   onEmpty,
-  onShowLogs,
   autoVerify,
   onAutoVerify,
   onManageSites,
+  onEditLaunch,
+  serverApprovals,
+  onDecide,
+  onAnnotate,
+  onScreenshot,
 }: {
   request: { url: string; key: number } | null; // A navigation request from the app.
-  servers: ServerItem[];
+  serverApi: ServersApi; // The dev servers of the project (.harness/launch.json), as in the Claude app.
   agentFrame: (AgentFrame & { key: number }) | null; // The newest page of the agent browser.
   onOpenServer: (server: ServerItem) => void;
   onOpenAgentPage: (url: string) => void;
   onError: (message: string) => void;
   onEmpty: () => void; // The user closed the last tab: close the pane.
-  onShowLogs: () => void; // Open the Servers pane, with the output of the dev servers.
   autoVerify: boolean | null; // The "check the app after UI changes" setting of the project. null: no session.
   onAutoVerify: (on: boolean) => void;
   onManageSites: () => void; // The sites that the agent browser can open with no question.
+  onEditLaunch: () => void; // Open .harness/launch.json. With no file, the empty tab makes it.
+  serverApprovals: ServerApproval[]; // The questions before the first start of a server command.
+  onDecide: (requestId: string, decision: Decision) => void;
+  onAnnotate: (note: Annotation) => void; // A note on an element of the page: it goes into the prompt box.
+  onScreenshot: (image: string, url: string) => void; // The page with the marks: it goes into the prompt box.
 }) {
   const tauri = isTauri();
   const area = useRef<HTMLDivElement>(null);
@@ -231,6 +244,90 @@ export function BrowserPane({
 
   const update = useCallback((id: string, change: Partial<BrowserTab>) => {
     setTabs((list) => list.map((t) => (t.id === id ? { ...t, ...change } : t)));
+  }, []);
+
+  // The annotation mode (annotate.ts): the tab where it runs, and the notes that went to the prompt.
+  const [annotating, setAnnotating] = useState<string | null>(null);
+  const [notes, setNotes] = useState(0);
+  const annotatingRef = useRef<string | null>(null);
+  annotatingRef.current = annotating;
+  const onAnnotateRef = useRef(onAnnotate);
+  onAnnotateRef.current = onAnnotate;
+  const onScreenshotRef = useRef(onScreenshot);
+  onScreenshotRef.current = onScreenshot;
+
+  // The tool of the annotation bar, the last shape, and the color.
+  const [tool, setTool] = useState<AnnotateTool>("select");
+  const [shape, setShape] = useState<ShapeTool>("rect");
+  const [color, setColor] = useState(COLORS[0][0]);
+  const [capturing, setCapturing] = useState(false);
+
+  /** Run a script in the page of a tab. A page of another origin in an iframe refuses it. */
+  const runInPage = useCallback(
+    async (id: string, script: (send: "nav" | "post") => string): Promise<boolean> => {
+      if (tauri) {
+        await browserView.evalScript(id, script("nav"));
+        return true;
+      }
+      const frame = area.current?.querySelector<HTMLIFrameElement>(`iframe[data-tab="${id}"]`);
+      try {
+        (frame?.contentWindow as (Window & { eval: (code: string) => unknown }) | null | undefined)?.eval(script("post"));
+        return !!frame?.contentWindow;
+      } catch {
+        return false; // Another origin: only the desktop app can annotate it.
+      }
+    },
+    [tauri],
+  );
+  const runAnnotate = useCallback(
+    (id: string, on: boolean) => runInPage(id, (send) => annotateScript(on, send)),
+    [runInPage],
+  );
+  const chooseTool = (next: AnnotateTool, nextColor = color) => {
+    setTool(next);
+    if (SHAPES.some((s) => s.id === next)) setShape(next as ShapeTool);
+    if (annotating) void runInPage(annotating, () => annotateCall("setTool", next, nextColor)).catch(() => undefined);
+  };
+
+  /** "Add to prompt": a screenshot of the page with the marks goes into the prompt box. */
+  const addScreenshot = async () => {
+    const id = annotatingRef.current;
+    if (!id || !tauri) return;
+    setCapturing(true);
+    try {
+      await browserView.evalScript(id, annotateCall("prepare", true)); // Hide the hint and the outline.
+      await new Promise((r) => setTimeout(r, 120)); // The page draws again before the capture.
+      const png = await browserView.capture(id);
+      await browserView.evalScript(id, annotateCall("prepare", false));
+      const small = await imageToDataUrl(await (await fetch(png)).blob());
+      onScreenshotRef.current(small, active.url ?? "");
+      await browserView.evalScript(id, annotateCall("clear"));
+    } catch (e) {
+      onError(`The screenshot failed: ${e instanceof Error ? e.message : String(e)}`);
+      void browserView.evalScript(id, annotateCall("prepare", false)).catch(() => undefined);
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  const stopAnnotate = useCallback(() => {
+    const id = annotatingRef.current;
+    if (!id) return;
+    setAnnotating(null);
+    void runAnnotate(id, false).catch(() => undefined);
+  }, [runAnnotate]);
+
+  /** A message of the page script: a note, or the end of the mode (Esc in the page). */
+  const onPageData = useCallback((id: string, data: unknown) => {
+    if (id !== annotatingRef.current) return;
+    if (typeof data === "string" && data.includes('"type":"stop"')) {
+      setAnnotating(null);
+      return;
+    }
+    const note = parseAnnotation(data);
+    if (!note) return;
+    setNotes((n) => n + 1);
+    onAnnotateRef.current(note);
   }, []);
 
   const measure = useCallback((): Bounds | null => {
@@ -313,8 +410,23 @@ export function BrowserPane({
     void browserView
       .onEvent((event) => {
         if (event.title !== undefined) update(event.id, { title: event.title });
-        else if (event.loading) update(event.id, { loading: true });
+        else if (event.loading) {
+          update(event.id, { loading: true });
+          // A new page has no annotation script: the mode ends.
+          if (event.id === annotatingRef.current) setAnnotating(null);
+        }
         else update(event.id, { loading: false, address: event.url, url: event.url });
+      })
+      .then((stop) => (live ? stops.push(stop) : stop()));
+    void browserView
+      .onAnnotation((event) => {
+        let text: string;
+        try {
+          text = decodeURIComponent(event.data);
+        } catch {
+          return;
+        }
+        onPageData(event.id, text);
       })
       .then((stop) => (live ? stops.push(stop) : stop()));
     void browserView
@@ -328,7 +440,26 @@ export function BrowserPane({
       live = false;
       stops.forEach((stop) => stop());
     };
-  }, [tauri, update]);
+  }, [tauri, update, onPageData]);
+
+  // In a normal browser (development), the page script in an iframe sends with postMessage.
+  useEffect(() => {
+    if (tauri) return;
+    const onMessage = (e: MessageEvent) => {
+      const data = (e.data as { __harnessAnnotation?: unknown } | null)?.__harnessAnnotation;
+      if (data === undefined) return;
+      const frame = area.current?.querySelector<HTMLIFrameElement>(`iframe[data-tab="${annotatingRef.current}"]`);
+      if (!frame || e.source !== frame.contentWindow) return; // Only the page of the annotated tab.
+      onPageData(annotatingRef.current!, data);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [tauri, onPageData]);
+
+  // The mode is for one page: another tab, or the agent view, ends it.
+  useEffect(() => {
+    if (annotatingRef.current && (annotatingRef.current !== activeId || view !== "page")) stopAnnotate();
+  }, [activeId, view]);
 
   // Keep the webview of the active tab over the pane area. Hide the other webviews, and hide all
   // of them when the pane is hidden or an overlay (a menu, a dialog) is open.
@@ -377,7 +508,6 @@ export function BrowserPane({
     [],
   );
 
-  const running = servers.filter((s) => s.state === "running" && s.url);
   const DeviceIcon = DEVICES[device].icon;
   const agentView = view === "agent" && !!agentFrame;
   const navOff = !active.url || agentView;
@@ -410,6 +540,12 @@ export function BrowserPane({
         />
       </PaneHeader>
       <PaneActions>
+        <ServerMenu
+          api={serverApi}
+          onOpenInBrowser={onOpenServer}
+          // With no launch.json, an empty tab shows the block that makes it.
+          onEditConfig={serverApi.config === "missing" ? () => (active.url ? addTab() : setView("page")) : onEditLaunch}
+        />
         <Menu label="More" icon={<EllipsisVertical size={15} aria-hidden />}>
           {(close) => {
             const page = active.url && active.url !== "about:blank" ? active.url : null;
@@ -468,9 +604,6 @@ export function BrowserPane({
                     close();
                   }}
                 />
-                <button type="button" role="menuitem" onMouseEnter={() => setSub(null)} onClick={() => run(onShowLogs)}>
-                  Show dev server logs
-                </button>
                 <div className="menu-sep" role="separator" />
                 <button
                   type="button"
@@ -587,19 +720,30 @@ export function BrowserPane({
           <Bot size={15} aria-hidden />
           {unseen && <span className="agent-dot" aria-hidden />}
         </button>
-        <Menu label="Running servers" icon={<><Server size={15} aria-hidden /><ChevronDown size={11} aria-hidden /></>}>
-          {(close) =>
-            running.length === 0 ? (
-              <p className="menu-note">No server is running.</p>
-            ) : (
-              running.map((s) => (
-                <button key={s.name} type="button" role="menuitem" onClick={() => { close(); onOpenServer(s); }}>
-                  <Server size={14} aria-hidden /> {s.name} <span className="mono menu-dim">{s.url}</span>
-                </button>
-              ))
-            )
-          }
-        </Menu>
+        <button
+          type="button"
+          className={`icon-btn ghost annotate-toggle${annotating ? " active" : ""}`}
+          disabled={!active.url || agentView || active.url.startsWith("file:")}
+          aria-pressed={!!annotating}
+          aria-label={annotating ? "Stop annotating" : "Annotate the page"}
+          title={annotating ? "Stop annotating (Esc in the page)" : "Annotate: click elements of the page and add notes for the agent"}
+          onClick={() => {
+            if (annotating) return stopAnnotate();
+            const id = active.id;
+            setNotes(0);
+            void runAnnotate(id, true)
+              .then((ok) => {
+                if (!ok) return onError("This page is on another origin. Annotations of it work in the desktop app.");
+                setAnnotating(id);
+                setTool("select");
+                void runInPage(id, () => annotateCall("setTool", "select", color));
+              })
+              .catch((e) => onError(e instanceof Error ? e.message : String(e)));
+          }}
+        >
+          <SquareDashedMousePointer size={15} aria-hidden />
+          {annotating && notes > 0 && <span className="annotate-count" aria-label={`${notes} notes`}>{notes}</span>}
+        </button>
         <Menu label={`Viewport: ${DEVICES[device].label}`} icon={<DeviceIcon size={15} aria-hidden />}>
           {(close) =>
             (Object.keys(DEVICES) as Device[]).map((d) => {
@@ -643,17 +787,14 @@ export function BrowserPane({
             <img className="agent-frame" src={agentFrame.image} alt={`The agent browser page: ${agentFrame.title || agentFrame.url}`} />
           </div>
         ) : !active.url ? (
-          <div className="editor-empty">
-            <Globe size={28} aria-hidden />
-            <p>Open a running server from the Servers pane, or type an address.</p>
-            <p className="help">A project file path in the chat (HTML, PDF, image, or video) also opens here.</p>
-          </div>
+          <ServerBlock api={serverApi} approvals={serverApprovals} onDecide={onDecide} onOpen={onOpenServer} onEdit={onEditLaunch} />
         ) : null}
         {!tauri &&
           tabs.map((t) =>
             t.url ? (
               <iframe
                 key={`${t.id}-${t.frame}`}
+                data-tab={t.id}
                 src={t.url}
                 title={tabLabel(t)}
                 className="browser-frame"
@@ -663,6 +804,24 @@ export function BrowserPane({
             ) : null,
           )}
       </div>
+      {annotating && annotating === active.id && (
+        <AnnotateBar
+          tool={tool}
+          shape={shape}
+          color={color}
+          busy={capturing}
+          canCapture={tauri}
+          onTool={(t) => chooseTool(t)}
+          onColor={(c) => {
+            setColor(c);
+            chooseTool(tool, c);
+          }}
+          onUndo={() => void runInPage(annotating, () => annotateCall("undo")).catch(() => undefined)}
+          onClear={() => void runInPage(annotating, () => annotateCall("clear")).catch(() => undefined)}
+          onAdd={() => void addScreenshot()}
+          onClose={stopAnnotate}
+        />
+      )}
     </section>
   );
 }

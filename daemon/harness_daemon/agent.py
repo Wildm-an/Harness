@@ -60,7 +60,10 @@ SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 
 # Fields of stored messages that only the client uses. The model does not get them.
 # The model gets the "image" of a tool result in a separate message. See Agent.messages.
-CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin")
+CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin", "images")
+# A user message with images, for a model with no image input.
+NO_IMAGE_NOTE = ("[The user attached {count} image(s). This model cannot read images, so you cannot see them. "
+                 "Tell the user, if the images are important for the task.]")
 
 # Called before the first change of a file in the turn of a user message: (message id, path, content or None).
 OnCheckpoint = Callable[[str, str, "bytes | None"], None]
@@ -312,8 +315,11 @@ class Agent:
         image_at = self._current_image() if self.image_input else None
         history: list[dict[str, Any]] = []
         for i, m in enumerate(self.history):
-            history.append({k: v for k, v in m.items() if k not in CLIENT_ONLY_FIELDS}
-                           if any(k in m for k in CLIENT_ONLY_FIELDS) else m)
+            clean = ({k: v for k, v in m.items() if k not in CLIENT_ONLY_FIELDS}
+                     if any(k in m for k in CLIENT_ONLY_FIELDS) else m)
+            if m.get("role") == "user" and m.get("images"):
+                clean = self._with_images(clean, m["images"])
+            history.append(clean)
             last_result = i + 1 == len(self.history) or self.history[i + 1].get("role") != "tool"
             if image_at is not None and i >= image_at and last_result:
                 image = self.history[image_at]
@@ -323,6 +329,16 @@ class Agent:
                 ]})
                 image_at = None
         return [{"role": "system", "content": self.system_prompt}, *history]
+
+    def _with_images(self, message: dict[str, Any], images: list[str]) -> dict[str, Any]:
+        """A user message with the images that the user pasted, for the model."""
+        text = message.get("content") or ""
+        if not self.image_input:
+            note = NO_IMAGE_NOTE.format(count=len(images))
+            return {**message, "content": f"{text}\n\n{note}" if text else note}
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text or "(The user sent images.)"}]
+        parts += [{"type": "image_url", "image_url": {"url": url}} for url in images]
+        return {**message, "content": parts}
 
     def _current_image(self) -> int | None:
         """The index of the newest tool message with an image, if no user message comes after it."""
@@ -363,7 +379,8 @@ class Agent:
         return [t.schema(self.ctx) for t in self.tools.values()]
 
     async def run_turn(self, text: str, *, display: str | None = None, allow: tuple[str, ...] = (),
-                       message_id: str | None = None, origin: str | None = None) -> str:
+                       message_id: str | None = None, origin: str | None = None,
+                       images: list[str] | None = None) -> str:
         """Run one user turn. Return the stop reason.
 
         ``display`` is the text that the client shows for the user message, for example
@@ -371,11 +388,14 @@ class Agent:
         that apply for this turn only, for example the allowed-tools of a skill.
 
         ``origin`` "task": the message is a note of a background task, not a message of the user.
+        ``images``: data URLs that the user pasted. A model with image input gets them.
 
         Stop reasons: ``end``, ``max_tool_calls``, ``denied``, ``interrupted``, ``error``.
         """
         text = (await self.hooks.emit("turn.start", TurnEvent(text, self.cwd))).text
         message = user_message(text, display, message_id, origin)
+        if images:
+            message["images"] = list(images)
         self.history.append(message)
         self.message_id = message["id"]
         self.gate.turn_allow = list(allow)

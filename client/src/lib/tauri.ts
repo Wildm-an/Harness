@@ -200,4 +200,19 @@ export const browserView = {
     const { listen } = await import("@tauri-apps/api/event");
     return listen<{ id: string; url: string }>("browser-new-tab", (e) => fn(e.payload));
   },
+  /** A PNG screenshot of the visible part of a tab, as a data URL (the annotation bar). Windows only. */
+  async capture(id: string): Promise<string> {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<string>("browser_capture", { id });
+  },
+  /** Runs a script of the app in the page of a tab, for example the annotation mode (annotate.ts). */
+  async evalScript(id: string, script: string) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("browser_eval", { id, script });
+  },
+  /** The annotation script of a page sent data. ``data`` is the encoded text after "#" (annotate.ts). */
+  async onAnnotation(fn: (event: { id: string; data: string }) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<{ id: string; data: string }>("browser-annotation", (e) => fn(e.payload));
+  },
 };

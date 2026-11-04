@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { CornerDownLeft, FileText, Folder, LoaderCircle, MessageSquare, Square } from "lucide-react";
+import { CornerDownLeft, FileText, Folder, LoaderCircle, MessageSquare, Square, X } from "lucide-react";
 import type { CommandItem } from "../daemon/protocol";
 import { isAddFilesShortcut } from "../lib/fileRefs";
 import { busySend, type BusySend } from "./SettingsDialog";
+import { imageFiles, imageToDataUrl, MAX_IMAGES } from "../lib/images";
 import {
   filterSessions,
   insertMention,
@@ -22,7 +23,34 @@ const BUSY_HINTS: Record<BusySend, string> = {
   steer: "Type a message to steer the agent.",
 };
 
-export type Submission = { kind: "prompt"; text: string; display?: string } | { kind: "command"; name: string; args: string };
+// images: the data URLs of pasted images and screenshots.
+export type Submission = { kind: "prompt"; text: string; display?: string; images?: string[] } | { kind: "command"; name: string; args: string };
+
+/**
+ * A block of context in the prompt box, for example a browser annotation. The box shows it as a
+ * small code chip. The agent gets ``text``. The chat shows ``label`` and ``detail``.
+ */
+export interface PromptAttachment {
+  id: string;
+  label: string; // For example: "Annotation 1".
+  detail: string; // For example: "span.name — Make this row taller."
+  text: string; // The full text for the agent. Empty for an image.
+  image?: string; // A data URL: a pasted image or a screenshot. The box shows a thumbnail.
+}
+
+/** The prompt with its attachments: the text for the agent, and the short text that the chat shows. */
+export function withAttachments(s: Submission, attachments: readonly PromptAttachment[]): Submission {
+  if (attachments.length === 0) return s;
+  const typed = s.kind === "prompt" ? s.text : `/${s.name}${s.args ? ` ${s.args}` : ""}`;
+  const shown = s.kind === "prompt" ? (s.display ?? s.text) : typed;
+  const blocks = attachments.filter((a) => !a.image);
+  const images = attachments.flatMap((a) => (a.image ? [a.image] : []));
+  // An image can have a line for the agent too, for example the page of a screenshot.
+  const text = [typed, ...attachments.map((a) => a.text.trim())].filter(Boolean).join("\n\n");
+  const display = [shown, ...blocks.map((a) => `[${a.label}: ${a.detail}]`)].filter(Boolean).join("\n");
+  // The chat shows the images as thumbnails: the display has no text for them.
+  return { kind: "prompt", text, ...(display !== text ? { display } : {}), ...(images.length ? { images } : {}) };
+}
 
 /** Splits "/name args" into a command. Other text is a prompt. */
 export function parseSubmission(raw: string): Submission | null {
@@ -74,7 +102,9 @@ const MAX_HEIGHT_PX = 280;
 
 // The unsent text of each prompt box key (session). It is kept while the app runs.
 const drafts = new Map<string, string>();
-// The inserts that a prompt box used (see the "insert" prop).
+// The unsent attachments of each prompt box key, as the text.
+const draftAttachments = new Map<string, PromptAttachment[]>();
+// The inserts and the attachments that a prompt box used (see the "insert" and "attach" props).
 const appliedInserts = new WeakSet<object>();
 
 export function saveDraft(key: string, text: string): void {
@@ -113,10 +143,13 @@ export function PromptBox({
   boxClassName,
   focusKey,
   draftKey = null,
+  attach = null,
 }: {
   // The unsent text stays with this key, for example the session id. A change of the key keeps the
   // text for the old key, and shows the text of the new key. null: the text is not kept.
   draftKey?: string | null;
+  // A block of context to add, for example a browser annotation. Each new object adds one chip.
+  attach?: { item: PromptAttachment; key: number } | null;
   // The start screen uses the same box as a session. These props change it for the start screen.
   inputId?: string;
   label?: string; // The label for a screen reader.
@@ -148,14 +181,48 @@ export function PromptBox({
 }) {
   const [text, setText] = useState(() => (draftKey !== null ? drafts.get(draftKey) ?? "" : ""));
   // A new key (another session) shows the draft of that session. The draft of the old session stays.
+  const [attachments, setAttachments] = useState<PromptAttachment[]>(() => (draftKey !== null ? draftAttachments.get(draftKey) ?? [] : []));
   const [shownKey, setShownKey] = useState(draftKey);
   if (draftKey !== shownKey) {
     setShownKey(draftKey);
     setText(draftKey !== null ? drafts.get(draftKey) ?? "" : "");
+    setAttachments(draftKey !== null ? draftAttachments.get(draftKey) ?? [] : []);
   }
   useEffect(() => {
     if (shownKey !== null) saveDraft(shownKey, text);
   }, [text, shownKey]);
+  useEffect(() => {
+    if (shownKey === null) return;
+    if (attachments.length) draftAttachments.set(shownKey, attachments);
+    else draftAttachments.delete(shownKey);
+  }, [attachments, shownKey]);
+  // Each attach object adds one chip, one time (a box that mounts again does not add it again).
+  useEffect(() => {
+    if (!attach || appliedInserts.has(attach)) return;
+    appliedInserts.add(attach);
+    setAttachments((list) => [...list, attach.item]);
+  }, [attach]);
+  /** Add pasted or dropped images as thumbnails. Return true if the data had images. */
+  const addImages = (data: DataTransfer | null): boolean => {
+    const files = imageFiles(data);
+    if (files.length === 0) return false;
+    void Promise.all(files.map((file) => imageToDataUrl(file).catch(() => null))).then((urls) => {
+      const stamp = Date.now().toString(36);
+      setAttachments((list) => {
+        const room = MAX_IMAGES - list.filter((a) => a.image).length;
+        const added = urls
+          .filter((u): u is string => !!u)
+          .slice(0, Math.max(0, room))
+          .map((url, i) => ({ id: `image-${stamp}-${i}`, label: "Image", detail: "", text: "", image: url }));
+        return [...list, ...added];
+      });
+    });
+    return true;
+  };
+  const removeAttachment = (id: string) => {
+    setAttachments((list) => list.filter((a) => a.id !== id));
+    area.current?.focus();
+  };
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null); // The start of a closed "/" token.
   const area = useRef<HTMLTextAreaElement>(null);
@@ -302,15 +369,18 @@ export function PromptBox({
   };
 
   const submit = () => {
-    const parsed = parseSubmission(text) ?? (sendEmpty ? { kind: "prompt", text: "" } : null);
+    // A prompt with only attachments (for example browser annotations) can go too.
+    const parsed = parseSubmission(text) ?? (sendEmpty || attachments.length ? { kind: "prompt" as const, text: "" } : null);
     if (!parsed || disabled || busy || sendBlocked) return; // During a turn, the app puts the message in the queue.
     let s: Submission = parsed;
     if (s.kind === "prompt") {
       const resolved = resolveSessionRefs(s.text, sessionRefs.current);
       if (resolved !== s.text) s = { kind: "prompt", text: resolved, display: s.text };
     }
+    s = withAttachments(s, attachments);
     if (onSubmit(s)) {
       change("");
+      setAttachments([]);
       sessionRefs.current.clear();
     }
   };
@@ -330,6 +400,12 @@ export function PromptBox({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Backspace at the start of the box removes the last chip, as in the Claude app.
+    if (e.key === "Backspace" && attachments.length && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+      e.preventDefault();
+      setAttachments((list) => list.slice(0, -1));
+      return;
+    }
     if (onAddFiles && isAddFilesShortcut(e.nativeEvent)) {
       e.preventDefault();
       const at = area.current?.selectionStart ?? text.length;
@@ -408,7 +484,7 @@ export function PromptBox({
     }
   };
 
-  const canSend = !disabled && !busy && !sendBlocked && (sendEmpty || text.trim().length > 0);
+  const canSend = !disabled && !busy && !sendBlocked && (sendEmpty || text.trim().length > 0 || attachments.length > 0);
   const mentionOpen = mention !== null && mentionItems.length > 0;
   const sendHint = sendLabel ? (text.trim() ? sendLabel.text : sendLabel.empty) : running ? "Queue (Enter)" : "Send (Enter)";
   const activeId = menuOpen && matches.length > 0 ? `slash-opt-${active}` : mentionOpen ? `mention-opt-${mentionActive}` : undefined;
@@ -524,6 +600,30 @@ export function PromptBox({
           <label htmlFor={inputId} className="sr-only">
             {label}
           </label>
+          {attachments.length > 0 && (
+            <ul className="prompt-attachments" aria-label="Attached context">
+              {attachments.map((a) => (
+                <li key={a.id} className={`prompt-attachment${a.image ? " image" : ""}`} title={a.image ? a.label : a.text.trim()}>
+                  {a.image ? (
+                    <img src={a.image} alt={a.label} className="prompt-attachment-thumb" />
+                  ) : (
+                    <code>
+                      <span className="prompt-attachment-label">{a.label}</span> {a.detail}
+                    </code>
+                  )}
+                  <button
+                    type="button"
+                    className="prompt-attachment-remove"
+                    onClick={() => removeAttachment(a.id)}
+                    aria-label={`Remove ${a.label}`}
+                    title="Remove (Backspace at the start of the box)"
+                  >
+                    <X size={10} aria-hidden />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <textarea
             id={inputId}
             ref={area}
@@ -538,6 +638,17 @@ export function PromptBox({
                   : (placeholder ?? "Type / for commands and skills, @ for files.")
             }
             onChange={(e) => change(e.target.value, e.target.selectionStart)}
+            // A pasted screenshot or a dropped image becomes a thumbnail. Pasted text stays text.
+            onPaste={(e) => {
+              const hasText = !!e.clipboardData.getData("text/plain");
+              if (addImages(e.clipboardData) && !hasText) e.preventDefault();
+            }}
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer.items).some((i) => i.kind === "file" && i.type.startsWith("image/"))) e.preventDefault();
+            }}
+            onDrop={(e) => {
+              if (addImages(e.dataTransfer)) e.preventDefault();
+            }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onKeyDown={onKeyDown}
             spellCheck={false}

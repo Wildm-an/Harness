@@ -106,3 +106,12 @@ describe("layout", () => {
     setSideShare(0.55);
   });
 });
+
+describe("a saved layout with the old Servers pane", () => {
+  it("loads with no Servers pane", () => {
+    const old = { type: "split", id: "s9", direction: "row", children: [group(["chat"]), group(["servers" as never])], sizes: [0.5, 0.5] } as const;
+    const n = normalize(old as never);
+    expect(JSON.stringify(n)).not.toContain("servers");
+    expect(n.type).toBe("group");
+  });
+});

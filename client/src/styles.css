@@ -2110,6 +2110,56 @@ textarea:focus-visible {
   margin: 0 auto;
 }
 
+/* The tabs of the Capabilities page: Skills, MCP servers, Connections. */
+.cap-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cap-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cap-tab:hover {
+  color: var(--text);
+}
+
+.cap-tab.active {
+  border-bottom-color: var(--text);
+  color: var(--text);
+}
+
+.cap-tab-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.cap-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
 .cap-page-head h1 {
   margin: 0;
   font-size: 22px;
@@ -3044,6 +3094,22 @@ select {
   color: var(--text);
 }
 
+/* Settings > Providers: the model by network, above the list of providers. */
+.model-choice {
+  margin: 0 0 20px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.model-choice .setting-row:last-child {
+  border-bottom: none;
+}
+
+.model-choice select {
+  max-width: 260px;
+}
+
 .providers-intro {
   margin: -8px 0 16px;
 }
@@ -3746,15 +3812,17 @@ select {
   white-space: nowrap;
 }
 
+/* A larger close X, as in the Claude app: easy to hit. */
 .win-tab-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -4639,6 +4707,155 @@ input.tree-rename-input[aria-invalid="true"] {
   background: var(--surface-sunken);
 }
 
+/* An empty tab: the dev servers of the project, in a block at the center, as in the Claude app. */
+.server-block-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px 20px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.server-block {
+  width: min(456px, 100%);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.server-block-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 0 14px;
+}
+
+/* The first start of a command asks: the question shows under the server. */
+.server-block-row.asks {
+  flex-wrap: wrap;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.server-block-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  width: 100%;
+  padding-left: 27px;
+}
+
+.server-block-ask-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.server-block-ask-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.server-block-row + .server-block-row {
+  border-top: 1px solid var(--border);
+}
+
+.server-block-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.server-block-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.server-block-name {
+  overflow: hidden;
+  color: var(--text-secondary, var(--text));
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-block-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.server-block-port {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.server-block-go {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.server-block-go:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.server-block-go:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.server-block-none {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(456px, 100%);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.server-block-none > p {
+  margin: 0;
+}
+
+.server-block-none .server-block-text .server-block-port {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-block-foot {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.server-block-foot .link-btn {
+  color: inherit;
+}
+
 .browser-area.device-tablet,
 .browser-area.device-phone {
   background: repeating-linear-gradient(45deg, var(--surface-sunken) 0 10px, var(--bg) 10px 20px);
@@ -4660,6 +4877,124 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .agent-toggle {
   position: relative;
+}
+
+/* The annotation bar at the bottom of the Browser pane, as in the Claude app (AnnotateBar.tsx). */
+.annotate-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.annotate-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 32px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.annotate-tool:hover {
+  background: var(--hover, color-mix(in srgb, var(--text) 6%, transparent));
+  color: var(--text);
+}
+
+.annotate-tool.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.annotate-menu {
+  position: relative;
+}
+
+/* The bar is at the bottom: its menus open upward. */
+.menu.annotate-menu-list {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 160px;
+}
+
+.annotate-menu-list button {
+  gap: 10px;
+}
+
+.annotate-color-dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.annotate-colors {
+  display: grid;
+  grid-template-columns: repeat(4, 24px);
+  gap: 8px;
+  padding: 6px;
+}
+
+.menu .annotate-swatch {
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.menu .annotate-swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.annotate-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+/* Annotate: click elements of the page and add notes for the agent (annotate.ts). */
+.annotate-toggle {
+  position: relative;
+}
+
+.annotate-toggle.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.annotate-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
 }
 
 .agent-toggle.active {
@@ -4752,6 +5087,84 @@ input.tree-rename-input[aria-invalid="true"] {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* "Scroll to bottom": a round button at the bottom of the visible list, when the list does not follow
+   the agent. It takes no room in the list (height 0, and the negative margin cancels the gap). */
+.scroll-bottom-wrap {
+  position: sticky;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  height: 0;
+  margin-top: -12px;
+  pointer-events: none;
+}
+
+.scroll-bottom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  transform: translateY(-100%);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-2, var(--panel));
+  color: var(--text-muted);
+  box-shadow: 0 1px 2px #0000001f, 0 2px 8px #00000029;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color var(--duration) var(--ease-out), background var(--duration) var(--ease-out);
+}
+
+.scroll-bottom:hover {
+  color: var(--text);
+}
+
+/* While the agent works: three dots that pulse, as in the Claude app. */
+.scroll-bottom-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.scroll-bottom-dots > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: scroll-bottom-dot 1.2s ease-in-out infinite;
+}
+
+.scroll-bottom-dots > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.scroll-bottom-dots > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.scroll-bottom.active {
+  color: var(--text);
+}
+
+@keyframes scroll-bottom-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-bottom-dots > span {
+    animation: none;
+    opacity: 0.8;
+  }
 }
 
 .empty-hint {
@@ -5571,6 +5984,85 @@ input.tree-rename-input[aria-invalid="true"] {
 
 /* One line of text and the send button in a row. The button stays at the bottom right when the text
    grows. As in Claude, a 1px ring inside the box and a soft shadow make the edge: the ring takes no height. */
+/* Attached context, for example browser annotations: small code chips on their own row above the text. */
+.prompt-box:has(.prompt-attachments) {
+  flex-wrap: wrap;
+}
+
+.prompt-attachments {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 0 0;
+  list-style: none;
+}
+
+.prompt-attachment {
+  position: relative;
+  max-width: min(320px, 100%);
+}
+
+.prompt-attachment code {
+  display: block;
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A pasted image or a screenshot: a small square thumbnail, as in the Claude app. */
+.prompt-attachment.image {
+  width: 56px;
+  height: 56px;
+}
+
+.prompt-attachment-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.prompt-attachment-label {
+  color: var(--text);
+}
+
+/* The x shows on hover or focus, at the top right of the chip. */
+.prompt-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+.prompt-attachment:hover .prompt-attachment-remove,
+.prompt-attachment-remove:focus-visible {
+  opacity: 1;
+}
+
 .prompt-box {
   --prompt-ring: color-mix(in srgb, var(--text) 10%, transparent);
   --prompt-ring-focus: color-mix(in srgb, var(--text) 20%, transparent);
@@ -6257,6 +6749,25 @@ mark.word-del {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+}
+
+/* The images of a sent message, above the text. */
+.msg-user-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 80%;
+  margin-bottom: 6px;
+}
+
+.msg-user-images img {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  object-fit: cover;
 }
 
 .msg-user-wrap .msg-user {

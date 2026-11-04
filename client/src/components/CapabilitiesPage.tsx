@@ -62,6 +62,12 @@ export function mcpSummary(item: McpServerItem): string {
   return parts.join(" · ");
 }
 
+const CAP_TABS: [CapTab, string][] = [
+  ["skills", "Skills"],
+  ["mcp", "MCP servers"],
+  ["connections", "Connections"],
+];
+
 /** True when each word of the filter is in one of the fields. Case does not matter. */
 export function matches(query: string, ...fields: string[]): boolean {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -245,7 +251,12 @@ function McpRow({ item, live, busy, onRestart }: { item: McpServerItem; live: bo
   );
 }
 
+/** The tabs of the page. Connections is a placeholder: the user adds it later. */
+export type CapTab = "skills" | "mcp" | "connections";
+
 export const CapabilitiesPage = memo(function CapabilitiesPage({
+  tab,
+  onTab,
   folder,
   live,
   skills,
@@ -257,6 +268,8 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   onRestart,
   onEditConfig,
 }: {
+  tab: CapTab;
+  onTab: (tab: CapTab) => void;
   folder: string | null; // The project folder. null: only the skills and servers of the user.
   live: boolean; // A session is open in the folder: the MCP states are live.
   skills: CommandItem[] | null;
@@ -291,14 +304,17 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   } else {
     body = (
       <>
-        <div className="skills-search cap-search">
-          <Search size={14} aria-hidden />
-          <label htmlFor="capabilities-filter" className="sr-only">
-            Filter the skills and the MCP servers
-          </label>
-          <input id="capabilities-filter" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter" spellCheck={false} />
-        </div>
+        {tab !== "connections" && (
+          <div className="skills-search cap-search">
+            <Search size={14} aria-hidden />
+            <label htmlFor="capabilities-filter" className="sr-only">
+              {tab === "skills" ? "Filter the skills" : "Filter the MCP servers"}
+            </label>
+            <input id="capabilities-filter" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter" spellCheck={false} />
+          </div>
+        )}
 
+        {tab === "skills" && (
         <section className="cap-section" aria-labelledby="cap-skills">
           <SectionHead id="cap-skills" title="Skills" count={skills && skills.length > 0 ? String(skills.length) : undefined} />
           {skills === null ? (
@@ -320,7 +336,9 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
             </ul>
           )}
         </section>
+        )}
 
+        {tab === "mcp" && (
         <section className="cap-section" aria-labelledby="cap-mcp">
           <SectionHead
             id="cap-mcp"
@@ -392,6 +410,16 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
             </>
           )}
         </section>
+        )}
+
+        {tab === "connections" && (
+          <section className="cap-section" aria-labelledby="cap-connections">
+            <SectionHead id="cap-connections" title="Connections" />
+            <div className="cap-empty">
+              <p>Connections are not ready yet. This tab will show the apps and services that the agent can connect to.</p>
+            </div>
+          </section>
+        )}
       </>
     );
   }
@@ -411,7 +439,28 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
             )}
           </p>
         </header>
-        <div role="region" aria-labelledby="capabilities-title">
+        {!skillDetail && (
+          <div className="cap-tabs" role="tablist" aria-label="Capabilities">
+            {CAP_TABS.map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                id={`cap-tab-${id}`}
+                aria-selected={tab === id}
+                aria-controls="cap-tab-panel"
+                className={`cap-tab${tab === id ? " active" : ""}`}
+                onClick={() => onTab(id)}
+              >
+                {label}
+                {id === "skills" && skills && skills.length > 0 && <span className="cap-tab-count">{skills.length}</span>}
+                {id === "mcp" && mcp && mcp.items.length > 0 && <span className="cap-tab-count">{mcp.items.length}</span>}
+                {id === "mcp" && failed > 0 && <span className="cap-tab-dot" role="img" aria-label={`${failed} failed`} />}
+              </button>
+            ))}
+          </div>
+        )}
+        <div role={skillDetail ? "region" : "tabpanel"} id="cap-tab-panel" aria-labelledby={skillDetail ? "capabilities-title" : `cap-tab-${tab}`}>
           {body}
         </div>
       </div>

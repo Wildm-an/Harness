@@ -132,7 +132,7 @@ class PreviewHost:
             raise BrowserError(
                 "There is no server configuration. Create .harness/launch.json with the write tool, "
                 'for example {"servers": [{"name": "web", "command": "npm run dev", "port": 5173, '
-                '"ready_pattern": "Local:.*http", "default": true}]}. Or ask the user to open the Servers pane.')
+                '"ready_pattern": "Local:.*http", "default": true}]}. Or ask the user to add a server from an empty tab of the Browser pane.')
         if not name:
             server = self.servers.default()
             assert server is not None

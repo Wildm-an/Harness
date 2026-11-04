@@ -9,6 +9,9 @@
 //!   opened with "Open HTML file".
 //! - Each page load and each title change goes to the app as a "browser-event". A link that
 //!   opens a new window goes to the app as a "browser-new-tab": the pane opens it in a new tab.
+//! - The annotation script of the app (annotate.ts) sends a note with a navigation to
+//!   https://harness-annotate.invalid/#<data>. The webview stops that navigation and gives the data
+//!   to the app as a "browser-annotation". The app uses the data only while it annotates the tab.
 
 use std::sync::Mutex;
 
@@ -17,6 +20,8 @@ use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl};
 
 const LABEL_PREFIX: &str = "browser-";
+/// The host of the address that the annotation script opens to send a note (annotate.ts).
+const ANNOTATE_HOST: &str = "harness-annotate.invalid";
 
 // Two open calls for the same tab can come at the same time. Only one makes the webview.
 static CREATE: Mutex<()> = Mutex::new(());
@@ -36,6 +41,12 @@ struct BrowserEvent {
     loading: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct Annotation {
+    id: String,
+    data: String, // The encoded text after "#". The app decodes it.
 }
 
 #[derive(Clone, Serialize)]
@@ -81,12 +92,19 @@ pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds, fresh: bool) -
         return view.navigate(target).map_err(|e| e.to_string());
     }
     let window = app.get_window("main").ok_or("The main window is missing.")?;
-    let (loads, titles, windows) = (app.clone(), app.clone(), app.clone());
-    let (load_id, title_id, window_id) = (id.to_string(), id.to_string(), id.to_string());
+    let (loads, titles, windows, notes) = (app.clone(), app.clone(), app.clone(), app.clone());
+    let (load_id, title_id, window_id, note_id) = (id.to_string(), id.to_string(), id.to_string(), id.to_string());
     // A fresh webview starts on a blank page: the clear runs before the page of the tab loads.
     let first = if fresh { Url::parse("about:blank").map_err(|e| e.to_string())? } else { target.clone() };
     let mut builder = WebviewBuilder::new(label(id)?, WebviewUrl::External(first))
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "about" | "file"))
+        .on_navigation(move |url| {
+            if url.host_str() == Some(ANNOTATE_HOST) {
+                let data = url.fragment().unwrap_or_default().to_string();
+                let _ = notes.emit_to("main", "browser-annotation", Annotation { id: note_id.clone(), data });
+                return false; // The page stays.
+            }
+            matches!(url.scheme(), "http" | "https" | "about" | "file")
+        })
         .on_page_load(move |_view, payload| {
             let event = BrowserEvent {
                 id: load_id.clone(),
@@ -207,6 +225,11 @@ pub fn history(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
         _ => return Err(format!("Unknown action: {action}")),
     }
     .map_err(|e| e.to_string())
+}
+
+/// Runs a script of the app in the page of a tab (the annotation mode).
+pub fn eval(app: &AppHandle, id: &str, script: &str) -> Result<(), String> {
+    require(app, id)?.eval(script).map_err(|e| e.to_string())
 }
 
 pub fn devtools(app: &AppHandle, id: &str) -> Result<(), String> {

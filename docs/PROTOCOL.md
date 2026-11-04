@@ -207,6 +207,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 | `turn.end` | `stop_reason` | `end`, `max_tool_calls`, `denied`, `interrupted`, `error`, or `blocked` (a plugin ended the turn). |
 | `prompt` | `id` | Optional. The id of the user message in the history. Rewind and fork use it. |
+| `prompt` | `images` | Optional. At most 8 data URLs (PNG, JPEG, WebP, or GIF) that the user pasted or that the annotation bar captured. With images, `text` can be empty. A model with image input gets them as image parts of the user message. Another model gets a note that the user attached images. The history keeps them in the `images` field of the user message. |
 | `session.ready` | `history` | A `user` message has `id` and `ts` (epoch seconds). The daemon does not send these fields to the model. |
 | `auth.ok` | `updatable` | True if the daemon can install an update from the app (`daemon.update`). False for the daemon of the desktop app. |
 | `session.update` | `archived` | Optional. True archives the session: the sidebar shows it only with the "Archived" or "All" status filter. `session.updated` and the `sessions` items also have `archived`. |

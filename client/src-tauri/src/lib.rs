@@ -121,6 +121,18 @@ async fn browser_screenshot(app: AppHandle, id: String, path: String) -> Result<
     std::fs::write(&path, bytes).map_err(|e| format!("Cannot save the screenshot: {e}"))
 }
 
+/// A PNG screenshot of the visible part of a tab, as a data URL: the annotation bar puts it in the prompt.
+#[tauri::command]
+async fn browser_capture(app: AppHandle, id: String) -> Result<String, String> {
+    use base64::Engine;
+    let rx = browser::screenshot(&app, &id)?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(15)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| "The screenshot did not finish.".to_string())??;
+    Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
 #[tauri::command]
 async fn browser_bounds(app: AppHandle, id: String, bounds: Bounds) -> Result<(), String> {
     browser::set_bounds(&app, &id, bounds)
@@ -139,6 +151,11 @@ async fn browser_navigate(app: AppHandle, id: String, url: String) -> Result<(),
 #[tauri::command]
 async fn browser_history(app: AppHandle, id: String, action: String) -> Result<(), String> {
     browser::history(&app, &id, &action)
+}
+
+#[tauri::command]
+async fn browser_eval(app: AppHandle, id: String, script: String) -> Result<(), String> {
+    browser::eval(&app, &id, &script)
 }
 
 #[tauri::command]
@@ -215,11 +232,13 @@ pub fn run() {
             browser_visible,
             browser_navigate,
             browser_history,
+            browser_eval,
             browser_devtools,
             browser_clear_data,
             browser_close,
             browser_close_all,
-            browser_screenshot
+            browser_screenshot,
+            browser_capture
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");

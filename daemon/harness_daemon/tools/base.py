@@ -50,7 +50,7 @@ class Approval:
     ``key`` is the value that permission rules match: a command or a path.
     ``rule`` is the rule that ``allow_always`` adds to the project settings.
     ``tool`` is the tool name that the rules use, if it is not the name of the tool. For
-    example, ``preview_start`` uses the ``server(<command>)`` rules of the Servers pane.
+    example, ``preview_start`` uses the ``server(<command>)`` rules of the dev servers.
     ``input`` replaces the tool arguments in the request to the user, if the arguments do
     not show what the tool does. For example, ``preview_start`` shows the server command.
     """

@@ -47,7 +47,7 @@ export function WindowTabs({
                 <span className="win-tab-label">{tab.label}</span>
               </button>
               <button type="button" className="win-tab-close" onClick={() => onClose(tab.id)} aria-label={`Close ${tab.label}`} title="Close">
-                <X size={12} aria-hidden />
+                <X size={15} aria-hidden />
               </button>
             </div>
           );

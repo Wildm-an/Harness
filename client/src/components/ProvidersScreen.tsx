@@ -584,7 +584,9 @@ export function ProvidersScreen({
   onReturn,
   loadKey,
   embedded = false,
+  modelChoice,
 }: {
+  modelChoice?: React.ReactNode; // Settings > Providers: the model by network, at the top.
   embedded?: boolean; // In the Settings dialog: no Back button, and no space of a full screen.
   items: ProviderItem[] | null; // null: loading.
   path: string;
@@ -650,6 +652,7 @@ export function ProvidersScreen({
             {error}
           </p>
         )}
+        {modelChoice}
         <div className="list-head">
           <span>OpenAI-compatible providers</span>
           <button type="button" className="icon-btn ghost" onClick={() => edit(null)} aria-label="Add a provider" title="Add a provider">

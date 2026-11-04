@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ExternalLink, Play, Server, Square } from "lucide-react";
+import { ChevronDown, ExternalLink, FileCog, Play, Server, Square } from "lucide-react";
 import type { ServerItem } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
-import { StateBadge } from "./ServersPane";
+import { StateBadge } from "./StateBadge";
 import type { ServersApi } from "./useServers";
 
-/** The server controls in the session toolbar (SPEC.md section 8.7). */
+/** The dev servers of the project, in the header of the Browser pane, as in the Claude app (SPEC.md section 8.7). */
 export function ServerMenu({
   api,
   onOpenInBrowser,
-  onOpenPane,
+  onEditConfig,
 }: {
   api: ServersApi;
   onOpenInBrowser: (server: ServerItem) => void;
-  onOpenPane: () => void;
+  onEditConfig: () => void; // Open .harness/launch.json, or the empty tab that makes it.
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -89,10 +89,10 @@ export function ServerMenu({
             role="menuitem"
             onClick={() => {
               setOpen(false);
-              onOpenPane();
+              onEditConfig();
             }}
           >
-            <Server size={14} aria-hidden /> Open the Servers pane
+            <FileCog size={14} aria-hidden /> {api.items.length > 0 ? "Edit launch.json" : "Add a dev server…"}
           </button>
         </div>
       )}

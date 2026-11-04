@@ -6,7 +6,7 @@ export type ToolStatus = "running" | "done" | "error";
 
 export type ChatItem =
   // messageId: the daemon id, for rewind and fork. ts: epoch ms. origin "task": the notes of background tasks.
-  | { kind: "user"; id: string; text: string; messageId?: string; ts?: number; origin?: "task" }
+  | { kind: "user"; id: string; text: string; messageId?: string; ts?: number; origin?: "task"; images?: string[] }
   | { kind: "assistant"; id: string; text: string; streaming: boolean }
   | {
       kind: "tool";
@@ -59,7 +59,7 @@ export const emptyChat: ChatState = { items: [], running: false, usage: null, co
 
 export type ChatAction =
   | { type: "daemon"; msg: DaemonMessage }
-  | { type: "user"; text: string; startsTurn: boolean; messageId?: string }
+  | { type: "user"; text: string; startsTurn: boolean; messageId?: string; images?: string[] }
   | { type: "disconnected" }
   | { type: "decide"; requestId: string; decision: Decision }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string }
@@ -130,7 +130,7 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const msg of history) {
     if (msg.role === "user") {
-      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined, origin: msg.origin });
+      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined, origin: msg.origin, images: msg.images });
     } else if (msg.role === "assistant") {
       if (msg.content) items.push({ kind: "assistant", id: nextId("assistant"), text: msg.content, streaming: false });
       for (const call of msg.tool_calls ?? []) {
@@ -273,7 +273,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...state,
         running: state.running || action.startsTurn,
         turn: state.turn ?? (action.startsTurn ? { startedAt: Date.now(), tokens: 0 } : null),
-        items: [...state.items, { kind: "user", id: nextId("user"), text: action.text, messageId: action.messageId, ts: Date.now() }],
+        items: [...state.items, { kind: "user", id: nextId("user"), text: action.text, messageId: action.messageId, ts: Date.now(), images: action.images }],
       };
     case "disconnected":
       return {

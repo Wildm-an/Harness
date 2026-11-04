@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, contextShare, foldedValue, needsRailRoom, parseFolded, percentText, prStateText, railShown, railTasks, sortTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, contextShare, foldedValue, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -78,15 +78,31 @@ describe("the heading of a folded section", () => {
 });
 
 describe("the room for a pane", () => {
-  it("closes the rail when the Preview or the Browser pane opens", () => {
+  it("closes the rail when any pane opens", () => {
     expect(needsRailRoom([], ["preview"])).toBe(true);
     expect(needsRailRoom(["preview"], ["preview", "browser"])).toBe(true);
+    expect(needsRailRoom([], ["files"])).toBe(true);
+    expect(needsRailRoom([], ["terminal", "diff"])).toBe(true);
   });
 
-  it("keeps the rail when no such pane opens", () => {
+  it("keeps the rail when no new pane opens", () => {
     expect(needsRailRoom(["browser"], ["browser"])).toBe(false);
     expect(needsRailRoom(["preview"], [])).toBe(false);
-    expect(needsRailRoom([], ["terminal", "diff"])).toBe(false);
+  });
+
+  it("opens the rail again when the last pane closes, if a pane closed it", () => {
+    let state = railAfterPanes({ open: true, auto: false }, [], ["files"]);
+    expect(state).toEqual({ open: false, auto: true });
+    state = railAfterPanes(state, ["files"], ["files", "diff"]);
+    expect(state).toEqual({ open: false, auto: true });
+    state = railAfterPanes(state, ["files", "diff"], ["diff"]);
+    expect(state.open).toBe(false); // One pane is still open.
+    state = railAfterPanes(state, ["diff"], []);
+    expect(state).toEqual({ open: true, auto: false });
+  });
+
+  it("keeps a rail closed that the user closed", () => {
+    expect(railAfterPanes({ open: false, auto: false }, ["files"], [])).toEqual({ open: false, auto: false });
   });
 });
 

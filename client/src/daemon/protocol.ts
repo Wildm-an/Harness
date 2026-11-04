@@ -22,7 +22,7 @@ export interface HistoryToolCall {
 export type HistoryMessage =
   // ts: epoch seconds. display: the text that the user typed, for example "/review src".
   // origin "task": the notes of background tasks, not a message of the user.
-  | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task" }
+  | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task"; images?: string[] } // images: pasted images (data URLs).
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string };
@@ -119,6 +119,10 @@ export interface UserSettings {
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
   subagents?: boolean; // false: the agent cannot start subagents (the agent tool).
+  // The model by network (Settings > Providers): on, a new session uses online_model, or offline_model with no connection.
+  auto_model?: boolean;
+  online_model?: string | null;
+  offline_model?: string | null;
   // The agent instructions of the user. The system prompt includes them. null: no instructions.
   instructions_thinking?: string | null;
   instructions_research?: string | null;
@@ -505,7 +509,7 @@ export type ClientMessage =
   | { type: "projects.list" }
   | { type: "projects.save"; id?: string; name: string; path: string; create?: boolean }
   | { type: "projects.delete"; id: string }
-  | { type: "prompt"; text: string; display?: string; id?: string } // display: the text that the user sees. id: for rewind and fork.
+  | { type: "prompt"; text: string; display?: string; id?: string; images?: string[] } // display: the text that the user sees. id: for rewind and fork. images: data URLs.
   // Go back to the time before a user message: remove it and all after it, and/or restore the files that the agent changed.
   | { type: "session.rewind"; id: string; conversation: boolean; code: boolean }
   // A new session with the conversation before a user message.

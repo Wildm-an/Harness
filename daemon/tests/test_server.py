@@ -721,3 +721,61 @@ def test_trash_deletes_read_only_files_and_links(tmp_path, monkeypatch):
         return  # Windows without the right to make links.
     trash.delete(link)
     assert not os.path.lexists(link) and target.read_text() == "t"  # The target stays.
+
+
+PNG_DOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+
+def test_a_prompt_with_pasted_images(daemon, project, fake_model):
+    # A model with no image input gets a note: it cannot see the images.
+    c = Client(daemon)
+    c.new_session(project)
+    fake_model.script({"text": "I cannot see it."})
+    c.send({"type": "prompt", "text": "What is wrong here?", "images": [PNG_DOT]})
+    c.until("turn.end")
+    last = fake_model.requests[-1]["messages"][-1]
+    assert isinstance(last["content"], str) and "attached 1 image" in last["content"]
+    c.send({"type": "prompt", "text": "x", "images": ["https://example.com/a.png"]})
+    assert "data URL" in c.until("error")[0]["message"]
+    c.close()
+
+    # A model with image input gets the image as a part of the message.
+    fake_model.capabilities = ["completion", "tools", "vision"]
+    c = Client(daemon)
+    ready = c.new_session(project, model="fake/other-model")
+    assert ready["image_input"] is True
+    fake_model.script({"text": "I see a dot."})
+    c.send({"type": "prompt", "text": "", "images": [PNG_DOT]})  # Only an image: the prompt can go.
+    c.until("turn.end")
+    parts = fake_model.requests[-1]["messages"][-1]["content"]
+    assert parts[1] == {"type": "image_url", "image_url": {"url": PNG_DOT}}
+    c.close()
+
+
+def test_the_default_model_follows_the_network(daemon, harness_home, project, fake_model):
+    import json as _json
+
+    providers = _json.loads((harness_home / "providers.json").read_text())
+    # A provider that does not answer: nothing listens on port 1.
+    providers["cloud"] = {"base_url": "http://127.0.0.1:1/v1", "api_key": "x", "kind": "openai"}
+    (harness_home / "providers.json").write_text(_json.dumps(providers))
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "user_settings.set", "values": {"auto_model": True, "online_model": "cloud/big-model",
+                                                     "offline_model": "fake/test-model"}})
+    got = c.until("user_settings")[0]["values"]
+    assert (got["auto_model"], got["online_model"], got["offline_model"]) == (True, "cloud/big-model", "fake/test-model")
+    c.send({"type": "session.new", "cwd": str(project), "model": ""})
+    ready = c.until("session.ready")[0]
+    assert ready["model"] == "fake/test-model"
+    assert any("uses the local model fake/test-model" in w for w in ready["warnings"])
+    c.close()
+
+    # The online model answers: a new session uses it. Off: the default_model setting applies, as before.
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "user_settings.set", "values": {"online_model": "fake/other-model"}})
+    c.until("user_settings")
+    c.send({"type": "session.new", "cwd": str(project), "model": ""})
+    assert c.until("session.ready")[0]["model"] == "fake/other-model"
+    c.close()
