@@ -2376,6 +2376,43 @@ textarea:focus-visible {
   color: var(--text-muted);
 }
 
+.cap-warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.cap-auth {
+  flex: none;
+  align-self: center;
+}
+
+/* The sign-in of an OAuth MCP server (mcp_auth.py). */
+.mcp-signin {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mcp-signin .help {
+  margin: 0;
+}
+
+.mcp-signin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mcp-signin .mcp-signin-actions {
+  margin-top: 0;
+}
+
+.mcp-signin .field-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 .cap-go,
 .cap-chevron {
   flex: none;

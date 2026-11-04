@@ -12,6 +12,11 @@ same as Claude Code and other MCP clients::
 - ``type``: ``stdio`` (the default with ``command``), ``http`` (streamable HTTP), or ``sse``.
 - ``${VAR}`` and ``${VAR:-default}`` take values from the environment of the daemon.
 - ``timeout``: seconds for one tool call. The default is 120.
+- ``oauth``: OAuth for an http or sse server (mcp_auth.py). It is on by default when the headers
+  have no ``Authorization``. A server that needs a sign-in has the state "needs_auth" until the
+  user authenticates it (message ``mcp.auth``).
+- ``connector``: the server comes from a connector (connectors.py). The daemon adds the token of
+  the connector as the ``Authorization`` header at each connection. OAuth is then off.
 
 Each MCP tool is a tool of the agent with the name ``mcp__<server>__<tool>``. It needs approval
 by default. The rule ``mcp__<server>__*`` allows all the tools of one server.
@@ -36,7 +41,9 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from . import __version__
+from . import connectors, mcp_auth
 from .config import ConfigError, harness_home, read_json
+from .mcp_auth import AUTH_TIMEOUT, AuthCancelled, AuthRequired, OAuthConfig
 from .tools.base import Approval, Tool, ToolContext, ToolError, ToolResult
 
 log = logging.getLogger("harness.mcp")
@@ -83,6 +90,12 @@ class ServerConfig:
     headers: dict[str, str] = field(default_factory=dict)
     disabled: bool = False
     timeout: float = CALL_TIMEOUT
+    oauth: OAuthConfig | None = None  # OAuth for an http or sse server. None: off.
+    connector: str | None = None  # The connector that gives the token (connectors.py).
+
+    @property
+    def auth_key(self) -> str:
+        return mcp_auth.record_key(self.name, self.url or "")
 
     def describe(self) -> str:
         if self.transport == "stdio":
@@ -149,6 +162,13 @@ def _parse_server(name: str, raw: Any, scope: str, project: Path | None) -> tupl
             raise ConfigError(f"MCP server {name}: 'headers' must be an object.")
         config.url = _expand(url, missing)
         config.headers = {str(k): _expand(str(v), missing) for k, v in headers.items()}
+        connector = raw.get("connector")
+        if connector is not None:
+            if connector not in connectors.CONNECTORS:
+                raise ConfigError(f"MCP server {name}: unknown connector {connector!r}.")
+            config.connector = connector
+        else:
+            config.oauth = mcp_auth.parse_oauth(name, raw.get("oauth"), config.headers, lambda v: _expand(v, missing))
     warnings = [f"MCP server {name}: the environment variable {v} is not set." for v in dict.fromkeys(missing)]
     return config, warnings
 
@@ -266,7 +286,7 @@ class LoopThread:
 @dataclass
 class ServerState:
     config: ServerConfig
-    state: str = "stopped"  # starting, connected, failed, disabled, stopped
+    state: str = "stopped"  # starting, connected, failed, disabled, stopped, needs_auth, authenticating
     error: str | None = None
     tools: list[Any] = field(default_factory=list)  # mcp.types.Tool
     session: Any = None
@@ -275,6 +295,9 @@ class ServerState:
     log_path: Path | None = None
     server_name: str | None = None
     started: float = 0.0
+    callback: mcp_auth.Callback | None = None  # The listener of an interactive sign-in.
+    auth_url: str | None = None  # The sign-in page of an interactive sign-in.
+    unauthorized: bool = False  # The server answered HTTP 401 (for a connector: a bad token).
 
     def log_tail(self) -> list[str]:
         if not self.log_path or not self.log_path.exists():
@@ -290,11 +313,16 @@ class ServerState:
         body: dict[str, Any] = {
             "name": c.name, "scope": c.scope, "transport": c.transport, "target": c.describe(),
             "state": self.state, "error": self.error, "server_name": self.server_name,
+            "oauth": c.oauth is not None,
+            "connector": c.connector,
+            "signed_in": c.oauth is not None and mcp_auth.has_tokens(c.auth_key),
             "tools": [{"name": t.name, "agent_name": tool_names.get(t.name, ""),
                        "description": (t.description or "")[:300]} for t in self.tools],
         }
         if self.state == "failed":
             body["log"] = self.log_tail()
+        if self.state == "authenticating" and self.auth_url:
+            body["auth_url"] = self.auth_url
         return body
 
 
@@ -346,7 +374,7 @@ class McpManager:
         except asyncio.TimeoutError:
             log.info("MCP servers are still starting after %s seconds.", timeout)
 
-    async def _connect(self, s: ServerState) -> None:
+    async def _connect(self, s: ServerState, interactive: bool = False) -> None:
         s.error, s.tools, s.started = None, [], time.time()
         logs = harness_home() / "logs"
         logs.mkdir(parents=True, exist_ok=True)
@@ -358,14 +386,47 @@ class McpManager:
             self.main_loop.call_soon_threadsafe(connected.set)
 
         loop = self.thread.ensure()
-        s.task = asyncio.run_coroutine_threadsafe(self._run(s, signal), loop)  # type: ignore[assignment]
+        s.task = asyncio.run_coroutine_threadsafe(self._run(s, signal, interactive), loop)  # type: ignore[assignment]
+        wait = CONNECT_TIMEOUT + 5 + (AUTH_TIMEOUT if interactive else 0)
         try:
-            await asyncio.wait_for(connected.wait(), CONNECT_TIMEOUT + 5)
+            await asyncio.wait_for(connected.wait(), wait)
         except asyncio.TimeoutError:
-            s.state, s.error = "failed", f"No connection after {CONNECT_TIMEOUT} seconds."
+            s.state, s.error = "failed", f"No connection after {wait - 5} seconds."
             await self._stop_one(s)
 
-    async def _run(self, s: ServerState, signal: Callable[[], None]) -> None:
+    def _auth_provider(self, s: ServerState, interactive: bool) -> Any:
+        """The OAuth provider of an http or sse server. Runs in the MCP loop."""
+        c = s.config
+        assert c.oauth is not None
+        if interactive:
+            assert s.callback is not None
+            port = s.callback.port
+        else:
+            port = mcp_auth.callback_port(c.auth_key, c.oauth)
+        storage = mcp_auth.FileTokenStorage(c.auth_key, c.oauth, mcp_auth.redirect_uri(port))
+
+        async def redirect(url: str) -> None:
+            if not interactive:
+                raise AuthRequired(url)
+            if not re.match(r"^https?://", url):
+                raise AuthCancelled("The authorization server gave a sign-in URL that is not http or https.")
+            s.auth_url = url
+            if self.main_loop is not None:
+                asyncio.run_coroutine_threadsafe(self._auth_started(s.config.name, url), self.main_loop)
+
+        async def callback() -> Any:
+            if s.callback is None:
+                raise AuthRequired("")
+            return await s.callback.wait()
+
+        return mcp_auth.make_provider(c.url or "", storage, c.oauth, redirect, callback)
+
+    async def _auth_started(self, name: str, url: str) -> None:
+        """The sign-in page is ready: the client opens it in the browser."""
+        await self.emit({"type": "mcp.auth_url", "name": name, "url": url})
+        await self.send_status()
+
+    async def _run(self, s: ServerState, signal: Callable[[], None], interactive: bool = False) -> None:
         """Runs in the MCP loop. The transport opens and closes in this task, as anyio requires."""
         from mcp import ClientSession, types
 
@@ -384,15 +445,34 @@ class McpManager:
                 else:
                     from mcp.client.streamable_http import create_mcp_http_client
 
+                    auth = self._auth_provider(s, interactive) if c.oauth is not None else None
+                    headers = dict(c.headers)
+                    if c.connector is not None:
+                        value = await asyncio.to_thread(connectors.token, c.connector)
+                        if value is None:
+                            raise _ConnectorMissing()
+                        headers["Authorization"] = f"Bearer {value}"
+                    s.unauthorized = False
+
+                    async def on_response(response: Any) -> None:
+                        if response.status_code == 401:
+                            s.unauthorized = True
+
+                    def make_client(**kwargs: Any) -> Any:
+                        client = create_mcp_http_client(**kwargs)
+                        client.event_hooks["response"].append(on_response)
+                        return client
+
                     if c.transport == "http":
                         from mcp.client.streamable_http import streamable_http_client
 
-                        client = await stack.enter_async_context(create_mcp_http_client(headers=c.headers or None))
+                        client = await stack.enter_async_context(make_client(headers=headers or None, auth=auth))
                         read, write = await stack.enter_async_context(streamable_http_client(c.url, http_client=client))
                     else:
                         from mcp.client.sse import sse_client
 
-                        read, write = await stack.enter_async_context(sse_client(c.url, headers=c.headers or None))
+                        read, write = await stack.enter_async_context(
+                            sse_client(c.url, headers=headers or None, auth=auth, httpx_client_factory=make_client))
 
                 async def on_message(message: Any) -> None:
                     root = getattr(message, "root", message)
@@ -402,7 +482,9 @@ class McpManager:
                 session = await stack.enter_async_context(ClientSession(
                     read, write, message_handler=on_message,
                     client_info=types.Implementation(name="harness", version=__version__)))
-                init = await asyncio.wait_for(session.initialize(), CONNECT_TIMEOUT)
+                # An interactive sign-in happens in the first request, so it gets more time.
+                wait = CONNECT_TIMEOUT + (AUTH_TIMEOUT if interactive else 0)
+                init = await asyncio.wait_for(session.initialize(), wait)
                 info = getattr(init, "server_info", None) or getattr(init, "serverInfo", None)
                 s.server_name = getattr(info, "name", None)
                 s.tools = await self._list_tools(session)
@@ -410,11 +492,26 @@ class McpManager:
                 signal()
                 await s.stop.wait()
         except BaseException as e:  # noqa: BLE001 - anyio raises exception groups.
-            if not isinstance(e, asyncio.CancelledError):
+            cancelled = mcp_auth.find_error(e, AuthCancelled)
+            if c.connector is not None and (mcp_auth.find_error(e, _ConnectorMissing) is not None
+                                            or s.unauthorized):
+                name = connectors.get(c.connector).name
+                missing = mcp_auth.find_error(e, _ConnectorMissing) is not None
+                s.state = "needs_auth"
+                s.error = (f"Connect {name} on the Connectors tab." if missing else
+                           f"{name} refused the token. Connect {name} again on the Connectors tab.")
+            elif mcp_auth.find_error(e, AuthRequired) is not None:
+                s.state, s.error = "needs_auth", None
+            elif cancelled is not None:
+                s.state, s.error = "needs_auth", str(cancelled)
+            elif not isinstance(e, asyncio.CancelledError):
                 s.state, s.error = "failed", _error_text(e)
+                if interactive and mcp_auth.find_error(e, _oauth_errors()) is not None:
+                    s.error = f"The sign-in failed: {s.error}"
                 log.info("MCP server %s failed: %s", c.name, s.error)
         finally:
             s.session = None
+            s.auth_url = None
             if s.state == "connected":
                 s.state = "stopped"
             signal()
@@ -451,6 +548,8 @@ class McpManager:
         await self.send_status()
 
     async def _stop_one(self, s: ServerState) -> None:
+        if s.callback is not None and self.thread.loop is not None:
+            self.thread.loop.call_soon_threadsafe(s.callback.cancel)  # A sign-in that waits.
         if s.stop is not None and self.thread.loop is not None:
             self.thread.loop.call_soon_threadsafe(s.stop.set)
         if s.task is not None:
@@ -468,9 +567,15 @@ class McpManager:
             await self.start()
             return
         configs, self.problems = load_mcp_config(self.project, self.plugin_servers())
-        if name not in configs:
-            raise ConfigError(f"Unknown MCP server: {name}")
         old = self.servers.get(name)
+        if name not in configs:
+            if old is None:
+                raise ConfigError(f"Unknown MCP server: {name}")
+            await self._stop_one(old)  # The configuration no longer has the server (a removed connector).
+            del self.servers[name]
+            self._update_tools()
+            await self.send_status()
+            return
         if old is not None:
             await self._stop_one(old)
         s = self.servers[name] = ServerState(configs[name])
@@ -482,6 +587,83 @@ class McpManager:
             await self._connect(s)
         self._update_tools()
         await self.send_status()
+
+    # -- OAuth --------------------------------------------------------------------------------------------
+
+    def _oauth_server(self, name: str) -> ServerState:
+        s = self.servers.get(name)
+        if s is None:
+            raise ConfigError(f"Unknown MCP server: {name}")
+        if s.config.oauth is None:
+            raise ConfigError(f"The MCP server {name} does not use OAuth. Only an http or sse server with "
+                              "no Authorization header can use it.")
+        return s
+
+    def is_connected(self, name: str) -> bool:
+        s = self.servers.get(name)
+        return s is not None and s.state == "connected"
+
+    async def authenticate(self, name: str) -> None:
+        """Sign in to an OAuth server: open the sign-in page in the browser, wait for the callback, and connect."""
+        old = self.servers.get(name)
+        if old is not None and old.state == "authenticating" and old.auth_url:
+            await self._auth_started(name, old.auth_url)  # The sign-in already waits: open the page again.
+            return
+        configs, self.problems = load_mcp_config(self.project, self.plugin_servers())
+        if name not in configs:
+            raise ConfigError(f"Unknown MCP server: {name}")
+        if configs[name].oauth is None:
+            raise ConfigError(f"The MCP server {name} does not use OAuth. Only an http or sse server with "
+                              "no Authorization header can use it.")
+        if old is not None:
+            await self._stop_one(old)
+        s = self.servers[name] = ServerState(configs[name])
+        c = s.config
+        assert c.oauth is not None
+        port = mcp_auth.callback_port(c.auth_key, c.oauth)
+        listener = mcp_auth.Callback(port)
+        try:
+            await self.thread.call(listener.start)
+        except OSError:
+            if c.oauth.callback_port:
+                s.state = "needs_auth"
+                s.error = (f"The callback port {port} is in use. Close the other program, "
+                           "or change 'oauth.callback_port' in mcp.json.")
+                self._update_tools()
+                await self.send_status()
+                return
+            port = mcp_auth.free_port()  # The saved port is in use: a new port, and a new registration.
+            mcp_auth.update_record(c.auth_key, port=port, client=None)
+            listener = mcp_auth.Callback(port)
+            await self.thread.call(listener.start)
+        s.callback, s.state = listener, "authenticating"
+        await self.send_status()
+        try:
+            await self._connect(s, interactive=True)
+        finally:
+            s.callback = None
+            await self.thread.call(listener.close)
+        self._update_tools()
+        await self.send_status()
+
+    async def auth_code(self, name: str, url: str) -> str | None:
+        """The user pasted the URL of the callback page. Return an error text, or None if it was accepted."""
+        s = self._oauth_server(name)
+        listener = s.callback
+        if listener is None:
+            return "No sign-in is waiting for this server. Click Authenticate first."
+        return await self.thread.call(lambda: _call(lambda: listener.resolve(url)))
+
+    async def auth_cancel(self, name: str) -> None:
+        listener = self._oauth_server(name).callback
+        if listener is not None:
+            await self.thread.call(lambda: _call(listener.cancel))
+
+    async def logout(self, name: str) -> None:
+        """Remove the tokens and the client registration of a server, and connect again (it then needs a sign-in)."""
+        s = self._oauth_server(name)
+        mcp_auth.clear_record(s.config.auth_key)
+        await self.restart(name)
 
     async def close(self) -> None:
         await asyncio.gather(*(self._stop_one(s) for s in self.servers.values()), return_exceptions=True)
@@ -525,6 +707,13 @@ class McpManager:
         s = self.servers.get(server)
         if s is None or s.session is None:
             state = s.state if s else "unknown"
+            if state == "needs_auth" and s is not None and s.config.connector is not None:
+                name = connectors.get(s.config.connector).name
+                raise ToolError(f"The MCP server {server} needs a token. Ask the user to connect {name} on the "
+                                "Connectors tab of the Capabilities page (/mcp).")
+            if state in ("needs_auth", "authenticating"):
+                raise ToolError(f"The MCP server {server} needs authentication. Ask the user to click Authenticate "
+                                "for it on the MCP servers tab of the Capabilities page (/mcp).")
             raise ToolError(f"The MCP server {server} is not connected ({state}). Ask the user to restart it with /mcp.")
         session = s.session
 
@@ -558,6 +747,21 @@ class McpManager:
 
     async def send_status(self) -> None:
         await self.emit(self.items())
+
+
+class _ConnectorMissing(Exception):
+    """The connector of a server has no token."""
+
+
+async def _call(fn: Callable[[], Any]) -> Any:
+    """Run a plain function in the MCP loop (with LoopThread.call)."""
+    return fn()
+
+
+def _oauth_errors() -> tuple[type[BaseException], ...]:
+    from mcp.client.auth import OAuthFlowError, OAuthRegistrationError, OAuthTokenError
+
+    return (OAuthFlowError, OAuthRegistrationError, OAuthTokenError)
 
 
 class McpTool(Tool):

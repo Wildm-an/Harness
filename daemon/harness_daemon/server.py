@@ -37,6 +37,7 @@ from .plugins.install import (InstallError, install as install_plugin, remove as
 from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
 from . import provider_config
+from . import connectors, mcp_auth
 from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, load_mcp_config, project_config_path, user_config_path
 from .cookbook import hosts as cookbook_hosts
 from .cookbook.hosts import HostError
@@ -1681,6 +1682,113 @@ async def on_mcp_restart(conn: Connection, msg: dict[str, Any]) -> None:
     _background(conn, "mcp.restart", work)
 
 
+def _mcp_name(msg: dict[str, Any]) -> str:
+    name = msg.get("name")
+    if not isinstance(name, str) or not name:
+        raise ProtocolError("'name' must be the name of an MCP server.")
+    return name
+
+
+@handler("mcp.auth")
+async def on_mcp_auth(conn: Connection, msg: dict[str, Any]) -> None:
+    """Sign in to an OAuth MCP server. The daemon sends "mcp.auth_url", and the client opens it in the browser."""
+    manager = _require_mcp(conn)
+    name = _mcp_name(msg)
+    if manager.is_connected(name):
+        conn.require_idle()  # A new connection stops the tool calls of the turn.
+
+    async def work() -> None:
+        await manager.authenticate(name)
+
+    _background(conn, "mcp.auth", work)
+
+
+@handler("mcp.auth_code")
+async def on_mcp_auth_code(conn: Connection, msg: dict[str, Any]) -> None:
+    """The URL of the callback page, that the user pasted (the browser is not on the daemon host)."""
+    manager = _require_mcp(conn)
+    url = msg.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise ProtocolError("'url' must be the URL of the callback page.")
+    error = await manager.auth_code(_mcp_name(msg), url)
+    if error is not None:
+        await conn.error(error, ref="mcp.auth_code")
+
+
+@handler("mcp.auth_cancel")
+async def on_mcp_auth_cancel(conn: Connection, msg: dict[str, Any]) -> None:
+    await _require_mcp(conn).auth_cancel(_mcp_name(msg))
+
+
+@handler("mcp.logout")
+async def on_mcp_logout(conn: Connection, msg: dict[str, Any]) -> None:
+    """Clear authentication: remove the tokens of an OAuth MCP server, and connect again."""
+    manager = _require_mcp(conn)
+    name = _mcp_name(msg)
+    if manager.is_connected(name):
+        conn.require_idle()
+
+    async def work() -> None:
+        await manager.logout(name)
+
+    _background(conn, "mcp.logout", work)
+
+
+# -- connectors (connectors.py) -----------------------------------------------------------------------
+
+
+@handler("connectors.list")
+async def on_connectors_list(conn: Connection, msg: dict[str, Any]) -> None:
+    """The connectors of the Connectors tab. It needs no session: connectors are in the user file."""
+    await conn.send(await connectors.items())
+
+
+def _connector_id(msg: dict[str, Any]) -> str:
+    value = msg.get("id")
+    if not isinstance(value, str) or value not in connectors.CONNECTORS:
+        raise ProtocolError(f"'id' must be one of: {', '.join(connectors.CONNECTORS)}.")
+    return value
+
+
+async def _connector_changed(conn: Connection, connector_id: str) -> None:
+    """Send the new list, and connect the server again in the session."""
+    await conn.send(await connectors.items())
+    if conn.current is not None and conn.mcp is not None:
+        await conn.mcp.restart(connector_id)
+
+
+@handler("connectors.connect")
+async def on_connectors_connect(conn: Connection, msg: dict[str, Any]) -> None:
+    """Connect a connector: "source" is "gh" (the token of the GitHub CLI) or "token" (with "token")."""
+    connector_id = _connector_id(msg)
+    source, value = msg.get("source"), msg.get("token")
+    if value is not None and not isinstance(value, str):
+        raise ProtocolError("'token' must be a string.")
+    if conn.current is not None and conn.mcp is not None and conn.mcp.is_connected(connector_id):
+        conn.require_idle()
+
+    async def work() -> None:
+        try:
+            await connectors.connect(connector_id, str(source), value)
+        except connectors.ConnectorError as e:
+            await conn.send(await connectors.items())
+            await conn.error(str(e), ref="connectors.connect")
+            return
+        await _connector_changed(conn, connector_id)
+
+    _background(conn, "connectors.connect", work)
+
+
+@handler("connectors.disconnect")
+async def on_connectors_disconnect(conn: Connection, msg: dict[str, Any]) -> None:
+    """Remove the token of a connector and its server entry in ~/.harness/mcp.json."""
+    connector_id = _connector_id(msg)
+    if conn.current is not None and conn.mcp is not None and conn.mcp.is_connected(connector_id):
+        conn.require_idle()
+    connectors.disconnect(connector_id)
+    await _connector_changed(conn, connector_id)
+
+
 @handler("mcp.init")
 async def on_mcp_init(conn: Connection, msg: dict[str, Any]) -> None:
     """Create .harness/mcp.json of the project from a template, if it does not exist."""
@@ -1696,7 +1804,9 @@ def _configured_mcp(folder: Path | None, host: PluginHost | None) -> dict[str, A
     """The MCP servers in the configuration files, with no connection. Each server is "stopped" or "disabled"."""
     configs, problems = load_mcp_config(folder, host.mcp_servers() if host is not None else None)
     items = [{"name": c.name, "scope": c.scope, "transport": c.transport, "target": c.describe(),
-              "state": "disabled" if c.disabled else "stopped", "error": None, "server_name": None, "tools": []}
+              "state": "disabled" if c.disabled else "stopped", "error": None, "server_name": None, "tools": [],
+              "oauth": c.oauth is not None, "signed_in": c.oauth is not None and mcp_auth.has_tokens(c.auth_key),
+              "connector": c.connector}
              for c in configs.values()]
     return {"items": items, "problems": problems,
             "paths": {"user": str(user_config_path()), "project": ".harness/mcp.json"}}

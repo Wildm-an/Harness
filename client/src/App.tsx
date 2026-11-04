@@ -58,7 +58,7 @@ import {
   type WebKeyProvider,
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
-import { CapabilitiesPage, toCapTab, type CapTab } from "./components/CapabilitiesPage";
+import { CapabilitiesPage, toCapTab, type CapTab, type ConnectorAction, type McpAuthAction } from "./components/CapabilitiesPage";
 import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
@@ -123,7 +123,7 @@ import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ClientMessage, GitBranches, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, ClientMessage, ConnectorItem, GitBranches, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath, openFolderBlocked } from "./editor/paths";
@@ -159,7 +159,7 @@ import {
   setLastConnectionId,
   type Connection,
 } from "./lib/connections";
-import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openLocalPath, pickFiles, pickFolder, revealInExplorer } from "./lib/tauri";
+import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openExternal, openLocalPath, pickFiles, pickFolder, revealInExplorer } from "./lib/tauri";
 import { filesPromptText } from "./lib/fileRefs";
 import { FolderMenu } from "./components/FolderMenu";
 import type { SessionActions } from "./components/SessionRow";
@@ -510,6 +510,10 @@ export default function App() {
   // The MCP servers of the Capabilities page.
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
+  const [connectors, setConnectors] = useState<ConnectorItem[] | null>(null);
+  const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
+  const [connectorError, setConnectorError] = useState<{ id: string; message: string } | null>(null);
+  const connectorWait = useRef<string | null>(null);
   const [pendingEdit, setPendingEdit] = useState<{ path: string; key: number } | null>(null); // A file for the editor.
 
   /** Opens the Cookbook screen (SPEC.md section 7). */
@@ -760,6 +764,14 @@ export default function App() {
           setMcpBusy(status.items.some((i) => i.state === "starting"));
           return;
         }
+        case "connectors":
+          setConnectors(msg.items);
+          setConnectorBusy(null);
+          return;
+        case "mcp.auth_url":
+          // The daemon sends it only after the user clicked Authenticate. Open the sign-in page in the browser.
+          if (/^https?:\/\//.test(msg.url)) void openExternal(msg.url);
+          return;
         case "capabilities":
           setSkillItems(msg.skills);
           setMcpStatus(msg.mcp);
@@ -803,6 +815,11 @@ export default function App() {
               setSkillItems([]);
               setMcpStatus({ items: [], problems: [msg.message], paths: { user: "", project: "" } });
             }
+            return;
+          }
+          if (msg.ref?.startsWith("connectors.")) {
+            setConnectorBusy(null);
+            setConnectorError({ id: connectorWait.current ?? "", message: msg.message });
             return;
           }
           if (msg.ref?.startsWith("plugins.")) {
@@ -1775,6 +1792,24 @@ export default function App() {
     if (conn.status === "open") conn.send({ type: "skills.list" });
   }, [conn]);
 
+  const mcpAuth = (action: McpAuthAction) => {
+    if (action.kind === "code") sendSafely({ type: "mcp.auth_code", name: action.name, url: action.url });
+    else if (action.kind === "auth") sendSafely({ type: "mcp.auth", name: action.name });
+    else if (action.kind === "cancel") sendSafely({ type: "mcp.auth_cancel", name: action.name });
+    else sendSafely({ type: "mcp.logout", name: action.name });
+  };
+
+  const connectorAction = (action: ConnectorAction) => {
+    connectorWait.current = action.id;
+    setConnectorError(null);
+    setConnectorBusy(action.id);
+    const sent =
+      action.kind === "disconnect"
+        ? sendSafely({ type: "connectors.disconnect", id: action.id })
+        : sendSafely({ type: "connectors.connect", id: action.id, source: action.source, ...(action.source === "token" ? { token: action.token } : {}) });
+    if (!sent) setConnectorBusy(null);
+  };
+
   const restartMcp = (name?: string) => {
     setMcpBusy(true);
     if (!sendSafely({ type: "mcp.restart", ...(name ? { name } : {}) })) setMcpBusy(false);
@@ -1800,6 +1835,8 @@ export default function App() {
     setScreen("capabilities");
     sendSafely({ type: "capabilities.list", ...(folder ? { cwd: folder } : {}) });
     sendSafely({ type: "plugins.list" }); // The Plugins tab, and its count.
+    setConnectorError(null);
+    sendSafely({ type: "connectors.list" }); // The Connectors tab. It needs no session.
   };
   openCapabilitiesRef.current = openCapabilities;
 
@@ -2751,6 +2788,11 @@ export default function App() {
             onOpenSkill={openSkill}
             onBack={backToSkills}
             onRestart={restartMcp}
+            onMcpAuth={mcpAuth}
+            connectors={connectors}
+            connectorBusy={connectorBusy}
+            connectorError={connectorError}
+            onConnector={connectorAction}
             onEditConfig={() => sendSafely({ type: "mcp.init" })}
             plugins={plugins}
             pluginsTab={

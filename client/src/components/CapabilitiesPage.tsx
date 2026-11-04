@@ -3,7 +3,7 @@
 // item in the sidebar opens it. Each row shows the name, a short description, and the status. A skill
 // row opens the skill. An MCP row opens its tools, its target, and its error.
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   ChevronRight,
@@ -13,6 +13,8 @@ import {
   FileCog,
   FileText,
   FolderPlus,
+  GitBranch,
+  KeyRound,
   LoaderCircle,
   Package,
   Plug,
@@ -23,16 +25,33 @@ import {
 } from "lucide-react";
 import { SlashIcon } from "./SlashIcon";
 import { Markdown } from "./Markdown";
-import type { CommandItem, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
+import { openExternal } from "../lib/tauri";
+import type { CommandItem, ConnectorItem, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
 
-export type CapabilityStatus = "connected" | "connecting" | "failed" | "disabled" | "stopped" | "enabled" | "command" | "model";
+export type CapabilityStatus =
+  | "connected"
+  | "connecting"
+  | "failed"
+  | "disabled"
+  | "stopped"
+  | "needs_auth"
+  | "authenticating"
+  | "linked"
+  | "unlinked"
+  | "enabled"
+  | "command"
+  | "model";
 
-const STATUS: Record<CapabilityStatus, { label: string; tone: "ok" | "busy" | "bad" | "off"; icon: LucideIcon; tip: string }> = {
+const STATUS: Record<CapabilityStatus, { label: string; tone: "ok" | "busy" | "bad" | "off" | "warn"; icon: LucideIcon; tip: string }> = {
   connected: { label: "Connected", tone: "ok", icon: CircleCheck, tip: "The server is connected. The agent can use its tools." },
   connecting: { label: "Connecting", tone: "busy", icon: LoaderCircle, tip: "The server starts." },
   failed: { label: "Failed", tone: "bad", icon: CircleX, tip: "The server did not start. Open the row to see the error." },
   disabled: { label: "Disabled", tone: "off", icon: CircleSlash, tip: "The configuration turns off this server." },
   stopped: { label: "Not connected", tone: "off", icon: Plug, tip: "The server connects when a session starts in this folder." },
+  needs_auth: { label: "Needs authentication", tone: "warn", icon: KeyRound, tip: "The server needs a sign-in. Click Authenticate." },
+  authenticating: { label: "Authenticating", tone: "busy", icon: LoaderCircle, tip: "Sign in on the page that opened in your browser." },
+  linked: { label: "Connected", tone: "ok", icon: CircleCheck, tip: "Harness has a token. The MCP server is in your mcp.json." },
+  unlinked: { label: "Not connected", tone: "off", icon: Plug, tip: "Connect it to add its MCP server for all your projects." },
   enabled: { label: "Enabled", tone: "ok", icon: CircleCheck, tip: "You can run it as a / command. The agent can also use it." },
   command: { label: "Command only", tone: "off", icon: CircleSlash, tip: "Only you can run it, as a / command. The agent does not use it." },
   model: { label: "Agent only", tone: "ok", icon: CircleCheck, tip: "Only the agent uses it. It is not a / command." },
@@ -44,6 +63,8 @@ const MCP_STATUS: Record<McpState, CapabilityStatus> = {
   failed: "failed",
   disabled: "disabled",
   stopped: "stopped",
+  needs_auth: "needs_auth",
+  authenticating: "authenticating",
 };
 
 /** The status of a skill, from its frontmatter. */
@@ -88,7 +109,7 @@ function StatusPill({ status }: { status: CapabilityStatus }) {
   const Icon = s.icon;
   return (
     <span className={`cap-status cap-${s.tone}`} title={s.tip}>
-      <Icon size={13} aria-hidden className={status === "connecting" ? "spin" : undefined} />
+      <Icon size={13} aria-hidden className={status === "connecting" || status === "authenticating" ? "spin" : undefined} />
       {s.label}
     </span>
   );
@@ -224,9 +245,78 @@ function SkillRow({ item, onOpen }: { item: CommandItem; onOpen: () => void }) {
   );
 }
 
-function McpRow({ item, live, busy, onRestart }: { item: McpServerItem; live: boolean; busy: boolean; onRestart: () => void }) {
-  // A failed server opens at once, so the error shows.
-  const [open, setOpen] = useState(item.state === "failed");
+/** An OAuth action of an MCP server row. "code": the URL that the user pasted from the browser. */
+export type McpAuthAction =
+  | { kind: "auth" | "cancel" | "logout"; name: string }
+  | { kind: "code"; name: string; url: string };
+
+/** The sign-in of an OAuth server: the page in the browser, and the paste field for a browser on another computer. */
+function McpSignIn({ item, onAuth }: { item: McpServerItem; onAuth: (action: McpAuthAction) => void }) {
+  const [pasted, setPasted] = useState("");
+  const url = item.auth_url;
+  const submit = () => {
+    const text = pasted.trim();
+    if (!text) return;
+    onAuth({ kind: "code", name: item.name, url: text });
+    setPasted("");
+  };
+  return (
+    <div className="mcp-signin">
+      <p className="help">Sign in on the page that opened in your browser. Harness connects when the sign-in completes.</p>
+      <div className="mcp-signin-actions">
+        {url && /^https?:\/\//.test(url) && (
+          <button type="button" className="btn btn-small" onClick={() => void openExternal(url)}>
+            Open sign-in page
+          </button>
+        )}
+        <button type="button" className="btn btn-small btn-ghost" onClick={() => onAuth({ kind: "cancel", name: item.name })}>
+          Cancel
+        </button>
+      </div>
+      <p className="help">If the browser shows an error page after the sign-in, copy the URL from its address bar and paste it here.</p>
+      <form
+        className="field-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <input
+          className="mono"
+          value={pasted}
+          onChange={(e) => setPasted(e.target.value)}
+          placeholder="http://127.0.0.1:…/callback?code=…"
+          aria-label={`Callback URL for ${item.name}`}
+          spellCheck={false}
+        />
+        <button type="submit" className="btn" disabled={!pasted.trim()}>
+          Submit
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function McpRow({
+  item,
+  live,
+  busy,
+  onRestart,
+  onAuth,
+  onOpenConnectors,
+}: {
+  item: McpServerItem;
+  live: boolean;
+  busy: boolean;
+  onRestart: () => void;
+  onAuth: (action: McpAuthAction) => void;
+  onOpenConnectors: () => void;
+}) {
+  // A failed server opens at once, so the error shows. A sign-in opens the row too.
+  const [open, setOpen] = useState(item.state === "failed" || item.state === "authenticating");
+  useEffect(() => {
+    if (item.state === "authenticating") setOpen(true);
+  }, [item.state]);
   const status = MCP_STATUS[item.state];
   return (
     <li className={`cap-item${open ? " open" : ""}`}>
@@ -242,6 +332,16 @@ function McpRow({ item, live, busy, onRestart }: { item: McpServerItem; live: bo
           <StatusPill status={status} />
           <ChevronRight size={14} aria-hidden className="cap-chevron" />
         </button>
+        {live && item.state === "needs_auth" && item.connector && (
+          <button type="button" className="btn btn-small btn-primary cap-auth" onClick={onOpenConnectors}>
+            Connect
+          </button>
+        )}
+        {live && item.state === "needs_auth" && !item.connector && (
+          <button type="button" className="btn btn-small btn-primary cap-auth" onClick={() => onAuth({ kind: "auth", name: item.name })}>
+            Authenticate
+          </button>
+        )}
         {live && (
           <button
             type="button"
@@ -267,6 +367,17 @@ function McpRow({ item, live, busy, onRestart }: { item: McpServerItem; live: bo
             </div>
           )}
           {item.log && item.log.length > 0 && <pre className="server-log mcp-log">{item.log.join("\n")}</pre>}
+          {live && item.state === "authenticating" && <McpSignIn item={item} onAuth={onAuth} />}
+          {live && item.signed_in && item.state !== "authenticating" && (
+            <div className="mcp-signin-actions">
+              <button type="button" className="btn btn-small" onClick={() => onAuth({ kind: "auth", name: item.name })}>
+                Re-authenticate
+              </button>
+              <button type="button" className="btn btn-small btn-ghost" onClick={() => onAuth({ kind: "logout", name: item.name })}>
+                Clear authentication
+              </button>
+            </div>
+          )}
           {item.tools.length > 0 ? (
             <ul className="mcp-tools">
               {item.tools.map((t) => (
@@ -285,7 +396,128 @@ function McpRow({ item, live, busy, onRestart }: { item: McpServerItem; live: bo
   );
 }
 
-/** The tabs of the page. Connectors ("connections") is a placeholder: the user adds it later. */
+/** An action of a connector row. */
+export type ConnectorAction =
+  | { kind: "connect"; id: string; source: "gh" }
+  | { kind: "connect"; id: string; source: "token"; token: string }
+  | { kind: "disconnect"; id: string };
+
+/** The short description of a connector: the account and the token source, or what it gives. */
+export function connectorSummary(item: ConnectorItem): string {
+  if (!item.source) return item.description;
+  const source = item.source === "gh" ? "GitHub CLI" : "personal access token";
+  return `${item.login ? `@${item.login}` : "Connected"} · ${source}`;
+}
+
+function ConnectorRow({
+  item,
+  busy,
+  error,
+  onAction,
+}: {
+  item: ConnectorItem;
+  busy: boolean;
+  error: string | null;
+  onAction: (action: ConnectorAction) => void;
+}) {
+  const connected = item.source !== null;
+  const [open, setOpen] = useState(!connected);
+  const [token, setToken] = useState("");
+  const status: CapabilityStatus = busy ? "connecting" : connected ? "linked" : "unlinked";
+  const submit = () => {
+    const text = token.trim();
+    if (!text) return;
+    onAction({ kind: "connect", id: item.id, source: "token", token: text });
+    setToken("");
+  };
+  return (
+    <li className={`cap-item${open ? " open" : ""}`}>
+      <div className="cap-row-wrap">
+        <button type="button" className="cap-row" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          <span className="cap-icon" aria-hidden>
+            <GitBranch size={15} />
+          </span>
+          <span className="cap-text">
+            <span className="cap-name">{item.name}</span>
+            <span className="cap-desc">{connectorSummary(item)}</span>
+          </span>
+          <StatusPill status={status} />
+          <ChevronRight size={14} aria-hidden className="cap-chevron" />
+        </button>
+      </div>
+      {open && (
+        <div className="cap-more">
+          <p className="mcp-target mono" title={item.url}>
+            {item.url}
+          </p>
+          {error && (
+            <div className="notice-bar bad" role="alert">
+              <CircleX size={15} aria-hidden />
+              <span>{error}</span>
+            </div>
+          )}
+          {connected ? (
+            <>
+              <p className="help">
+                The MCP server "{item.id}" is in your mcp.json, for all your projects. Each tool call needs approval, unless a rule
+                allows it, for example <code>mcp__{item.id}__*</code>.
+              </p>
+              <div className="mcp-signin-actions">
+                <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => onAction({ kind: "disconnect", id: item.id })}>
+                  Disconnect
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="mcp-signin">
+              {item.gh_available ? (
+                <div className="mcp-signin-actions">
+                  <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => onAction({ kind: "connect", id: item.id, source: "gh" })}>
+                    Use GitHub CLI
+                  </button>
+                  <span className="help">The token of "gh auth login" on the daemon computer.</span>
+                </div>
+              ) : (
+                <p className="help">
+                  To use the GitHub CLI, run <code>gh auth login</code> on the daemon computer. Or paste a token here.
+                </p>
+              )}
+              <p className="help">{item.token_help}</p>
+              <form
+                className="field-row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submit();
+                }}
+              >
+                <input
+                  type="password"
+                  className="mono"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="github_pat_…"
+                  aria-label={`Personal access token for ${item.name}`}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button type="submit" className="btn" disabled={busy || !token.trim()}>
+                  Connect
+                </button>
+              </form>
+              <div className="mcp-signin-actions">
+                <button type="button" className="btn btn-small btn-ghost" onClick={() => void openExternal(item.token_url)}>
+                  Create a token
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** The tabs of the page. Connectors ("connections") sets up MCP servers with a token (connectors.py). */
 export type CapTab = "skills" | "mcp" | "plugins" | "connections";
 
 /** The saved tab, or "skills" for an unknown value. */
@@ -307,6 +539,11 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   onOpenSkill,
   onBack,
   onRestart,
+  onMcpAuth,
+  connectors,
+  connectorBusy,
+  connectorError,
+  onConnector,
   onEditConfig,
 }: {
   tab: CapTab;
@@ -322,6 +559,11 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   onOpenSkill: (name: string) => void;
   onBack: () => void;
   onRestart: (name?: string) => void;
+  onMcpAuth: (action: McpAuthAction) => void;
+  connectors: ConnectorItem[] | null;
+  connectorBusy: string | null; // The id of the connector that connects now.
+  connectorError: { id: string; message: string } | null;
+  onConnector: (action: ConnectorAction) => void;
   onEditConfig: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -487,7 +729,15 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
               ) : (
                 <ul className="cap-list">
                   {shownServers.map((item) => (
-                    <McpRow key={item.name} item={item} live={live} busy={mcpBusy} onRestart={() => onRestart(item.name)} />
+                    <McpRow
+                      key={item.name}
+                      item={item}
+                      live={live}
+                      busy={mcpBusy}
+                      onRestart={() => onRestart(item.name)}
+                      onAuth={onMcpAuth}
+                      onOpenConnectors={() => onTab("connections")}
+                    />
                   ))}
                 </ul>
               )}
@@ -508,10 +758,32 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
 
         {tab === "connections" && (
           <section className="cap-section" aria-labelledby="cap-connections">
-            <SectionHead id="cap-connections" title="Connectors" />
-            <div className="cap-empty">
-              <p>Connectors are not ready yet. This tab will show the apps and services that the agent can connect to.</p>
-            </div>
+            <SectionHead
+              id="cap-connections"
+              title="Connectors"
+              count={connectors ? `${connectors.filter((c) => c.source).length} of ${connectors.length} connected` : undefined}
+            />
+            {connectors === null ? (
+              <p className="cap-empty">
+                <LoaderCircle size={14} className="spin" aria-hidden /> Loading the connectors.
+              </p>
+            ) : (
+              <ul className="cap-list">
+                {connectors.map((item) => (
+                  <ConnectorRow
+                    key={item.id}
+                    item={item}
+                    busy={connectorBusy === item.id}
+                    error={connectorError?.id === item.id ? connectorError.message : null}
+                    onAction={onConnector}
+                  />
+                ))}
+              </ul>
+            )}
+            <p className="help cap-note">
+              A connector adds an MCP server to <code>~/.harness/mcp.json</code> on the daemon computer, for all your projects. Harness keeps
+              the token in <code>~/.harness/mcp-auth.json</code>, not in mcp.json.
+            </p>
           </section>
         )}
       </>

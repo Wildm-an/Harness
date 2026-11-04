@@ -167,6 +167,16 @@ Each provider is an entry in `~/.harness/providers.json`:
 - Read the server list from `.harness/mcp.json` and `~/.harness/mcp.json`.
 - Add MCP tools to the tool list with the prefix `mcp__<server>__`.
 - MCP tools need approval by default.
+- Support OAuth 2.1 with PKCE for HTTP and SSE servers, as the MCP authorization specification describes:
+  - Find the authorization server from the protected resource metadata. Register the client with dynamic client registration, or use the `client_id` in `mcp.json`.
+  - A connection at the start of a session never opens a browser. A server that needs a sign-in gets the state "needs_auth".
+  - The user clicks "Authenticate". The client opens the sign-in page in the browser. The daemon gets the code on `http://127.0.0.1:<port>/callback`.
+  - For a remote daemon, the user pastes the URL of the callback page into the client.
+  - Keep the tokens in `~/.harness/mcp-auth.json`, which only the user can read. Refresh them when they expire.
+- Connectors set up an MCP server in one step from the Connectors tab of the Capabilities page:
+  - A connector adds an entry with a `connector` key to `~/.harness/mcp.json`. The token stays in `~/.harness/mcp-auth.json`.
+  - The daemon adds the token as the `Authorization` header at each connection.
+  - GitHub: the token of the GitHub CLI (`gh auth token`) on the daemon computer, or a personal access token. The daemon checks the token with the GitHub API before it keeps it.
 
 ### 5.8 Plugins
 

@@ -23,6 +23,28 @@ this file on its Changelog page.
   - `skill-creator` and `mcp-builder` help you make skills and MCP servers. They are Anthropic
     skills under the Apache License 2.0, changed for Harness (see `MODIFICATIONS.md` in each).
 
+### MCP servers
+
+- HTTP and SSE MCP servers can now use OAuth. A server that needs a sign-in shows "Needs
+  authentication" and an "Authenticate" button on the MCP servers tab. The sign-in page opens
+  in your browser, and the server connects when the sign-in completes.
+- For a daemon on another computer, paste the URL of the callback page into the field under
+  the row.
+- "Re-authenticate" and "Clear authentication" show for a server that has tokens.
+- The new `oauth` key in `mcp.json` sets a registered client (`client_id`, `client_secret`),
+  the scopes, and a fixed callback port. `"oauth": false` turns OAuth off.
+- The tokens are in `~/.harness/mcp-auth.json`. Harness refreshes them when they expire.
+
+### Connectors
+
+- The Connectors tab now has a GitHub connector. It adds the GitHub MCP server
+  (`https://api.githubcopilot.com/mcp/`) for all your projects: repositories, issues, pull
+  requests, code search, and Actions.
+- Click "Use GitHub CLI" to use the sign-in of `gh auth login` on the daemon computer, or paste
+  a personal access token. Harness checks the token with GitHub first.
+- The token is in `~/.harness/mcp-auth.json`, not in `mcp.json`. "Disconnect" removes the token
+  and the server.
+
 ### Capabilities page
 
 - The tabs are now in this order: Skills, Connectors, Plugins, MCP servers. "Connections" is now

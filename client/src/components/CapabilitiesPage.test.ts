@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { matches, mcpSummary, skillStatus, skillsOfGroup } from "./CapabilitiesPage";
+import { connectorSummary, matches, mcpSummary, skillStatus, skillsOfGroup } from "./CapabilitiesPage";
 import { placeOf } from "../layout/history";
 import { findGroupOf, parseLayout } from "../layout/model";
-import type { CommandItem, McpServerItem } from "../daemon/protocol";
+import type { CommandItem, ConnectorItem, McpServerItem } from "../daemon/protocol";
 
 const skill = (extra: Partial<CommandItem> = {}): CommandItem => ({
   name: "greet",
@@ -71,5 +71,30 @@ describe("skillsOfGroup", () => {
     const items = [skill({ name: "docx", bundled: true }), skill({ name: "greet" }), skill({ name: "mine", bundled: false })];
     expect(skillsOfGroup(items, "builtin").map((i) => i.name)).toEqual(["docx"]);
     expect(skillsOfGroup(items, "added").map((i) => i.name)).toEqual(["greet", "mine"]);
+  });
+});
+
+describe("connectorSummary", () => {
+  const github = (extra: Partial<ConnectorItem> = {}): ConnectorItem => ({
+    id: "github",
+    name: "GitHub",
+    description: "Repositories and issues.",
+    url: "https://api.githubcopilot.com/mcp/",
+    installed: false,
+    source: null,
+    login: null,
+    gh_available: false,
+    token_url: "https://github.com/settings/personal-access-tokens/new",
+    token_help: "A token.",
+    ...extra,
+  });
+
+  it("shows what the connector gives before it connects", () => {
+    expect(connectorSummary(github())).toBe("Repositories and issues.");
+  });
+
+  it("shows the account and the token source after it connects", () => {
+    expect(connectorSummary(github({ source: "gh", login: "octo", installed: true }))).toBe("@octo · GitHub CLI");
+    expect(connectorSummary(github({ source: "token", login: null }))).toBe("Connected · personal access token");
   });
 });
