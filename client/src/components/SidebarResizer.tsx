@@ -7,7 +7,8 @@ export const SIDEBAR_DEFAULT = 264;
 // The title row of the sidebar (logo, toggle, Back, Forward, and the Code / IDE switch) needs 214px
 // with its padding and border. A smaller width cuts off the switch.
 export const SIDEBAR_MIN = 216;
-export const SIDEBAR_MAX = 480;
+// The widest sidebar, as in the Claude app (about 478 screen pixels at a 125% scale).
+export const SIDEBAR_MAX = 384;
 const KEY_STEP = 16;
 
 /** A width in the limits. A value that is not a number gives the default width. */

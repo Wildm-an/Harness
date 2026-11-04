@@ -22,7 +22,7 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 - **P2. Settings for defaults, menus for this session.** A setting changes the default for new sessions. A per-session menu changes the current session only. The description of a setting must say which one it changes ("Applies to new sessions.").
 - **P3. Few visible controls.** Show the common controls. Put the rest in an overflow menu (⋮) or a "+" menu. Do not add a new row of buttons.
 - **P4. Each command has three paths.** A user can find each command in a menu, in the command menu (Ctrl+K), and with a keyboard shortcut when one exists. Menu items show their shortcut on the right.
-- **P5. Every hover tip names the shortcut.** Use the tooltip style in `Tooltips.tsx`: the label, then the key in a muted color.
+- **P5. Every hover tip names the shortcut.** Use the tooltip style in `Tooltips.tsx`: the label, then the key in a muted color. Exceptions that the user asked for: the view switch (V6f) and the scroll-to-bottom button of the chat have no hover tip.
 - **P6. Harness-only features go to the nearest Claude location.** Model providers, local models, and remote daemons do not exist in Claude. Put them where the closest Claude feature lives (see section 9).
 
 ## 2. Window and title bar
@@ -81,6 +81,7 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
   Harness now uses the single keys P, U, R, A, D in this menu. Change them to the Ctrl+Alt chords above.
 - **S8.** Archive asks first only when the session has uncommitted changes: "Archive session with uncommitted changes?" with "Archive anyway". Delete always asks first.
 - **S9.** A drag of a row shows a label pill: "Open in split view", "Release to unpin", "Move to {label}".
+- **S12.** The edge at the right of the sidebar changes its width, from 216px to 384px (the widest sidebar of the Claude app, the user asked for it). The default is 264px. A double-click sets the default.
 - **S11.** A folded project still shows its sessions that are running, awaiting input, or unread, under the project name (the user asked for this). The other sessions show when the project opens.
 - **S10.** When the sidebar is hidden, the pointer on the sidebar toggle in the title row shows the sidebar over the view (the user asked for this). It goes away a short time after the pointer leaves it, on Esc, or after a choice in it. A menu or a dialog of the sidebar keeps it. The sidebar toggle in it shows the sidebar again in its usual place.
 

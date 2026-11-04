@@ -5,6 +5,7 @@ describe("clampSidebar", () => {
   it("keeps the width in the limits", () => {
     expect(clampSidebar(100)).toBe(SIDEBAR_MIN);
     expect(clampSidebar(900)).toBe(SIDEBAR_MAX);
+    expect(clampSidebar(480)).toBe(384); // The limit of the Claude app.
     expect(clampSidebar(300.4)).toBe(300);
   });
 

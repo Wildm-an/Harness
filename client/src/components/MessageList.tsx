@@ -374,8 +374,8 @@ export function MessageList({
               type="button"
               className={`scroll-bottom${running ? " active" : ""}`}
               onClick={toBottom}
+              // No hover tip (the user asked for this). The label is for screen readers.
               aria-label={running ? "Scroll to the agent" : "Scroll to bottom"}
-              title={running ? "Scroll to the agent" : "Scroll to bottom"}
             >
               {running ? (
                 <span className="scroll-bottom-dots" aria-hidden>
