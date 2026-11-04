@@ -714,7 +714,8 @@ textarea:focus-visible {
   align-items: center;
   width: 100%;
   min-height: var(--side-row-h);
-  padding: 0 8px 0 var(--side-row-px);
+  /* No mark at the left: the title starts a little inside the project name, so the rows read as its sessions. */
+  padding: 0 8px 0 calc(var(--side-label-x) + 8px);
   border: none;
   border-radius: var(--side-radius);
   background: transparent;
@@ -725,18 +726,30 @@ textarea:focus-visible {
   transition: background var(--duration) var(--ease-out);
 }
 
-/* The state of a session: a gray circle when idle, a pulsing gray dot when a turn runs, a yellow
-   dot when the turn awaits a permission decision, and a blue dot for an unread response (a turn
-   that ended while the user was in another session). */
+/* Room for the status mark at the right end. */
+.side-session.has-status {
+  padding-right: calc(var(--side-row-h) + 4px);
+}
+
+/* The state of a session, at the right end of the row, where the ⋮ button shows on hover: a pulsing
+   gray dot when a turn runs, a yellow dot when the turn awaits input, and a blue dot for an unread
+   response (a turn that ended while the user was in another session). An idle session has no mark. */
 .side-session-status {
-  flex: none;
-  box-sizing: border-box;
-  width: 8px;
-  height: 8px;
-  /* Centered in the leading slot. The title starts at --side-text-x, as the text of the nav rows. */
-  margin: 0 calc((var(--side-slot) - 8px) / 2 + var(--side-row-gap)) 0 calc((var(--side-slot) - 8px) / 2);
-  border: 1.5px solid var(--text-muted);
+  position: absolute;
+  top: 50%;
+  /* The same center as the ⋮ button. */
+  right: calc((var(--side-row-h) - var(--side-ctl)) / 2 + (var(--side-ctl) - 6px) / 2);
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.side-session-row:hover .side-session-status,
+.side-session-row:focus-within .side-session-status,
+.side-session-row.menu-open .side-session-status {
+  visibility: hidden;
 }
 
 .side-session-status.running {
@@ -745,12 +758,10 @@ textarea:focus-visible {
 }
 
 .side-session-status.awaiting {
-  border-color: var(--warning);
   background: var(--warning);
 }
 
 .side-session-status.unread {
-  border-color: var(--info);
   background: var(--info);
 }
 

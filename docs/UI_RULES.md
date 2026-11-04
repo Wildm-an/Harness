@@ -64,11 +64,14 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
 
   | State | Tooltip | Mark |
   |---|---|---|
+  | Idle | — | no mark |
   | Running | "Running" | grey pulse |
   | Waiting | "Awaiting input" or "Awaiting answer" | yellow dot |
   | Unread | "Unread response" | accent (blue) dot |
   | Error | — | warning icon |
   | Archived | "Archived" | archive icon |
+
+  Harness puts the mark at the right end of the row, after the title (the user asked for this). The mark is a 6px dot. On hover, on focus, and while the menu is open, the ⋮ button takes its place. An idle session has no mark, so its title starts at the left with no empty slot.
 
 - **S7.** The row menu has groups in this order. A line separates the groups.
   1. Open: "Open PR" (Ctrl+Alt+G), "Open in" > "Split view" / "New window".
