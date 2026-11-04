@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from typing import Any, Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from . import __version__
 from .agent import Agent
@@ -57,6 +57,7 @@ from .tools.base import ToolError
 from .tools.document import check_preview_file
 from .tools.grep import search_project
 from .tools.search import find_paths
+from .tools.visual import FRAME_CSP, FRAME_HTML
 from .tunnels import TUNNELS, TunnelError
 from . import trash, worktrees
 from .worktrees import WorktreeError
@@ -261,6 +262,12 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
             await websocket.close(code=4404)
             return
         await _pipe(websocket, port)
+
+    @app.get("/visual-frame")
+    async def visual_frame():
+        """The frame page of the show_visual tool. It has no data: the client sends the visual."""
+        headers = {"Content-Security-Policy": FRAME_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
+        return HTMLResponse(FRAME_HTML, headers=headers)
 
     @app.get("/files/{file_token}/{rel_path:path}")
     async def project_file(file_token: str, rel_path: str):

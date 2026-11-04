@@ -5375,6 +5375,22 @@ input.tree-rename-input[aria-invalid="true"] {
   transform: rotate(90deg);
 }
 
+/* A visual of the agent (VisualBlock.tsx): a header line with a caret, then the frame. */
+.visual-block {
+  margin: 4px 0 8px;
+}
+
+.visual-body {
+  padding: 4px 0 0;
+}
+
+.visual-frame {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+}
+
 /* The rows of a group: a frame with a line between the rows. */
 .tool-group-list {
   margin: 4px 0 8px;

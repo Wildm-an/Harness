@@ -12,17 +12,19 @@ import { ToolGroup } from "./ToolGroup";
 import { PlanBlock, WrapUpBox } from "./ProgressBlocks";
 import { isProgressTool, latestPlan, latestWrapUp } from "../lib/progress";
 import { WorkingLine } from "./WorkingLine";
+import { VisualBlock } from "./VisualBlock";
+import { isVisualItem, visualOf } from "../lib/visual";
 import type { TurnInfo } from "../chat/state";
 
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 
-/** The items to show: the tool calls in a row become one group, as in Claude. */
+/** The items to show: the tool calls in a row become one group, as in Claude. A visual is its own item. */
 export function groupTools(items: ChatItem[]): (ChatItem | { kind: "tools"; id: string; items: ToolItem[] })[] {
   const out: (ChatItem | { kind: "tools"; id: string; items: ToolItem[] })[] = [];
   for (const item of items) {
     const last = out[out.length - 1];
-    if (item.kind !== "tool") out.push(item);
+    if (item.kind !== "tool" || isVisualItem(item)) out.push(item);
     else if (last?.kind === "tools") last.items.push(item);
     else out.push({ kind: "tools", id: `tools-${item.id}`, items: [item] });
   }
@@ -371,8 +373,11 @@ export function MessageList({
               );
             case "tools":
               return <ToolGroup key={item.id} items={item.items} reviewId={reviewId} onReview={onReview} />;
-            case "tool":
-              return null; // In a group.
+            case "tool": {
+              // A visual of the agent (show_visual). Other tool calls are in a group.
+              const visual = visualOf(item);
+              return visual ? <VisualBlock key={item.id} visual={visual} onPrompt={onAction} /> : null;
+            }
             case "permission":
               return (
                 <PermissionCard
