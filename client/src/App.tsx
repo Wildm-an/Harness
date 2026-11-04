@@ -137,6 +137,7 @@ import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { ModelChoice } from "./components/ModelChoice";
+import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
 import {
   LOCAL,
@@ -2404,7 +2405,8 @@ export default function App() {
 
   // The sidebar button and the back and forward buttons. They are at the far left of the title
   // bar: in the sidebar when it is open, and in the top bar when it is closed.
-  const titleNav = (
+  // The logo, the sidebar toggle, and Back and Forward. withSwitch: the Code / IDE switch too (only in the sidebar).
+  const titleNav = (withSwitch: boolean) => (
     <div className="title-nav">
       <img className="title-logo" src="/app-logo.png" alt="Harness" width={20} height={20} draggable={false} />
       <button
@@ -2439,8 +2441,8 @@ export default function App() {
       >
         <ArrowRight size={16} aria-hidden />
       </button>
-      {/* At the right end of the sidebar head. With the sidebar hidden, after the arrows in the title bar. */}
-      <ViewSwitch value={view} onChange={switchView} />
+      {/* At the right end of the sidebar head. With the sidebar hidden, in the title bar of the IDE view only. */}
+      {withSwitch && <ViewSwitch value={view} onChange={switchView} />}
     </div>
   );
 
@@ -2485,7 +2487,7 @@ export default function App() {
       onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
-      head={titleNav}
+      head={titleNav(true)}
       nav={[capabilitiesNav]}
       tools={sessionTools}
       prStatus={prStatus}
@@ -2548,7 +2550,8 @@ export default function App() {
       )}
       <div className="shell">
         <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">
-          {!sidebarOpen && titleNav}
+          {/* With the sidebar hidden, the title bar has the switch only in the IDE view (the user asked for this). */}
+          {!sidebarOpen && titleNav(view === "ide")}
           <div className="topbar-title" title={session?.cwd}>
             {screen === "chat" && session && (
               <>
@@ -2631,6 +2634,9 @@ export default function App() {
           )}
           {hasWindowControls() && <WindowControls />}
         </header>
+        {/* A warning before the app closes while the agent works on this computer (as in the Claude app).
+            A session that waits for an answer does not count: the agent is not working. */}
+        <QuitGuard working={current?.kind === "local" && status === "open" ? runningSessions.filter((r) => !r.waiting).length : 0} />
 
       <main className="main">
         {screen === "starting" && (

@@ -3,7 +3,7 @@
 // window the rail covers the workspace, and Esc or a click outside closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, ChevronRight, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, KeyRound, Monitor } from "lucide-react";
+import { Archive, ChevronRight, Coffee, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, KeyRound, Monitor } from "lucide-react";
 import type { PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
 import type { ConnectionKind } from "../lib/connections";
 import {
@@ -130,13 +130,13 @@ export function SessionRail({
       className="rail-awake"
       disabled={keepAwakeDisabled}
       onClick={() => onKeepAwake(!keepAwake)}
-      title="The computer of the agent does not sleep while the agent works in this session."
+      aria-label="Keep computer awake"
+      title="Only for this session"
     >
-      <span className="rail-awake-text">
-        <span>Keep computer awake</span>
-        <span className="rail-awake-sub">Only for this session</span>
-      </span>
-      <span className={`switch${keepAwake ? " on" : ""}`} aria-hidden>
+      {/* A small row with a small switch, as "Remote Control" in the Claude app. */}
+      <Coffee size={13} aria-hidden className="rail-awake-icon" />
+      <span className="rail-awake-text">Keep computer awake</span>
+      <span className={`switch switch-small${keepAwake ? " on" : ""}`} aria-hidden>
         <span className="switch-knob" />
       </span>
     </button>
