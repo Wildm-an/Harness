@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNewSessionShortcut, isSideChatShortcut, isSidebarShortcut, navShortcut, shortcutPane } from "./shortcuts";
+import { isNewSessionShortcut, isSideChatShortcut, isSidebarShortcut, isViewShortcut, navShortcut, shortcutPane } from "./shortcuts";
 import { chatHasFullHeight, defaultLayout, findGroupOf, group, movePane, normalize, togglePane, type LayoutNode } from "./model";
 
 const key = (code: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean; key?: string } = {}) => ({
@@ -124,5 +124,14 @@ describe("the side chat key", () => {
     expect(isSideChatShortcut(key({ metaKey: true }))).toBe(true);
     expect(isSideChatShortcut(key({}))).toBe(false);
     expect(isSideChatShortcut(key({ ctrlKey: true, shiftKey: true }))).toBe(false);
+  });
+});
+
+describe("the view shortcut", () => {
+  it("is Ctrl+E or Cmd+E, with no other modifier", () => {
+    expect(isViewShortcut(key("KeyE", { ctrl: true, key: "e" }))).toBe(true);
+    expect(isViewShortcut(key("KeyE", { meta: true, key: "e" }))).toBe(true);
+    expect(isViewShortcut(key("KeyE", { ctrl: true, shift: true, key: "E" }))).toBe(false);
+    expect(isViewShortcut(key("KeyE", { key: "e" }))).toBe(false);
   });
 });

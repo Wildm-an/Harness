@@ -63,6 +63,15 @@ export function isSidebarShortcut(e: KeyInfo): boolean {
   return e.code === "KeyB" || e.key.toLowerCase() === "b";
 }
 
+/** The key that switches between the Code view and the IDE view (the user chose it). */
+export const VIEW_SHORTCUT = "Ctrl+E";
+
+/** Ctrl+E (Cmd+E on macOS) switches between the Code view and the IDE view. */
+export function isViewShortcut(e: KeyInfo): boolean {
+  if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
+  return e.code === "KeyE" || e.key.toLowerCase() === "e";
+}
+
 /** The keys of the back and forward buttons, as in Claude. */
 export const BACK_SHORTCUT = "Alt+Left";
 export const FORWARD_SHORTCUT = "Alt+Right";

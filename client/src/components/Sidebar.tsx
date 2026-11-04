@@ -225,8 +225,8 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null); // The right-click menu.
   const toArchive = group.sessions.filter((s) => !s.archived);
   const shown = all ? group.sessions : group.sessions.slice(0, SHOWN_SESSIONS);
-  // A folded project still shows the sessions that work, wait for the user, or have an unread reply.
-  const pending = open ? [] : sessionsToShowFolded(group.sessions, running, unread);
+  // A folded project still shows the open session, and the sessions that work, wait for the user, or have an unread reply.
+  const pending = open ? [] : sessionsToShowFolded(group.sessions, running, unread, activeId);
   const listId = `side-project-${group.key.replace(/[^a-z0-9]/gi, "-")}`;
   const isProjectDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(PROJECT_DRAG);
   return (
@@ -353,9 +353,14 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
   );
 }
 
-/** The sessions of a folded project that stay in view: running, awaiting input, or unread. */
-export function sessionsToShowFolded<T extends { id: string }>(sessions: T[], running: Map<string, RunningSession>, unread: Set<string>): T[] {
-  return sessions.filter((s) => sessionState(running.get(s.id), unread.has(s.id)).kind !== "idle");
+/** The sessions of a folded project that stay in view: the open session (``activeId``), and the sessions that run, await input, or are unread. */
+export function sessionsToShowFolded<T extends { id: string }>(
+  sessions: T[],
+  running: Map<string, RunningSession>,
+  unread: Set<string>,
+  activeId: string | null = null,
+): T[] {
+  return sessions.filter((s) => s.id === activeId || sessionState(running.get(s.id), unread.has(s.id)).kind !== "idle");
 }
 
 export function Sidebar({

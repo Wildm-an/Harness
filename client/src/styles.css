@@ -3106,8 +3106,12 @@ select {
   border-bottom: none;
 }
 
+/* The two model lists have one width, whatever the names in them (the user asked for this). */
 .model-choice select {
-  max-width: 260px;
+  width: 240px;
+  min-width: 0;
+  max-width: 100%;
+  text-overflow: ellipsis;
 }
 
 .providers-intro {

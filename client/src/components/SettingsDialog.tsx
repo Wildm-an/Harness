@@ -49,6 +49,7 @@ import { IdeSketch } from "./IdeSketch";
 import { DEFAULT_IDE_OPTIONS, type IdeLayoutOptions } from "../layout/model";
 import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
+import { useLinksInPane } from "../lib/openLink";
 import { compareVersions } from "../lib/version";
 import { availableVersion, checkAtStart, checkForUpdate, installUpdate, setCheckAtStart, useUpdateState } from "../lib/updater";
 
@@ -251,6 +252,7 @@ const SHORTCUTS: [string, string][] = [
   ["Search the sessions", "Ctrl+K"],
   ["Side chat", "Ctrl+;"],
   ["Show or hide the sidebar", "Ctrl+B"],
+  ["Switch the Code and IDE view", "Ctrl+E"],
   ["Terminal", "Ctrl+`"],
   ["Browser", "Ctrl+Shift+B"],
   ["Diff", "Ctrl+Shift+D"],
@@ -605,6 +607,7 @@ export function GeneralSettings({
   onSet: (changes: Partial<UserSettings>) => void;
 }) {
   const [busy, setBusy] = useState<BusySend>(busySend);
+  const [linksInPane, setLinksInPane] = useLinksInPane();
   const off = !connected || values === null;
   // "Saving" until the daemon sends the new values, then "Saved" for a moment.
   const [status, setStatus] = useState<"" | "saving" | "saved">("");
@@ -730,6 +733,14 @@ export function GeneralSettings({
           />
         </div>
       ))}
+
+      <h3 className="settings-section">Browser</h3>
+      <Row label="Open links in" help="Where a link in the chat opens, for example a link that the agent lists. Applies to this computer." htmlFor="setting-open-links">
+        <select id="setting-open-links" value={linksInPane ? "pane" : "system"} onChange={(e) => setLinksInPane(e.target.value === "pane")}>
+          <option value="pane">Built-in browser</option>
+          <option value="system">Default browser</option>
+        </select>
+      </Row>
 
       <h3 className="settings-section">Keyboard shortcuts</h3>
       <dl className="shortcut-list">

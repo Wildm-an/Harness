@@ -20,7 +20,7 @@ import { PaneActions, PaneHeader } from "../layout/Workspace";
 import { WindowTabs } from "../layout/WindowTabs";
 import { useOverlay, useOverlayOpen } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
-import { linksInPane, setLinksInPane } from "../lib/openLink";
+import { useLinksInPane } from "../lib/openLink";
 import { browserView, isTauri, openExternal, pickFile, pickSavePath, type Bounds } from "../lib/tauri";
 import { ServerMenu } from "../servers/ServerMenu";
 import type { ServersApi } from "../servers/useServers";
@@ -232,7 +232,7 @@ export function BrowserPane({
   const [unseen, setUnseen] = useState(false); // A new agent frame came while the user looks at the page.
   const [device, setDevice] = useState<Device>(() => (loadPref("browserDevice", "desktop") as Device) || "desktop");
   const [keep, setKeep] = useState<KeepCookies>(keepCookies);
-  const [inPane, setInPane] = useState(linksInPane);
+  const [inPane, setInPane] = useLinksInPane(); // The same preference as Settings > General > "Open links in".
   const [sub, setSub] = useState<"viewport" | "cookies" | null>(null); // The open list of the More menu.
   const overlay = useOverlayOpen();
   const lastSync = useRef(new Map<string, string>()); // The last bounds and visibility of each webview.
@@ -612,7 +612,6 @@ export function BrowserPane({
                   onMouseEnter={() => setSub(null)}
                   onClick={() => {
                     setInPane(!inPane);
-                    setLinksInPane(!inPane);
                   }}
                 >
                   <span className="side-filter-label">Open links in built-in browser</span>

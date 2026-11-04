@@ -109,5 +109,7 @@ describe("a folded project", () => {
     ]);
     expect(sessionsToShowFolded(list, running, new Set(["new"])).map((s) => s.id)).toEqual(["busy", "asks", "new"]);
     expect(sessionsToShowFolded(list, new Map(), new Set())).toEqual([]);
+    // The open session stays in view too.
+    expect(sessionsToShowFolded(list, new Map(), new Set(), "idle").map((s) => s.id)).toEqual(["idle"]);
   });
 });

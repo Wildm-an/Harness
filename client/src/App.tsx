@@ -80,6 +80,7 @@ import {
   FORWARD_SHORTCUT,
   SIDEBAR_SHORTCUT,
   isSidebarShortcut,
+  isViewShortcut,
   isSideChatShortcut,
   isNewSessionShortcut,
   isSearchShortcut,
@@ -2272,6 +2273,20 @@ export default function App() {
     // The saved state is the state of the Code view. The IDE view does not change it.
     if (!narrow() && viewRef.current !== "ide") savePref("sidebar.open", open ? "1" : "0");
   };
+
+  // Ctrl+E switches between the Code view and the IDE view, on every screen. The capture phase runs
+  // before the editor and the terminal get the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isViewShortcut(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      switchViewRef.current(viewRef.current === "ide" ? "code" : "ide");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // Ctrl+B shows or hides the sidebar on every screen. The capture phase runs before the editor
   // and the terminal get the key.

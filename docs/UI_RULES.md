@@ -22,7 +22,7 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 - **P2. Settings for defaults, menus for this session.** A setting changes the default for new sessions. A per-session menu changes the current session only. The description of a setting must say which one it changes ("Applies to new sessions.").
 - **P3. Few visible controls.** Show the common controls. Put the rest in an overflow menu (⋮) or a "+" menu. Do not add a new row of buttons.
 - **P4. Each command has three paths.** A user can find each command in a menu, in the command menu (Ctrl+K), and with a keyboard shortcut when one exists. Menu items show their shortcut on the right.
-- **P5. Every hover tip names the shortcut.** Use the tooltip style in `Tooltips.tsx`: the label, then the key in a muted color. Exceptions that the user asked for: the view switch (V6f) and the scroll-to-bottom button of the chat have no hover tip.
+- **P5. Every hover tip names the shortcut.** Use the tooltip style in `Tooltips.tsx`: the label, then the key in a muted color. Exception that the user asked for: the scroll-to-bottom button of the chat has no hover tip.
 - **P6. Harness-only features go to the nearest Claude location.** Model providers, local models, and remote daemons do not exist in Claude. Put them where the closest Claude feature lives (see section 9).
 
 ## 2. Window and title bar
@@ -82,7 +82,7 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
 - **S8.** Archive asks first only when the session has uncommitted changes: "Archive session with uncommitted changes?" with "Archive anyway". Delete always asks first.
 - **S9.** A drag of a row shows a label pill: "Open in split view", "Release to unpin", "Move to {label}".
 - **S12.** The edge at the right of the sidebar changes its width, from 216px to 384px (the widest sidebar of the Claude app, the user asked for it). The default is 264px. A double-click sets the default.
-- **S11.** A folded project still shows its sessions that are running, awaiting input, or unread, under the project name (the user asked for this). The other sessions show when the project opens.
+- **S11.** A folded project still shows the open session and its sessions that are running, awaiting input, or unread, under the project name (the user asked for this). The other sessions show when the project opens.
 - **S10.** When the sidebar is hidden, the pointer on the sidebar toggle in the title row shows the sidebar over the view (the user asked for this). It goes away a short time after the pointer leaves it, on Esc, or after a choice in it. A menu or a dialog of the sidebar keeps it. The sidebar toggle in it shows the sidebar again in its usual place.
 
 ### 3.4 Capabilities page
@@ -286,7 +286,7 @@ Harness has no "+" button now. Add it.
 
 Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 
-- **V6f.** A switch with "</>" (label "Code view") and "IDE" (label "IDE view"). It has no hover tip: the user asked for none (an exception to P5). It is at the right end of the sidebar head, as the Chat / Code switch of the Claude app. When the sidebar is hidden, it is in the title bar after Back and Forward, but only in the IDE view. In the Code view, a hidden sidebar hides the switch (the user asked for this), and Ctrl+B shows it again. It is a radio group. The arrow keys move the choice. It has no shortcut.
+- **V6f.** A switch with "</>" (label "Code view") and "IDE" (label "IDE view"). Its hover tip is "Switch view" with the key Ctrl+E (the user asked for it). It is at the right end of the sidebar head, as the Chat / Code switch of the Claude app. When the sidebar is hidden, it is in the title bar after Back and Forward, but only in the IDE view. In the Code view, a hidden sidebar hides the switch (the user asked for this), and Ctrl+B shows it again. It is a radio group. The arrow keys move the choice. Ctrl+E switches the view from anywhere (the user chose this key).
 - **V6g.** The Code view is the Claude layout. The IDE view is laid out as VS Code: the Files pane (the file tree and search) at the left in the full height, the editor in the middle with the terminal under it, and the chat at the right in the full height. A saved IDE layout that is still the old default (the file tree inside the editor pane) gets this default. A layout that the user changed stays. Each view keeps its own layout for each project. The app opens in the view that the user used last (the user asked for this). In the IDE view, the start screen at launch starts an empty session, as a switch to the IDE view does. A switch back to the Code view before the user sends a prompt removes that empty session and shows the start screen again, with the folder block and no session rail: only the view changed (the user asked for this). Back and Forward never open a deleted session. Each new session (New session, or a prompt on the start screen) starts in the Code view. A switch to the IDE view on the start screen starts an empty session in the selected project (with the selected model, mode, and worktree choice), so the Files pane, the editor, the terminal, and the chat show at once. A switch to the Code view closes the Files window (the user asked for this).
 - **V6r.** A pane that closes gives its space to the pane next to it, as in VS Code. A pane that opens again (for example the terminal) goes back to its last place and size in that view. In the IDE view, the editor window has no close button. The open files keep their close buttons.
 - **V6h.** The IDE view hides the sessions sidebar and the session rail. The Code view shows the sidebar again. Ctrl+B still shows the sidebar in the IDE view.
@@ -325,6 +325,7 @@ Use these keys. Do not give a key to a different command.
 | Settings | Ctrl+, | same |
 | Keyboard shortcuts | Ctrl+/ | missing (table in Settings) |
 | Toggle sidebar | Ctrl+B | same |
+| Switch the Code / IDE view (Harness only) | Ctrl+E | same (the user chose it) |
 | Back / Forward | Alt+Left / Alt+Right | same |
 | Previous / next session | Ctrl+Shift+Tab / Ctrl+Tab | missing |
 | Terminal | Ctrl+` | same |
@@ -395,6 +396,7 @@ Notes:
 | Auto-archive | Sessions: "Archive inactive sessions" | Never / 1 / 2 / 7 / 14 / 30 days | missing |
 | Worktree folder | Sessions: "Worktree location" | "Inside project" / "Custom…" | always inside the project (`.harness/worktrees/<name>`, branch `harness/<name>`); no setting yet |
 | Output style | Sessions: "Output style" (the session menu can change it for one session) | select | missing |
+| Chat links | not a Claude setting | "Open links in": "Built-in browser" (default) / "Default browser" | General > Browser (the user asked for it). The same choice as "Open links in built-in browser" in the Browser ⋯ menu. A link that the agent lists opens in the Browser pane by default. |
 | Browser tools | Browser: "Browser tools" | switch, default on | Browser ⋮ menu |
 | Browser cookies | Browser: "Keep cookies" | Until quit / Shared / Per session | Browser ⋮ > Cookies |
 | Allowed sites | Browser: allowed origins list | list | Browser ⋮ > "Manage allowed sites…" |
