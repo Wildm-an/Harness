@@ -4860,6 +4860,13 @@ input.tree-rename-input[aria-invalid="true"] {
   color: inherit;
 }
 
+/* A still picture of the page while a menu or a dialog hides the webview. */
+.browser-still {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+}
+
 .browser-area.device-tablet,
 .browser-area.device-phone {
   background: repeating-linear-gradient(45deg, var(--surface-sunken) 0 10px, var(--bg) 10px 20px);

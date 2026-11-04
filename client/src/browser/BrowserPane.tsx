@@ -50,6 +50,9 @@ export function normalizeAddress(text: string): string {
 }
 
 /** The webview bounds for a device inside the pane area. */
+/** The longest wait (ms) for the still picture of the page before the webview hides for an overlay. */
+const STILL_WAIT = 600;
+
 export function deviceBounds(area: Bounds, device: Device): Bounds {
   const size = DEVICES[device].size;
   if (!size) return area;
@@ -461,14 +464,53 @@ export function BrowserPane({
     if (annotatingRef.current && (annotatingRef.current !== activeId || view !== "page")) stopAnnotate();
   }, [activeId, view]);
 
+  // The webview is a native window over the app, so it hides while a menu or a dialog is open. A
+  // still picture of the page shows in its place: the page does not go blank. The webview hides
+  // when the picture is ready, or after STILL_WAIT ms with no picture.
+  const [still, setStill] = useState<{ src: string; left: number; top: number; width: number; height: number } | null>(null);
+  const [covered, setCovered] = useState(false);
+  useEffect(() => {
+    if (!overlay) {
+      setCovered(false);
+      setStill(null);
+      return;
+    }
+    const bounds = measure();
+    const box = area.current?.getBoundingClientRect();
+    if (!tauri || view !== "page" || !active.url || !opened.has(active.id) || !bounds || !box) {
+      setCovered(true);
+      return;
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      setCovered(true);
+    };
+    const timer = window.setTimeout(finish, STILL_WAIT);
+    browserView
+      .capture(active.id)
+      .then((src) => {
+        if (done) return;
+        setStill({ src, left: bounds.x - box.left, top: bounds.y - box.top, width: bounds.width, height: bounds.height });
+        finish();
+      })
+      .catch(finish);
+    return () => {
+      done = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- The picture is of the page when the overlay opens.
+  }, [overlay]);
+
   // Keep the webview of the active tab over the pane area. Hide the other webviews, and hide all
-  // of them when the pane is hidden or an overlay (a menu, a dialog) is open.
+  // of them when the pane is hidden or an overlay (a menu, a dialog) covers the page.
   useLayoutEffect(() => {
     if (!tauri) return;
     const sync = () => {
       const bounds = measure();
       for (const tab of tabs) {
-        const show = tab.id === active.id && !!bounds && !overlay && !!tab.url && view === "page";
+        const show = tab.id === active.id && !!bounds && !covered && !!tab.url && view === "page";
         const key = JSON.stringify([show ? bounds : null, show, opened.has(tab.id)]);
         if (lastSync.current.get(tab.id) === key) continue;
         lastSync.current.set(tab.id, key);
@@ -497,7 +539,7 @@ export function BrowserPane({
       window.removeEventListener("resize", sync);
       window.clearInterval(timer);
     };
-  }, [tauri, measure, overlay, tabs, active.id, view, onError, keep]);
+  }, [tauri, measure, covered, tabs, active.id, view, onError, keep]);
 
   // Hide the webviews when the pane closes. They stay open for the next time.
   useEffect(
@@ -770,6 +812,9 @@ export function BrowserPane({
         </Menu>
       </form>
       <div className={`browser-area device-${device}`} ref={area}>
+        {still && covered && !agentView && (
+          <img className="browser-still" src={still.src} alt="" style={{ left: still.left, top: still.top, width: still.width, height: still.height }} />
+        )}
         {agentView ? (
           <div className="agent-view">
             <div className="agent-caption">
