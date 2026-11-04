@@ -38,10 +38,14 @@ datas = [
 binaries = []
 if sys.platform == "win32":
     # The terminal pane: pywinpty starts these helper programs from its package folder.
+    # The ARM64 wheel has no winpty-agent.exe (the WinPTY backend). The terminal uses ConPTY.
     import winpty
 
     WINPTY = os.path.dirname(winpty.__file__)
-    binaries += [(os.path.join(WINPTY, name), "winpty") for name in ("OpenConsole.exe", "winpty-agent.exe")]
+    binaries += [(os.path.join(WINPTY, name), "winpty") for name in ("OpenConsole.exe", "winpty-agent.exe")
+                 if os.path.isfile(os.path.join(WINPTY, name))]
+    if not any(name.endswith("OpenConsole.exe") for name, _ in binaries):
+        raise SystemExit(f"pywinpty has no OpenConsole.exe in {WINPTY}.")
 
 
 def windows_version_info():

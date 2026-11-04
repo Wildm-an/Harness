@@ -8,7 +8,8 @@ installed apps read it at https://github.com/<owner/repo>/releases/latest/downlo
 (plugins.updater.endpoints in client/src-tauri/tauri.conf.json).
 
 The update file of each platform:
-- Windows: Harness_<version>_x64-setup.exe (the NSIS installer).
+- Windows: Harness_<version>_x64-setup.exe and Harness_<version>_arm64-setup.exe (the NSIS
+  installers). The platforms are "windows-x86_64" and "windows-aarch64".
 - macOS: Harness_<version>_<arch>.app.tar.gz (the workflow renames Harness.app.tar.gz, because
   the arm64 and the x64 jobs make the same file name).
 - Linux: Harness_<version>_amd64.AppImage.

@@ -96,10 +96,44 @@ setup file of the release again.
     "windows-x86_64": {
       "signature": "<the text of Harness_0.2.0_x64-setup.exe.sig>",
       "url": "https://github.com/Wildm-an/Harness/releases/download/v0.2.0/Harness_0.2.0_x64-setup.exe"
+    },
+    "windows-aarch64": {
+      "signature": "<the text of Harness_0.2.0_arm64-setup.exe.sig>",
+      "url": "https://github.com/Wildm-an/Harness/releases/download/v0.2.0/Harness_0.2.0_arm64-setup.exe"
     }
   }
 }
 ```
+
+The other platforms are `darwin-aarch64`, `darwin-x86_64`, and `linux-x86_64`.
+
+## Windows on ARM
+
+The job `windows-arm64` builds a native ARM64 installer, `Harness_<version>_arm64-setup.exe`, on
+the GitHub runner `windows-11-arm`.
+
+- PyInstaller cannot cross-compile, so the job builds the sidecar on the ARM64 runner.
+- The job uses Python 3.12 (ARM64). Python 3.11 has no ARM64 wheel of PyYAML.
+- Tauri builds for `aarch64-pc-windows-msvc`. The files are in
+  `client/src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/`.
+- The installer itself is an x86 NSIS program (the same as the x64 installer), with the
+  HarnessUI plugin. Windows on ARM runs it under emulation. It installs the ARM64 app.
+- The ARM64 wheel of pywinpty has no `winpty-agent.exe`. The terminal uses ConPTY, so the
+  sidecar does not need it.
+- The ARM64 app gets the `windows-aarch64` entry of `latest.json`. An x64 app that runs under
+  emulation on an ARM64 computer keeps the `windows-x86_64` entry.
+- The job is optional (`continue-on-error`): if it fails, the release still has the other
+  platforms, with no `windows-aarch64` entry. Check the job result of each release.
+
+To test the job with no release: `gh workflow run release.yml --ref <branch>`. Download the
+artifact `harness-windows-arm64`, and run `latest_json.py` on its folder to see the entry.
+
+A release before the ARM64 job has no ARM64 installer, and it does not need one: the apps read
+`latest.json` of the newest release only. The ARM64 job needs the changes of the same commit in
+`daemon/packaging/harness-daemon.spec` and `client/scripts/package.mjs`, so it cannot build the
+code of an earlier tag. To add ARM64 to a release of an earlier tag, use a `ref` that has the
+version of the tag and these changes. That run builds all platforms again and replaces the files of
+that release only.
 
 A version that was installed before the update address existed (0.1.30 and before) cannot find
 updates: install the first release with the address by hand. Until the first release is published,

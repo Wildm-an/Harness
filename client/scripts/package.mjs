@@ -25,7 +25,9 @@ if (wheel.status !== 0) {
 }
 
 const env = { ...process.env };
-const args = ["tauri", "build", "--config", "src-tauri/tauri.bundle.json"];
+// Extra arguments go to "tauri build", for example: npm run package -- --target aarch64-pc-windows-msvc
+// With --target, the installers are in src-tauri/target/<target>/release/bundle.
+const args = ["tauri", "build", "--config", "src-tauri/tauri.bundle.json", ...process.argv.slice(2)];
 // The release key has no password. In CI, the key comes from a secret: GitHub accepts no empty secret.
 env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ??= "";
 
