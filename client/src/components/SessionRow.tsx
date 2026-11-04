@@ -222,7 +222,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
       ) : (
         <button
           type="button"
-          className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}${working ? " working" : ""}`}
+          className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}${working ? " side-session-running" : ""}`}
           onClick={() => !active && actions.onResume(session.id)}
           disabled={disabled}
           aria-current={active ? "true" : undefined}

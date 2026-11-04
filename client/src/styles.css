@@ -768,8 +768,9 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-/* A running session: a light band moves across the muted title, as in the Claude app. */
-.side-session.working .side-session-title {
+/* A running session: a light band moves across the muted title, as in the Claude app. The class is not
+   ".working": the global .working rule of the chat (WorkingLine.tsx) would change the padding and font. */
+.side-session.side-session-running .side-session-title {
   background: linear-gradient(
     90deg,
     var(--text-muted) 0%,
@@ -795,7 +796,7 @@ textarea:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .side-session.working .side-session-title {
+  .side-session.side-session-running .side-session-title {
     animation: none;
     background: none;
     color: var(--text-muted);
