@@ -480,7 +480,7 @@ Rules:
 
 - **T1.** Use the accent blue for focus rings, links, selection and the unread dot. Use clay only for the brand.
 - **T2.** Make borders and hover fills from the text color with alpha. Do not use fixed gray borders.
-- **T3.** Harness dark colors (`#262624`, `#1f1e1d`, `#30302e`) are the older warm claude.ai palette. The move to the CDS palette is a large visual change. Decide it in its own change, and change all the tokens in `styles.css` together.
+- **T3.** The dark theme uses the CDS grays (the user chose them): page `#151515` (`gray-850`), sidebar and sunken areas `#0b0b0b` (`gray-900`), surface `#1a1a19` (`gray-830`), surface-2 `#20201f` (`gray-800`), border `#2c2c2a`, strong border `#3f3e3c`, text `#f0efec` (`gray-50`), muted text `#a5a49a`. The sidebar is darker than the page, as before. The light theme keeps the warm paper colors (`#faf9f5`, `#f3f1ea`, `#ffffff`): the user chose them. The installer art still uses the old dark sidebar color `#1f1e1d`.
 
 ### 11.3 Type
 
