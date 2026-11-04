@@ -1,4 +1,4 @@
-// The working line at the bottom of the chat during a turn, as in the Claude app: animated dots, what the
+// The working line at the bottom of the chat during a turn, as in the Claude app: a turning gyroscope, what the
 // agent does now (the step of its task list in progress, or "Writing…"), and the time of the turn. The caret
 // shows the details: "1.1k tokens · 1 running task · Waiting for qwen3…", and the tool calls at the end of the
 // chat (the chat does not show them as a line during the turn). It scrolls with the chat.
@@ -8,6 +8,7 @@ import { ChevronRight } from "lucide-react";
 import type { ChatItem, ToolItem, TurnInfo } from "../chat/state";
 import { latestPlan } from "../lib/progress";
 import { ToolCard, toolLabel } from "./ToolCard";
+import { GyroLoader } from "./GyroLoader";
 
 /** "8s", "1m 11s", or "1h 2m". */
 export function formatElapsed(ms: number): string {
@@ -95,12 +96,7 @@ export function WorkingLine({
   return (
     <div className="working-wrap">
       <div className="working" title="Esc to interrupt">
-        <span className="working-dots" aria-hidden>
-          <span />
-          <span />
-          <span />
-          <span />
-        </span>
+        <GyroLoader className="working-loader" />
         <span className="working-text" aria-hidden>
           {label}
         </span>

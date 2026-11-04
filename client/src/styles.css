@@ -6144,45 +6144,10 @@ input.tree-rename-input[aria-invalid="true"] {
   font-size: calc(var(--chat-font-size, 14px) - 0.5px);
 }
 
-.working-dots {
-  position: relative;
+/* The gyroscope loader (GyroLoader.tsx). It draws in the accent color. */
+.working-loader {
   flex: none;
-  width: 16px;
-  height: 16px;
-}
-
-/* Four dots in a loose square, as the Claude app shows. Each one pulses in turn. */
-.working-dots > span {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: working-dot 1.4s ease-in-out infinite;
-}
-
-.working-dots > span:nth-child(1) { top: 1px; left: 6px; }
-.working-dots > span:nth-child(2) { top: 6px; left: 11px; animation-delay: 0.35s; }
-.working-dots > span:nth-child(3) { top: 11px; left: 5px; animation-delay: 0.7s; }
-.working-dots > span:nth-child(4) { top: 5px; left: 1px; animation-delay: 1.05s; }
-
-@keyframes working-dot {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.15);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .working-dots > span {
-    animation: none;
-    opacity: 0.8;
-  }
+  color: var(--accent);
 }
 
 .working-text {
