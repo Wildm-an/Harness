@@ -8793,6 +8793,35 @@ textarea.setting-textarea:disabled {
   margin: 0;
 }
 
+/* The user drags a section heading to move the section. A line shows where it goes. */
+.rail-section {
+  position: relative;
+}
+
+.rail-section.dragging {
+  opacity: 0.5;
+}
+
+.rail-section.drop-before::before,
+.rail-section.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.rail-section.drop-before::before {
+  top: -1px;
+}
+
+.rail-section.drop-after::after {
+  bottom: -1px;
+}
+
 .rail-section-head button {
   display: flex;
   align-items: center;

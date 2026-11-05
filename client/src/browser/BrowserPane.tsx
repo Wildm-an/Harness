@@ -201,6 +201,11 @@ function watchAgentTabs() {
       if (!info) return;
       if (event.title !== undefined) info.title = event.title;
       else if (!event.loading) info.url = event.url;
+      // With no pane, the saved tab gets the page too: the pane shows it when it opens.
+      if (!paneHooks && kept) {
+        const change: Partial<BrowserTab> = event.title !== undefined ? { title: event.title } : event.loading ? {} : { url: event.url, address: event.url, loading: false };
+        kept = { ...kept, tabs: kept.tabs.map((t) => (t.id === event.id ? { ...t, ...change } : t)) };
+      }
       agentChanged();
     });
   }
@@ -229,7 +234,7 @@ async function agentTabFor(session: string): Promise<string> {
   if (pending) return pending;
   const make = (async () => {
     watchAgentTabs();
-    const tab: BrowserTab = { ...newTab("about:blank"), title: "Agent", agent: session };
+    const tab: BrowserTab = { ...newTab("about:blank"), agent: session };
     if (paneHooks) paneHooks.add(tab);
     else kept = kept ? { ...kept, tabs: [...kept.tabs, tab] } : { tabs: [tab], active: tab.id };
     agentTabs.set(session, tab.id);

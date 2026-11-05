@@ -6,23 +6,71 @@ import type { PrStatus, TaskItem } from "../daemon/protocol";
 import { loadPref, savePref } from "./prefs";
 
 /**
- * The sections, in the order of Claude: environment, context, pull requests, servers, background
- * tasks. Claude also has a settings section. Harness keeps the mode and model menus under the prompt box.
- * "Browser" is first: the small live view of the page where the agent works (the user asked for it).
+ * The default order of the sections, as in Claude: environment, context, pull requests, servers,
+ * background tasks. Claude also has a settings section. Harness keeps the mode and model menus under
+ * the prompt box. "Browser" (the small live view of the page where the agent works) is under
+ * "Servers" (the user asked for it). The user can drag the sections into another order.
  */
 export type RailSection = "browser" | "environment" | "context" | "pullRequests" | "servers" | "backgroundTasks";
 
 export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
-  { id: "browser", title: "Browser" },
   { id: "environment", title: "Environment" },
   { id: "context", title: "Context" },
   { id: "pullRequests", title: "Pull requests" },
   { id: "servers", title: "Servers" },
+  { id: "browser", title: "Browser" },
   { id: "backgroundTasks", title: "Background tasks" },
 ];
 
 const SHOWN_PREF = "sessionRail.shown";
 const FOLDED_PREF = "sessionRail.folded";
+// The order that the user set. The desktop app keeps the prefs in a file, so the order stays after an update.
+const ORDER_PREF = "sessionRail.order";
+
+/**
+ * Read the section order from the saved text. Unknown ids go away. A section that is not in the
+ * text (a new section after an update) goes after the section that is before it in the default order.
+ */
+export function parseOrder(text: string): RailSection[] {
+  const ids = RAIL_SECTIONS.map((s) => s.id);
+  let saved: RailSection[] = [];
+  try {
+    const value: unknown = JSON.parse(text);
+    if (Array.isArray(value)) saved = value.filter((v, i): v is RailSection => ids.includes(v as RailSection) && value.indexOf(v) === i);
+  } catch {
+    saved = [];
+  }
+  const order = [...saved];
+  ids.forEach((id, index) => {
+    if (order.includes(id)) return;
+    const before = index > 0 ? order.indexOf(ids[index - 1]) : -1;
+    order.splice(before + 1, 0, id);
+  });
+  return order;
+}
+
+export function sectionOrder(): RailSection[] {
+  return parseOrder(loadPref(ORDER_PREF, "[]"));
+}
+
+/** Move a section before or after another section. Returns the new order and saves it. */
+export function moveSection(order: RailSection[], id: RailSection, target: RailSection, after: boolean): RailSection[] {
+  if (id === target) return order;
+  const next = order.filter((s) => s !== id);
+  const at = next.indexOf(target);
+  if (at < 0) return order;
+  next.splice(after ? at + 1 : at, 0, id);
+  savePref(ORDER_PREF, JSON.stringify(next));
+  return next;
+}
+
+/** Move a section one place up (-1) or down (1) in the shown sections. Returns the new order and saves it. */
+export function stepSection(order: RailSection[], shown: RailSection[], id: RailSection, step: -1 | 1): RailSection[] {
+  const index = shown.indexOf(id);
+  const target = shown[index + step];
+  if (index < 0 || !target) return order;
+  return moveSection(order, id, target, step === 1);
+}
 
 /**
  * The panes that need the room of the rail: all the windows next to the chat. In the Code view the

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, contextShare, foldedValue, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, contextShare, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -14,7 +14,7 @@ const task = (id: string, status: TaskItem["status"], started_at: number): TaskI
 
 describe("the session rail sections", () => {
   it("use the order of Claude", () => {
-    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["browser", "environment", "context", "pullRequests", "servers", "backgroundTasks"]);
+    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "pullRequests", "servers", "browser", "backgroundTasks"]);
   });
 
   it("read the folded sections and drop unknown ids", () => {
@@ -123,5 +123,26 @@ describe("the background tasks of the rail", () => {
     expect(taskDetailText(wakeup, 970_000)).toBe("Wakeup · in 30s");
     const cron = { ...task("d", "running", 1), kind: "cron" as const, wake_at: 1000 };
     expect(taskDetailText(cron, 760_000)).toBe("Scheduled · in 4 min");
+  });
+});
+
+describe("section order", () => {
+  it("keeps the saved order and puts a new section after its default neighbor", () => {
+    expect(parseOrder("not json")).toEqual(["environment", "context", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    // A saved order from before the Browser section: Browser goes after Servers.
+    expect(parseOrder(JSON.stringify(["servers", "environment", "context", "pullRequests", "backgroundTasks"]))).toEqual([
+      "servers", "browser", "environment", "context", "pullRequests", "backgroundTasks",
+    ]);
+    expect(parseOrder(JSON.stringify(["context", "nope", "context"]))).toEqual(["environment", "context", "pullRequests", "servers", "browser", "backgroundTasks"]);
+  });
+
+  it("moves a section before or after another, and one step in the shown list", () => {
+    const order = parseOrder("[]");
+    expect(moveSection(order, "browser", "environment", false)[0]).toBe("browser");
+    expect(moveSection(order, "environment", "backgroundTasks", true).at(-1)).toBe("environment");
+    const shown: RailSection[] = ["environment", "servers", "browser"];
+    const up = stepSection(order, shown, "browser", -1);
+    expect(up.indexOf("browser")).toBeLessThan(up.indexOf("servers"));
+    expect(stepSection(order, shown, "environment", -1)).toBe(order);
   });
 });

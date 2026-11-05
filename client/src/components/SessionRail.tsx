@@ -10,6 +10,9 @@ import type { ConnectionKind } from "../lib/connections";
 import {
   RAIL_SECTIONS,
   contextShare,
+  moveSection,
+  sectionOrder,
+  stepSection,
   foldedSections,
   foldedValue,
   percentText,
@@ -91,6 +94,10 @@ export function SessionRail({
   onClose: () => void; // Esc or a click outside, in a narrow window.
 }) {
   const [folded, setFolded] = useState<RailSection[]>(foldedSections);
+  const [order, setOrder] = useState<RailSection[]>(sectionOrder);
+  // The section that the user drags, and where it goes: before or after another section.
+  const [dragging, setDragging] = useState<RailSection | null>(null);
+  const [drop, setDrop] = useState<{ id: RailSection; after: boolean } | null>(null);
   const ref = useRef<HTMLElement>(null);
 
   // In a narrow window the rail is an overlay: Esc and a click outside close it.
@@ -272,15 +279,61 @@ export function SessionRail({
       ) : null,
   };
 
+  const titles = Object.fromEntries(RAIL_SECTIONS.map((s) => [s.id, s.title])) as Record<RailSection, string>;
+  const shown = order.filter((id) => body[id] !== null);
+  const endDrag = () => {
+    setDragging(null);
+    setDrop(null);
+  };
+
   return (
     <aside ref={ref} id={SESSION_RAIL_ID} className="session-rail" role="group" aria-label="Session details" tabIndex={-1}>
-      {RAIL_SECTIONS.filter((s) => body[s.id] !== null).map((s) => {
+      {shown.map((id) => {
+        const s = { id, title: titles[id] };
         const open = !folded.includes(s.id);
         const bodyId = `rail-section-${s.id}`;
+        const mark = drop?.id === s.id && dragging !== s.id ? (drop.after ? " drop-after" : " drop-before") : "";
         return (
-          <section key={s.id} className={`rail-section${open ? " open" : ""}`}>
-            <h3 className="rail-section-head">
-              <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => setFolded((f) => toggleFolded(f, s.id))}>
+          <section
+            key={s.id}
+            className={`rail-section${open ? " open" : ""}${dragging === s.id ? " dragging" : ""}${mark}`}
+            onDragOver={(e) => {
+              if (!dragging) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              const box = e.currentTarget.getBoundingClientRect();
+              const after = e.clientY > box.top + box.height / 2;
+              if (drop?.id !== s.id || drop.after !== after) setDrop({ id: s.id, after });
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragging && drop) setOrder((o) => moveSection(o, dragging, drop.id, drop.after));
+              endDrag();
+            }}
+          >
+            <h3
+              className="rail-section-head"
+              // Drag a heading to move its section. The order stays for new sessions.
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", s.title);
+                setDragging(s.id);
+              }}
+              onDragEnd={endDrag}
+            >
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-controls={bodyId}
+                title="Drag to move. Alt+Up or Alt+Down also moves it."
+                onClick={() => setFolded((f) => toggleFolded(f, s.id))}
+                onKeyDown={(e) => {
+                  if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                  e.preventDefault();
+                  setOrder((o) => stepSection(o, shown, s.id, e.key === "ArrowUp" ? -1 : 1));
+                }}
+              >
                 <ChevronRight size={13} aria-hidden className="rail-chevron" />
                 {s.title}
                 {!open && foldedValue(s.id, context) && (

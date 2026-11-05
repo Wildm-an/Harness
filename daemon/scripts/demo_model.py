@@ -119,6 +119,11 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
     last = messages[-1]
     if last["role"] == "user" and isinstance(last["content"], list):
         return {"text": "I can see the screenshot. The page shows the app."}
+    # A user message right after a tool result is a note of the harness (for example the task list
+    # reminder). The demo goes on from the tool result.
+    while len(messages) > 1 and last["role"] == "user" and messages[-2]["role"] == "tool":
+        messages = messages[:-1]
+        last = messages[-1]
     if last["role"] == "tool":
         step = preview_step(last_tool_name(messages), last["content"], tools)
         if step:
