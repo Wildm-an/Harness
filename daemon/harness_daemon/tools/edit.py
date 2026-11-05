@@ -21,9 +21,18 @@ def unified_diff(before: str, after: str, name: str, new_file: bool = False) -> 
 class EditTool(Tool):
     name = "edit"
     description = (
-        "Replace an exact string in an existing file. old_string must match the file exactly, "
-        "with the same spaces and indentation. old_string must occur one time in the file, "
-        "unless replace_all is true. Read the file before you edit it."
+        "Replace an exact string in an existing file.\n\n"
+        "Use it to change part of a file. To create a file or to replace all its content, use write. "
+        "For Word, PowerPoint, or Excel files, use office_edit.\n\n"
+        "Usage notes:\n"
+        "- Read the file with the read tool before you edit it.\n"
+        "- old_string must match the file exactly, with the same spaces and indentation. "
+        "Do not copy the line numbers and the tab that the read tool puts before each line.\n"
+        "- old_string must occur one time in the file. If it occurs more times, add lines around it, "
+        "or set replace_all to true to change each occurrence.\n"
+        "- If the edit fails with \"old_string was not found\", read the file again and copy the exact text.\n"
+        "- Make small, targeted edits. Do not replace a full file with edit.\n"
+        "- To make several changes to one file, make several edit calls."
     )
     parameters = {
         "type": "object",

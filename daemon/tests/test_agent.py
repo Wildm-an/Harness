@@ -41,7 +41,7 @@ def test_text_reply_streams_tokens(harness_home, project, fake_model):
     assert sent["messages"][-1] == {"role": "user", "content": "hi"}
     assert {t["function"]["name"] for t in sent["tools"]} == {
         "read", "glob", "grep", "edit", "write", "bash", "office_edit", "show_document", "show_visual", "update_plan", "wrap_up",
-        "web_search", "web_fetch", "ask_user_question", "memory",
+        "web_search", "web_fetch", "ask_user_question", "memory", "exit_plan_mode",
     }
 
 
@@ -108,7 +108,7 @@ def test_no_tool_call_limit(harness_home, project, fake_model):
 
 def test_bad_arguments_and_unknown_tool_go_back_to_the_model(harness_home, project, fake_model):
     fake_model.script(
-        {"tool_calls": [{"name": "read", "arguments": "{not json"}, {"name": "write_file", "arguments": {}}]},
+        {"tool_calls": [{"name": "read", "arguments": "{not json"}, {"name": "fly_to_the_moon", "arguments": {}}]},
         {"text": "Sorry."},
     )
     agent, events, _ = make_agent(project)
@@ -229,3 +229,31 @@ def test_steer_with_no_turn(harness_home, project, fake_model):
     agent, _, _ = make_agent(project)
     assert agent.steer("s1", "hello") is False
     assert agent.user_steer == []
+
+
+def test_deepseek_reasoning_goes_back_to_the_model(harness_home, project, fake_model):
+    # DeepSeek thinking mode returns HTTP 400 when a request with tools has no reasoning of the earlier replies.
+    fake_model.script(
+        {"reasoning": "The user wants the file.", "tool_calls": [{"name": "read", "arguments": {"path": "hello.py"}}]},
+        {"text": "It defines greet()."},
+    )
+    agent, _, _ = make_agent(project)
+    provider, _ = resolve_model("fake/test-model")
+    agent.set_client(ModelClient(provider, "deepseek-v4-pro"))
+    agent.history.insert(0, {"role": "assistant", "content": "An older reply of another model."})
+    assert asyncio.run(agent.run_turn("read hello.py")) == "end"
+    sent = fake_model.requests[1]["messages"]
+    replies = [m for m in sent if m["role"] == "assistant"]
+    assert replies[0]["reasoning_content"] == ""  # The field is on each reply.
+    assert replies[1]["reasoning_content"] == "The user wants the file."
+
+
+def test_reasoning_stays_out_of_other_models(harness_home, project, fake_model):
+    fake_model.script(
+        {"reasoning": "Some thoughts.", "tool_calls": [{"name": "read", "arguments": {"path": "hello.py"}}]},
+        {"text": "Done."},
+    )
+    agent, _, _ = make_agent(project)
+    assert asyncio.run(agent.run_turn("read hello.py")) == "end"
+    assert agent.history[1]["reasoning_content"] == "Some thoughts."  # Kept, for a later DeepSeek model.
+    assert all("reasoning_content" not in m for m in fake_model.requests[1]["messages"])

@@ -6,14 +6,15 @@ import datetime
 import platform
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Collection
 
+from .model_prompts import PARALLEL_TOOL_CALLS, SMALL_MODEL_TOOL_CALLS, is_small_model, model_guidance
 from .tools import ToolContext
 
 if TYPE_CHECKING:
     from .skills import Skill
 
-BASE_PROMPT = """\
+BASE_PROMPT_TEMPLATE = """\
 You are a coding agent. You work in the project folder of the user. \
 You use tools to find files, read files, change files, and run commands.
 
@@ -32,11 +33,9 @@ The file tools give better results, and the user can review each call.
 - Use bash for commands that have no tool, such as git, package managers, tests, and builds.
 - Code in your reply does not change a file. Use the edit or write tool to make each change.
 - Do not guess a file path or a parameter value. Find it with a tool first.
+- A message that starts with [Harness: comes from the Harness, not from the user. Follow it.
 
-Parallel tool calls:
-- When tool calls do not depend on each other, make them all in one reply. \
-For example, read three files with three read calls in one reply.
-- Make the calls one at a time only when a call needs the result of an earlier call.
+{tool_calls}
 
 Finish the task:
 - Do the full task. When you write that you will do a step, make the tool call for it in the same reply.
@@ -45,6 +44,13 @@ After a code change, run the tests, the build, or the code when the project lets
 - Do not write that a test passed or a command worked unless the tool output shows it.
 - If you cannot check the change, tell the user what you did not check.
 - When the task is complete, stop. Give a short summary of the changes."""
+
+BASE_PROMPT = BASE_PROMPT_TEMPLATE.format(tool_calls=PARALLEL_TOOL_CALLS)
+
+
+def base_prompt(model: str) -> str:
+    """The base prompt. A small model gets one tool call for each reply, in place of parallel calls."""
+    return BASE_PROMPT_TEMPLATE.format(tool_calls=SMALL_MODEL_TOOL_CALLS if is_small_model(model) else PARALLEL_TOOL_CALLS)
 
 PREVIEW_PROMPT = """\
 # Preview
@@ -119,9 +125,10 @@ def build_system_prompt(
     skills: "list[Skill] | None" = None,
     plugin_sections: list[str] | None = None,
     user_facing: bool = True,
+    tool_names: "Collection[str] | None" = None,
 ) -> str:
     return "\n\n".join(text for _kind, text in system_prompt_parts(ctx, model, instructions, summary, skills,
-                                                                  plugin_sections, user_facing))
+                                                                  plugin_sections, user_facing, tool_names))
 
 
 def system_prompt_parts(
@@ -132,13 +139,15 @@ def system_prompt_parts(
     skills: "list[Skill] | None" = None,
     plugin_sections: list[str] | None = None,
     user_facing: bool = True,
+    tool_names: "Collection[str] | None" = None,
 ) -> list[tuple[str, str]]:
     """The parts of the system prompt, with their kind: system, instructions, skills, plugins, or summary.
 
     The context breakdown of the client shows the size of each kind. ``user_facing`` False (a subagent)
     removes the agent instructions of the user: the agent that made the subagent tells it how to act.
+    ``tool_names``: the tools of the agent. The model guidance leaves out the lines about missing tools.
     """
-    parts: list[tuple[str, str]] = [("system", BASE_PROMPT), ("system", "\n".join([
+    parts: list[tuple[str, str]] = [("system", base_prompt(model)), ("system", "\n".join([
         "Environment:",
         f"- Project folder: {ctx.cwd}",
         f"- Operating system: {platform.system()} {platform.release()}",
@@ -146,6 +155,7 @@ def system_prompt_parts(
         f"- Date: {datetime.date.today().isoformat()}",
         f"- Model: {model}",
     ]))]
+    parts += [("system", text) for text in model_guidance(model, tool_names)]
     personal = user_instructions(ctx.settings) if user_facing else None
     if personal:
         parts.append(("instructions", personal))

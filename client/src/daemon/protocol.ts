@@ -22,7 +22,8 @@ export interface HistoryToolCall {
 export type HistoryMessage =
   // ts: epoch seconds. display: the text that the user typed, for example "/review src".
   // origin "task": the notes of background tasks, not a message of the user.
-  | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task"; images?: string[] } // images: pasted images (data URLs).
+  // origin "harness": a note of the loop guards to the model. The chat does not show it.
+  | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task" | "harness"; images?: string[] } // images: pasted images (data URLs).
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   // created: the new PDF and Word files of the call. The chat shows a card with "Open" for each one.

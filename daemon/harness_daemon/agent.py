@@ -32,6 +32,9 @@ from .permissions import Approver, PermissionGate
 from .plugins.host import (
     Hooks, PluginHost, RequestErrorEvent, RequestEvent, StepEvent, StreamEvent, ToolCall, TurnEvent, TurnStoppingEvent,
 )
+from .loop_guards import (
+    MAX_STALL_NUDGES, STALL_NOTICE, STALL_NUDGE, is_stall, repair_tool_name, repaired_note, repeat_key, repeat_note,
+)
 from .prompt import build_system_prompt, load_project_instructions, system_prompt_parts
 from .providers import DEFAULT_CONTEXT_LENGTH, ModelClient, ModelError, resolve_model
 from .skills import Skill, render_skill
@@ -177,6 +180,13 @@ class Agent:
         self.on_checkpoint: OnCheckpoint | None = None  # The session stores the checkpoints.
         self._step_contexts: list[str] = []  # tool.after contexts: user messages after the tool results.
         self._cancel_turn = False  # A tool.before handler cancelled a call: the turn stops.
+        self._repeat_counts: dict[str, int] = {}  # Identical calls with identical results in this turn.
+        # The system prompt stays the same in a session, so the prompt cache of the endpoint stays valid.
+        # Plan mode and memory changes go to the model as harness notes in the conversation.
+        self._told_plan = False  # True: the last plan mode note told the model that plan mode is on.
+        self._memory_text: str | None = None  # The memory of the system prompt: a snapshot.
+        self._memory_loaded = False  # False: the next prompt build reads the memory again.
+        self._harness_notes: list[str] = []  # Notes for the next step of a turn.
         self._rebuild_prompt()
 
     def _plugin_sections(self) -> list[str]:
@@ -185,12 +195,10 @@ class Agent:
     def _rebuild_prompt(self) -> None:
         self.system_prompt = build_system_prompt(
             self.ctx, self.client.label, self.instructions, self.summary, list(self.skills.values()),
-            self._plugin_sections(), user_facing=self.user_facing)
-        if self.settings.get("permission_mode") == "plan":
-            self.system_prompt += PLAN_MODE_NOTE
+            self._plugin_sections(), user_facing=self.user_facing, tool_names=list(self.tools))
         if self.role_prompt:
             self.system_prompt += "\n\n" + self.role_prompt  # The prompt of the agent type of a subagent.
-        memory = self._memory_prompt()
+        memory = self._memory_snapshot()
         if memory:
             self.system_prompt += "\n\n" + memory
         self._known_tokens = None
@@ -246,9 +254,22 @@ class Agent:
             self.tools[MemoryTool.name] = MemoryTool(self.memory)
         self._known_tokens = None
 
+    def _memory_snapshot(self) -> str | None:
+        """The memory for the system prompt. It is read one time, and again after a compaction or a clear.
+        The memory tool changes the files during the session: the model knows these changes already."""
+        if not self._memory_on():
+            self._memory_text, self._memory_loaded = None, False
+            return None
+        if not self._memory_loaded:
+            self._memory_text, self._memory_loaded = self._memory_prompt(), True
+        return self._memory_text
+
     def memory_changed(self) -> None:
-        """The user changed the memory in Settings: the prompt shows the new index."""
-        self._rebuild_prompt()
+        """The user changed the memory in Settings. The next turn gives the new memory in a note.
+        The system prompt keeps the snapshot until the next compaction."""
+        memory = self._memory_prompt() if self._memory_on() else None
+        if memory != self._memory_text:
+            self._harness_notes.append(MEMORY_NOTE.format(memory=memory) if memory else MEMORY_OFF_NOTE)
 
     def enable_chat_search(self, search: Callable[[str, int], list[dict[str, Any]]]) -> None:
         """The session gives the search of its past sessions. Only the agent that the user talks to gets it."""
@@ -264,9 +285,10 @@ class Agent:
         self._known_tokens = None
 
     def _sync_plan_tool(self) -> None:
-        """exit_plan_mode is only in plan mode, and only for the agent that the user talks to."""
+        """exit_plan_mode is only for the agent that the user talks to. It stays in the tool list in each
+        mode, so that the tool list (a part of the prompt cache) does not change with the mode."""
         self.tools.pop(ExitPlanModeTool.name, None)
-        if self.user_facing and self.settings.get("permission_mode") == "plan":
+        if self.user_facing:
             self.tools[ExitPlanModeTool.name] = ExitPlanModeTool()
         self._known_tokens = None
 
@@ -343,6 +365,8 @@ class Agent:
 
     def reload_settings(self, settings: dict[str, Any]) -> None:
         """Use changed settings, for example "auto_verify" from the client."""
+        if settings.get("memory_sensitive") != self.settings.get("memory_sensitive"):
+            self._memory_loaded = False  # The memory part of the prompt has other rules now.
         self.settings.clear()
         self.settings.update(settings)
         self._sync_agent_tool()
@@ -356,6 +380,8 @@ class Agent:
         """Start a new context: no history and no summary."""
         self.history.clear()
         self.summary = None
+        self._memory_loaded = False
+        self._told_plan = False
         self._rebuild_prompt()
 
     def context_tokens(self) -> int:
@@ -379,9 +405,7 @@ class Agent:
                                               list(self.skills.values()), self._plugin_sections(),
                                               user_facing=self.user_facing):
             sizes[kind] += text_tokens(text)
-        if self.settings.get("permission_mode") == "plan":
-            sizes["system"] += text_tokens(PLAN_MODE_NOTE)
-        memory = self._memory_prompt()
+        memory = self._memory_snapshot()
         if memory:
             sizes["instructions"] += text_tokens(memory)
         schemas = self.tool_schemas()
@@ -421,12 +445,24 @@ class Agent:
         Older images stay in the history for the client only, to save context.
         """
         image_at = self._current_image() if self.image_input else None
+        replay = getattr(self.client, "replays_reasoning", False)
         history: list[dict[str, Any]] = []
         for i, m in enumerate(self.history):
             clean = ({k: v for k, v in m.items() if k not in CLIENT_ONLY_FIELDS}
                      if any(k in m for k in CLIENT_ONLY_FIELDS) else m)
+            if m.get("role") == "assistant":
+                if replay and "reasoning_content" not in clean:
+                    # DeepSeek needs the field on each reply. A reply of another model has no reasoning.
+                    clean = {**clean, "reasoning_content": ""}
+                elif not replay and "reasoning_content" in clean:
+                    clean = {k: v for k, v in clean.items() if k != "reasoning_content"}
             if m.get("role") == "user" and m.get("images"):
                 clean = self._with_images(clean, m["images"])
+            if (m.get("origin") == "harness" and history and history[-1].get("role") == "user"
+                    and isinstance(history[-1].get("content"), str) and isinstance(clean.get("content"), str)):
+                # One user message: some chat templates reject two user messages in sequence.
+                history[-1] = {**history[-1], "content": history[-1]["content"] + "\n\n" + clean["content"]}
+                continue
             history.append(clean)
             last_result = i + 1 == len(self.history) or self.history[i + 1].get("role") != "tool"
             if image_at is not None and i >= image_at and last_result:
@@ -524,7 +560,9 @@ class Agent:
         new_messages = [message]  # The new user messages of the next step, for step.before.
         self.in_turn = True
         self._cancel_turn = False
-        usage = {"prompt_tokens": 0, "completion_tokens": 0, "last_prompt_tokens": 0}
+        self._repeat_counts = {}
+        stall_nudges = 0  # The times that the turn continued after a reply with a plan and no tool call.
+        usage ={"prompt_tokens": 0, "completion_tokens": 0, "last_prompt_tokens": 0}
         max_calls = int(self.settings["max_tool_calls"])
         calls_used = 0
         streamed: list[str] = []
@@ -544,6 +582,7 @@ class Agent:
                 streamed.clear()
                 step += 1
                 new_messages += await self._take_user_steer()
+                new_messages += [self._add_harness_note(t) for t in self._step_notes(step)]
                 if self.hooks.has("step.before"):
                     event = await self.hooks.emit("step.before", StepEvent(
                         turn, step, [str(m.get("content") or "") for m in new_messages], self.cwd))
@@ -567,6 +606,8 @@ class Agent:
 
                 response.tool_calls = self._unique_ids(response.tool_calls)
                 message: dict[str, Any] = {"role": "assistant", "content": response.text or None}
+                if response.reasoning:
+                    message["reasoning_content"] = response.reasoning
                 if response.tool_calls:
                     message["tool_calls"] = [
                         {"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["arguments"]}}
@@ -580,6 +621,12 @@ class Agent:
                 if not response.tool_calls:
                     if self.user_steer:
                         continue  # The user steered the turn during this step: the model reads the message.
+                    # A reply that says what the model will do now, with no tool call: ask it to do the step.
+                    if self.tools and stall_nudges < MAX_STALL_NUDGES and is_stall(response.text):
+                        stall_nudges += 1
+                        new_messages = [self._add_harness_note(STALL_NUDGE)]
+                        await self.emit({"type": "notice", "level": "info", "text": STALL_NOTICE})
+                        continue
                     # turn.stopping handlers can add messages: then the turn continues.
                     if self.hooks.has("turn.stopping") and continuations < MAX_STEER_CONTINUATIONS:
                         stopping = await self.hooks.emit("turn.stopping", TurnStoppingEvent(turn, self.cwd))
@@ -762,6 +809,32 @@ class Agent:
         self.history.append(message)
         asyncio.ensure_future(self.emit({"type": "notice", "level": "info", "text": f"A plugin added a message: {text}"}))
         return message
+
+    def _step_notes(self, step: int) -> list[str]:
+        """The harness notes for the next step: plan mode (at the start of each turn in plan mode, and
+        when the mode changes) and the notes that wait, for example a memory change."""
+        notes, self._harness_notes = self._harness_notes, []
+        plan = self.settings.get("permission_mode") == "plan"
+        if plan and (step == 1 or not self._told_plan):
+            notes.insert(0, PLAN_ON_NOTE)
+        elif not plan and self._told_plan:
+            notes.insert(0, PLAN_OFF_NOTE)
+        self._told_plan = plan
+        return notes
+
+    def _add_harness_note(self, text: str) -> dict[str, Any]:
+        """Add a user message from the loop guards. The client does not show it in the chat."""
+        message = {"role": "user", "content": text, "origin": "harness"}
+        self.history.append(message)
+        return message
+
+    def _rename_call(self, call_id: str, name: str) -> None:
+        """Put the repaired tool name in the history, for servers that check the names."""
+        for m in reversed(self.history):
+            for call in m.get("tool_calls") or []:
+                if call["id"] == call_id:
+                    call["function"]["name"] = name
+                    return
 
     def _replace_new_messages(self, messages: list[dict[str, Any]], texts: list[str]) -> None:
         """Use the new user messages that step.before handlers returned."""
@@ -974,6 +1047,7 @@ class Agent:
                 removed = len(old)
                 self.history = [m for turn in turns[-keep:] for m in turn]
                 self.summary = summary
+                self._memory_loaded = False  # A new prompt cache starts here: the memory can be new.
                 self._rebuild_prompt()
                 if self.on_compact:
                     self.on_compact(removed, summary)
@@ -1030,7 +1104,10 @@ class Agent:
         open_calls.clear()
 
     async def _run_tool_call(self, call: dict[str, str]) -> ToolResult:
-        call_id, name = call["id"], call["name"]
+        call_id, called = call["id"], call["name"]
+        name = repair_tool_name(called, self.tools) or called  # For example "Bash" or "read_file".
+        if name != called:
+            self._rename_call(call_id, name)
         args, parse_error = _parse_arguments(call["arguments"])
         await self.emit({"type": "tool.start", "id": call_id, "name": name, "input": args if args is not None else call["arguments"]})
 
@@ -1041,6 +1118,14 @@ class Agent:
             result.output = truncate(result.output, int(self.settings["max_output_chars"]))
             if snapshot is not None:
                 result.created = await asyncio.to_thread(created_files, self.cwd, snapshot, result.changed_paths)
+            key = repeat_key(name, args, result.output)
+            self._repeat_counts[key] = self._repeat_counts.get(key, 0) + 1
+            notes = [repaired_note(called, name)] if name != called else []
+            repeat = repeat_note(name, self._repeat_counts[key])
+            if repeat:
+                notes.append(repeat)
+            if notes:
+                result.output = "\n\n".join([result.output, *notes]) if result.output else "\n\n".join(notes)
         event = {"type": "tool.result", "id": call_id, "output": result.output, "is_error": result.is_error}
         if result.diff:
             event["diff"] = result.diff
@@ -1133,12 +1218,15 @@ def user_message(text: str, display: str | None, message_id: str | None,
     message["ts"] = time.time()
     return message
 
-PLAN_MODE_NOTE = """
-
-Plan mode is on. Do not change files. Read and search the project, and ask the user with
-ask_user_question if a choice is not clear. Then call exit_plan_mode with the plan: the steps, and
-the files that each step changes. The user accepts the plan (then you start the work), asks for
-changes, or rejects it."""
+PLAN_ON_NOTE = (
+    "[Harness: Plan mode is on. Do not change files. Read and search the project, and ask the user with "
+    "ask_user_question if a choice is not clear. Then call exit_plan_mode with the plan: the steps, and "
+    "the files that each step changes. The user accepts the plan (then you start the work), asks for "
+    "changes, or rejects it.]")
+PLAN_OFF_NOTE = "[Harness: Plan mode is off. You can change files again. Stay in the scope of the request.]"
+MEMORY_NOTE = ("[Harness: The user changed the memory in Settings. This memory replaces the memory in the "
+               "system prompt.]\n\n{memory}")
+MEMORY_OFF_NOTE = "[Harness: The user turned off or cleared the memory. Do not use the memory in the system prompt.]"
 
 
 def _parse_arguments(raw: str) -> tuple[dict[str, Any] | None, str | None]:

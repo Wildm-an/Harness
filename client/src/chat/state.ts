@@ -167,6 +167,7 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const msg of history) {
     if (msg.role === "user") {
+      if (msg.origin === "harness") continue; // A note of the loop guards to the model, not a message of the user.
       items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined, origin: msg.origin, images: msg.images });
     } else if (msg.role === "assistant") {
       if (msg.content) items.push({ kind: "assistant", id: nextId("assistant"), text: msg.content, streaming: false });

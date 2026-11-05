@@ -20,10 +20,19 @@ MODES = ("files", "content", "count")
 class GrepTool(Tool):
     name = "grep"
     description = (
-        "Search the content of files with a regular expression. "
-        "output=files (default) lists the files that match. "
-        "output=content shows the matching lines as path:line:text. "
-        "output=count shows the number of matching lines in each file."
+        "Search the content of files with a regular expression.\n\n"
+        "Output modes:\n"
+        "- output=files (default) lists the files that match.\n"
+        "- output=content shows the matching lines as path:line:text. Add context to see lines around each match.\n"
+        "- output=count shows the number of matching lines in each file.\n\n"
+        "Usage notes:\n"
+        "- Use it in place of grep, rg, findstr, or Select-String in bash.\n"
+        "- The pattern is a regular expression. Escape special characters, for example "
+        "interface\\{\\} or foo\\(.\n"
+        "- Use glob to limit the search, for example *.py. To find files by name, use the glob tool.\n"
+        f"- It shows at most {MAX_FILES} files or {MAX_LINES} lines. If there are more, use a narrower "
+        "pattern, path, or glob.\n"
+        "- After you find a match, use read to see the code around it."
     )
     parameters = {
         "type": "object",

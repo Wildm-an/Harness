@@ -534,6 +534,7 @@ class ModelResponse:
     tool_calls: list[dict[str, str]] = field(default_factory=list)
     usage: dict[str, int] | None = None
     finish_reason: str | None = None
+    reasoning: str | None = None  # The reasoning_content of the reply (DeepSeek thinking mode).
 
 
 OnText = Callable[[str], Awaitable[None]]
@@ -581,6 +582,15 @@ class ModelClient:
     def label(self) -> str:
         return f"{self.provider.name}/{self.model}"
 
+    @property
+    def replays_reasoning(self) -> bool:
+        """True: the history sends the reasoning_content of each reply back to the model.
+
+        DeepSeek in thinking mode needs the reasoning of each earlier reply when the request has
+        tools, or the API returns HTTP 400. Other servers can reject the unknown field.
+        """
+        return "deepseek" in (self.provider.base_url or "").lower() or "deepseek" in self.model.lower()
+
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
                      _retry_tunnel: bool = True, options: dict[str, Any] | None = None) -> ModelResponse:
         """Stream one completion. ``options``: ``temperature``, ``max_tokens``, and ``stop``, from plugins."""
@@ -614,6 +624,7 @@ class ModelClient:
             raise ModelError(f"The model endpoint returned HTTP {e.status_code}: {e.message}") from e
 
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
         slots: dict[int, dict[str, str]] = {}
         index_map: dict[int, int] = {}
         usage: dict[str, int] | None = None
@@ -628,6 +639,9 @@ class ModelClient:
                     delta = choice.delta
                     if delta is None:
                         continue
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if isinstance(reasoning, str) and reasoning:
+                        reasoning_parts.append(reasoning)
                     if delta.content:
                         text_parts.append(delta.content)
                         await on_text(delta.content)
@@ -648,7 +662,7 @@ class ModelClient:
                 "name": slot["name"],
                 "arguments": slot["arguments"],
             })
-        return ModelResponse("".join(text_parts), calls, usage, finish)
+        return ModelResponse("".join(text_parts), calls, usage, finish, "".join(reasoning_parts) or None)
 
 
 def _merge_tool_call_delta(slots: dict[int, dict[str, str]], index_map: dict[int, int], tc: Any) -> None:

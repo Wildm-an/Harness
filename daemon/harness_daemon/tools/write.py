@@ -11,8 +11,12 @@ from .edit import unified_diff
 class WriteTool(Tool):
     name = "write"
     description = (
-        "Create a file, or replace all the content of a file. The folders are created if necessary. "
-        "To change part of an existing file, use the edit tool."
+        "Create a file, or replace all the content of a file. The folders are created if necessary.\n\n"
+        "Usage notes:\n"
+        "- To change part of an existing file, use edit. Edit is safer, and the diff is smaller.\n"
+        "- Before you replace an existing file, read it.\n"
+        "- Do not create documentation or README files unless the user asks for them.\n"
+        "- Do not use bash with echo or a redirect (>) to create a file. Use this tool."
     )
     parameters = {
         "type": "object",

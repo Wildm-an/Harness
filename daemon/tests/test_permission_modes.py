@@ -89,8 +89,11 @@ def test_modes_through_the_daemon(daemon, project, fake_model):  # noqa: F811
     assert result["is_error"] and result["output"] == PLAN_BLOCK
     assert not any(e["type"] == "permission.request" for e in events)
     assert "'hello'" in (project / "hello.py").read_text()
-    # The system prompt tells the model about plan mode.
-    assert "Plan mode is on" in fake_model.requests[-1]["messages"][0]["content"]
+    # A note on the user message tells the model about plan mode. The system prompt does not change.
+    sent = fake_model.requests[-1]["messages"]
+    assert "Plan mode is on" not in sent[0]["content"]
+    prompt = next(m for m in sent if m["role"] == "user")
+    assert prompt["content"].startswith("Change the greeting\n\n[Harness: Plan mode is on.")
 
     c.send({"type": "settings.set", "permission_mode": "yolo"})
     assert "must be one of" in c.until("error")[0]["message"]

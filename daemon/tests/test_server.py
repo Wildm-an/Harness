@@ -922,7 +922,9 @@ def test_plan_approval_changes_the_mode_and_starts_the_work(daemon, project, fak
     c.until("turn.end")
     assert "'hey'" in (project / "hello.py").read_text()  # acceptEdits: the edit ran with no question.
     assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "acceptEdits"
-    assert "exit_plan_mode" not in [t["function"]["name"] for t in fake_model.requests[-1]["tools"]]
+    # The tool list stays the same in each mode. A note tells the model that plan mode is off.
+    assert "exit_plan_mode" in [t["function"]["name"] for t in fake_model.requests[-1]["tools"]]
+    assert any("Plan mode is off" in str(m.get("content")) for m in fake_model.requests[-2]["messages"])
     c.close()
 
 

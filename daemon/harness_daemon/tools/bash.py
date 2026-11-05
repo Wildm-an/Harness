@@ -30,11 +30,37 @@ class BashTool(Tool):
     needs_approval = True
 
     def describe(self, ctx: ToolContext) -> str:
-        return (
-            f"Run a command with {ctx.shell.name} in the project folder. "
-            f"The default timeout is {ctx.settings['bash_timeout']} seconds. "
-            "Do not run commands that wait for input. Do not start servers that do not stop."
-        )
+        shell = ctx.shell.name
+        lines = [
+            f"Run a command with {shell} in the project folder. Each call starts a new shell in the project "
+            "folder, so a cd does not stay for the next call.",
+            "",
+            "Use it for commands that have no tool: git, package managers, tests, builds, and scripts.",
+            "",
+            "Do not use it for these jobs. Use the tool instead:",
+            "- Read a file: use read, not cat, head, tail, or Get-Content.",
+            "- Find files by name: use glob, not find, ls, or dir.",
+            "- Find text in files: use grep, not grep, rg, findstr, or Select-String.",
+            "- Change a file: use edit or write, not sed, awk, echo, or a redirect (>).",
+            "- Talk to the user: write text in your reply, not echo.",
+            "",
+            "Usage notes:",
+            f"- The default timeout is {ctx.settings['bash_timeout']} seconds, and the maximum is "
+            f"{ctx.settings['bash_max_timeout']} seconds. For a long build, test run, or watcher, set "
+            "run_in_background and read the output later with task_output.",
+            "- Do not run commands that wait for input. Use flags such as --yes or -y.",
+            "- Do not start servers that do not stop, unless you use run_in_background.",
+            "- Long output is cut, and the end is kept. Errors are usually at the end.",
+            "- When commands do not depend on each other, make several bash calls in one reply.",
+            "- Put quotes around paths that have spaces.",
+            "- Before you delete or move files, check the paths.",
+            "- Read the exit code and the output before you say that a command worked.",
+        ]
+        if shell == "powershell":
+            lines.append("- This is Windows PowerShell 5.1: && and || do not work. Use ; to run commands in sequence.")
+        elif shell == "cmd":
+            lines.append("- This is cmd.exe: use cmd syntax, not POSIX shell syntax.")
+        return "\n".join(lines)
 
     def _command(self, args: dict[str, Any]) -> str:
         command = args.get("command")

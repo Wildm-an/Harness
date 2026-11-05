@@ -25,7 +25,12 @@ class GlobTool(Tool):
     name = "glob"
     description = (
         "Find files by a name pattern, for example **/*.py or src/**/*.ts. "
-        "A pattern with no / matches the file name in each folder. The newest files come first."
+        "A pattern with no / matches the file name in each folder. The newest files come first.\n\n"
+        "Usage notes:\n"
+        f"- It shows at most {MAX_RESULTS} files. If there are more, use a narrower pattern.\n"
+        "- To find text in files, use grep.\n"
+        "- Use it in place of find, ls, or dir in bash.\n"
+        "- When you need several patterns, make several glob calls in one reply."
     )
     parameters = {
         "type": "object",

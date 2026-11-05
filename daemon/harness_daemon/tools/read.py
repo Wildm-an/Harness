@@ -53,8 +53,11 @@ def _image_result(path: Path, image_input: bool, shown: str) -> ToolResult:
 class ReadTool(Tool):
     name = "read"
     description = (
-        "Read a text file. The result shows each line with its line number. "
+        "Read a text file. The result shows each line as the line number, a tab, and the text. "
+        "The line number and the tab are not part of the file. "
         "For a large file, use offset and limit to read one part. "
+        "Use it in place of cat, head, tail, or Get-Content in bash. "
+        "When you need several files, read them all in one reply with several read calls. "
         "It also reads PDF, Word (.docx), PowerPoint (.pptx), and Excel (.xlsx) files as text with "
         "numbered parts: paragraphs [P1], table cells, slides and shapes [2.1], and cells such as B4. "
         "Use office_edit to change a Word, PowerPoint, or Excel file. "

@@ -132,6 +132,9 @@ def _chunk(delta: dict[str, Any], finish: str | None = None) -> str:
 
 async def _sse(reply: dict[str, Any]):
     yield _chunk({"role": "assistant", "content": ""})
+    reasoning = reply.get("reasoning") or ""  # The reasoning_content of DeepSeek thinking mode.
+    for i in range(0, len(reasoning), 5):
+        yield _chunk({"reasoning_content": reasoning[i:i + 5]})
     text = reply.get("text") or ""
     for i in range(0, len(text), 5):
         yield _chunk({"content": text[i:i + 5]})

@@ -133,7 +133,8 @@ class ExitPlanModeTool(Tool):
         "In plan mode, give the user your plan for approval when it is complete. The plan is Markdown: "
         "the steps, and the files that each step changes. The user accepts it (the mode changes and you "
         "start the work), asks for changes (you get the feedback and stay in plan mode), or rejects it. "
-        "Use it only to plan a task that changes files, not after research only."
+        "Use it only to plan a task that changes files, not after research only. "
+        "When plan mode is off, do not call it."
     )
     parameters = {
         "type": "object",
