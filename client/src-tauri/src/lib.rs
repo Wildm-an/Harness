@@ -121,6 +121,17 @@ async fn browser_screenshot(app: AppHandle, id: String, path: String) -> Result<
     std::fs::write(&path, bytes).map_err(|e| format!("Cannot save the screenshot: {e}"))
 }
 
+/// Saves a file that the app got from the daemon to ``path`` (from the save dialog), for example
+/// "Export memory". ``data`` is base64.
+#[tauri::command]
+async fn save_file(path: String, data: String) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| format!("The file data is not valid: {e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("Cannot save the file: {e}"))
+}
+
 /// A PNG screenshot of the visible part of a tab, as a data URL: the annotation bar puts it in the prompt.
 #[tauri::command]
 async fn browser_capture(app: AppHandle, id: String) -> Result<String, String> {
@@ -302,7 +313,8 @@ pub fn run() {
             browser_close,
             browser_close_all,
             browser_screenshot,
-            browser_capture
+            browser_capture,
+            save_file
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");

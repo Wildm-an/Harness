@@ -1,9 +1,10 @@
 // The Settings dialog (Ctrl+,), as in the DeepSeek Harness and Claude apps: a list of pages on the
-// left, and the page on the right. General and Appearance are here. Local Models, Providers, and
+// left, and the page on the right. General and Appearance are here. Your Harness (the agent
+// instructions and the memory) is in YourHarnessSettings.tsx. Local Models, Providers, and
 // Computers are the screens that the sidebar opened before. Plugins are on the Capabilities page.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 import type { PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
 import type { WebKeyProvider } from "../lib/providerKeys";
 import { useOverlay } from "../lib/overlay";
@@ -55,10 +56,11 @@ import { useLinksInPane } from "../lib/openLink";
 import { compareVersions } from "../lib/version";
 import { availableVersion, checkAtStart, checkForUpdate, installUpdate, setCheckAtStart, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "appearance" | "models" | "connections" | "computers" | "changelog";
+export type SettingsPage = "general" | "harness" | "appearance" | "models" | "connections" | "computers" | "changelog";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
+  { id: "harness", label: "Your Harness", icon: UserRound },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "connections", label: "Providers", icon: Cable },
@@ -180,7 +182,7 @@ export function SettingsDialog({
  * One setting: the name and the help text on the left, the control on the right. A child row
  * (docs/UI_RULES.md R2) is indented. ``title`` is the tooltip of a locked row (R5).
  */
-function Row({ label, help, htmlFor, child, title, children }: {
+export function Row({ label, help, htmlFor, child, title, children }: {
   label: string;
   help?: string;
   htmlFor?: string;
@@ -199,7 +201,7 @@ function Row({ label, help, htmlFor, child, title, children }: {
   );
 }
 
-function Switch({ checked, label, disabled, onChange }: { checked: boolean; label: string; disabled?: boolean; onChange: (on: boolean) => void }) {
+export function Switch({ checked, label, disabled, onChange }: { checked: boolean; label: string; disabled?: boolean; onChange: (on: boolean) => void }) {
   return (
     <button
       type="button"
@@ -697,10 +699,6 @@ export function GeneralSettings({
         <Switch checked={values?.subagents !== false} label="Subagents" disabled={off} onChange={(on) => set({ subagents: on })} />
       </Row>
 
-      <Row label="Auto memory" help="The agent keeps notes about you and the project between sessions. /memory lists them.">
-        <Switch checked={values?.auto_memory !== false} label="Auto memory" disabled={off} onChange={(on) => set({ auto_memory: on })} />
-      </Row>
-
       <Row label="Check the app after UI changes" help="The agent opens the preview and checks each change to the UI.">
         <Switch checked={values?.auto_verify ?? false} label="Check the app after UI changes" disabled={off} onChange={(on) => set({ auto_verify: on })} />
       </Row>
@@ -732,26 +730,6 @@ export function GeneralSettings({
       <Row label="Terminal shell" help="The shell of the terminal pane. Empty: the default shell." htmlFor="setting-shell">
         <TextField id="setting-shell" value={values?.terminal_shell ?? ""} placeholder="pwsh.exe" disabled={off} onSave={(v) => set({ terminal_shell: v || null })} />
       </Row>
-
-      <h3 className="settings-section">Agent instructions</h3>
-      <p className="help settings-note">
-        The agent that you talk to follows these instructions in all projects. A subagent does not get them: its agent tells it how to act. A HARNESS.md or CLAUDE.md file can change them for one project. A change applies at the next turn.
-      </p>
-      {INSTRUCTION_FIELDS.map(([key, label, help, placeholder]) => (
-        <div key={key} className="setting-block">
-          <label className="setting-label" htmlFor={`setting-${key}`}>
-            {label}
-          </label>
-          <span className="setting-help">{help}</span>
-          <TextAreaField
-            id={`setting-${key}`}
-            value={values?.[key] ?? ""}
-            placeholder={placeholder}
-            disabled={off}
-            onSave={(v) => set({ [key]: v || null })}
-          />
-        </div>
-      ))}
 
       <h3 className="settings-section">Web</h3>
       <Row label="Web search" help="The search provider of the agent. Off: the agent cannot search the web, but it can fetch pages." htmlFor="setting-web-search">
@@ -982,7 +960,7 @@ export const INSTRUCTION_FIELDS: [InstructionKey, string, string, string][] = [
 export const INSTRUCTION_MAX = 10_000; // The daemon limit, in characters.
 
 /** A multi-line text field. It saves when the focus leaves it, or on Ctrl+Enter. */
-function TextAreaField({ id, value, placeholder, disabled, onSave }: {
+export function TextAreaField({ id, value, placeholder, disabled, onSave }: {
   id: string;
   value: string;
   placeholder?: string;

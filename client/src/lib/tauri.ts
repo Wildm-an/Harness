@@ -49,6 +49,28 @@ export async function pickSavePath(defaultPath: string, filters: { name: string;
   return (await save({ defaultPath, filters })) ?? null;
 }
 
+/**
+ * Asks where to save a file, and saves it. ``data`` is base64. Returns the path, or null if the user
+ * cancels. In a normal browser, the browser downloads the file.
+ */
+export async function saveBase64File(name: string, data: string, filter: { name: string; extensions: string[] }): Promise<string | null> {
+  if (!isTauri()) {
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes]));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return name;
+  }
+  const path = await pickSavePath(name, [filter]);
+  if (!path) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("save_file", { path, data });
+  return path;
+}
+
 /** Shows a folder or a file in Explorer (Finder on macOS). Only for the daemon on this computer. */
 export async function revealInExplorer(path: string): Promise<void> {
   const { revealItemInDir } = await import("@tauri-apps/plugin-opener");

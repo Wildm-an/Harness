@@ -24,6 +24,9 @@ class Session:
         self._saved = len(agent.history)  # The number of history messages in storage.
         agent.on_compact = self.on_compact
         agent.on_checkpoint = lambda message_id, path, content: storage.add_checkpoint(self.id, message_id, path, content)
+        # "Search and reference chats": the agent can search the other sessions of the project.
+        agent.enable_chat_search(lambda query, limit: storage.search_chats(
+            str(self.project_dir), query, exclude=self.id, limit=limit))
 
     @property
     def cwd(self):

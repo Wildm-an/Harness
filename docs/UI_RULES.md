@@ -401,6 +401,15 @@ Notes:
 
   Harness now has "Appearance" as its own page after "General". The page holds the "Appearance" rows and the "Code appearance" rows. When Settings changes to the groups in G2, move these rows into the Claude Code page.
 
+- **G4.** Harness has a "Your Harness" page after "General" (the user asked for it, `YourHarnessSettings.tsx`). It has two sections: "Agent instructions" and "Memory". The Memory rows use the labels of the claude.ai Settings > Memory page, in this order:
+  1. "Search and reference chats" (switch, default on). The agent gets the `conversation_search` tool. It searches the past sessions of the same project.
+  2. "Generate memory from chats" (switch, default on). This is the auto memory switch.
+  3. "Include sensitive topics in memory" (switch, default off). It is locked while "Generate memory from chats" is off.
+  4. "Project" (select). Each project has its own memory, so the next three rows apply to the selected project. The default is the project of the open session, else the last project.
+  5. "Your memory" with "Manage". The view lists the memories with their type, and has "Add memory". A click on a row opens its editor: "Name", "Type", "Description", "Content", "Delete…", "Cancel", "Save". "Your Harness" goes back.
+  6. "Import memory from other AI providers" with "Start import". The view shows the prompt with "Copy prompt", a field for the reply, "Preview", the facts with checkboxes, and "Import {n} memories". After the import, the Manage view opens.
+  7. "Export memory" with "Export". The app asks where to save the `.zip` of the Markdown files.
+
 ### 9.3 Setting map
 
 | Option | Claude location and label | Control | Harness now |
@@ -433,9 +442,12 @@ Notes:
 | Keyboard shortcuts | Help > "Keyboard Shortcuts" (Ctrl+/), a dialog | dialog | General table |
 | Preferred providers | not in Claude | switch "Preferred providers" (the user asked for this name, it was "Choose the model by network"), then "Default model" and "Local model" lists | Providers page, at the top (the user asked for this). On: a new session with "Default model" uses the default model when its provider answers (a 1.5 s connection check of the daemon), else the local model, with a warning in the chat. An old session whose model is not available switches to that model when it opens (C17b). Off: the model is manual. The lists are off while the switch is off. The local list has only the models of providers on this computer. |
 | Web search | not a Claude setting (Claude Code has its own search) | select "Web search": "DuckDuckGo (no key)" (default), "Brave Search", "Tavily", "SearXNG", "Off", then "API key" (Brave, Tavily: in the keychain) or "SearXNG URL" | General > Web. Off removes `web_search`. `web_fetch` stays. |
-| Auto memory | Claude Code: auto memory | switch, default on | General > The agent > "Auto memory". Off removes the memory tool and the memory part of the prompt. `/memory` lists the memories. |
+| Auto memory | Claude Code: auto memory; claude.ai Memory: "Generate memory from chats" | switch, default on | Your Harness > Memory > "Generate memory from chats" (G4). Off removes the memory tool and the memory part of the prompt. `/memory` lists the memories. |
+| Chat search | claude.ai Memory: "Search and reference chats" | switch, default on | Your Harness > Memory (G4). Off removes `conversation_search`. |
+| Sensitive memory | claude.ai Memory: "Include sensitive topics in memory" | switch, default off | Your Harness > Memory (G4). Off adds a rule to the memory prompt: save sensitive topics only when the user asks. |
+| Manage, import, export memory | claude.ai Memory: "Your memory" (Manage), "Import memory from other AI providers" (Start import), "Export memory" (Export) | buttons | Your Harness > Memory (G4), for the selected project |
 | Subagents | Claude has "Dynamic workflows" ("Let Claude run several agents at once on complex tasks. Uses your limit faster.") | switch, default on | General > The agent > "Subagents". Off removes the agent tool. Harness has no workflows: the switch is for subagents (the user asked for it). |
-| Agent instructions | not in the Code tab (claude.ai has "personal preferences") | four text areas: "How to think", "How to do research", "How to speak", "Other instructions" | General > Agent instructions (the user asked for this location). Only the session agent gets them, not a subagent. |
+| Agent instructions | not in the Code tab (claude.ai has "personal preferences") | four text areas: "How to think", "How to do research", "How to speak", "Other instructions" | Your Harness > Agent instructions (the user asked for this location, G4). Only the session agent gets them, not a subagent. |
 | Tool call limit, command timeout, shell | not in Claude (Claude Code `settings.json`) | — | General > The agent; keep in "Claude Code" > "General" |
 | Send while working | not a setting (Enter / Ctrl+Enter) | — | General; remove |
 

@@ -287,6 +287,57 @@ class Storage:
         )
         return [json.loads(r[0]) for r in rows]
 
+    def search_chats(self, project: str, query: str, exclude: str | None = None, limit: int = 5,
+                     snippets: int = 3) -> list[dict[str, Any]]:
+        """The past sessions of a project with user or agent text that has the words of ``query``.
+
+        The best match comes first: more words, then a newer session. A worktree session belongs to its
+        project. ``exclude`` is the current session. Each hit has the session title, its date, and
+        ``snippets`` short parts of the matching messages.
+        """
+        from .memory import project_root
+
+        words = [w.lower() for w in query.split() if w.strip()][:8]
+        if not words:
+            return []
+        key = path_key(str(project_root(Path(project))))
+        rows = self.db.execute("SELECT id, cwd, title, updated_at FROM sessions WHERE id != ? ORDER BY updated_at DESC",
+                               (exclude or "",)).fetchall()
+        hits: list[dict[str, Any]] = []
+        # SQLite LIKE ignores the case of ASCII letters. JSON escapes other letters, so they skip this filter.
+        ascii_words = [w for w in words if w.isascii()]
+        like = " OR ".join("data LIKE ? ESCAPE '\\'" for _ in ascii_words)
+        params = ["%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for w in ascii_words]
+        for row in rows:
+            if path_key(str(project_root(Path(row["cwd"])))) != key:
+                continue
+            sql = "SELECT data FROM messages WHERE session_id = ?" + (f" AND ({like})" if like else "") + " ORDER BY seq"
+            matches: list[tuple[int, str, str]] = []
+            found: set[str] = set()
+            for (data,) in self.db.execute(sql, (row["id"], *params)):
+                try:
+                    message = json.loads(data)
+                except ValueError:
+                    continue
+                role = message.get("role")
+                if role not in ("user", "assistant"):
+                    continue
+                content = message.get("display") or message.get("content")
+                if isinstance(content, list):
+                    content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+                text = " ".join(str(content or "").split())
+                lower = text.lower()
+                present = [w for w in words if w in lower]
+                if present:
+                    found.update(present)
+                    matches.append((len(present), role, _snippet(text, lower.find(present[0]))))
+            if matches:
+                matches.sort(key=lambda m: -m[0])
+                hits.append({"id": row["id"], "title": row["title"], "updated_at": row["updated_at"], "score": len(found),
+                             "snippets": [{"role": r, "text": t} for _, r, t in matches[:snippets]]})
+        hits.sort(key=lambda h: (-h["score"], -h["updated_at"]))
+        return hits[:limit]
+
     def truncate_context(self, session_id: str, keep: int) -> None:
         """Delete the messages of the current context after the first ``keep`` messages (a rewind)."""
         session = self.get_session(session_id)
@@ -487,3 +538,16 @@ def _unique(base: str, taken: set[str]) -> str:
         n += 1
         name = f"{base}-{n}"
     return name
+
+
+SNIPPET_CHARS = 300
+
+
+def _snippet(text: str, at: int) -> str:
+    """About SNIPPET_CHARS characters of a text around the position ``at``."""
+    if len(text) <= SNIPPET_CHARS:
+        return text
+    start = max(0, at - SNIPPET_CHARS // 3)
+    end = min(len(text), start + SNIPPET_CHARS)
+    start = max(0, end - SNIPPET_CHARS)
+    return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")

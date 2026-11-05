@@ -50,6 +50,7 @@ from .tools.interact import AskUserQuestionTool, ExitPlanModeTool
 from .agents import DEFAULT_TYPE as DEFAULT_AGENT_TYPE, AgentType, discover_agents
 from .hooks import CommandHooks, HookOutcome
 from .memory import MemoryStore
+from .tools.chats import ConversationSearchTool
 from .tools.memory import MemoryTool
 
 log = logging.getLogger("harness.agent")
@@ -118,6 +119,8 @@ class Agent:
         self.command_hooks: CommandHooks | None = None  # The hooks of the settings files (hooks.py).
         # The auto memory of the project (memory.py). Only the agent that the user talks to has it.
         self.memory: MemoryStore | None = None
+        # The search of the past sessions of the project (Session sets it). None: no chat search.
+        self.chat_search: Callable[[str, int], list[dict[str, Any]]] | None = None
         self.client = client
         self.image_input = image_input  # The model accepts images, for example screenshots.
         self.emit = emit
@@ -228,7 +231,7 @@ class Agent:
         if not self._memory_on():
             return None
         assert self.memory is not None
-        return self.memory.prompt()
+        return self.memory.prompt(sensitive=self.settings.get("memory_sensitive") is True)
 
     def _sync_memory_tool(self) -> None:
         """The setting "auto_memory" off removes the memory tool and the memory part of the prompt."""
@@ -236,6 +239,23 @@ class Agent:
         if self._memory_on():
             assert self.memory is not None
             self.tools[MemoryTool.name] = MemoryTool(self.memory)
+        self._known_tokens = None
+
+    def memory_changed(self) -> None:
+        """The user changed the memory in Settings: the prompt shows the new index."""
+        self._rebuild_prompt()
+
+    def enable_chat_search(self, search: Callable[[str, int], list[dict[str, Any]]]) -> None:
+        """The session gives the search of its past sessions. Only the agent that the user talks to gets it."""
+        if self.user_facing:
+            self.chat_search = search
+            self._sync_chat_tool()
+
+    def _sync_chat_tool(self) -> None:
+        """The setting "chat_search" off removes the conversation_search tool."""
+        self.tools.pop(ConversationSearchTool.name, None)
+        if self.chat_search is not None and self.settings.get("chat_search", True) is not False:
+            self.tools[ConversationSearchTool.name] = ConversationSearchTool(self.chat_search)
         self._known_tokens = None
 
     def _sync_plan_tool(self) -> None:
@@ -324,6 +344,7 @@ class Agent:
         self._sync_web_search()
         self._sync_plan_tool()
         self._sync_memory_tool()
+        self._sync_chat_tool()
         self._rebuild_prompt()
 
     def clear(self) -> None:

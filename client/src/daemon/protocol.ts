@@ -136,6 +136,8 @@ export interface UserSettings {
   terminal_shell: string | null;
   subagents?: boolean; // false: the agent cannot start subagents (the agent tool).
   auto_memory?: boolean; // false: no memory tool and no memory in the prompt (daemon memory.py).
+  memory_sensitive?: boolean; // true: the memory can have sensitive topics, for example health conditions.
+  chat_search?: boolean; // false: no conversation_search tool (the search of the past sessions of the project).
   // The model by network (Settings > Providers): on, a new session uses online_model, or offline_model with no connection.
   auto_model?: boolean;
   online_model?: string | null;
@@ -311,6 +313,22 @@ export interface RoutineItem extends RoutineFields {
   last_run: RoutineRun | null;
   running: boolean;
   queued: boolean; // It waits for a free place (at most 3 routines run at the same time).
+}
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+/** One memory of a project (daemon memory.py). */
+export interface MemoryItem {
+  name: string; // A kebab-case slug: the file name without ".md".
+  description: string;
+  type: MemoryType;
+  content: string;
+}
+
+/** One fact of a memory import (Settings > Your Harness > "Start import"). */
+export interface MemoryFact {
+  type: MemoryType;
+  content: string;
 }
 
 /** A saved project: a folder on the daemon computer. The agent keeps its files in this folder. */
@@ -646,6 +664,13 @@ export type ClientMessage =
   | ({ type: "routines.save"; id?: string } & RoutineFields)
   | { type: "routines.delete"; id: string }
   | { type: "routines.run"; id: string } // "Run now".
+  // Settings > Your Harness > Memory. cwd: the project folder. Each project has its own memory.
+  | { type: "memory.list"; cwd: string }
+  | { type: "memory.save"; cwd: string; name: string; old_name?: string; description: string; memory_type: MemoryType; content: string }
+  | { type: "memory.delete"; cwd: string; name: string }
+  | { type: "memory.parse"; text: string } // The reply of another AI assistant, for the import preview.
+  | { type: "memory.import"; cwd: string; items: MemoryFact[] }
+  | { type: "memory.export"; cwd: string }
   | { type: "routines.runs"; id: string } // The run history.
   | { type: "prompt"; text: string; display?: string; id?: string; images?: string[] } // display: the text that the user sees. id: for rewind and fork. images: data URLs.
   // Go back to the time before a user message: remove it and all after it, and/or restore the files that the agent changed.
@@ -875,6 +900,10 @@ export type DaemonMessage =
   | { type: "fs.found"; query: string; items: string[] } // Paths for the "@" menu. A folder ends with "/".
   | ({ type: "context.usage" } & ContextUsage) // The context breakdown, the reply to context.get.
   | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
+  // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
+  | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
+  | { type: "memory.parsed"; items: MemoryFact[] }
+  | { type: "memory.export"; cwd: string; name: string; data: string; count: number } // data: the .zip as base64.
   | { type: "routines"; items: RoutineItem[]; saved?: string; folder?: string } // To all clients. saved: the id after routines.save. folder: the routine files.
   | { type: "routine.runs"; routine_id: string; items: RoutineRun[] }
   | {

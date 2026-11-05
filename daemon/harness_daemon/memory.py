@@ -9,7 +9,10 @@ both. A worktree session uses the memory of its project.
 
 from __future__ import annotations
 
+import base64
+import io
 import re
+import zipfile
 from pathlib import Path
 
 from .config import harness_home
@@ -37,9 +40,56 @@ memory tool to save, read, and delete memories.
 - When the user asks you to remember or forget something, do it with the memory tool at once.
 - A memory was true when it was written. Before you use a memory that names a file, a function, or a
   flag, check that it still exists.
+{sensitive}
 
 MEMORY.md:
 {index}"""
+
+
+# The setting "memory_sensitive" (Settings > Your Harness > "Include sensitive topics in memory").
+SENSITIVE_OFF = """- Do not save sensitive topics: health conditions, religious or political beliefs, sexual
+  orientation, ethnic origin, union membership, or criminal records. Save one only when the user
+  asks you to remember it."""
+SENSITIVE_ON = "- You can save sensitive topics, for example health conditions, when they will help in a later session."
+
+# The prompt for "Import memory from other AI providers": the user gives it to the other assistant,
+# and pastes the reply in Harness. parse_import reads the reply.
+IMPORT_PROMPT = """List everything that you remember about me from our past conversations: my work, my projects, my preferences, how I want you to answer, and the tools and resources that I use.
+
+Write one fact on each line, in this format, with no other text:
+[type] fact
+
+Use one of these types:
+- user: who I am (role, knowledge, preferences)
+- feedback: how I want you to work or to answer
+- project: my projects, goals, and decisions
+- reference: links and outside resources that I use
+
+Write each fact as one or two complete sentences. Give dates as absolute dates. Do not include sensitive topics, for example health conditions, unless I told you to remember them."""
+
+_IMPORT_LINE = re.compile(r"^\s*(?:[-*•]|\d+[.)])?\s*\[?\s*(user|feedback|project|reference)\s*[\]:]\s*(.+)$", re.I)
+
+
+def parse_import(text: str) -> list[dict[str, str]]:
+    """The facts of an import reply: one "[type] fact" line each. A line with no type is a "user" fact."""
+    out: list[dict[str, str]] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("```"):
+            continue
+        m = _IMPORT_LINE.match(line)
+        kind, fact = (m.group(1).lower(), m.group(2)) if m else ("user", re.sub(r"^(?:[-*•]|\d+[.)])\s*", "", line))
+        fact = " ".join(fact.split())
+        if fact:
+            out.append({"type": kind, "content": fact[:MAX_CONTENT]})
+    return out
+
+
+def slug(text: str) -> str:
+    """A kebab-case memory name from the first words of a text."""
+    words = re.findall(r"[a-z0-9]+", text.lower())[:6]
+    name = "-".join(words)[:48].strip("-")
+    return name or "memory"
 
 
 def project_root(cwd: Path) -> Path:
@@ -74,12 +124,13 @@ class MemoryStore:
         except OSError:
             return ""
 
-    def prompt(self) -> str:
+    def prompt(self, sensitive: bool = False) -> str:
         lines = self.index().strip().splitlines()
         shown = "\n".join(lines[:MAX_INDEX_LINES])[:MAX_INDEX_CHARS]
         if len(lines) > MAX_INDEX_LINES:
             shown += f"\n(The index has {len(lines)} lines. Only the first {MAX_INDEX_LINES} are shown.)"
-        return PROMPT.format(folder=self.dir, index=shown or "(No memories yet.)")
+        return PROMPT.format(folder=self.dir, index=shown or "(No memories yet.)",
+                             sensitive=SENSITIVE_ON if sensitive else SENSITIVE_OFF)
 
     def _file(self, name: str) -> Path:
         name = (name or "").strip().lower()
@@ -143,3 +194,52 @@ class MemoryStore:
             if m:
                 out.append({"name": m.group(1), "file": m.group(2), "description": m.group(3)})
         return out
+
+    def entries(self) -> list[dict[str, str]]:
+        """Each memory of the index with its type and content, for Settings > Your Harness > Manage."""
+        out = []
+        for item in self.items():
+            path = self.dir / item["file"]
+            if path.parent != self.dir or path.suffix != ".md":
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            kind, content = "user", text.strip()
+            m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", text, re.S)
+            if m:
+                content = m.group(2).strip()
+                t = re.search(r"^type:\s*(\S+)", m.group(1), re.M)
+                if t and t.group(1) in TYPES:
+                    kind = t.group(1)
+            out.append({"name": path.stem, "description": item["description"], "type": kind, "content": content})
+        return out
+
+    def import_facts(self, facts: list[dict[str, str]]) -> int:
+        """Save each fact as a new memory with a name from its first words. Return the count."""
+        taken = {p.stem for p in self.dir.glob("*.md")} if self.dir.is_dir() else set()
+        count = 0
+        for fact in facts:
+            content = " ".join(str(fact.get("content") or "").split())
+            kind = fact.get("type") if fact.get("type") in TYPES else "user"
+            if not content:
+                continue
+            base = slug(content)
+            name, n = base, 2
+            while name in taken:
+                name, n = f"{base}-{n}", n + 1
+            description = content if len(content) <= MAX_DESCRIPTION else content[:MAX_DESCRIPTION - 1].rstrip() + "…"
+            self.save(name, description, str(kind), content)
+            taken.add(name)
+            count += 1
+        return count
+
+    def export_zip(self) -> str:
+        """The memory files and MEMORY.md in a .zip, as base64."""
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+            if self.dir.is_dir():
+                for path in sorted(self.dir.glob("*.md")):
+                    z.write(path, f"memory/{path.name}")
+        return base64.b64encode(buffer.getvalue()).decode("ascii")

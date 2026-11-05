@@ -7882,6 +7882,7 @@ mark.word-del {
 
 .setting-control select {
   min-width: 190px;
+  max-width: 320px;
   cursor: pointer;
 }
 
@@ -9761,4 +9762,103 @@ textarea.setting-textarea:disabled {
   font-family: var(--font-mono);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+/* Settings > Your Harness: Manage and Import of the memory. */
+.memory-view .cap-view-head {
+  margin-top: 0;
+}
+
+.memory-list {
+  margin-top: 8px;
+}
+
+.memory-item {
+  display: block;
+}
+
+.memory-item .cap-go.open {
+  transform: rotate(90deg);
+}
+
+.memory-editor {
+  margin: 8px 0 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.memory-editor .field-row {
+  gap: 12px;
+}
+
+.memory-editor .field-row .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.memory-editor .field input,
+.memory-editor .field select {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.memory-editor > .help {
+  margin: -10px 0 12px;
+}
+
+.memory-editor textarea.setting-textarea {
+  margin-top: 0;
+}
+
+.memory-editor .form-error {
+  margin: 0 0 12px;
+}
+
+.memory-view .setting-block .form-actions {
+  margin-top: 8px;
+}
+
+.memory-prompt {
+  margin: 8px 0;
+  padding: 10px 12px;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font: 12.5px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.memory-facts {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-facts li label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.memory-facts li input {
+  flex: none;
+  width: auto;
+  min-height: 0;
+  margin: 3px 0 0;
+}
+
+.memory-facts li label > span:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.memory-facts .cap-status {
+  flex: none;
 }

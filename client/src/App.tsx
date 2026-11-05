@@ -104,6 +104,7 @@ import { MoreMenu } from "./components/MoreMenu";
 import { UpdateToast } from "./components/UpdateToast";
 import { availableVersion, checkOnLaunch, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
+import { YourHarnessSettings } from "./components/YourHarnessSettings";
 import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
 import { base64ToBytes, isPreviewFile, shownDocument, type PreviewDoc } from "./preview/document";
@@ -457,7 +458,7 @@ export default function App() {
       setSettingsPage(page);
       setSettingsError(null);
       try {
-        if (page === "general" || page === "connections") conn.send({ type: "user_settings.get" }); // Providers: the model by network.
+        if (page === "general" || page === "harness" || page === "connections") conn.send({ type: "user_settings.get" }); // Providers: the model by network.
         if (page === "connections") {
           setProviderError(null);
           setProviderTest(null);
@@ -923,6 +924,7 @@ export default function App() {
             }
             return;
           }
+          if (msg.ref?.startsWith("memory.")) return; // Settings > Your Harness shows the error.
           if (msg.ref === "daemon.update") {
             setRemoteUpdate((u) => (u ? { ...u, phase: "error", message: msg.message } : u));
             return;
@@ -3095,6 +3097,20 @@ export default function App() {
                 error={settingsError}
                 webKeys={webKeysSaved}
                 onSaveWebKey={(provider, key) => void saveWebKeyValue(provider, key)}
+                onSet={(values) => {
+                  setSettingsError(null);
+                  sendSafely({ type: "user_settings.set", values });
+                }}
+              />
+            )}
+            {settingsPage === "harness" && (
+              <YourHarnessSettings
+                values={status === "open" ? userSettings : null}
+                connected={status === "open"}
+                error={settingsError}
+                conn={conn}
+                projects={projects}
+                currentProject={session?.cwd ?? null}
                 onSet={(values) => {
                   setSettingsError(null);
                   sendSafely({ type: "user_settings.set", values });

@@ -12,6 +12,7 @@ import logging
 import mimetypes
 import os
 import platform
+import re
 import secrets
 import socket
 import string
@@ -81,7 +82,7 @@ from .suggestions import suggest_prompt
 from .completions import complete_code
 from .titles import summarize_title
 from .agents import agent_folders, discover_agents
-from .memory import MemoryStore
+from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
 from .web import set_key as set_web_key
 
@@ -2899,6 +2900,8 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "offline_model": (str, type(None)),
     "web_search": (str,),
     "auto_memory": (bool,),
+    "memory_sensitive": (bool,),
+    "chat_search": (bool,),
     "web_search_url": (str, type(None)),
     "instructions_thinking": (str, type(None)),
     "instructions_research": (str, type(None)),
@@ -2965,6 +2968,96 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
         if live.session is not None:
             live.session.agent.reload_settings(load_settings(live.session.cwd))
     await _send_user_settings(conn)
+
+
+# Settings > Your Harness > Memory: see, add, change, delete, import, and export the memories of a
+# project (memory.py). They need no session. "cwd" is the project folder.
+
+def _memory_store(msg: dict[str, Any]) -> MemoryStore:
+    value = msg.get("cwd")
+    if not isinstance(value, str) or not value.strip() or not Path(value).expanduser().is_absolute():
+        raise ProtocolError("'cwd' must be the absolute path of a project folder.")
+    return MemoryStore(Path(value).expanduser())
+
+
+async def _send_memory(conn: Connection, msg: dict[str, Any], store: MemoryStore, changed: bool = False,
+                       **extra: Any) -> None:
+    items = await asyncio.to_thread(store.entries)
+    await conn.send({"type": "memory", "cwd": msg["cwd"], "path": str(store.dir), "items": items,
+                     "import_prompt": IMPORT_PROMPT, **extra})
+    if changed:  # The open sessions of the project show the new index in their prompt.
+        for live in conn.live.values():
+            agent = live.session.agent if live.session is not None else None
+            if agent is not None and agent.memory is not None and agent.memory.dir == store.dir:
+                agent.memory_changed()
+
+
+def _memory_text(msg: dict[str, Any], key: str) -> str:
+    value = msg.get(key)
+    return value if isinstance(value, str) else ""
+
+
+@handler("memory.list")
+async def on_memory_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_memory(conn, msg, _memory_store(msg))
+
+
+@handler("memory.save")
+async def on_memory_save(conn: Connection, msg: dict[str, Any]) -> None:
+    """Add or change a memory. "old_name": the name before a rename."""
+    store = _memory_store(msg)
+    name = _memory_text(msg, "name").strip().lower()
+    old = _memory_text(msg, "old_name").strip().lower()
+    try:
+        if old and old != name and (store.dir / f"{name}.md").exists():
+            raise MemoryStoreError(f"A memory with the name {name} exists. Give another name.")
+        store.save(name, _memory_text(msg, "description"), _memory_text(msg, "memory_type"),
+                   _memory_text(msg, "content"))
+        if old and old != name and (store.dir / f"{old}.md").exists():
+            store.delete(old)
+    except MemoryStoreError as e:
+        raise ProtocolError(str(e)) from None
+    await _send_memory(conn, msg, store, changed=True, saved=name)
+
+
+@handler("memory.delete")
+async def on_memory_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    store = _memory_store(msg)
+    try:
+        store.delete(_memory_text(msg, "name"))
+    except MemoryStoreError as e:
+        raise ProtocolError(str(e)) from None
+    await _send_memory(conn, msg, store, changed=True)
+
+
+@handler("memory.parse")
+async def on_memory_parse(conn: Connection, msg: dict[str, Any]) -> None:
+    """The facts in the reply of another AI assistant, for the preview of an import."""
+    await conn.send({"type": "memory.parsed", "items": parse_import(_memory_text(msg, "text"))})
+
+
+@handler("memory.import")
+async def on_memory_import(conn: Connection, msg: dict[str, Any]) -> None:
+    """Save each fact of "items" ([{"type", "content"}]) as a new memory."""
+    store = _memory_store(msg)
+    items = msg.get("items")
+    if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+        raise ProtocolError("'items' must be a list of {type, content} objects.")
+    try:
+        count = await asyncio.to_thread(store.import_facts, items)
+    except MemoryStoreError as e:
+        raise ProtocolError(str(e)) from None
+    await _send_memory(conn, msg, store, changed=True, imported=count)
+
+
+@handler("memory.export")
+async def on_memory_export(conn: Connection, msg: dict[str, Any]) -> None:
+    """The memory files of the project in a .zip (base64), for "Export memory"."""
+    store = _memory_store(msg)
+    data = await asyncio.to_thread(store.export_zip)
+    folder = re.sub(r"[^\w.-]+", "-", Path(msg["cwd"]).name).strip("-") or "project"
+    await conn.send({"type": "memory.export", "cwd": msg["cwd"], "name": f"{folder}-memory.zip", "data": data,
+                     "count": len(store.items())})
 
 
 @handler("skills.list")

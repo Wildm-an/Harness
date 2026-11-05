@@ -32,6 +32,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "subagents": True,  # The agent tool: the agent can start subagents, also several at once in the background.
     # The agent instructions of the user (Settings > General). The system prompt includes them (prompt.py).
     "auto_memory": True,  # The agent keeps notes between sessions (memory.py).
+    "memory_sensitive": False,  # The memory can have sensitive topics, for example health conditions.
+    "chat_search": True,  # The conversation_search tool: the agent searches the past sessions of the project.
     "web_search": "duckduckgo",  # The search provider of web_search (web.py): duckduckgo, brave, tavily, searxng, or off.
     "web_search_url": None,  # The URL of a SearXNG server, for "searxng".
     "instructions_thinking": None,
