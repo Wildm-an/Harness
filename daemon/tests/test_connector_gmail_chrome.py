@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 import httpx
@@ -183,6 +184,8 @@ def test_gmail_messages(daemon, project, fake_model, fake_google):  # noqa: F811
 def test_gmail_with_the_harness_client(harness_home, fake_google, monkeypatch):
     monkeypatch.delenv("HARNESS_GOOGLE_CLIENT_ID", raising=False)
     monkeypatch.delenv("HARNESS_GOOGLE_CLIENT_SECRET", raising=False)
+    # A build with no client: the module _google_client cannot be imported (a local copy can have values).
+    monkeypatch.setitem(sys.modules, "harness_daemon._google_client", None)
     assert gmail_status()["builtin_client"] is False
     with pytest.raises(connectors.ConnectorError, match="has no Google client"):
         asyncio.run(connectors.connect("gmail", "google", options={"builtin": True}, on_url=browser))
@@ -199,3 +202,19 @@ def test_gmail_with_the_harness_client(harness_home, fake_google, monkeypatch):
     # A second account uses the Harness client again, with no options.
     httpx.get(f"{fake_google}/set-email", params={"email": "sam@gmail.com"})
     assert asyncio.run(connectors.connect("gmail", "google", on_url=browser)) == "sam@gmail.com"
+
+
+def test_the_harness_client_from_the_module(monkeypatch):
+    import types
+
+    monkeypatch.delenv("HARNESS_GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("HARNESS_GOOGLE_CLIENT_SECRET", raising=False)
+    module = types.ModuleType("harness_daemon._google_client")
+    module.CLIENT_ID, module.CLIENT_SECRET = "id.apps.googleusercontent.com", "secret"
+    monkeypatch.setitem(sys.modules, "harness_daemon._google_client", module)
+    assert connectors.builtin_google_client() == ("id.apps.googleusercontent.com", "secret")
+    module.CLIENT_SECRET = ""  # The empty file in a checkout: no Harness client.
+    assert connectors.builtin_google_client() is None
+    monkeypatch.setenv("HARNESS_GOOGLE_CLIENT_ID", "env-id")
+    monkeypatch.setenv("HARNESS_GOOGLE_CLIENT_SECRET", "env-secret")
+    assert connectors.builtin_google_client() == ("env-id", "env-secret")  # The environment wins.

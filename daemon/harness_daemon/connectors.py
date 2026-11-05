@@ -544,8 +544,10 @@ def builtin_google_client() -> tuple[str, str] | None:
     client_id = os.environ.get("HARNESS_GOOGLE_CLIENT_ID", "").strip()
     client_secret = os.environ.get("HARNESS_GOOGLE_CLIENT_SECRET", "").strip()
     if not (client_id and client_secret):
+        import importlib
+
         try:
-            from . import _google_client  # type: ignore[attr-defined]
+            _google_client = importlib.import_module(f"{__package__}._google_client")
         except ImportError:
             return None
         client_id = str(getattr(_google_client, "CLIENT_ID", "")).strip()

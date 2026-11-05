@@ -326,7 +326,10 @@ Google has no dynamic client registration. There are two OAuth clients:
 2. On the Google Auth Platform page, set the audience to External and publish the app ("In production"). An app in testing loses its sign-in after 7 days.
 3. Make an OAuth client of the type "Desktop app". Paste its ID and secret into the Gmail row.
 
-To make the Harness client, do the same steps in the Google Cloud project of Harness (app name "Harness", with a support address), then put the ID and secret in `_google_client.py` before the build.
+To make the Harness client, do the same steps in the Google Cloud project of Harness (app name "Harness", with a support address). Then:
+
+- Local builds and the dev app: put the ID and secret in `daemon/harness_daemon/_google_client.py` (`CLIENT_ID`, `CLIENT_SECRET`). The file in a checkout has empty values.
+- Releases: add the repository secrets `HARNESS_GOOGLE_CLIENT_ID` and `HARNESS_GOOGLE_CLIENT_SECRET` (`gh secret set HARNESS_GOOGLE_CLIENT_ID`). The release workflow writes `_google_client.py` from them before it builds the sidecar and the installers. With no secrets, the release has no Harness client.
 
 "Continue with Google" then does the sign-in in Harness (`connectors.py`): a browser sign-in with PKCE, `access_type=offline`, and the loopback redirect `http://127.0.0.1:<port>/`. Harness asks Google for the address of the account and writes a credential file in the format of workspace-mcp (`token`, `refresh_token`, `client_id`, `client_secret`, `scopes`, `expiry`) to `~/.harness/connectors/gmail/credentials/<address>.json`. The server refreshes the tokens. Google shows a warning that the app is not verified: it is the user's own app, so the user can continue.
 
