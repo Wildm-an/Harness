@@ -33,6 +33,13 @@ from html import unescape
 from typing import Any
 
 TIMEOUT = 30
+
+
+def ehlo_name() -> str:
+    """The name of this computer in the SMTP greeting (EHLO). With no name, smtplib asks socket.getfqdn(): a
+    reverse DNS lookup that can take many seconds, for example on macOS. Mail servers do not check this name."""
+    name = socket.gethostname()
+    return name if re.fullmatch(r"[A-Za-z0-9.-]{1,253}", name or "") else "localhost"
 MAX_TEXT = 20_000  # The characters of a message body that read_message returns.
 MAX_RESULTS = 100
 SECURITY = ("ssl", "starttls", "plain")
@@ -452,10 +459,10 @@ class Mail:
         message.set_content(body)
         try:
             if a.smtp_security == "ssl":
-                server: smtplib.SMTP = smtplib.SMTP_SSL(a.smtp_host, a.smtp_port, timeout=TIMEOUT,
+                server: smtplib.SMTP = smtplib.SMTP_SSL(a.smtp_host, a.smtp_port, timeout=TIMEOUT, local_hostname=ehlo_name(),
                                                         context=ssl.create_default_context())
             else:
-                server = smtplib.SMTP(a.smtp_host, a.smtp_port, timeout=TIMEOUT)
+                server = smtplib.SMTP(a.smtp_host, a.smtp_port, timeout=TIMEOUT, local_hostname=ehlo_name())
                 if a.smtp_security == "starttls":
                     server.starttls(context=ssl.create_default_context())
             with server:
@@ -477,9 +484,11 @@ def check_account(account: Account, send: bool) -> None:
     try:
         if account.smtp_security == "ssl":
             server: smtplib.SMTP = smtplib.SMTP_SSL(account.smtp_host, account.smtp_port, timeout=TIMEOUT,
+                                                    local_hostname=ehlo_name(),
                                                     context=ssl.create_default_context())
         else:
-            server = smtplib.SMTP(account.smtp_host, account.smtp_port, timeout=TIMEOUT)
+            server = smtplib.SMTP(account.smtp_host, account.smtp_port, timeout=TIMEOUT,
+                                  local_hostname=ehlo_name())
             if account.smtp_security == "starttls":
                 server.starttls(context=ssl.create_default_context())
         with server:

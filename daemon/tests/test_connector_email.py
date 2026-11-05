@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from email import message_from_bytes, policy
 
 import pytest
@@ -187,6 +188,21 @@ def test_connect_accounts(harness_home, mailbox):
     assert connectors.server_env("email")["HARNESS_MAIL_READ_ONLY"] == "1"
     asyncio.run(connectors.disconnect("email"))
     assert "email" not in user_servers() and mcp_auth.read_record(connectors.record_key("email")) == {}
+
+
+def test_smtp_does_not_look_up_the_host_name(mailbox, monkeypatch):
+    """smtplib calls socket.getfqdn() for the EHLO name when it gets no name. On macOS that DNS lookup can take
+    many seconds, and the connect of the Email connector timed out in the release build."""
+    store, imap_port, smtp_port = mailbox
+
+    def no_lookup(*args):
+        raise AssertionError("socket.getfqdn() was called")
+
+    monkeypatch.setattr(socket, "getfqdn", no_lookup)
+    mail_server.check_account(account(imap_port, smtp_port), True)
+    mail = Mail([account(imap_port, smtp_port)], read_only=False)
+    assert mail.send(None, ["bob@shop.example"], "Hi", "Hello", None, None, None, "INBOX").startswith("Sent to")
+    assert mail_server.ehlo_name()
 
 
 def test_a_preset_provider():
