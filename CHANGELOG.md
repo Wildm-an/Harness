@@ -3,6 +3,52 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.50 (2026-11-05)
+
+### Split view
+
+- Show two sessions side by side. Drag a session row onto the right half of the main view: a
+  blue zone with the label "Split view" shows. Release the row to open the session in a pane at
+  the right. The row menu also has "Open in" > "Split view".
+- The split pane is a full chat with its own prompt box, mode menu, and context ring. The X in
+  its header closes it. Drag the edge between the panes to change their widths.
+- A turn that runs in the split pane continues when the pane closes.
+
+### Sessions
+
+- Nested sessions: a fork, and a session that the agent starts with the new `start_session` tool,
+  show under the session that started them. The parent row is closed at the start. The count of
+  nested sessions and an arrow show at the right end of the row.
+- The agent sees the other sessions of the project, and can read them. The `offer_session` tool
+  sends a task to a new nested session or to a session that fits better. The setting "When you
+  ask for an unrelated task" has "Ask me", "Always do it here", and "Always start a new session".
+- Better session titles: the title names the subject in 3 to 5 words. An online provider uses
+  its small model for the title. A failed title tries again on the next prompt. A rename during
+  the title request keeps your name.
+- A new session in the Code view opens with the chat only.
+
+### Model menu
+
+- A new model menu, as in the Claude app: online models with number keys, the "Effort" and
+  "Local models" submenus, and "Show providers". The chip shows the model and the effort level.
+- Effort goes to the model as `reasoning_effort`. An endpoint that rejects it gets the request
+  again with no effort.
+
+### Start screen
+
+- A "Worktree" check box to the right of the folder chip, as in Claude. The branch chip shows
+  only when the box is on.
+
+### Chat
+
+- URLs in the replies of the agent are links.
+- The agent gets reminders to show and update its task list.
+
+### Updates
+
+- The update check runs only when the window shows: a few seconds after the window opens, and
+  at most one time each 30 minutes. The setting is now "Check for updates when the app opens".
+
 ## 0.1.49 (2026-11-05)
 
 ### Agent
