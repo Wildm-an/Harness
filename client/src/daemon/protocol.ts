@@ -61,11 +61,11 @@ export interface RunningSession {
   waiting: boolean;
 }
 
-/** A small screenshot of the agent browser page after an agent action (SPEC.md section 8.7). */
+/** A small picture of the headless agent browser page (SPEC.md section 8.7): live, or after an action. */
 export interface AgentFrame {
   url: string;
   title: string;
-  action: string; // For example "navigate" or "click e5".
+  action: string; // "live" (a live frame), or the action, for example "navigate" or "click e5".
   image: string; // A JPEG data URL.
 }
 
@@ -688,6 +688,10 @@ export type ClientMessage =
   | { type: "task.get"; id: string }
   | { type: "task.stop"; id: string }
   | { type: "session.keep_awake"; on: boolean } // Only for this session. The daemon does not save it.
+  // The client can host the agent browser in a tab of its Browser pane (the desktop app, a local daemon).
+  | { type: "browser.pane"; enabled: boolean }
+  // The answer to browser.call: the DevTools result, or an error. "tab": the agent tab that ran it.
+  | { type: "browser.result"; call_id: string; tab?: string; result?: Record<string, unknown>; error?: string }
   | { type: "user_settings.get" } // It needs no session.
   | { type: "user_settings.set"; values: Partial<UserSettings> } // null removes the terminal shell.
   | { type: "term.input"; id: string; data: string }
@@ -930,6 +934,8 @@ export type DaemonMessage =
     }
   | { type: "serve.output"; host: string; name: string; text: string }
   | ({ type: "preview.frame" } & AgentFrame)
+  // A DevTools protocol call for the agent tab of the Browser pane. The client answers with browser.result.
+  | { type: "browser.call"; call_id: string; method: string; params: Record<string, unknown>; timeout_ms: number; session_id?: string }
   | {
       type: "context.compacted";
       reason: "auto" | "manual";

@@ -506,7 +506,12 @@ The user approves the proposal before the daemon writes `launch.json`.
 
 **Agent preview tools**
 
-The agent uses a headless Chromium through Playwright in the daemon. These tools let the agent check its own changes.
+These tools let the agent check its own changes. The agent and the user use the same browser:
+
+- In the desktop app on Windows with the daemon of this computer, the agent works in its own tab of the Browser pane (one tab for each session). The user sees the same page, live, and can use it too. All tabs share the cookies. The client runs each DevTools protocol call of the agent in the tab (WebView2 `CallDevToolsProtocolMethod`), so no debug port opens. A click of the agent is a real mouse event, and its text is real input.
+- A navigation of the agent shows its tab in the open Browser pane. With the pane closed, the session rail opens with a small live view of the tab ("Browser"). A click on it opens the tab in the pane. While the agent works, a tab that the pane does not show stays out of sight with its real size, so the page keeps drawing.
+- A link to a site that the agent cannot open goes back to the page before, and the tool result names the blocked URL.
+- Else (a remote daemon, a normal browser, or a session that the client does not show), the agent uses a headless Chromium through Playwright in the daemon. It sends live frames of its page (`preview.frame` with `action: "live"`) until 30 seconds after its last action. The rail and the Browser pane show them.
 
 | Tool | Function | Needs approval |
 |---|---|---|

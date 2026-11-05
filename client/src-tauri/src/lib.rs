@@ -226,6 +226,17 @@ async fn browser_capture(app: AppHandle, id: String) -> Result<String, String> {
     Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
+/// A DevTools protocol call in the page of a tab, for the agent. ``params`` and the result are JSON text.
+#[tauri::command]
+async fn browser_cdp(app: AppHandle, id: String, method: String, params: String, timeout: Option<u64>) -> Result<String, String> {
+    let rx = browser::cdp(&app, &id, &method, &params)?;
+    let wait = std::time::Duration::from_millis(timeout.unwrap_or(30_000).clamp(100, 120_000));
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(wait))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| format!("The page did not answer {method} in time."))?
+}
+
 #[tauri::command]
 async fn browser_bounds(app: AppHandle, id: String, bounds: Bounds) -> Result<(), String> {
     browser::set_bounds(&app, &id, bounds)
@@ -393,6 +404,7 @@ pub fn run() {
             browser_close_all,
             browser_screenshot,
             browser_capture,
+            browser_cdp,
             save_file,
             prefs_load,
             prefs_store,

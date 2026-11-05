@@ -1,7 +1,8 @@
 """The agent preview tools (SPEC.md section 8.7).
 
-The agent starts the servers of launch.json and operates a headless browser, so that it
-can check its own changes. The tools use the preview host of the session (preview.py).
+The agent starts the servers of launch.json and operates a browser, so that it can check
+its own changes. The browser is its tab of the Browser pane of the user when the client can
+host it, else a headless browser (preview.py). The tools use the preview host of the session (preview.py).
 
 | Tool | Needs approval |
 |---|---|
@@ -168,7 +169,9 @@ class PreviewLogsTool(_PreviewTool):
 class PreviewNavigateTool(_PreviewTool):
     name = "preview_navigate"
     description = (
-        "Open a page in the agent browser. Give a full URL, or a path such as /about. A path opens "
+        "Open a page in the agent browser. In the desktop app, this browser is your tab of the Browser "
+        "pane: the user sees the page live, can use it too, and shares its cookies. "
+        "Give a full URL, or a path such as /about. A path opens "
         "on the current page, or on the running server. The URLs of the servers in launch.json need "
         "no approval. Other URLs need approval."
     )

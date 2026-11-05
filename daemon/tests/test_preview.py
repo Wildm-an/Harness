@@ -299,7 +299,7 @@ def test_agent_starts_and_opens_the_app_through_the_protocol(daemon, project, fa
     results = [m for m in seen if m["type"] == "tool.result"]
     assert "is running at" in results[0]["output"]
     assert f"Opened http://127.0.0.1:{port}/about (HTTP 200)." in results[1]["output"]
-    frame = next(m for m in seen if m["type"] == "preview.frame")
+    frame = next(m for m in seen if m["type"] == "preview.frame" and m["action"] != "live")
     assert frame["title"] == "About" and frame["action"] == "navigate"
     assert any(m["type"] == "server.status" and m["state"] == "running" for m in seen)
 

@@ -61,6 +61,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `web.key` | `provider`, `key` | The API key of a web search provider (`brave` or `tavily`), from the keychain of the client. `null` removes it. The daemon keeps it in memory only. The reply is `web.key` with `provider` and `set`. |
 | `task.get` | `id` | One background task with its output. The reply is `task`. |
 | `task.stop` | `id` | Stops a background task and its child processes. |
+| `browser.pane` | `enabled` | The client can host the agent browser in a tab of its Browser pane (the desktop app on Windows, with the daemon of this computer). The client sends it after each `session.ready`. |
+| `browser.result` | `call_id`, `tab`, `result`, `error` | The answer to `browser.call`: the DevTools protocol result, or an error text. `tab` is the id of the agent tab. A new id means a new tab. |
 | `session.keep_awake` | `on` | The "Keep computer awake" switch of the session. While it is on, the computer of the daemon does not sleep during a turn or a background task of the session. The daemon does not save it. The reply is `keep_awake`. |
 | `term.input` | `id`, `data` | Sends typed text to the shell. |
 | `term.resize` | `id`, `cols`, `rows` | Changes the size of the terminal. |
@@ -201,7 +203,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `providers` | `items`, `path`, `exists` | Reply to the `providers.*` messages, except `providers.test`. Each item has `name`, `base_url`, `kind`, `kind_resolved`, `enabled`, `context_length`, `ssh`, `models`, and `key`. `key` has `source` (`client`, `env`, `file`, or `none`), `set` (the daemon has the key now), and `env`. The daemon never sends a key. If `exists` is false, the file does not exist and the list has the default provider. |
 | `providers.test` | `ref`, `name`, `ok`, `ms`, `models`, `truncated`, `contexts`, `error` | Reply to `providers.test`. `ref` is the value from the request. `ms` is the time of `GET /models`. `contexts` maps a model to `{length, source, warning?}`. A model with no known context length is not in it. |
 | `models` | `items`, `errors` | Reply to `models.list`. Each item has `provider` and `model`. Each error has `provider` and `message`. |
-| `preview.frame` | `url`, `title`, `action`, `image` | A small screenshot of the agent browser page after a `preview_navigate`, `preview_click`, or `preview_fill` call. `action` is, for example, `navigate` or `click e5`. `image` is a JPEG data URL. |
+| `preview.frame` | `url`, `title`, `action`, `image` | A small picture of the headless agent browser page. `action` is `live` for a live frame (at most about 3 each second, until 30 seconds after the last agent action), or the action after a `preview_navigate`, `preview_click`, or `preview_fill` call, for example `navigate` or `click e5`. `image` is a JPEG data URL. The agent tab of the Browser pane sends no frames: the client shows the tab itself. |
+| `browser.call` | `call_id`, `method`, `params`, `timeout_ms` | A DevTools protocol call of the agent for its tab of the Browser pane, only after `browser.pane` with `enabled: true` and only for the session that the client shows. The first call opens the tab. The client answers with `browser.result`. |
 
 
 

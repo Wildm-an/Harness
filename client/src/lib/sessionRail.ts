@@ -8,10 +8,12 @@ import { loadPref, savePref } from "./prefs";
 /**
  * The sections, in the order of Claude: environment, context, pull requests, servers, background
  * tasks. Claude also has a settings section. Harness keeps the mode and model menus under the prompt box.
+ * "Browser" is first: the small live view of the page where the agent works (the user asked for it).
  */
-export type RailSection = "environment" | "context" | "pullRequests" | "servers" | "backgroundTasks";
+export type RailSection = "browser" | "environment" | "context" | "pullRequests" | "servers" | "backgroundTasks";
 
 export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
+  { id: "browser", title: "Browser" },
   { id: "environment", title: "Environment" },
   { id: "context", title: "Context" },
   { id: "pullRequests", title: "Pull requests" },

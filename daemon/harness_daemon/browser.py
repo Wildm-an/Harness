@@ -1,7 +1,13 @@
-"""The agent browser: a headless Chromium through Playwright (SPEC.md section 8.7).
+"""The agent browser (SPEC.md section 8.7).
 
-The agent uses this browser to check its own changes. The user has a separate browser
-(the Browser pane of the client).
+The agent uses a browser to check its own changes. It has two kinds:
+
+- ``PaneBrowser``: a tab of the Browser pane of the user (the desktop app with a local daemon).
+  The agent and the user see and use the same page. The client runs each DevTools protocol call
+  in the tab (``browser.call``), so no debug port is open.
+- ``AgentBrowser``: a headless Chromium through Playwright, when the pane is not available (a
+  remote daemon, a normal browser, a session that the client does not show). It sends live
+  frames of its page, so that the user can see what the agent does.
 
 - Playwright runs in its own thread with its own event loop. On Windows, that loop is a
   ProactorEventLoop, because Playwright starts the browser as a subprocess.
@@ -16,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 import shlex
@@ -38,6 +45,9 @@ SETTLE_MS = 400  # The wait after an action, so that the page can react.
 CONSOLE_ENTRIES = 500
 SNAPSHOT_LINES = 500
 FRAME_QUALITY = 55
+LIVE_QUALITY = 50
+LIVE_SIZE = {"maxWidth": 800, "maxHeight": 500}  # The live frames are small: the rail and the pane show them.
+LIVE_INTERVAL = 0.3  # Seconds between two live frames, at most.
 SCREENSHOT_QUALITY = 70
 ALWAYS_ALLOWED_SCHEMES = ("about:", "data:", "blob:")
 
@@ -312,6 +322,10 @@ class AgentBrowser:
         # The console messages of the current document. A new document clears them.
         self.console: deque[dict[str, Any]] = deque(maxlen=CONSOLE_ENTRIES)
         self.blocked: deque[str] = deque(maxlen=20)  # Navigations that the allow list blocked.
+        # The live frames: the callback gets (url, JPEG bytes). It runs in the browser thread.
+        self._on_live: Callable[[str, bytes], None] | None = None
+        self._live_session: Any = None  # The CDP session of the page that sends the frames.
+        self._live_sent = 0.0
 
     # -- the browser thread ---------------------------------------------------------
 
@@ -384,6 +398,60 @@ class AgentBrowser:
         page.on("pageerror", lambda error: self._log("error", f"Uncaught error: {error}"))
         page.on("requestfailed", self._on_request_failed)
         page.on("dialog", self._on_dialog)
+        if self._on_live is not None:
+            asyncio.ensure_future(self._start_live(page))
+
+    # -- live frames (these run in the browser loop) -----------------------------------------
+
+    async def _start_live(self, page: Any) -> None:
+        await self._stop_live()
+        if self._context is None or page.is_closed():
+            return
+        try:
+            session = await self._context.new_cdp_session(page)
+            self._live_session = session
+            session.on("Page.screencastFrame", lambda frame: asyncio.ensure_future(self._on_frame(session, page, frame)))
+            await session.send("Page.startScreencast", {"format": "jpeg", "quality": LIVE_QUALITY, **LIVE_SIZE})
+        except Exception as e:  # noqa: BLE001 - the frames are only for the user.
+            log.debug("No live frames: %s", e)
+
+    async def _on_frame(self, session: Any, page: Any, frame: dict[str, Any]) -> None:
+        try:
+            await session.send("Page.screencastFrameAck", {"sessionId": frame["sessionId"]})
+        except Exception:  # noqa: BLE001 - the page closed.
+            return
+        now = time.monotonic()
+        callback = self._on_live
+        if callback is None or now - self._live_sent < LIVE_INTERVAL:
+            return
+        self._live_sent = now
+        try:
+            callback(page.url, base64.b64decode(frame["data"]))
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _stop_live(self) -> None:
+        session, self._live_session = self._live_session, None
+        if session is None:
+            return
+        try:
+            await session.send("Page.stopScreencast")
+            await session.detach()
+        except Exception:  # noqa: BLE001 - the page can be gone.
+            pass
+
+    async def set_live(self, callback: Callable[[str, bytes], None] | None) -> None:
+        """Start (a callback) or stop (None) the live frames of the page."""
+        async def run() -> None:
+            self._on_live = callback
+            if callback is None:
+                await self._stop_live()
+            elif self._page is not None and not self._page.is_closed() and self._live_session is None:
+                await self._start_live(self._page)
+        if self._loop is not None:
+            await self._call(run)
+        else:
+            self._on_live = callback
 
     def _log(self, level: str, text: str) -> None:
         self._seq += 1
@@ -562,6 +630,7 @@ class AgentBrowser:
             except Exception:  # noqa: BLE001 - the browser can be gone.
                 pass
         self._pw = self._browser = self._context = self._page = None
+        self._live_session = None
 
     async def close(self) -> None:
         loop = self._loop
@@ -589,6 +658,271 @@ class AgentBrowser:
             if self._loop is loop:
                 self._loop = None
         loop.call_soon_threadsafe(loop.stop)
+
+
+# The page script of a tab of the Browser pane: it keeps the console messages of the page for
+# preview_console. It runs before the scripts of each new document, and one time in the current one.
+CONSOLE_HOOK_JS = r"""
+(() => {
+  if (window.__harnessLog) return;
+  const entries = (window.__harnessLog = []);
+  window.__harnessDoc = Math.random().toString(36).slice(2);
+  let seq = 0;
+  const text = (a) => {
+    if (typeof a === "string") return a;
+    if (a instanceof Error) return a.stack || String(a);
+    try { return JSON.stringify(a); } catch { return String(a); }
+  };
+  const push = (level, message) => {
+    entries.push({ seq: ++seq, level, text: String(message).slice(0, 2000), time: Date.now() / 1000 });
+    if (entries.length > 500) entries.shift();
+  };
+  for (const level of ["log", "info", "warn", "error", "debug"]) {
+    const original = console[level];
+    console[level] = function (...args) {
+      try { push(level, args.map(text).join(" ")); } catch {}
+      return original.apply(this, args);
+    };
+  }
+  addEventListener("error", (e) => {
+    const t = e.target;
+    if (t && t !== window && (t.src || t.href)) push("error", "Request failed: " + (t.src || t.href));
+    else push("error", "Uncaught error: " + (e.error && e.error.stack ? e.error.stack : e.message));
+  }, true);
+  addEventListener("unhandledrejection", (e) => {
+    const r = e.reason;
+    push("error", "Uncaught error (in promise): " + (r && (r.stack || r.message) ? (r.stack || r.message) : String(r)));
+  });
+})()
+"""
+
+STATE_JS = """(() => ({
+  url: location.href,
+  title: document.title,
+  doc: window.__harnessDoc || "",
+  seq: (window.__harnessLog || []).reduce((m, e) => Math.max(m, e.seq), 0),
+}))()"""
+
+STATUS_JS = """(() => {
+  const nav = performance.getEntriesByType("navigation")[0];
+  return nav && nav.responseStatus ? nav.responseStatus : null;
+})()"""
+
+# The middle of an element in the viewport, after a scroll to it. "hit": the point is on the element.
+POINT_JS = """(ref) => {
+  const s = window.__harness;
+  const el = s && s.byRef.get(ref);
+  if (!el || !el.isConnected) return null;
+  el.scrollIntoView({ block: "center", inline: "center" });
+  const r = el.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const hit = document.elementFromPoint(x, y);
+  return { x, y, width: r.width, height: r.height, hit: !!hit && (hit === el || el.contains(hit)) };
+}"""
+
+CLICK_JS = """(ref) => {
+  window.__harness.byRef.get(ref).click();
+  return true;
+}"""
+
+# Focus a field and select its text, so that the typed text replaces it. A select box gets its option here.
+FILL_JS = """([ref, text]) => {
+  const s = window.__harness;
+  const el = s && s.byRef.get(ref);
+  if (!el || !el.isConnected) return { error: "stale" };
+  const tag = el.tagName.toLowerCase();
+  const type = (el.getAttribute("type") || "").toLowerCase();
+  if (tag === "select") {
+    const options = Array.from(el.options);
+    const option = options.find((o) => o.text.trim() === text) || options.find((o) => o.value === text);
+    if (!option) return { error: "option" };
+    el.value = option.value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { kind: "select" };
+  }
+  if (tag === "input" && (type === "checkbox" || type === "radio")) return { error: "check", type };
+  el.scrollIntoView({ block: "center" });
+  el.focus();
+  if ((tag === "input" || tag === "textarea") && typeof el.select === "function") el.select();
+  else if (el.isContentEditable) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  return { kind: "text" };
+}"""
+
+ENTER = {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}
+BACKSPACE = {"key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8}
+
+Call = Callable[[str, dict[str, Any], float], Awaitable[dict[str, Any]]]
+
+
+class PaneBrowser:
+    """The agent works in its tab of the Browser pane of the user.
+
+    ``call(method, params, timeout)`` runs a DevTools protocol method in the tab (the client
+    relays it) and returns its result. The result has the tab id in ``__tab``. A new tab id
+    means that the client made a new tab (for example, the user closed the old tab).
+    """
+
+    def __init__(self, call: Call, allow_url: Callable[[str], bool]):
+        self._send = call
+        self.allow_url = allow_url
+        self._tab: str | None = None  # The tab that has the console hook.
+        self._ref_seq = 0
+        self.started = False  # The agent opened a page in the tab.
+
+    async def _call(self, method: str, params: dict[str, Any] | None = None, timeout: float = 15) -> dict[str, Any]:
+        result = await self._send(method, params or {}, timeout)
+        tab = result.pop("__tab", None)
+        if tab and tab != self._tab:
+            # A new tab: it needs the console hook for each new document.
+            self._tab = tab
+            await self._send("Page.enable", {}, 10)  # The new document scripts need it.
+            await self._send("Page.addScriptToEvaluateOnNewDocument", {"source": CONSOLE_HOOK_JS}, 10)
+        return result
+
+    async def _eval(self, expression: str, timeout: float = 15) -> Any:
+        result = await self._call("Runtime.evaluate", {"expression": expression, "returnByValue": True,
+                                                       "awaitPromise": True}, timeout)
+        details = result.get("exceptionDetails")
+        if details:
+            text = (details.get("exception") or {}).get("description") or details.get("text") or "error"
+            raise BrowserError(f"The page script failed: {str(text).splitlines()[0]}")
+        return (result.get("result") or {}).get("value")
+
+    async def _run(self, fn_js: str, arg: Any, timeout: float = 15) -> Any:
+        return await self._eval(f"({fn_js})({json.dumps(arg)})", timeout)
+
+    async def _state(self) -> dict[str, Any]:
+        return await self._eval(STATE_JS) or {}
+
+    async def _wait_ready(self, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        await asyncio.sleep(SETTLE_MS / 1000)
+        while time.monotonic() < deadline:
+            try:
+                state = await self._eval("document.readyState", 5)
+            except BrowserError:
+                state = None  # The page changes now.
+            if state == "complete":
+                return
+            await asyncio.sleep(0.1)
+
+    def _require(self) -> None:
+        if not self.started:
+            raise BrowserError("No page is open. Open a page with preview_navigate.")
+
+    async def navigate(self, url: str) -> dict[str, Any]:
+        await self._eval(CONSOLE_HOOK_JS)  # The first call makes the tab.
+        result = await self._call("Page.navigate", {"url": url}, NAVIGATE_TIMEOUT / 1000)
+        error = result.get("errorText")
+        if error and error != "net::ERR_ABORTED":
+            raise BrowserError(f"The page did not load: {error}")
+        self.started = True
+        await self._wait_ready(NAVIGATE_TIMEOUT / 1000)
+        await self._eval(CONSOLE_HOOK_JS)
+        state = await self._state()
+        status = await self._eval(STATUS_JS)
+        return {"url": state.get("url", url), "title": state.get("title", ""), "status": status}
+
+    async def snapshot(self) -> dict[str, Any]:
+        self._require()
+        result = await self._run(SNAPSHOT_JS, {"maxLines": SNAPSHOT_LINES, "startSeq": self._ref_seq})
+        if not isinstance(result, dict):
+            raise BrowserError("The snapshot failed. Try again.")
+        self._ref_seq = max(self._ref_seq, int(result.pop("seq")))
+        state = await self._state()
+        return {"url": state.get("url", ""), "title": state.get("title", ""), **result}
+
+    async def click(self, ref: str) -> dict[str, Any]:
+        self._require()
+        before = await self._state()
+        point = await self._run(POINT_JS, ref)
+        if point is None:
+            raise BrowserError(STALE_REF.format(ref=ref))
+        if point["hit"] and point["width"] > 0 and point["height"] > 0:
+            # A real mouse click, as the user makes it.
+            at = {"x": point["x"], "y": point["y"]}
+            await self._call("Input.dispatchMouseEvent", {"type": "mouseMoved", **at})
+            for kind in ("mousePressed", "mouseReleased"):
+                await self._call("Input.dispatchMouseEvent", {"type": kind, **at, "button": "left", "clickCount": 1})
+        else:
+            await self._run(CLICK_JS, ref)  # Another element covers it, or it has no size.
+        return await self._after(before)
+
+    async def fill(self, ref: str, text: str, submit: bool = False) -> dict[str, Any]:
+        self._require()
+        before = await self._state()
+        kind = await self._run(FILL_JS, [ref, text])
+        error = (kind or {}).get("error")
+        if kind is None or error == "stale":
+            raise BrowserError(STALE_REF.format(ref=ref))
+        if error == "option":
+            raise BrowserError(f"The select box {ref} has no option {text!r}.")
+        if error == "check":
+            raise BrowserError(f"{ref} is a {kind['type']}. Use preview_click to change it.")
+        if kind.get("kind") == "text":
+            if text:
+                await self._call("Input.insertText", {"text": text})
+            else:
+                for kind_ in ("keyDown", "keyUp"):
+                    await self._call("Input.dispatchKeyEvent", {"type": kind_, **BACKSPACE})
+        if submit:
+            await self._call("Input.dispatchKeyEvent", {"type": "keyDown", **ENTER, "text": "\r"})
+            await self._call("Input.dispatchKeyEvent", {"type": "keyUp", **ENTER})
+        return await self._after(before)
+
+    async def _after(self, before: dict[str, Any]) -> dict[str, Any]:
+        """The result of an action: the new URL, the blocked URLs, and the new console errors."""
+        await self._wait_ready(ACTION_TIMEOUT / 1000)
+        await self._eval(CONSOLE_HOOK_JS)
+        state = await self._state()
+        url = state.get("url", "")
+        blocked: list[str] = []
+        if url != before.get("url") and url.startswith(("http:", "https:")) and not self.allow_url(url):
+            # The agent opens only the allowed sites. The tab goes back to the page before.
+            blocked.append(url)
+            await self._eval("history.back()")
+            await self._wait_ready(ACTION_TIMEOUT / 1000)
+            await self._eval(CONSOLE_HOOK_JS)
+            state = await self._state()
+            url = state.get("url", "")
+        mark = before.get("seq", 0) if state.get("doc") == before.get("doc") else 0
+        errors = [e["text"] for e in await self.console_messages() if e["seq"] > mark and e["level"] == "error"]
+        return {"url": url, "navigated": url != before.get("url"), "blocked": blocked, "errors": errors}
+
+    async def console_messages(self) -> list[dict[str, Any]]:
+        if not self.started:
+            return []
+        entries = await self._eval("window.__harnessLog || []")
+        return [dict(e) for e in entries or []]
+
+    async def screenshot(self, full_page: bool = False, quality: int = SCREENSHOT_QUALITY) -> bytes:
+        self._require()
+        params: dict[str, Any] = {"format": "jpeg", "quality": quality}
+        if full_page:
+            metrics = await self._call("Page.getLayoutMetrics")
+            size = metrics.get("cssContentSize") or metrics.get("contentSize") or {}
+            params["captureBeyondViewport"] = True
+            params["clip"] = {"x": 0, "y": 0, "width": size.get("width", VIEWPORT["width"]),
+                              "height": min(size.get("height", VIEWPORT["height"]), 16_000), "scale": 1}
+        result = await self._call("Page.captureScreenshot", params, 30)
+        return base64.b64decode(result.get("data") or "")
+
+    async def page_info(self) -> dict[str, Any] | None:
+        if not self.started:
+            return None
+        state = await self._state()
+        return {"url": state.get("url", ""), "title": state.get("title", "")}
+
+    async def close(self) -> None:
+        """The tab stays open: the user can use it."""
+        self.started = False
 
 
 def _first_line(error: Exception) -> str:

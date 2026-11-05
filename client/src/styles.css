@@ -9045,6 +9045,73 @@ textarea.setting-textarea:disabled {
   color: var(--text-muted);
 }
 
+/* The small live view of the page where the agent works. A click opens it in the Browser pane. */
+.rail-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-browser:hover {
+  background: var(--hover);
+}
+
+.rail-browser:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.rail-browser-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--bg));
+}
+
+.rail-browser-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+
+.rail-browser-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.rail-browser-caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.rail-browser-caption .rail-item-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-browser-state {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .rail-dot {
   flex: none;
   width: 7px;

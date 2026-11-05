@@ -114,7 +114,7 @@ import { SIDEBAR_DEFAULT, SidebarResizer, clampSidebar } from "./components/Side
 import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
-import { BrowserPane, clearBrowserData, keepCookies } from "./browser/BrowserPane";
+import { BrowserPane, agentBrowserOf, clearBrowserData, keepCookies, onAgentBrowser, runAgentCall, showAgentTab } from "./browser/BrowserPane";
 import { pendingServerApprovals } from "./browser/ServerBlock";
 import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
 import { AllowedSites } from "./components/AllowedSites";
@@ -289,6 +289,11 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** True when the agent can work in a tab of the Browser pane: the desktop app on Windows, with the daemon of this computer. */
+function canHostAgentBrowser(kind: string | undefined): boolean {
+  return isTauri() && kind === "local" && /Windows/i.test(navigator.userAgent);
+}
+
 export default function App() {
   // A ref, not useMemo: React Fast Refresh runs useMemo again, and a second connection object would be closed.
   const connRef = useRef<DaemonConnection | null>(null);
@@ -393,6 +398,9 @@ export default function App() {
   const [previewServer, setPreviewServer] = useState<string | null>(null); // /preview waits for this server.
   const [filesToken, setFilesToken] = useState<string | null>(null);
   const [agentFrame, setAgentFrame] = useState<(AgentFrame & { key: number }) | null>(null); // The agent browser page.
+  const [frameLive, setFrameLive] = useState(false); // The headless agent browser sent a live frame lately.
+  const frameLiveTimer = useRef(0);
+  const [showAgentView, setShowAgentView] = useState(0); // A change shows the headless agent page in the Browser pane.
   const [autoVerify, setAutoVerify] = useState(false);
   const targetRef = useRef<{ host: string; port: number; token: string } | null>(null);
   const [commands, setCommands] = useState<CommandItem[] | null>(null); // The / menu.
@@ -624,6 +632,7 @@ export default function App() {
             setReviewId(null);
             setRules(null);
             setAgentFrame(null);
+            setFrameLive(false);
             setMcpStatus(null);
             const saved = loadLayout(currentRef.current?.id ?? "local", msg.cwd, viewRef.current);
             const codeStart = codeStartNext.current && viewRef.current === "code";
@@ -632,6 +641,8 @@ export default function App() {
             // When no provider gives the model of the session, the model by network replaces it, or the chat asks.
             requestModels();
             sendSafely({ type: "user_settings.get" });
+            // The agent works in a tab of the Browser pane: only the desktop app on Windows with the local daemon.
+            sendSafely({ type: "browser.pane", enabled: canHostAgentBrowser(currentRef.current?.kind) });
           } else if (sessionRef.current.cwd !== msg.cwd) {
             // The session moved to another folder: the daemon stopped its shells. The terminal
             // pane opens a new shell in the new folder.
@@ -845,6 +856,29 @@ export default function App() {
         case "preview.frame": {
           const { type: _type, ...frame } = msg;
           setAgentFrame((f) => ({ ...frame, key: (f?.key ?? 0) + 1 }));
+          // The headless agent browser sends live frames while it works.
+          setFrameLive(true);
+          window.clearTimeout(frameLiveTimer.current);
+          frameLiveTimer.current = window.setTimeout(() => setFrameLive(false), 35_000);
+          return;
+        }
+        case "browser.call": {
+          // The agent works in its tab of the Browser pane. The answer goes back to the daemon.
+          const session = msg.session_id ?? sessionRef.current?.id;
+          const answer = (body: { tab?: string; result?: Record<string, unknown>; error?: string }) => {
+            try {
+              conn.send({ type: "browser.result", call_id: msg.call_id, ...body });
+            } catch {
+              // Not connected: the daemon stops the call.
+            }
+          };
+          if (!session) {
+            answer({ error: "No session." });
+            return;
+          }
+          void runAgentCall(session, msg.method, msg.params, msg.timeout_ms)
+            .then(({ tab, result }) => answer({ tab, result }))
+            .catch((e) => answer({ error: e instanceof Error ? e.message : String(e) }));
           return;
         }
         case "permissions":
@@ -1815,6 +1849,26 @@ export default function App() {
     setRailShown(on);
   }, []);
   const closeRail = useCallback(() => showRail(false), [showRail]);
+  // The agent tab of the Browser pane for this session (desktop app), or the headless agent browser.
+  const sessionId = session?.id ?? null;
+  const [agentTab, setAgentTab] = useState(() => agentBrowserOf(sessionId));
+  useEffect(() => {
+    const read = () => setAgentTab(agentBrowserOf(sessionId));
+    read();
+    return onAgentBrowser(read);
+  }, [sessionId]);
+  const agentWorking = agentTab ? agentTab.live : frameLive;
+  // When the agent starts to work in the browser, the rail opens with a small live view of the page,
+  // as in the Claude app. With the Browser pane open, the pane shows the page.
+  useEffect(() => {
+    if (!agentWorking || view !== "code" || findGroupOf(layout, "browser") !== null) return;
+    setRail(true);
+  }, [agentWorking]);
+  const showAgentBrowser = useCallback(() => {
+    if (sessionId && agentTab) showAgentTab(sessionId);
+    else setShowAgentView((n) => n + 1);
+    setLayout((l) => openPane(l, "browser"));
+  }, [sessionId, agentTab]);
   // In the Code view, the rail closes when a pane opens (the browser, the files, the changes, and the
   // others), so the pane gets the room. When the last pane closes, the rail opens again. The saved
   // preference does not change, and the title bar button still opens the rail. A change of view only
@@ -2539,6 +2593,7 @@ export default function App() {
           request={browserRequest}
           serverApi={servers}
           agentFrame={agentFrame}
+          showAgent={showAgentView}
           onOpenServer={(s) => void openServer(s)}
           onOpenAgentPage={openAgentPage}
           onError={browserError}
@@ -3322,6 +3377,14 @@ export default function App() {
                   servers={servers.items}
                   onOpenServer={(s) => void openServer(s)}
                   onShowServers={() => setLayout((l) => openPane(l, "browser"))}
+                  browser={
+                    agentTab
+                      ? { tab: agentTab.tab, image: null, url: agentTab.url, title: agentTab.title, live: agentTab.live }
+                      : agentFrame
+                        ? { tab: null, image: agentFrame.image, url: agentFrame.url, title: agentFrame.title, live: frameLive }
+                        : null
+                  }
+                  onShowBrowser={showAgentBrowser}
                   tasks={tasks ?? []}
                   onShowTasks={() => showPane("tasks")}
                   keepAwake={keepAwake}

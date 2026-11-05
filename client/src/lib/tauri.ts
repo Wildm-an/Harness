@@ -192,6 +192,12 @@ export const browserView = {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("browser_screenshot", { id, path });
   },
+  /** A DevTools protocol call in the page of a tab: the agent works in the tab. Returns the JSON result. */
+  async cdp(id: string, method: string, params: unknown, timeoutMs = 30_000): Promise<Record<string, unknown>> {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const text = await invoke<string>("browser_cdp", { id, method, params: JSON.stringify(params ?? {}), timeout: timeoutMs });
+    return text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  },
   async bounds(id: string, bounds: Bounds) {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("browser_bounds", { id, bounds });

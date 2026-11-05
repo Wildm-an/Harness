@@ -14,7 +14,7 @@ const task = (id: string, status: TaskItem["status"], started_at: number): TaskI
 
 describe("the session rail sections", () => {
   it("use the order of Claude", () => {
-    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "pullRequests", "servers", "backgroundTasks"]);
+    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["browser", "environment", "context", "pullRequests", "servers", "backgroundTasks"]);
   });
 
   it("read the folded sections and drop unknown ids", () => {

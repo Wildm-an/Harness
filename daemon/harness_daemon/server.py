@@ -643,7 +643,7 @@ class LiveSession:
         self.plugins = session.agent.plugins
         self.servers = ServerManager(session.cwd, session.agent.ctx.shell, self.send)
         MANAGERS.add(self.servers)
-        self.preview = PreviewHost(self.servers, self.send)
+        self.preview = PreviewHost(self.servers, self.send, relay=PaneRelay(self))
         PREVIEWS.add(self.preview)
         session.agent.enable_preview(self.preview)
         self.files_token = secrets.token_urlsafe(24)
@@ -674,6 +674,48 @@ class LiveSession:
     async def wait_for_mcp(self) -> None:
         if self.mcp is not None:
             await self.mcp.ready(MCP_WAIT)
+
+
+class PaneRelay:
+    """Runs the DevTools protocol calls of the agent in its tab of the Browser pane of the client.
+
+    The client hosts the tab only when it says so (``browser.pane``) and shows this session. A
+    call fails at once when the client leaves the session.
+    """
+
+    def __init__(self, live: LiveSession):
+        self.live = live
+
+    def available(self) -> bool:
+        conn = self.live.conn
+        return conn.pane_browser and conn._open and conn.current is self.live
+
+    async def call(self, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+        from .browser import BrowserError
+
+        conn = self.live.conn
+        call_id = secrets.token_hex(8)
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        conn.browser_calls[call_id] = future
+        try:
+            await self.live.send({"type": "browser.call", "call_id": call_id, "method": method, "params": params,
+                                  "timeout_ms": int(timeout * 1000)})
+            deadline = asyncio.get_running_loop().time() + timeout + 5
+            while not future.done():
+                if not self.available():
+                    raise BrowserError("The Browser pane of this session closed. Open the page again with preview_navigate.")
+                if asyncio.get_running_loop().time() > deadline:
+                    raise BrowserError(f"The Browser pane did not answer {method} in time.")
+                await asyncio.wait({future}, timeout=0.25)
+            reply = future.result()
+        finally:
+            conn.browser_calls.pop(call_id, None)
+        if reply.get("error"):
+            raise BrowserError(str(reply["error"]))
+        result = reply.get("result")
+        result = dict(result) if isinstance(result, dict) else {}
+        result["__tab"] = reply.get("tab")
+        return result
 
 
 def _delegate(name: str) -> property:
@@ -711,6 +753,9 @@ class Connection:
         self._running_sent: list[dict[str, Any]] | None = None
         # The plugins of the project on the start screen, for its / menu. A session loads its own plugins.
         self._start_plugins: PluginHost | None = None
+        # The client can host the agent browser in a tab of its Browser pane (browser.pane).
+        self.pane_browser = False
+        self.browser_calls: dict[str, asyncio.Future] = {}  # The open browser.call requests, by call id.
 
     @property
     def pending(self) -> dict[str, asyncio.Future]:
@@ -1816,6 +1861,20 @@ async def on_task_stop(conn: Connection, msg: dict[str, Any]) -> None:
         await _tasks(conn).stop(_text_arg(msg, "id"))
     except TaskError as e:
         raise ProtocolError(str(e)) from None
+
+
+@handler("browser.pane")
+async def on_browser_pane(conn: Connection, msg: dict[str, Any]) -> None:
+    """The client says if it can host the agent browser in a tab of its Browser pane."""
+    conn.pane_browser = bool(msg.get("enabled"))
+
+
+@handler("browser.result")
+async def on_browser_result(conn: Connection, msg: dict[str, Any]) -> None:
+    """The result of a browser.call: ``result`` (the DevTools result) or ``error``, and ``tab``."""
+    future = conn.browser_calls.get(str(msg.get("call_id") or ""))
+    if future is not None and not future.done():
+        future.set_result({"result": msg.get("result"), "error": msg.get("error"), "tab": msg.get("tab")})
 
 
 @handler("session.keep_awake")

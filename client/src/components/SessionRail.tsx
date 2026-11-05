@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Archive, ChevronRight, Coffee, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, KeyRound, Monitor } from "lucide-react";
+import { captureAgentTab } from "../browser/BrowserPane";
 import type { PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
 import type { ConnectionKind } from "../lib/connections";
 import {
@@ -37,7 +38,20 @@ export interface RailEnvironment {
   worktree: SessionWorktree | null;
 }
 
+/** The page where the agent works: its tab of the Browser pane, or the headless agent browser. */
+export interface RailBrowser {
+  tab: string | null; // The agent tab of the Browser pane. null: the headless browser.
+  image: string | null; // The last frame of the headless browser.
+  url: string;
+  title: string;
+  live: boolean; // The agent works in it now.
+}
+
+const LIVE_EVERY = 500; // ms between two pictures of the agent tab.
+
 export function SessionRail({
+  browser,
+  onShowBrowser,
   environment,
   context,
   usage,
@@ -56,6 +70,8 @@ export function SessionRail({
   keepAwakeDisabled,
   onClose,
 }: {
+  browser: RailBrowser | null;
+  onShowBrowser: () => void; // Open the Browser pane on the page of the agent.
   environment: RailEnvironment;
   context: { tokens: number; length: number } | null;
   usage: ContextUsage | null; // The last context breakdown (context.usage).
@@ -143,6 +159,7 @@ export function SessionRail({
   );
 
   const body: Record<RailSection, ReactNode | null> = {
+    browser: browser ? <RailBrowserView browser={browser} onShow={onShowBrowser} /> : null,
     environment: (
       <>
       <dl className="rail-rows">
@@ -282,6 +299,51 @@ export function SessionRail({
         );
       })}
     </aside>
+  );
+}
+
+/**
+ * A small live view of the page where the agent works. A click opens it in the Browser pane, where
+ * the user can use the same page. The pictures of the agent tab come from the tab itself.
+ */
+function RailBrowserView({ browser, onShow }: { browser: RailBrowser; onShow: () => void }) {
+  const [picture, setPicture] = useState<string | null>(null);
+  const { tab, live } = browser;
+  useEffect(() => {
+    setPicture(null);
+  }, [tab]);
+  useEffect(() => {
+    if (!tab) return;
+    let stop = false;
+    let timer = 0;
+    const take = async () => {
+      try {
+        const image = await captureAgentTab(tab);
+        if (!stop) setPicture(image);
+      } catch {
+        // The tab is hidden or busy. The last picture stays.
+      }
+      if (!stop && live) timer = window.setTimeout(take, LIVE_EVERY);
+    };
+    void take();
+    return () => {
+      stop = true;
+      window.clearTimeout(timer);
+    };
+  }, [tab, live]);
+  const image = tab ? picture : browser.image;
+  const label = browser.title.trim() || browser.url;
+  return (
+    <button type="button" className="rail-browser" onClick={onShow} title="Open in the Browser pane">
+      <span className="rail-browser-frame">
+        {image ? <img src={image} alt={`The page where the agent works: ${label}`} /> : <span className="rail-browser-empty">Opening the page…</span>}
+      </span>
+      <span className="rail-browser-caption">
+        <span className={`rail-dot ${live ? "running" : "stopped"}`} aria-hidden />
+        <span className="rail-item-title">{label || "Agent browser"}</span>
+        <span className="rail-browser-state">{live ? "Live" : "Idle"}</span>
+      </span>
+    </button>
   );
 }
 

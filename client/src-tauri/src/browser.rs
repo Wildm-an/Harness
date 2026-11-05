@@ -176,6 +176,45 @@ pub fn screenshot(app: &AppHandle, id: &str) -> Result<std::sync::mpsc::Receiver
     Ok(rx)
 }
 
+/// Starts a DevTools protocol call in the page of a tab (WebView2 CallDevToolsProtocolMethod).
+/// The agent uses it to work in the tab of the user. It needs no debug port: only the app can call it.
+/// The receiver gets the JSON result of the method.
+#[cfg(windows)]
+pub fn cdp(app: &AppHandle, id: &str, method: &str, params: &str) -> Result<std::sync::mpsc::Receiver<Result<String, String>>, String> {
+    use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+    use windows::core::HSTRING;
+
+    if method.is_empty() || !method.chars().all(|c| c.is_ascii_alphanumeric() || c == '.') {
+        return Err(format!("Not a valid method: {method}"));
+    }
+    let view = require(app, id)?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (method, params) = (HSTRING::from(method), HSTRING::from(params));
+    view.with_webview(move |platform| {
+        let failed = tx.clone();
+        let start = || -> windows::core::Result<()> {
+            unsafe {
+                let core = platform.controller().CoreWebView2()?;
+                let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+                    let _ = tx.send(result.map(|()| json).map_err(|e| e.message().to_string()));
+                    Ok(())
+                }));
+                core.CallDevToolsProtocolMethod(&method, &params, &handler)
+            }
+        };
+        if let Err(e) = start() {
+            let _ = failed.send(Err(format!("The browser call failed: {e}")));
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(rx)
+}
+
+#[cfg(not(windows))]
+pub fn cdp(_app: &AppHandle, _id: &str, _method: &str, _params: &str) -> Result<std::sync::mpsc::Receiver<Result<String, String>>, String> {
+    Err("The agent works in the Browser pane only on Windows now.".to_string())
+}
+
 #[cfg(windows)]
 unsafe fn read_stream(stream: &windows::Win32::System::Com::IStream) -> windows::core::Result<Vec<u8>> {
     use windows::Win32::System::Com::STREAM_SEEK_SET;

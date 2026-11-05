@@ -92,6 +92,7 @@ export interface BrowserTab {
   title: string; // The page title. Empty until the page gives one.
   loading: boolean;
   frame: number; // The iframe key outside the desktop app. A change reloads the page.
+  agent?: string; // The session id of the agent that works in this tab.
 }
 
 let tabCounter = 0;
@@ -119,6 +120,170 @@ let handledRequest = 0; // The key of the last navigation request from the app. 
 
 // A new page of the app has no tabs yet. Webviews from an earlier page (a reload) must go.
 if (isTauri()) void browserView.closeAll().catch(() => undefined);
+
+// -- The agent tabs ----------------------------------------------------------------------------
+// The agent works in its own tab of this browser, one tab for each session (SPEC.md section 8.7).
+// The user sees the same page, live, and can use it too. All tabs share the cookies, so the agent
+// is signed in where the user is. While the agent works, a tab that the pane does not show is
+// "parked": it moves out of sight with a real size and stays visible, so the page keeps drawing.
+// The agent can then take its screenshots, and the session rail shows the page live.
+
+const AGENT_IDLE = 60_000; // ms with no agent call before a parked tab hides.
+const agentTabs = new Map<string, string>(); // Session id -> tab id.
+const agentInfo = new Map<string, { session: string; last: number; url: string; title: string }>(); // By tab id.
+const parked = new Set<string>();
+const creating = new Map<string, Promise<string>>(); // Session id -> the tab that opens now.
+const agentListeners = new Set<() => void>();
+let shown: string | null = null; // The tab that the pane shows now.
+let parkSize = { width: 1280, height: 800 }; // The last size of the pane area.
+let agentTimer = 0;
+let agentEvents = false;
+// The open pane: it adds and shows the agent tabs. With no pane, the tabs go into "kept".
+let paneHooks: { add: (tab: BrowserTab) => void; activate: (id: string) => void; has: (id: string) => boolean; resync: (id: string) => void } | null = null;
+
+function agentChanged() {
+  agentListeners.forEach((listener) => listener());
+}
+
+function agentLive(id: string): boolean {
+  const info = agentInfo.get(id);
+  return !!info && Date.now() - info.last < AGENT_IDLE;
+}
+
+/** Calls ``listener`` when an agent tab opens, closes, changes its page, or starts or stops work. */
+export function onAgentBrowser(listener: () => void): () => void {
+  agentListeners.add(listener);
+  return () => agentListeners.delete(listener);
+}
+
+/** The agent tab of a session. ``live``: the agent used it in the last minute. */
+export function agentBrowserOf(session: string | null | undefined): { tab: string; live: boolean; url: string; title: string } | null {
+  const tab = session ? agentTabs.get(session) : undefined;
+  const info = tab ? agentInfo.get(tab) : undefined;
+  if (!tab || !info || !opened.has(tab)) return null;
+  return { tab, live: agentLive(tab), url: info.url, title: info.title };
+}
+
+/** A small live picture of an agent tab, for the session rail. */
+export async function captureAgentTab(tab: string): Promise<string> {
+  const result = await browserView.cdp(tab, "Page.captureScreenshot", { format: "jpeg", quality: 45 }, 5_000);
+  return `data:image/jpeg;base64,${String(result.data ?? "")}`;
+}
+
+/** Show the agent tab of a session in the pane. The app opens the pane. */
+export function showAgentTab(session: string): void {
+  const tab = agentTabs.get(session);
+  if (!tab) return;
+  if (paneHooks) paneHooks.activate(tab);
+  else if (kept?.tabs.some((t) => t.id === tab)) kept = { ...kept, active: tab };
+}
+
+function parkBounds(): Bounds {
+  return { x: -(parkSize.width + 200), y: 0, width: parkSize.width, height: parkSize.height };
+}
+
+async function park(id: string): Promise<void> {
+  if (shown === id) return;
+  parked.add(id);
+  await browserView.bounds(id, parkBounds());
+  await browserView.visible(id, true);
+}
+
+function tabExists(id: string): boolean {
+  return paneHooks ? paneHooks.has(id) : !!kept?.tabs.some((t) => t.id === id);
+}
+
+function watchAgentTabs() {
+  if (!agentEvents) {
+    agentEvents = true;
+    void browserView.onEvent((event) => {
+      const info = agentInfo.get(event.id);
+      if (!info) return;
+      if (event.title !== undefined) info.title = event.title;
+      else if (!event.loading) info.url = event.url;
+      agentChanged();
+    });
+  }
+  if (agentTimer) return;
+  // A parked tab hides one minute after the last agent call. The rail stops its live picture.
+  agentTimer = window.setInterval(() => {
+    let changed = false;
+    for (const [id, info] of agentInfo) {
+      if (info.last === 0 || Date.now() - info.last < AGENT_IDLE) continue;
+      info.last = 0; // Not live now. The change shows one time.
+      changed = true;
+      if (parked.has(id) && shown !== id) {
+        parked.delete(id);
+        void browserView.visible(id, false).catch(() => undefined);
+      }
+    }
+    if (changed) agentChanged();
+  }, 5_000);
+}
+
+/** The agent tab of a session. The first call opens it, out of sight. */
+async function agentTabFor(session: string): Promise<string> {
+  const known = agentTabs.get(session);
+  if (known && opened.has(known) && tabExists(known)) return known;
+  const pending = creating.get(session);
+  if (pending) return pending;
+  const make = (async () => {
+    watchAgentTabs();
+    const tab: BrowserTab = { ...newTab("about:blank"), title: "Agent", agent: session };
+    if (paneHooks) paneHooks.add(tab);
+    else kept = kept ? { ...kept, tabs: [...kept.tabs, tab] } : { tabs: [tab], active: tab.id };
+    agentTabs.set(session, tab.id);
+    agentInfo.set(tab.id, { session, last: Date.now(), url: "about:blank", title: "" });
+    opened.add(tab.id);
+    parked.add(tab.id);
+    const fresh = keepCookies() === "quit" && !clearedThisRun;
+    clearedThisRun = true;
+    try {
+      await browserView.open(tab.id, "about:blank", parkBounds(), fresh);
+    } catch (e) {
+      opened.delete(tab.id);
+      parked.delete(tab.id);
+      agentInfo.delete(tab.id);
+      agentTabs.delete(session);
+      throw e;
+    }
+    paneHooks?.resync(tab.id); // The pane can show it already.
+    agentChanged();
+    return tab.id;
+  })();
+  creating.set(session, make);
+  try {
+    return await make;
+  } finally {
+    creating.delete(session);
+  }
+}
+
+/**
+ * Run a DevTools protocol call of the agent of a session in its tab (the daemon sends browser.call).
+ * A navigation shows the agent tab in the open pane: the agent takes the browser for its work.
+ */
+export async function runAgentCall(session: string, method: string, params: unknown, timeoutMs: number): Promise<{ tab: string; result: Record<string, unknown> }> {
+  if (!isTauri()) throw new Error("This client cannot host the agent browser.");
+  const tab = await agentTabFor(session);
+  const info = agentInfo.get(tab);
+  const wasLive = agentLive(tab);
+  if (info) info.last = Date.now();
+  if (shown !== tab && !parked.has(tab)) await park(tab);
+  if (method === "Page.navigate") paneHooks?.activate(tab);
+  if (!wasLive) agentChanged();
+  return { tab, result: await browserView.cdp(tab, method, params, timeoutMs) };
+}
+
+/** Forget the agent tab when the user closes it. The next agent call opens a new one. */
+function dropAgentTab(id: string) {
+  const info = agentInfo.get(id);
+  if (!info) return;
+  agentInfo.delete(id);
+  parked.delete(id);
+  if (agentTabs.get(info.session) === id) agentTabs.delete(info.session);
+  agentChanged();
+}
 
 /** Clear the cookies and storage of the browser. All tabs share them, so any open tab can do it. */
 export async function clearBrowserData(): Promise<void> {
@@ -196,6 +361,7 @@ export function BrowserPane({
   request,
   serverApi,
   agentFrame,
+  showAgent,
   onOpenServer,
   onOpenAgentPage,
   onError,
@@ -211,7 +377,8 @@ export function BrowserPane({
 }: {
   request: { url: string; key: number } | null; // A navigation request from the app.
   serverApi: ServersApi; // The dev servers of the project (.harness/launch.json), as in the Claude app.
-  agentFrame: (AgentFrame & { key: number }) | null; // The newest page of the agent browser.
+  agentFrame: (AgentFrame & { key: number }) | null; // The newest page of the headless agent browser.
+  showAgent: number; // A change shows the headless agent page (the session rail asks for it).
   onOpenServer: (server: ServerItem) => void;
   onOpenAgentPage: (url: string) => void;
   onError: (message: string) => void;
@@ -247,6 +414,27 @@ export function BrowserPane({
 
   const update = useCallback((id: string, change: Partial<BrowserTab>) => {
     setTabs((list) => list.map((t) => (t.id === id ? { ...t, ...change } : t)));
+  }, []);
+
+  // The agent adds its tab here, and shows it when it opens a page.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  useEffect(() => {
+    paneHooks = {
+      add: (tab) => {
+        tabsRef.current = [...tabsRef.current, tab];
+        setTabs((list) => [...list, tab]);
+      },
+      activate: (id) => {
+        setActiveId(id);
+        setView("page");
+      },
+      has: (id) => tabsRef.current.some((t) => t.id === id),
+      resync: (id) => lastSync.current.delete(id),
+    };
+    return () => {
+      paneHooks = null;
+    };
   }, []);
 
   // The annotation mode (annotate.ts): the tab where it runs, and the notes that went to the prompt.
@@ -374,6 +562,7 @@ export function BrowserPane({
   const closeTab = (id: string) => {
     if (opened.delete(id)) void browserView.close(id).catch(() => undefined);
     lastSync.current.delete(id);
+    dropAgentTab(id);
     const index = tabs.findIndex((t) => t.id === id);
     const rest = tabs.filter((t) => t.id !== id);
     if (rest.length === 0) {
@@ -404,6 +593,10 @@ export function BrowserPane({
     if (!active.url) setView("agent");
     else if (view === "page") setUnseen(true);
   }, [agentFrame?.key]);
+
+  useEffect(() => {
+    if (showAgent && agentFrame) setView("agent");
+  }, [showAgent]);
 
   // Page loads and title changes of the webviews. A link that opens a window opens a new tab.
   useEffect(() => {
@@ -509,11 +702,24 @@ export function BrowserPane({
     if (!tauri) return;
     const sync = () => {
       const bounds = measure();
+      const box = area.current?.getBoundingClientRect();
+      if (box && box.width >= 2 && box.height >= 2) parkSize = { width: Math.round(box.width), height: Math.round(box.height) };
+      shown = null;
       for (const tab of tabs) {
         const show = tab.id === active.id && !!bounds && !covered && !!tab.url && view === "page";
-        const key = JSON.stringify([show ? bounds : null, show, opened.has(tab.id)]);
+        if (show) {
+          shown = tab.id;
+          parked.delete(tab.id);
+        }
+        const live = !!tab.agent && agentLive(tab.id);
+        const key = JSON.stringify([show ? bounds : null, show, opened.has(tab.id), live]);
         if (lastSync.current.get(tab.id) === key) continue;
         lastSync.current.set(tab.id, key);
+        // While the agent works, its tab stays out of sight but visible (parked): the page keeps drawing.
+        if (!show && live && opened.has(tab.id)) {
+          void park(tab.id).catch(() => undefined);
+          continue;
+        }
         if (show && bounds && tab.url && !opened.has(tab.id)) {
           opened.add(tab.id);
           const fresh = keep === "quit" && !clearedThisRun;
@@ -526,6 +732,7 @@ export function BrowserPane({
         }
         if (!opened.has(tab.id)) continue;
         if (show && bounds) void browserView.bounds(tab.id, bounds);
+        if (!show) parked.delete(tab.id);
         void browserView.visible(tab.id, show);
       }
     };
@@ -541,10 +748,19 @@ export function BrowserPane({
     };
   }, [tauri, measure, covered, tabs, active.id, view, onError, keep]);
 
-  // Hide the webviews when the pane closes. They stay open for the next time.
+  // Hide the webviews when the pane closes. They stay open for the next time. A tab where the
+  // agent works now stays parked.
   useEffect(
     () => () => {
-      for (const id of opened) void browserView.visible(id, false).catch(() => undefined);
+      shown = null;
+      for (const id of opened) {
+        if (agentLive(id)) {
+          void park(id).catch(() => undefined);
+        } else {
+          parked.delete(id);
+          void browserView.visible(id, false).catch(() => undefined);
+        }
+      }
       lastSync.current.clear();
     },
     [],
@@ -570,7 +786,7 @@ export function BrowserPane({
       <PaneHeader>
         <WindowTabs
           kind="Browser"
-          tabs={tabs.map((t) => ({ id: t.id, label: tabLabel(t), icon: t.loading ? LoaderCircle : Globe, busy: t.loading }))}
+          tabs={tabs.map((t) => ({ id: t.id, label: t.agent ? `Agent: ${tabLabel(t)}` : tabLabel(t), icon: t.loading ? LoaderCircle : t.agent ? Bot : Globe, busy: t.loading }))}
           active={active.id}
           onSelect={(id) => {
             setActiveId(id);
@@ -820,7 +1036,13 @@ export function BrowserPane({
             <div className="agent-caption">
               <Bot size={14} aria-hidden />
               <span>
-                The agent browser after <span className="mono">{agentFrame.action}</span>
+                {agentFrame.action === "live" ? (
+                  "The agent browser, live"
+                ) : (
+                  <>
+                    The agent browser after <span className="mono">{agentFrame.action}</span>
+                  </>
+                )}
                 {agentFrame.title && <> · {agentFrame.title}</>}
               </span>
               <span className="spacer" />

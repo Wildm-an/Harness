@@ -8,18 +8,22 @@ Rules (SPEC.md section 8.7):
 - The agent browser opens the URLs of the servers in launch.json with no approval.
 - Another URL needs approval. After approval, the agent browser can open the pages of
   that origin until the session closes.
-- After each action, the host sends a ``preview.frame`` event with a small screenshot, so
-  that the Browser pane of the client can show the agent browser page.
+- The agent works in its tab of the Browser pane of the user when the client can host it
+  (``PaneRelay``). The user sees the same page, live, and can use it too.
+- Else the agent uses a headless browser. It sends live ``preview.frame`` events with small
+  pictures of its page, so that the client can show what the agent does.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+import secrets
+import time
+from typing import Any, Awaitable, Callable, Protocol
 from urllib.parse import urljoin, urlsplit
 
-from .browser import FRAME_QUALITY, AgentBrowser, BrowserError, data_url
+from .browser import FRAME_QUALITY, AgentBrowser, BrowserError, PaneBrowser, data_url
 from .servers import Server, ServerManager
 
 log = logging.getLogger("harness.preview")
@@ -28,6 +32,83 @@ Emit = Callable[[dict[str, Any]], Awaitable[None]]
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
 START_TIMEOUT = 60  # Seconds for preview_start to wait for the "running" state.
+LIVE_IDLE = 30  # Seconds with no agent action before the live frames of the headless browser stop.
+PANE_GONE = (
+    "The Browser pane of this session is not available now (the user shows another session, or the "
+    "app closed). Open the page again with preview_navigate. It opens in a headless browser.")
+
+
+class PaneRelay(Protocol):
+    """The client that hosts the agent tab in its Browser pane (server.py)."""
+
+    def available(self) -> bool: ...
+
+    async def call(self, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]: ...
+
+
+class SessionBrowser:
+    """The browser of the agent: its tab of the Browser pane when the client can host it, else a
+    headless browser. Each preview_navigate chooses again. The other actions use the browser of
+    the last page."""
+
+    def __init__(self, host: "PreviewHost", relay: PaneRelay | None):
+        self.host = host
+        self.relay = relay
+        self.headless = AgentBrowser(host.allowed)
+        self.pane = PaneBrowser(self._pane_call, host.allowed) if relay is not None else None
+        self.current: AgentBrowser | PaneBrowser = self.headless
+
+    @property
+    def in_pane(self) -> bool:
+        return self.current is self.pane
+
+    async def _pane_call(self, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+        if self.relay is None or not self.relay.available():
+            raise BrowserError(PANE_GONE)
+        return await self.relay.call(method, params, timeout)
+
+    def _active(self) -> AgentBrowser | PaneBrowser:
+        if self.current is self.pane and (self.relay is None or not self.relay.available()):
+            raise BrowserError(PANE_GONE)
+        return self.current
+
+    async def navigate(self, url: str) -> dict[str, Any]:
+        if self.pane is not None and self.relay is not None and self.relay.available():
+            self.current = self.pane
+        else:
+            self.current = self.headless
+        self.host.touch()
+        return await self.current.navigate(url)
+
+    async def snapshot(self) -> dict[str, Any]:
+        return await self._active().snapshot()
+
+    async def click(self, ref: str) -> dict[str, Any]:
+        self.host.touch()
+        return await self._active().click(ref)
+
+    async def fill(self, ref: str, text: str, submit: bool = False) -> dict[str, Any]:
+        self.host.touch()
+        return await self._active().fill(ref, text, submit)
+
+    async def console_messages(self) -> list[dict[str, Any]]:
+        return await self._active().console_messages()
+
+    async def screenshot(self, full_page: bool = False, quality: int = 70) -> bytes:
+        return await self._active().screenshot(full_page=full_page, quality=quality)
+
+    async def page_info(self) -> dict[str, Any] | None:
+        if self.current is self.pane and (self.relay is None or not self.relay.available()):
+            return None
+        return await self.current.page_info()
+
+    async def close(self) -> None:
+        if self.pane is not None:
+            await self.pane.close()
+        await self.headless.close()
+
+    def close_now(self) -> None:
+        self.headless.close_now()
 
 
 def origin_of(url: str) -> str:
@@ -40,11 +121,14 @@ def _default_port(scheme: str) -> int | None:
 
 
 class PreviewHost:
-    def __init__(self, servers: ServerManager, emit: Emit):
+    def __init__(self, servers: ServerManager, emit: Emit, relay: PaneRelay | None = None):
         self.servers = servers
         self.emit = emit
-        self.browser = AgentBrowser(self.allowed)
         self.approved: set[str] = set()  # Origins that the user approved in this session.
+        self.browser = SessionBrowser(self, relay)
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._live_until = 0.0  # The live frames of the headless browser stop at this time (monotonic).
+        self._live_task: asyncio.Task | None = None
 
     # -- URLs --------------------------------------------------------------------------
 
@@ -151,8 +235,39 @@ class PreviewHost:
 
     # -- the Browser pane --------------------------------------------------------------------
 
+    def touch(self) -> None:
+        """An agent action: the headless browser sends live frames until LIVE_IDLE seconds after it."""
+        self._live_until = time.monotonic() + LIVE_IDLE
+        if self._live_task is None or self._live_task.done():
+            self._loop = asyncio.get_running_loop()
+            self._live_task = asyncio.create_task(self._live())
+
+    async def _live(self) -> None:
+        browser = self.browser.headless
+        loop = asyncio.get_running_loop()
+
+        def on_frame(url: str, image: bytes) -> None:  # The browser thread.
+            if self.browser.in_pane:
+                return
+            event = {"type": "preview.frame", "url": url, "title": "", "action": "live", "image": data_url(image)}
+            asyncio.run_coroutine_threadsafe(self.emit(event), loop)
+
+        try:
+            await browser.set_live(on_frame)
+            while time.monotonic() < self._live_until:
+                await asyncio.sleep(1)
+        except Exception as e:  # noqa: BLE001 - the frames are only for the user.
+            log.debug("The live frames stopped: %s", e)
+        finally:
+            try:
+                await browser.set_live(None)
+            except Exception:  # noqa: BLE001
+                pass
+
     async def send_frame(self, action: str) -> None:
-        """Send a small screenshot of the agent browser page to the client."""
+        """Send a small screenshot of the headless page after an action. The pane shows its own tab live."""
+        if self.browser.in_pane:
+            return
         try:
             info = await self.browser.page_info()
             if info is None:
@@ -165,6 +280,8 @@ class PreviewHost:
                          "action": action, "image": data_url(image)})
 
     async def close(self) -> None:
+        if self._live_task is not None:
+            self._live_task.cancel()
         await self.browser.close()
 
     def close_now(self) -> None:
