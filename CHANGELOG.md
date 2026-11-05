@@ -3,6 +3,44 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.51 (2026-11-05)
+
+### Browser
+
+- The agent works in the Browser pane, in its own tab ("Agent: …"), one tab for each session.
+  You see the same page as the agent, live, and you can use it too. All tabs share the cookies,
+  so the agent is signed in where you are. A navigation of the agent shows its tab in the open
+  pane. This needs the desktop app on Windows with the daemon of this computer.
+- When the agent starts to work in the browser, the session rail opens with a small live view
+  of the page ("Browser"). A click on it opens the page in the Browser pane.
+- With a remote daemon, the agent uses a headless browser. It sends live pictures of its page,
+  and the rail and the Browser pane show them.
+
+### Session rail
+
+- Drag a section heading to move the section, or press Alt+Up or Alt+Down on the heading. The
+  order stays for new sessions and after an update. "Browser" is under "Servers" by default.
+- A new "Changes" section shows "+N −N" of the session folder against its base branch. A
+  repository with a GitHub remote has "Create PR": the agent commits, pushes, and opens a pull
+  request. A local repository has "Commit".
+- "Compact this session" is "Compact". The Context section starts folded in each session.
+
+### Chat
+
+- A finished task list folds into one line, "Plan finished · {n} steps". A click opens it.
+- When you send a message during a turn, the task list shows "Plan from before your last
+  message" at once, and the step in progress stops its spinner.
+- Esc stops the agent from anywhere in the window, not only in the prompt box.
+- The "Diff" pane is "Changes".
+
+### Speed
+
+- Sessions open faster: about 50 ms in the daemon, before up to several seconds. The open no
+  longer waits for the checks of the model endpoint, and the previous session closes in the
+  background.
+- The daemon makes its SSL context one time. Before, each network request stopped the daemon for
+  about 300 ms on Windows.
+
 ## 0.1.50 (2026-11-05)
 
 ### Split view
