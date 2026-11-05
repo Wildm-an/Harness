@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
-  ChevronDown,
   Code2,
   Folder,
   FolderOpen,
@@ -12,7 +11,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { CommandItem, GitBranches, PermissionMode, ProjectItem } from "../daemon/protocol";
+import type { CommandItem, Effort, GitBranches, PermissionMode, ProjectItem } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
@@ -205,7 +204,6 @@ function ProjectMenu({
           {selected?.name ?? "Loading the projects"}
           {selected && hint && <span className="project-hint"> · {hint}</span>}
         </span>
-        <ChevronDown size={13} aria-hidden />
       </button>
       {open && projects && (
         <div className="menu project-dropdown up" role="menu" aria-label="Projects">
@@ -271,6 +269,8 @@ export function SessionStart({
   prefScope,
   onBrowse,
   models,
+  localProviders,
+  effort,
   onRequestModels,
   onManageProviders,
   onSaveProject,
@@ -311,6 +311,8 @@ export function SessionStart({
   prefScope: string; // The project and the model are remembered for each connection.
   onBrowse: (current: string) => Promise<string | null>; // The native dialog, or the remote folder picker.
   models: ModelList | null; // The models of the connections that are on. null: loading.
+  localProviders?: ReadonlySet<string>; // The providers on the computer of the daemon: the "Local models" submenu.
+  effort?: { value: Effort | null; onChange: (value: Effort | null) => void }; // The "Effort" submenu.
   onRequestModels: () => void;
   onManageProviders: () => void;
   onSaveProject: (draft: ProjectDraft) => Promise<string>;
@@ -530,6 +532,8 @@ export function SessionStart({
                   allowDefault
                   alignRight
                   up
+                  localProviders={localProviders}
+                  effort={effort}
                   onOpen={onRequestModels}
                   onSelect={setModel}
                   onManage={onManageProviders}

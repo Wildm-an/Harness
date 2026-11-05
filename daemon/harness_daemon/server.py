@@ -46,6 +46,7 @@ from .cookbook.hub import HubError
 from .cookbook.service import COOKBOOK, CookbookError
 from .providers import (
     DEFAULT_CONTEXT_LENGTH,
+    EFFORT_API,
     ContextInfo,
     ModelClient,
     endpoint,
@@ -70,6 +71,7 @@ from .servers import ServerManager
 from .prstatus import pr_status
 from . import update
 from . import session as session_mod
+from .tools.sessions import NEW_TASK_CHOICES
 from .session import Session
 from .keepawake import AWAKE
 from .sidechat import NO_TOOLS_REPLY, clean_side_history, side_messages
@@ -202,6 +204,8 @@ class ProtocolError(Exception):
 ROUTINES = HUB
 # The connection of the sessions that the daemon starts with no window: the runs of routines.
 HEADLESS: HeadlessConnection | None = None
+# The connections of the open windows. offer_session finds an open session in them.
+WINDOWS: set[Connection] = set()
 
 
 @asynccontextmanager
@@ -757,6 +761,7 @@ class Connection:
         self._watcher = asyncio.create_task(self.watch_files())
         COOKBOOK.listen(self.send)  # Download and serve events of the Cookbook.
         ROUTINES.listen(self.send)  # The changes and runs of routines.
+        WINDOWS.add(self)
         if HEADLESS is not None and HEADLESS is not self:  # The sessions with no window that work now.
             await self.send(HEADLESS.background_message())
         try:
@@ -792,6 +797,7 @@ class Connection:
             self._open = False
             COOKBOOK.unlisten(self.send)
             ROUTINES.unlisten(self.send)
+            WINDOWS.discard(self)
             if self._watcher:
                 self._watcher.cancel()
             for live in list(self.live.values()):
@@ -1373,6 +1379,51 @@ async def start_child_session(parent: Session, title: str, prompt: str, worktree
 session_mod.CHILD_STARTER = start_child_session
 
 
+def _find_live(session_id: str) -> LiveSession | None:
+    """The open session in a window or in the sessions with no window."""
+    for conn in [*WINDOWS, *([HEADLESS] if HEADLESS is not None else [])]:
+        live = conn.live.get(session_id)
+        if live is not None and live.session is not None:
+            return live
+    return None
+
+
+async def send_to_session(source: Session, target_id: str, prompt: str) -> dict[str, Any]:
+    """Send a prompt to another session of the project and start its turn (the offer_session tool).
+
+    An open session gets the turn in its window. A closed session opens with no window, as a nested
+    session does. A session with a running turn cannot get the prompt now.
+    """
+    headless = HEADLESS
+    if headless is None:
+        raise ToolError("The daemon stops.")
+    row = headless.storage.get_session(target_id)
+    if row is None:
+        raise ToolError("The session does not exist now.")
+    title = row["title"] or "Untitled session"
+    live = _find_live(target_id)
+    if live is not None and (live.running or live.pending):
+        raise ToolError(f"The session '{title}' works on a turn now. Tell the user to send the prompt there "
+                        "when it stops, or offer a new session.")
+    if live is None:
+        try:
+            live, _warnings = await _load_stored(headless, target_id)
+        except ProtocolError as e:
+            raise ToolError(str(e)) from None
+        headless.live[target_id] = live
+        live.start()
+
+    async def work(target: LiveSession) -> None:
+        await target.conn.run_turn(target, prompt)
+
+    await live.conn.start_turn(work, live=live)
+    log.info("The session %s sent a prompt to the session %s", source.id, target_id)
+    return {"id": target_id, "title": title}
+
+
+session_mod.SESSION_SENDER = send_to_session
+
+
 def _project_ref(storage: Storage, cwd: Path) -> dict[str, str] | None:
     """The saved project of a session folder: its id and name."""
     found = storage.find_project(str(cwd))
@@ -1492,6 +1543,13 @@ async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
 
 async def _open_stored(conn: Connection, session_id: str) -> None:
     """Open a stored session in its folder, and make it the current session."""
+    live, warnings = await _load_stored(conn, session_id)
+    await conn.open_session(live)
+    await conn.send_ready(warnings)
+
+
+async def _load_stored(conn: Connection, session_id: str) -> tuple[LiveSession, list[str]]:
+    """Make the agent of a stored session in its folder. The caller opens it."""
     row = conn.storage.get_session(session_id)
     if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
@@ -1515,8 +1573,7 @@ async def _open_stored(conn: Connection, session_id: str) -> None:
         conn.storage.update_session(session_id, provider=agent.client.provider.name, model=agent.client.model)
     conn.storage.touch_project(str(cwd))
     live.session = Session(conn.storage, session_id, agent, title=row["title"], project_dir=cwd, worktree=worktree)
-    await conn.open_session(live)
-    await conn.send_ready(warnings)
+    return live, warnings
 
 
 @handler("session.move")
@@ -2998,6 +3055,8 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "auto_model": (bool,),
     "online_model": (str, type(None)),
     "offline_model": (str, type(None)),
+    "effort": (str, type(None)),  # The effort level of the model menu. None: the model decides.
+    "new_task_prompt": (str,),  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
     "auto_memory": (bool,),
     "memory_sensitive": (bool,),
@@ -3043,6 +3102,10 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"The type of '{key}' must be {' or '.join('null' if k is type(None) else k.__name__ for k in kinds)}.")
         if key == "permission_mode" and value not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+        if key == "new_task_prompt" and value not in NEW_TASK_CHOICES:
+            raise ProtocolError(f"'new_task_prompt' must be one of: {', '.join(NEW_TASK_CHOICES)}.")
+        if key == "effort" and value is not None and value not in EFFORT_API:
+            raise ProtocolError(f"'effort' must be null or one of: {', '.join(EFFORT_API)}.")
         if key == "web_search" and value not in WEB_PROVIDERS:
             raise ProtocolError(f"'web_search' must be one of: {', '.join(WEB_PROVIDERS)}.")
         if key == "web_search_url" and isinstance(value, str) and value.strip():

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { ancestry, filterStatus, folderName, groupByProject, hiddenState, mergeOrder, moveKey, nestSessions, orderGroups, pathKey, sessionState, sessionsToShowFolded, sortSessions, topSessions } from "./Sidebar";
-import { nestedLabel } from "./SessionRow";
+import { ancestry, filterStatus, folderName, groupByProject, hiddenActivity, mergeOrder, moveKey, nestSessions, orderGroups, pathKey, sessionState, sessionsToShowFolded, sortSessions, topSessions } from "./Sidebar";
+import { activityLine, nestedLabel } from "./SessionRow";
 import { searchSessions } from "./SessionSearch";
 
 const session = (id: string, cwd: string, updated: number): SessionSummary => ({
@@ -136,17 +136,22 @@ describe("nested sessions", () => {
     expect(ancestry("missing", list, children)).toEqual([]);
   });
 
-  it("gives the closed row the state of a hidden nested session", () => {
+  it("counts the hidden nested sessions that work, await input, or are unread", () => {
     const children = nestSessions(list);
     const states: Record<string, "idle" | "running" | "awaiting" | "unread"> = { fork: "unread", deep: "awaiting" };
-    expect(hiddenState("top", children, (id) => states[id] ?? "idle")).toBe("awaiting");
-    expect(hiddenState("fork", children, (id) => (id === "deep" ? "running" : "idle"))).toBe("running");
-    expect(hiddenState("deep", children, () => "unread")).toBe("idle"); // No nested sessions.
+    expect(hiddenActivity("top", children, (id) => states[id] ?? "idle")).toEqual({ running: 0, awaiting: 1, unread: 1 });
+    expect(hiddenActivity("fork", children, (id) => (id === "deep" ? "running" : "idle"))).toEqual({ running: 1, awaiting: 0, unread: 0 });
+    expect(hiddenActivity("deep", children, () => "unread")).toEqual({ running: 0, awaiting: 0, unread: 0 }); // No nested sessions.
+  });
+
+  it("writes the line under a closed row", () => {
+    expect(activityLine(1, { running: 1, awaiting: 0, unread: 0 })).toBe("1 nested session · 1 working");
+    expect(activityLine(3, { running: 1, awaiting: 1, unread: 2 })).toBe("3 nested sessions · 1 working · 1 awaiting input · 2 unread");
+    expect(activityLine(2, { running: 0, awaiting: 0, unread: 0 })).toBeNull(); // No line for idle sessions.
   });
 
   it("names the arrow button with the count", () => {
-    expect(nestedLabel({ count: 1, open: false, hidden: "idle" })).toBe("Show 1 nested session");
-    expect(nestedLabel({ count: 3, open: false, hidden: "awaiting" })).toBe("Show 3 nested sessions (one awaits input)");
-    expect(nestedLabel({ count: 2, open: true, hidden: "unread" })).toBe("Hide 2 nested sessions");
+    expect(nestedLabel({ count: 1, open: false })).toBe("Show 1 nested session");
+    expect(nestedLabel({ count: 2, open: true })).toBe("Hide 2 nested sessions");
   });
 });

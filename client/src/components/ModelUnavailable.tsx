@@ -49,7 +49,7 @@ export function ModelUnavailable({
       <div className="wrapup-actions">
         {models && models.items.length === 0 ? (
           <button type="button" className="btn btn-small btn-primary" onClick={onManage}>
-            Manage the connections
+            Show providers
           </button>
         ) : (
           <>

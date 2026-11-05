@@ -5,7 +5,7 @@ import type { PrStatus, ProjectItem, RunningSession, SessionSummary } from "../d
 import { loadPref, savePref } from "../lib/prefs";
 import { parentHints } from "../lib/projectLabels";
 import { PointMenu } from "./PointMenu";
-import { SessionRow, sessionState, type SessionActions, type SessionState } from "./SessionRow";
+import { SessionRow, sessionState, type NestedActivity, type SessionActions, type SessionState } from "./SessionRow";
 import { SidebarFilter, loadView, saveView, type SidebarView, type SortBy, type StatusFilter } from "./SidebarFilter";
 
 export { sessionState } from "./SessionRow";
@@ -93,22 +93,21 @@ export function ancestry(id: string | null, sessions: SessionSummary[], children
   return chain;
 }
 
-/** The state that a closed row shows on its count: a nested session (at any depth) that awaits input
- * first, then one that runs, then one with an unread response. */
-export function hiddenState(id: string, children: Map<string, SessionSummary[]>, stateOf: (id: string) => SessionState["kind"]): SessionState["kind"] {
-  const found = new Set<SessionState["kind"]>();
+/** The nested sessions of a row (at all depths) that work, await input, or have an unread response. */
+export function hiddenActivity(id: string, children: Map<string, SessionSummary[]>, stateOf: (id: string) => SessionState["kind"]): NestedActivity {
+  const activity: NestedActivity = { running: 0, awaiting: 0, unread: 0 };
   const seen = new Set<string>([id]);
   const walk = (parent: string) => {
     for (const s of children.get(parent) ?? []) {
       if (seen.has(s.id)) continue;
       seen.add(s.id);
-      found.add(stateOf(s.id));
+      const kind = stateOf(s.id);
+      if (kind !== "idle") activity[kind] += 1;
       walk(s.id);
     }
   };
   walk(id);
-  for (const kind of ["awaiting", "running", "unread"] as const) if (found.has(kind)) return kind;
-  return "idle";
+  return activity;
 }
 
 const PR_ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
@@ -548,7 +547,7 @@ export function Sidebar({
         unread={unread.has(s.id)}
         disabled={!open}
         actions={actions}
-        nested={nested && { count: nested.length, open: opened, onToggle: () => toggleNested(s.id), hidden: hiddenState(s.id, children, (id) => stateOf(id).kind), listId }}
+        nested={nested && { count: nested.length, open: opened, onToggle: () => toggleNested(s.id), hidden: hiddenActivity(s.id, children, (id) => stateOf(id).kind), listId }}
       >
         {nested && opened && (
           <ul id={listId} className="side-nested" aria-label={`Nested sessions of ${s.title ?? "Untitled session"}`}>

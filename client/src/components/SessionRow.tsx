@@ -36,25 +36,39 @@ export function sessionState(running: RunningSession | undefined, unread: boolea
   return { kind: "idle", label: "Idle" };
 }
 
-/** The nested sessions of a row: their count, the open state, and the state of the sessions that the
- * closed row hides (the count gets the color of a waiting or unread nested session). */
+/** The nested sessions (at all depths) that work, await input, or have an unread response. */
+export interface NestedActivity {
+  running: number;
+  awaiting: number;
+  unread: number;
+}
+
+/** The nested sessions of a row: their count, the open state, and the activity of the sessions that
+ * the closed row hides. */
 export interface NestedInfo {
   count: number;
   open: boolean;
   onToggle: () => void;
-  hidden: SessionState["kind"];
+  hidden: NestedActivity;
   listId: string; // The id of the list of the nested sessions.
 }
 
-/** The text of the arrow button: "Show 2 nested sessions", with the state of the hidden sessions. */
-export function nestedLabel(nested: Pick<NestedInfo, "count" | "open" | "hidden">): string {
-  const noun = nested.count === 1 ? "nested session" : "nested sessions";
-  const base = `${nested.open ? "Hide" : "Show"} ${nested.count} ${noun}`;
-  if (nested.open) return base;
-  if (nested.hidden === "awaiting") return `${base} (one awaits input)`;
-  if (nested.hidden === "running") return `${base} (running)`;
-  if (nested.hidden === "unread") return `${base} (unread response)`;
-  return base;
+const nestedNoun = (count: number) => `${count} ${count === 1 ? "nested session" : "nested sessions"}`;
+
+/** The line under a closed row, as in the Claude app: "1 nested session · 1 working". Null when no hidden
+ * nested session works, awaits input, or has an unread response. */
+export function activityLine(count: number, hidden: NestedActivity): string | null {
+  const parts = [
+    hidden.running > 0 && `${hidden.running} working`,
+    hidden.awaiting > 0 && `${hidden.awaiting} awaiting input`,
+    hidden.unread > 0 && `${hidden.unread} unread`,
+  ].filter((p): p is string => !!p);
+  return parts.length > 0 ? [nestedNoun(count), ...parts].join(" · ") : null;
+}
+
+/** The text of the arrow button: "Show 2 nested sessions". */
+export function nestedLabel(nested: Pick<NestedInfo, "count" | "open">): string {
+  return `${nested.open ? "Hide" : "Show"} ${nestedNoun(nested.count)}`;
 }
 
 const MENU_WIDTH = 210;
@@ -202,6 +216,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
   // response. The ⋮ button takes its place on hover. A running session has no mark: its title shimmers
   // (the user asked for both).
   const shown = state.kind === "awaiting" || state.kind === "unread";
+  const activity = nested && !nested.open ? activityLine(nested.count, nested.hidden) : null;
   const working = state.kind === "running";
 
   const act = (action: MenuAction) => {
@@ -279,7 +294,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
         {nested && !renaming && (
           <button
             type="button"
-            className={`side-nest-toggle${nested.open ? " open" : ""}${nested.open ? "" : ` hidden-${nested.hidden}`}`}
+            className={`side-nest-toggle${nested.open ? " open" : ""}`}
             onClick={nested.onToggle}
             aria-expanded={nested.open}
             aria-controls={nested.listId}
@@ -302,6 +317,13 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
         )}
       </div>
       {nested?.open && children}
+      {nested && !nested.open && activity && (
+        // A closed row shows the activity of its hidden nested sessions. A click opens the row.
+        <button type="button" className="side-nest-activity" onClick={nested.onToggle} aria-controls={nested.listId} title={nestedLabel(nested)}>
+          <span className="side-nest-elbow" aria-hidden />
+          <span className="side-nest-activity-text">{activity}</span>
+        </button>
+      )}
     </li>
   );
 }

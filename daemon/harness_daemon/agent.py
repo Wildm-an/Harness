@@ -36,7 +36,7 @@ from .loop_guards import (
     MAX_STALL_NUDGES, STALL_NOTICE, STALL_NUDGE, is_stall, repair_tool_name, repaired_note, repeat_key, repeat_note,
 )
 from .prompt import build_system_prompt, load_project_instructions, system_prompt_parts
-from .providers import DEFAULT_CONTEXT_LENGTH, ModelClient, ModelError, resolve_model
+from .providers import DEFAULT_CONTEXT_LENGTH, EFFORT_API, ModelClient, ModelError, resolve_model
 from .skills import Skill, render_skill
 from .tools import (
     SkillTool,
@@ -124,6 +124,9 @@ class Agent:
         self.memory: MemoryStore | None = None
         # The search of the past sessions of the project (Session sets it). None: no chat search.
         self.chat_search: Callable[[str, int], list[dict[str, Any]]] | None = None
+        # The list of the other sessions of the project, for a harness note (Session sets it).
+        self.session_context: Callable[[], str | None] | None = None
+        self._told_sessions: str | None = None  # The last session list note in the conversation.
         self.client = client
         self.image_input = image_input  # The model accepts images, for example screenshots.
         self.emit = emit
@@ -187,6 +190,8 @@ class Agent:
         self._memory_text: str | None = None  # The memory of the system prompt: a snapshot.
         self._memory_loaded = False  # False: the next prompt build reads the memory again.
         self._harness_notes: list[str] = []  # Notes for the next step of a turn.
+        self._turn_start = 0  # The history index of the user message of the turn.
+        self._plan_nudged = False  # The turn got the reminder to show a task list.
         self._rebuild_prompt()
 
     def _plugin_sections(self) -> list[str]:
@@ -285,6 +290,34 @@ class Agent:
 
             self.tools[StartSessionTool.name] = StartSessionTool(start)
             self._known_tokens = None
+
+    def enable_session_context(self, note: Callable[[], str | None], read: Callable[[str], str],
+                               find: Callable[[str], dict[str, Any] | None], send: Callable[..., Any] | None) -> None:
+        """The other sessions of the project: a list note at the start of a turn when the list changed,
+        session_read, and offer_session (tools/sessions.py). Only the agent that the user talks to gets them."""
+        if not self.user_facing:
+            return
+        from .tools.sessions import OfferSessionTool, SessionReadTool
+
+        self.session_context = note
+        self.tools[SessionReadTool.name] = SessionReadTool(read)
+        start = self.tools.get("start_session")
+        self.tools[OfferSessionTool.name] = OfferSessionTool(getattr(start, "start", None), send, find)
+        self._known_tokens = None
+
+    def _session_note(self) -> str | None:
+        """The session list note, when the list changed since the last note in the conversation."""
+        if self.session_context is None:
+            return None
+        try:
+            text = self.session_context()
+        except Exception:  # noqa: BLE001 - a storage problem must not stop the turn.
+            log.exception("The session list note failed")
+            return None
+        if not text or text == self._told_sessions:
+            return None
+        self._told_sessions = text
+        return text
 
     def _sync_chat_tool(self) -> None:
         """The setting "chat_search" off removes the conversation_search tool."""
@@ -391,6 +424,7 @@ class Agent:
         self.summary = None
         self._memory_loaded = False
         self._told_plan = False
+        self._told_sessions = None
         self._rebuild_prompt()
 
     def context_tokens(self) -> int:
@@ -468,10 +502,15 @@ class Agent:
             if m.get("role") == "user" and m.get("images"):
                 clean = self._with_images(clean, m["images"])
             if (m.get("origin") == "harness" and history and history[-1].get("role") == "user"
-                    and isinstance(history[-1].get("content"), str) and isinstance(clean.get("content"), str)):
+                    and isinstance(clean.get("content"), str)):
                 # One user message: some chat templates reject two user messages in sequence.
-                history[-1] = {**history[-1], "content": history[-1]["content"] + "\n\n" + clean["content"]}
-                continue
+                before = history[-1].get("content")
+                if isinstance(before, str):
+                    history[-1] = {**history[-1], "content": before + "\n\n" + clean["content"]}
+                    continue
+                if isinstance(before, list):  # A message with images: the note is one more text part.
+                    history[-1] = {**history[-1], "content": [*before, {"type": "text", "text": clean["content"]}]}
+                    continue
             history.append(clean)
             last_result = i + 1 == len(self.history) or self.history[i + 1].get("role") != "tool"
             if image_at is not None and i >= image_at and last_result:
@@ -560,6 +599,8 @@ class Agent:
             message["images"] = list(images)
         self.history.append(message)
         self.message_id = message["id"]
+        self._turn_start = len(self.history) - 1  # The plan reminders look at the calls of this turn.
+        self._plan_nudged = False
         self.gate.turn_allow = list(allow)
         self.turn_number += 1
         turn = self.turn_number
@@ -590,8 +631,13 @@ class Agent:
             while True:
                 streamed.clear()
                 step += 1
-                new_messages += await self._take_user_steer()
-                new_messages += [self._add_harness_note(t) for t in self._step_notes(step)]
+                steered = await self._take_user_steer()
+                new_messages += steered
+                notes = self._step_notes(step)
+                plan_note = self._plan_note(step, any(m.get("origin") != "task" for m in steered), calls_used, origin)
+                if plan_note:
+                    notes.append(plan_note)
+                new_messages += [self._add_harness_note(t) for t in notes]
                 if self.hooks.has("step.before"):
                     event = await self.hooks.emit("step.before", StepEvent(
                         turn, step, [str(m.get("content") or "") for m in new_messages], self.cwd))
@@ -829,7 +875,49 @@ class Agent:
         elif not plan and self._told_plan:
             notes.insert(0, PLAN_OFF_NOTE)
         self._told_plan = plan
+        if step == 1:
+            sessions = self._session_note()
+            if sessions:
+                notes.append(sessions)
         return notes
+
+    def _plan_calls(self, start: int = 0) -> list[list[dict[str, Any]]]:
+        """The step lists of the update_plan calls in the history after ``start``, oldest first."""
+        plans: list[list[dict[str, Any]]] = []
+        for m in self.history[start:]:
+            for call in m.get("tool_calls") or [] if m.get("role") == "assistant" else []:
+                fn = call.get("function") or {}
+                if fn.get("name") != "update_plan":
+                    continue
+                try:
+                    items = json.loads(fn.get("arguments") or "{}").get("items")
+                except (ValueError, AttributeError):
+                    continue
+                if isinstance(items, list):
+                    plans.append([i for i in items if isinstance(i, dict)])
+        return plans
+
+    def _plan_note(self, step: int, steered: bool, calls: int, origin: str | None) -> str | None:
+        """A reminder to show and update the task list (update_plan), as Claude Code does:
+
+        - a new prompt of the user while the last plan has steps that are not completed,
+        - a message of the user during the turn (a steer), when a plan exists,
+        - three tool calls in a turn with no plan (one time in the turn).
+        """
+        if not self.user_facing or "update_plan" not in self.tools or origin == "task":
+            return None
+        plans = self._plan_calls()
+        last = plans[-1] if plans else None
+        open_steps = [str(i.get("content") or "") for i in last or [] if i.get("status") != "completed"]
+        in_turn = self._plan_calls(self._turn_start)
+        if steered and last is not None:
+            return PLAN_STEER_NOTE
+        if step == 1 and open_steps:
+            return PLAN_OPEN_NOTE.format(steps="; ".join(open_steps[:6]))
+        if not in_turn and calls >= PLAN_NUDGE_CALLS and not self._plan_nudged:
+            self._plan_nudged = True
+            return PLAN_START_NOTE
+        return None
 
     def _add_harness_note(self, text: str) -> dict[str, Any]:
         """Add a user message from the loop guards. The client does not show it in the chat."""
@@ -856,13 +944,16 @@ class Agent:
             self.history.append({"role": "user", "content": text})
 
     async def _request_config(self, turn: int, step: int) -> tuple[ModelClient, dict[str, Any]]:
-        """request.before handlers can change the model and the call options of one model call."""
+        """request.before handlers can change the model and the call options of one model call.
+        The "effort" setting (the model menu) gives reasoning_effort. None: the model decides."""
         client = self.client
+        effort = EFFORT_API.get(str(self.settings.get("effort") or ""))
         if not self.hooks.has("request.before"):
-            return client, {}
+            return client, {"reasoning_effort": effort} if effort else {}
         event = await self.hooks.emit("request.before", RequestEvent(
-            turn, step, client.provider.name, client.model, self.cwd))
-        options = {"temperature": event.temperature, "max_tokens": event.max_tokens, "stop": event.stop}
+            turn, step, client.provider.name, client.model, self.cwd, reasoning_effort=effort))
+        options = {"temperature": event.temperature, "max_tokens": event.max_tokens, "stop": event.stop,
+                   "reasoning_effort": event.reasoning_effort}
         if (event.provider, event.model) != (client.provider.name, client.model):
             try:
                 provider, model = resolve_model(f"{event.provider}/{event.model}")
@@ -1057,6 +1148,7 @@ class Agent:
                 self.history = [m for turn in turns[-keep:] for m in turn]
                 self.summary = summary
                 self._memory_loaded = False  # A new prompt cache starts here: the memory can be new.
+                self._told_sessions = None  # The summary replaced the session list note.
                 self._rebuild_prompt()
                 if self.on_compact:
                     self.on_compact(removed, summary)
@@ -1232,6 +1324,16 @@ PLAN_ON_NOTE = (
     "ask_user_question if a choice is not clear. Then call exit_plan_mode with the plan: the steps, and "
     "the files that each step changes. The user accepts the plan (then you start the work), asks for "
     "changes, or rejects it.]")
+# The task list reminders (_plan_note).
+PLAN_NUDGE_CALLS = 3
+PLAN_START_NOTE = ("[Harness: This task has more than one step, and you showed no task list. Call update_plan "
+                   "now with the whole plan, and keep it current while you work.]")
+PLAN_STEER_NOTE = ("[Harness: The user sent a message during your work. If it changes the work, call update_plan "
+                   "with the new whole list first: keep the steps that still apply, add the new work, and mark the "
+                   "finished steps completed.]")
+PLAN_OPEN_NOTE = ("[Harness: The task list under your last message has steps that are not completed: {steps}. If "
+                  "the new message continues or changes this work, call update_plan with the new whole list first. "
+                  "If it is a short question, answer it.]")
 PLAN_OFF_NOTE = "[Harness: Plan mode is off. You can change files again. Stay in the scope of the request.]"
 MEMORY_NOTE = ("[Harness: The user changed the memory in Settings. This memory replaces the memory in the "
                "system prompt.]\n\n{memory}")

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ClipboardList, FilePenLine, RefreshCw, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react";
+import { Check, ClipboardList, FilePenLine, RefreshCw, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react";
 import type { PermissionMode } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
@@ -79,7 +79,6 @@ export function ModeMenu({ mode, onChange, up = true }: {
       >
         <Icon size={13} aria-hidden />
         <span className="prompt-chip-text">{current.label}</span>
-        <ChevronDown size={13} aria-hidden />
       </button>
       {open && (
         <div className={`menu model-dropdown${up ? " up" : ""} mode-dropdown`} role="menu" aria-label="Mode">
