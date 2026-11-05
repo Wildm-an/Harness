@@ -3,6 +3,16 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Routines
+
+- Each routine is now a file in the `routines` folder of Harness (`~/.harness/routines/`). The
+  settings are in the frontmatter and the prompt is the body, so you can edit, copy, or back up
+  a routine, or add one by hand. Harness moves the routines of 0.1.45 to files at the first start.
+- The Routines page shows each routine as "Active" or "Inactive", and shows the path of the
+  folder. A file with a problem shows "File error" and does not run.
+
 ## 0.1.45 (2026-11-04)
 
 ### Routines

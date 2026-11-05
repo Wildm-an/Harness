@@ -1,8 +1,8 @@
 """Routines: prompts that the daemon runs in a new session at the times of a cron schedule.
 
-The routines and their runs are in the database (storage.py), so they stay after a restart of the
-daemon. The scheduler runs in the daemon, not in a connection: a routine runs also when no window
-is open (for example when Harness starts hidden at login).
+Each routine is a file in ~/.harness/routines (routine_files.py). The runs are in the database.
+Both stay after a restart of the daemon. The scheduler runs in the daemon, not in a connection: a
+routine runs also when no window is open (for example when Harness starts hidden at login).
 
 Rules:
 - A routine runs one time for each due time. If the daemon did not run at one or more due times
@@ -108,7 +108,7 @@ class RoutineScheduler:
         return [self.item(r) for r in self.storage.list_routines()]
 
     async def send_items(self, saved: str | None = None) -> None:
-        message: dict[str, Any] = {"type": "routines", "items": self.items()}
+        message: dict[str, Any] = {"type": "routines", "items": self.items(), "folder": str(self.storage.routines_dir)}
         if saved:
             message["saved"] = saved
         await self.broadcast(message)

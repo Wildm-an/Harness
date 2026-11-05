@@ -1,4 +1,4 @@
-"""Routines (routines.py): the storage, the scheduler, and runs with no window."""
+"""Routines (routines.py, routine_files.py): the files, the scheduler, and runs with no window."""
 
 from __future__ import annotations
 
@@ -7,10 +7,19 @@ import datetime as dt
 import sqlite3
 import time
 
+import pytest
+
+from harness_daemon import trash
 from harness_daemon.routines import RoutineScheduler, next_fire
 from harness_daemon.storage import Storage
 
 from tests.test_server import Client, daemon  # noqa: F401 - the daemon fixture.
+
+
+@pytest.fixture(autouse=True)
+def no_recycle_bin(monkeypatch):
+    """A test delete removes the file. It does not go to the Recycle Bin of the user."""
+    monkeypatch.setattr(trash, "delete", lambda path: path.unlink() or False)
 
 
 def _routine(storage: Storage, project, schedule: str = "*/5 * * * *", **extra) -> str:
@@ -19,17 +28,28 @@ def _routine(storage: Storage, project, schedule: str = "*/5 * * * *", **extra) 
     return storage.save_routine(fields)
 
 
-# -- storage ------------------------------------------------------------------------------------
+# -- the files ----------------------------------------------------------------------------------
 
 
 def test_routine_storage(tmp_path, project):
     storage = Storage(tmp_path / "h.db")
+    assert storage.routines_dir == tmp_path / "routines"
     rid = _routine(storage, project)
+    assert rid == "daily-check"
+    path = tmp_path / "routines" / "daily-check.md"
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---\nname: Daily check\nschedule: '*/5 * * * *'\n")
+    assert "enabled: true\n---\nCheck the project\n" in text
     routine = storage.get_routine(rid)
     assert routine["name"] == "Daily check" and routine["enabled"] is True and routine["last_fire_at"]
+    assert routine["error"] is None
+
+    assert _routine(storage, project) == "daily-check-2"  # The same name gets a new file.
 
     storage.save_routine({"name": "New name", "enabled": False}, rid)
-    assert storage.get_routine(rid)["name"] == "New name" and storage.get_routine(rid)["enabled"] is False
+    changed = storage.get_routine(rid)
+    assert changed["name"] == "New name" and changed["enabled"] is False and changed["prompt"] == "Check the project"
+    assert path.exists()  # The id (the file name) does not change with the name.
 
     session_id = storage.create_session(str(project), "fake", "test-model")
     run_id = storage.add_run(rid, 100.0, "running", session_id=session_id)
@@ -45,8 +65,51 @@ def test_routine_storage(tmp_path, project):
     assert storage.get_run(open_run)["status"] == "failed"
 
     storage.delete_routine(rid)
+    assert not path.exists()
     assert storage.get_routine(rid) is None and storage.list_runs(rid) == []
     assert storage.get_session(session_id) is not None  # The session of the run stays.
+    assert storage.get_routine("../h") is None  # An id cannot point outside the folder.
+    storage.close()
+
+
+def test_a_file_that_the_user_writes_is_a_routine(tmp_path, project):
+    storage = Storage(tmp_path / "h.db")
+    folder = tmp_path / "routines"
+    folder.mkdir()
+    (folder / "by-hand.md").write_text(
+        f"---\nname: By hand\nschedule: 0 8 * * 1-5\ncwd: {project}\nmodel: fake/test-model\n---\nSay hi\n",
+        encoding="utf-8")
+    (folder / "broken.md").write_text("---\nname: Broken\nschedule: every day\ncwd: C:/x\n---\nHi\n", encoding="utf-8")
+    (folder / "notes.txt").write_text("not a routine", encoding="utf-8")
+    items = {r["id"]: r for r in storage.list_routines()}
+    assert set(items) == {"by-hand", "broken"}
+    hand = items["by-hand"]
+    assert hand["enabled"] is True and hand["permission_mode"] == "default" and hand["model"] == "fake/test-model"
+    assert hand["prompt"] == "Say hi" and hand["error"] is None
+    broken = items["broken"]
+    assert broken["enabled"] is False and broken["error"].startswith("schedule: A cron expression has 5 fields")
+
+    async def main() -> None:
+        async def run_fn(routine, report):
+            pass
+
+        async def broadcast(message):
+            pass
+
+        scheduler = RoutineScheduler(storage, run_fn, broadcast, clock=lambda: time.time() + 10 * 86400)
+        assert scheduler.tick() == ["by-hand"]  # A file with a problem does not run.
+
+    asyncio.run(main())
+    storage.close()
+
+
+def test_save_refuses_a_routine_with_a_problem(tmp_path, project):
+    storage = Storage(tmp_path / "h.db")
+    with pytest.raises(ValueError, match="no prompt"):
+        _routine(storage, project, prompt="")
+    with pytest.raises(ValueError, match="Unknown routine"):
+        storage.save_routine({"enabled": False}, "missing")
+    assert storage.list_routines() == []
     storage.close()
 
 
@@ -62,6 +125,35 @@ def test_an_old_database_gets_the_routine_column(tmp_path):
     storage = Storage(path)
     assert storage.list_sessions()[0]["routine_id"] is None
     storage.close()
+
+
+def test_the_routines_of_version_0_1_45_move_to_files(tmp_path, project):
+    """Version 0.1.45 kept the routines in a table. The runs and the sessions keep their routine."""
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(f"""
+        CREATE TABLE routines (id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, cwd TEXT NOT NULL,
+            provider TEXT, model TEXT, permission_mode TEXT NOT NULL DEFAULT 'default', schedule TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL, updated_at REAL NOT NULL, last_fire_at REAL);
+        CREATE TABLE routine_runs (id TEXT PRIMARY KEY,
+            routine_id TEXT NOT NULL REFERENCES routines(id) ON DELETE CASCADE, session_id TEXT,
+            fire_at REAL NOT NULL, started_at REAL NOT NULL, ended_at REAL, status TEXT NOT NULL, error TEXT);
+        INSERT INTO routines VALUES ('abc123', 'Morning summary', 'Sum it up', '{project}', NULL, 'fake/m',
+            'auto', '0 9 * * 1-5', 0, 5, 6, 7);
+        INSERT INTO routine_runs VALUES ('r1', 'abc123', 's1', 1, 2, 3, 'done', NULL);
+    """)
+    db.commit()
+    db.close()
+    storage = Storage(path)
+    routine = storage.get_routine("morning-summary")
+    assert routine["prompt"] == "Sum it up" and routine["permission_mode"] == "auto" and routine["enabled"] is False
+    assert routine["created_at"] == 5 and routine["last_fire_at"] == 7 and routine["model"] == "fake/m"
+    assert [r["id"] for r in storage.list_runs("morning-summary")] == ["r1"]
+    tables = {r[0] for r in storage.db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "routines" not in tables and "routine_runs_old" not in tables
+    storage.add_run("morning-summary", 10.0, "running")  # No foreign key to the old table.
+    storage.close()
+    Storage(path).close()  # A second start does not move anything again.
 
 
 # -- the scheduler ------------------------------------------------------------------------------

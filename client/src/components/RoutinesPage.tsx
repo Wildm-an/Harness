@@ -115,27 +115,51 @@ export function formatWhen(epoch: number, now: number = Date.now() / 1000): stri
 
 // -- the state of a routine -----------------------------------------------------------------------
 
-export type RoutineState = "off" | "scheduled" | "queued" | "running" | "waiting" | "failed";
+/** "active": the routine runs at the times of its schedule. "inactive": it is off, or its file has a problem. */
+export type Activity = "active" | "inactive";
 
-export function routineState(item: RoutineItem): RoutineState {
+export function activity(item: RoutineItem): Activity {
+  return item.enabled && !item.error ? "active" : "inactive";
+}
+
+/** What happens with the routine now, next to its Active or Inactive label. null: nothing to show. */
+export type RunState = "file_error" | "queued" | "running" | "waiting" | "failed";
+
+export function runState(item: RoutineItem): RunState | null {
+  if (item.error) return "file_error";
   if (item.last_run?.status === "waiting") return "waiting";
   if (item.running) return "running";
   if (item.queued) return "queued";
-  if (!item.enabled) return "off";
   if (item.last_run?.status === "failed") return "failed";
-  return "scheduled";
+  return null;
 }
 
 type Tone = "ok" | "busy" | "bad" | "off" | "warn";
+type PillInfo = { label: string; tone: Tone; icon: LucideIcon; tip: string };
 
-const STATES: Record<RoutineState, { label: string; tone: Tone; icon: LucideIcon; tip: string }> = {
-  off: { label: "Off", tone: "off", icon: CircleSlash, tip: "The routine does not run on its schedule. Run now still runs it." },
-  scheduled: { label: "Scheduled", tone: "ok", icon: CircleCheck, tip: "The routine runs at the next time of its schedule." },
+const ACTIVITY: Record<Activity, PillInfo> = {
+  active: { label: "Active", tone: "ok", icon: CircleCheck, tip: "The routine runs at the times of its schedule." },
+  inactive: { label: "Inactive", tone: "off", icon: CircleSlash, tip: "The routine does not run on its schedule. Run now still runs it." },
+};
+
+const RUN_STATES: Record<RunState, PillInfo> = {
+  file_error: { label: "File error", tone: "bad", icon: CircleX, tip: "The file of the routine has a problem. Open the routine to see it." },
   queued: { label: "Waiting", tone: "busy", icon: Clock, tip: "Other routines run now. This routine starts when one of them ends." },
   running: { label: "Running", tone: "busy", icon: LoaderCircle, tip: "The routine runs now in a new session." },
   waiting: { label: "Needs approval", tone: "warn", icon: ShieldAlert, tip: "The run waits for a permission answer. Open its session to answer." },
   failed: { label: "Last run failed", tone: "bad", icon: CircleX, tip: "The last run did not end correctly. Open the routine to see the error." },
 };
+
+/** The Active or Inactive label, and the run state if there is one. */
+function StatePills({ item }: { item: RoutineItem }) {
+  const run = runState(item);
+  return (
+    <span className="routine-pills">
+      <Pill {...ACTIVITY[activity(item)]} />
+      {run && <Pill {...RUN_STATES[run]} spin={run === "running"} />}
+    </span>
+  );
+}
 
 const RUNS: Record<RoutineRunStatus, { label: string; tone: Tone }> = {
   running: { label: "Running", tone: "busy" },
@@ -214,6 +238,12 @@ export function fieldsOf(d: RoutineDraft): RoutineFields {
     schedule: scheduleToCron(d.schedule),
     enabled: d.enabled,
   };
+}
+
+/** The path of the file of a routine: the folder, and the id with ".md". */
+export function routineFile(folder: string, id: string): string {
+  const sep = folder.includes("\\") ? "\\" : "/";
+  return `${folder.replace(/[\\/]+$/, "")}${sep}${id}.md`;
 }
 
 function folderName(path: string): string {
@@ -330,6 +360,7 @@ function RunList({ runs, onOpenSession }: { runs: RoutineRun[] | null; onOpenSes
 
 function RoutineForm({
   item,
+  file,
   draft: initial,
   runs,
   projects,
@@ -346,6 +377,7 @@ function RoutineForm({
   onBack,
 }: {
   item: RoutineItem | null; // null: a new routine.
+  file: string | null; // The path of the routine file on the daemon computer.
   draft: RoutineDraft;
   runs: RoutineRun[] | null;
   projects: ProjectItem[];
@@ -367,7 +399,6 @@ function RoutineForm({
   const update = (patch: Partial<RoutineDraft>) => setD((old) => ({ ...old, ...patch }));
   const folders = projects.filter((p) => p.exists).map((p) => p.path);
   if (d.cwd && !folders.includes(d.cwd)) folders.unshift(d.cwd);
-  const state = item ? routineState(item) : null;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -384,11 +415,11 @@ function RoutineForm({
       </button>
       <div className="cap-view-head">
         <h2>{item ? item.name : "New routine"}</h2>
-        {state && <Pill {...STATES[state]} spin={state === "running"} />}
+        {item && <StatePills item={item} />}
       </div>
       {item && (
         <div className="routine-actions">
-          <button type="button" className="btn btn-small" onClick={onRun} disabled={item.running || item.queued}>
+          <button type="button" className="btn btn-small" onClick={onRun} disabled={item.running || item.queued || !!item.error}>
             <Play size={14} aria-hidden />
             Run now
           </button>
@@ -398,6 +429,12 @@ function RoutineForm({
           </button>
           {item.next_fire_at && <span className="help">Next run: {formatWhen(item.next_fire_at)}</span>}
         </div>
+      )}
+      {item && file && <p className="help mono routine-file">{file}</p>}
+      {item?.error && (
+        <p className="form-error" role="alert">
+          The file has a problem: {item.error} Save the form to write the file again, or edit the file.
+        </p>
       )}
       <form className="routine-form" onSubmit={submit} noValidate autoComplete="off">
         <div className="field">
@@ -514,7 +551,6 @@ function RoutineForm({
 }
 
 function RoutineRow({ item, onOpen, onToggle }: { item: RoutineItem; onOpen: () => void; onToggle: (enabled: boolean) => void }) {
-  const state = routineState(item);
   const next = item.next_fire_at ? ` · Next: ${formatWhen(item.next_fire_at)}` : "";
   return (
     <li className="cap-item routine-item">
@@ -525,11 +561,10 @@ function RoutineRow({ item, onOpen, onToggle }: { item: RoutineItem; onOpen: () 
         <span className="cap-text">
           <span className="cap-name">{item.name}</span>
           <span className="cap-desc">
-            {describeSchedule(item.schedule)}
-            {next} · {folderName(item.cwd)}
+            {item.error ? `${item.id}.md: ${item.error}` : `${describeSchedule(item.schedule)}${next} · ${folderName(item.cwd)}`}
           </span>
         </span>
-        <Pill {...STATES[state]} spin={state === "running"} />
+        <StatePills item={item} />
         <ChevronRight size={14} aria-hidden className="cap-go" />
       </button>
       <Switch checked={item.enabled} label={`The routine ${item.name} runs on its schedule`} onChange={onToggle} />
@@ -539,6 +574,7 @@ function RoutineRow({ item, onOpen, onToggle }: { item: RoutineItem; onOpen: () 
 
 export const RoutinesPage = memo(function RoutinesPage({
   routines,
+  folder,
   runs,
   projects,
   models,
@@ -555,6 +591,7 @@ export const RoutinesPage = memo(function RoutinesPage({
   onOpenSession,
 }: {
   routines: RoutineItem[] | null; // null: loading.
+  folder: string | null; // The folder of the routine files on the daemon computer (~/.harness/routines).
   runs: { routine_id: string; items: RoutineRun[] } | null;
   projects: ProjectItem[];
   models: ModelList | null;
@@ -603,6 +640,7 @@ export const RoutinesPage = memo(function RoutinesPage({
       <RoutineForm
         key={openId}
         item={item}
+        file={item && folder ? routineFile(folder, item.id) : null}
         draft={item ? draftOf(item) : newDraft(projects)}
         runs={item && runs?.routine_id === item.id ? runs.items : null}
         projects={projects}
@@ -660,7 +698,15 @@ export const RoutinesPage = memo(function RoutinesPage({
       <div className="cap-page-inner">
         <header className="cap-page-head">
           <h1 id="routines-title">Routines</h1>
-          <p className="help">Prompts that Harness runs on a schedule, each in a new session. Routines run while Harness runs, also with no open window.</p>
+          <p className="help">
+            Prompts that Harness runs on a schedule, each in a new session. Routines run while Harness runs, also with no open window.
+            {folder && (
+              <>
+                {" "}
+                Each routine is a file in <span className="mono">{folder}</span>.
+              </>
+            )}
+          </p>
         </header>
         <div role="region" aria-labelledby="routines-title">
           {body}

@@ -301,7 +301,8 @@ export interface RoutineFields {
 }
 
 export interface RoutineItem extends RoutineFields {
-  id: string;
+  id: string; // The file name in the routines folder, with no ".md".
+  error: string | null; // A problem in the file. The routine does not run until the file is correct.
   provider: string | null;
   created_at: number;
   updated_at: number;
@@ -874,7 +875,7 @@ export type DaemonMessage =
   | { type: "fs.found"; query: string; items: string[] } // Paths for the "@" menu. A folder ends with "/".
   | ({ type: "context.usage" } & ContextUsage) // The context breakdown, the reply to context.get.
   | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
-  | { type: "routines"; items: RoutineItem[]; saved?: string } // To all clients. saved: the id after routines.save.
+  | { type: "routines"; items: RoutineItem[]; saved?: string; folder?: string } // To all clients. saved: the id after routines.save. folder: the routine files.
   | { type: "routine.runs"; routine_id: string; items: RoutineRun[] }
   | {
       // To all clients: a run started, waits for a permission answer, or ended.

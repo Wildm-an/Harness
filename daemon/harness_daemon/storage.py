@@ -10,6 +10,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from . import routine_files, trash
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -49,25 +51,16 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at REAL NOT NULL,
     last_used REAL NOT NULL
 );
--- A prompt that the daemon runs in a new session at the times of a cron schedule (routines.py).
-CREATE TABLE IF NOT EXISTS routines (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    prompt TEXT NOT NULL,
-    cwd TEXT NOT NULL,
-    provider TEXT,  -- NULL: the default provider and model.
-    model TEXT,
-    permission_mode TEXT NOT NULL DEFAULT 'default',
-    schedule TEXT NOT NULL,  -- A cron expression in local time (cron.py).
-    enabled INTEGER NOT NULL DEFAULT 1,
+-- The scheduler state of each routine. The routines are files in the routines folder (routine_files.py).
+CREATE TABLE IF NOT EXISTS routine_state (
+    id TEXT PRIMARY KEY,  -- The file name of the routine, with no ".md".
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL,
-    last_fire_at REAL  -- The last due time that the scheduler handled. NULL: none yet.
+    last_fire_at REAL  -- The last due time that the scheduler handled.
 );
 -- One run of a routine. The session stays when the routine is deleted.
 CREATE TABLE IF NOT EXISTS routine_runs (
     id TEXT PRIMARY KEY,
-    routine_id TEXT NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+    routine_id TEXT NOT NULL,
     session_id TEXT,
     fire_at REAL NOT NULL,  -- The due time. A "Run now" uses the time of the click.
     started_at REAL NOT NULL,
@@ -77,7 +70,7 @@ CREATE TABLE IF NOT EXISTS routine_runs (
 );
 """
 
-ROUTINE_FIELDS = ("name", "prompt", "cwd", "provider", "model", "permission_mode", "schedule", "enabled")
+ROUTINE_FIELDS = ("name", "prompt", "cwd", "model", "permission_mode", "schedule", "enabled")
 
 
 def path_key(path: str) -> str:
@@ -89,7 +82,9 @@ def folder_name(path: str) -> str:
 
 
 class Storage:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, routines_dir: Path | None = None):
+        # The routine files. The default is the "routines" folder next to the database (~/.harness/routines).
+        self.routines_dir = routines_dir or path.parent / "routines"
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
@@ -110,11 +105,41 @@ class Storage:
             self.db.execute("ALTER TABLE sessions ADD COLUMN worktree TEXT")
         if "routine_id" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN routine_id TEXT")
+        self._migrate_routines()
         # The first start with the projects table: add the folders of the stored sessions.
         if self.db.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
             rows = self.db.execute("SELECT cwd, MIN(created_at), MAX(updated_at) FROM sessions GROUP BY cwd").fetchall()
             for cwd, created, used in rows:
                 self._insert_project(folder_name(cwd), cwd, created, used)
+
+    def _migrate_routines(self) -> None:
+        """Version 0.1.45 kept the routines in a table. Write each one to a file, and keep its runs."""
+        tables = {row[0]: row[1] or "" for row in self.db.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'")}
+        if "routines" not in tables:
+            return
+        self.db.commit()  # PRAGMA foreign_keys does nothing in a transaction.
+        self.db.execute("PRAGMA foreign_keys = OFF")  # The old routine_runs table refers to the routines table.
+        try:
+            if "REFERENCES routines" in tables.get("routine_runs", ""):
+                self.db.execute("ALTER TABLE routine_runs RENAME TO routine_runs_old")
+                self.db.executescript(SCHEMA)  # The new routine_runs table.
+                self.db.execute("INSERT INTO routine_runs SELECT id, routine_id, session_id, fire_at, started_at, "
+                                "ended_at, status, error FROM routine_runs_old")
+                self.db.execute("DROP TABLE routine_runs_old")
+            taken = {p.stem for p in self.routines_dir.glob(f"*{routine_files.SUFFIX}")}
+            for row in self.db.execute("SELECT * FROM routines ORDER BY created_at").fetchall():
+                old = dict(row)
+                new_id = _unique(routine_files.slug(old["name"]), taken)
+                taken.add(new_id)
+                old["enabled"] = bool(old["enabled"])
+                routine_files.write(self._routine_path(new_id), old)
+                self.db.execute("INSERT OR REPLACE INTO routine_state (id, created_at, last_fire_at) VALUES (?, ?, ?)",
+                                (new_id, old["created_at"], old["last_fire_at"]))
+                self.db.execute("UPDATE routine_runs SET routine_id = ? WHERE routine_id = ?", (new_id, old["id"]))
+                self.db.execute("UPDATE sessions SET routine_id = ? WHERE routine_id = ?", (new_id, old["id"]))
+            self.db.execute("DROP TABLE routines")
+        finally:
+            self.db.execute("PRAGMA foreign_keys = ON")
 
     # -- projects ---------------------------------------------------------------------
 
@@ -325,54 +350,95 @@ class Storage:
         if session is not None:
             self.update_session(session_id, context_start=session["context_start"] + removed, summary=summary)
 
-    # -- routines ---------------------------------------------------------------------
+    # -- routines (files in routines_dir, routine_files.py) -----------------------------
 
-    @staticmethod
-    def _routine(row: sqlite3.Row) -> dict[str, Any]:
-        item = dict(row)
-        item["enabled"] = bool(item["enabled"])
+    def _routine_path(self, routine_id: str) -> Path:
+        if not routine_files.valid_id(routine_id):
+            raise ValueError("Unknown routine.")
+        return self.routines_dir / f"{routine_id}{routine_files.SUFFIX}"
+
+    def _state(self, routine_id: str) -> dict[str, Any]:
+        """The scheduler state of a routine. A new file (also one that the user made by hand) starts now:
+        no run for older due times."""
+        row = self.db.execute("SELECT * FROM routine_state WHERE id = ?", (routine_id,)).fetchone()
+        if row is not None:
+            return dict(row)
+        now = time.time()
+        self.db.execute("INSERT INTO routine_state (id, created_at, last_fire_at) VALUES (?, ?, ?)",
+                        (routine_id, now, now))
+        self.db.commit()
+        return {"id": routine_id, "created_at": now, "last_fire_at": now}
+
+    def _load_routine(self, path: Path) -> dict[str, Any]:
+        item = routine_files.read(path)
+        state = self._state(item["id"])
+        item["created_at"] = state["created_at"]
+        item["last_fire_at"] = state["last_fire_at"]
+        try:
+            item["updated_at"] = path.stat().st_mtime
+        except OSError:
+            item["updated_at"] = state["created_at"]
         return item
 
     def list_routines(self) -> list[dict[str, Any]]:
-        rows = self.db.execute("SELECT * FROM routines ORDER BY created_at, rowid")
-        return [self._routine(r) for r in rows]
+        """The routines of the files in the folder, the oldest first. A file with a problem has an "error"."""
+        if not self.routines_dir.is_dir():
+            return []
+        paths = [p for p in self.routines_dir.glob(f"*{routine_files.SUFFIX}")
+                 if p.is_file() and routine_files.valid_id(p.stem)]
+        items = [self._load_routine(p) for p in paths]
+        return sorted(items, key=lambda r: (r["created_at"], r["id"]))
 
     def get_routine(self, routine_id: str) -> dict[str, Any] | None:
-        row = self.db.execute("SELECT * FROM routines WHERE id = ?", (routine_id,)).fetchone()
-        return self._routine(row) if row else None
+        try:
+            path = self._routine_path(routine_id)
+        except ValueError:
+            return None
+        return self._load_routine(path) if path.is_file() else None
 
     def save_routine(self, fields: dict[str, Any], routine_id: str | None = None) -> str:
-        """Add a routine, or change the routine ``routine_id``. Raise ValueError for an unknown id."""
+        """Add a routine file, or change the file of ``routine_id``. Raise ValueError for an unknown id
+        or for fields with a problem. The id (the file name) does not change with the name."""
         values = {k: fields[k] for k in ROUTINE_FIELDS if k in fields}
-        if "enabled" in values:
-            values["enabled"] = 1 if values["enabled"] else 0
         now = time.time()
         if routine_id is None:
-            routine_id = uuid.uuid4().hex[:12]
-            values.update(id=routine_id, created_at=now, updated_at=now, last_fire_at=now)
-            names = ", ".join(values)
-            self.db.execute(f"INSERT INTO routines ({names}) VALUES ({', '.join('?' * len(values))})",
-                            tuple(values.values()))
+            taken = {p.stem for p in self.routines_dir.glob(f"*{routine_files.SUFFIX}")} if self.routines_dir.is_dir() else set()
+            routine_id = _unique(routine_files.slug(str(values.get("name") or "")), taken)
+            item = {"name": "", "prompt": "", "cwd": "", "model": None, "permission_mode": "default",
+                    "schedule": "", "enabled": True, **values}
+            fire_now = True
         else:
-            values["updated_at"] = now
-            if "schedule" in values or values.get("enabled"):
-                # A new schedule, or a routine that is on again, starts now: no catch-up run for older times.
-                values["last_fire_at"] = now
-            assignments = ", ".join(f"{k} = ?" for k in values)
-            cur = self.db.execute(f"UPDATE routines SET {assignments} WHERE id = ?", (*values.values(), routine_id))
-            if cur.rowcount == 0:
+            old = self.get_routine(routine_id)
+            if old is None:
                 raise ValueError("Unknown routine.")
+            item = {**old, **values}
+            # A new schedule, or a routine that is on again, starts now: no run for older times.
+            fire_now = (values.get("schedule", old["schedule"]) != old["schedule"]
+                        or (bool(values.get("enabled")) and not old["enabled"]))
+        error = routine_files.problem(item)
+        if error:
+            raise ValueError(error)
+        routine_files.write(self._routine_path(routine_id), item)
+        self.db.execute("INSERT OR IGNORE INTO routine_state (id, created_at, last_fire_at) VALUES (?, ?, ?)",
+                        (routine_id, now, now))
+        if fire_now:
+            self.db.execute("UPDATE routine_state SET last_fire_at = ? WHERE id = ?", (now, routine_id))
         self.db.commit()
         return routine_id
 
     def set_routine_fired(self, routine_id: str, fire_at: float) -> None:
-        self.db.execute("UPDATE routines SET last_fire_at = ? WHERE id = ?", (fire_at, routine_id))
+        self._state(routine_id)
+        self.db.execute("UPDATE routine_state SET last_fire_at = ? WHERE id = ?", (fire_at, routine_id))
         self.db.commit()
 
     def delete_routine(self, routine_id: str) -> None:
-        """Delete a routine and its run history. The sessions of the runs stay."""
+        """Delete the file of a routine (on Windows: to the Recycle Bin) and its run history.
+        The sessions of the runs stay."""
+        path = self._routine_path(routine_id)
+        if path.exists():
+            trash.delete(path)
         self.db.execute("DELETE FROM routine_runs WHERE routine_id = ?", (routine_id,))
-        self.db.execute("DELETE FROM routines WHERE id = ?", (routine_id,))
+        self.db.execute("DELETE FROM routine_state WHERE id = ?", (routine_id,))
         self.db.commit()
 
     def add_run(self, routine_id: str, fire_at: float, status: str, session_id: str | None = None,
@@ -411,3 +477,13 @@ class Storage:
         self.db.execute("UPDATE routine_runs SET status = 'failed', error = ?, ended_at = ? "
                         "WHERE status IN ('running', 'waiting')", ("Harness stopped during the run.", time.time()))
         self.db.commit()
+
+
+def _unique(base: str, taken: set[str]) -> str:
+    """``base``, or ``base-2``, ``base-3``, and so on: a name that is not in ``taken``."""
+    folded = {t.lower() for t in taken}  # Windows file names do not show case.
+    name, n = base, 1
+    while name.lower() in folded:
+        n += 1
+        name = f"{base}-{n}"
+    return name

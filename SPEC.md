@@ -365,7 +365,7 @@ Each result shows:
 - **Providers** — Model endpoints and a connection test.
 - **Cookbook** — Hardware, Hugging Face model browser, fit results, downloads, installed models, and running servers.
 - **Skills** — Installed skills, sources, and a file viewer.
-- **Routines** — Prompts that the daemon runs on a cron schedule, each in a new session, also with no window open. The daemon keeps them in its database. With "Keep running in the background" and "Run on startup", Harness starts hidden at sign-in with a tray icon, so the routines run.
+- **Routines** — Prompts that the daemon runs on a cron schedule, each in a new session, also with no window open. Each routine is a Markdown file in `~/.harness/routines/` (settings in the frontmatter, the prompt in the body). With "Keep running in the background" and "Run on startup", Harness starts hidden at sign-in with a tray icon, so the routines run.
 - **Settings** — Theme, permission rules, and defaults.
 
 ### 8.2 Local mode

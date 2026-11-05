@@ -9748,3 +9748,17 @@ textarea.setting-textarea:disabled {
   flex: 1;
   min-width: 0;
 }
+
+.routine-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.routine-file {
+  margin: -8px 0 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

@@ -2348,7 +2348,8 @@ def _routine_fields(msg: dict[str, Any]) -> dict[str, Any]:
 
 @handler("routines.list")
 async def on_routines_list(conn: Connection, msg: dict[str, Any]) -> None:
-    await conn.send({"type": "routines", "items": _scheduler().items()})
+    scheduler = _scheduler()
+    await conn.send({"type": "routines", "items": scheduler.items(), "folder": str(scheduler.storage.routines_dir)})
 
 
 @handler("routines.save")
@@ -2368,7 +2369,10 @@ async def on_routines_save(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_routines_delete(conn: Connection, msg: dict[str, Any]) -> None:
     """Delete a routine and its run history. A run that runs now continues in its session."""
     scheduler = _scheduler()
-    conn.storage.delete_routine(_text_arg(msg, "id"))
+    try:
+        conn.storage.delete_routine(_text_arg(msg, "id"))
+    except (ValueError, OSError) as e:
+        raise ProtocolError(f"The routine was not deleted: {e}") from None
     scheduler.wake()
     await scheduler.send_items()
 

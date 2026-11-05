@@ -414,6 +414,7 @@ export default function App() {
   const [routines, setRoutines] = useState<RoutineItem[] | null>(null);
   const [routineRuns, setRoutineRuns] = useState<{ routine_id: string; items: RoutineRun[] } | null>(null);
   const [routineError, setRoutineError] = useState<string | null>(null);
+  const [routinesFolder, setRoutinesFolder] = useState<string | null>(null); // ~/.harness/routines on the daemon computer.
   const [routineSaved, setRoutineSaved] = useState<{ id: string; key: number } | null>(null);
   const shownIdRef = useRef<string | null>(null); // The session that the user sees now, for the message handler.
 
@@ -727,6 +728,7 @@ export default function App() {
           return;
         case "routines":
           setRoutines(msg.items);
+          if (msg.folder) setRoutinesFolder(msg.folder);
           if (msg.saved) {
             const id = msg.saved;
             setRoutineError(null);
@@ -2704,14 +2706,14 @@ export default function App() {
     onClick: fromSidebar(() => openCapabilities()),
   };
   // The "Routines" nav item. A red dot shows when the last run of a routine failed.
-  const routinesFailed = routines?.filter((r) => r.last_run?.status === "failed").length ?? 0;
+  const routinesFailed = routines?.filter((r) => r.error || r.last_run?.status === "failed").length ?? 0;
   const routinesNav: SessionTool = {
     key: "routines",
     icon: CalendarClock,
     label: "Routines",
     active: screen === "routines",
     alert: routinesFailed > 0,
-    title: routinesFailed > 0 ? (routinesFailed === 1 ? "The last run of 1 routine failed" : `The last run of ${routinesFailed} routines failed`) : "Prompts that run on a schedule",
+    title: routinesFailed > 0 ? (routinesFailed === 1 ? "1 routine has a problem" : `${routinesFailed} routines have a problem`) : "Prompts that run on a schedule",
     onClick: fromSidebar(openRoutines),
   };
 
@@ -2922,6 +2924,7 @@ export default function App() {
         {screen === "routines" && (
           <RoutinesPage
             routines={routines}
+            folder={routinesFolder}
             runs={routineRuns}
             projects={projects ?? []}
             models={models}

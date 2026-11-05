@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, RoutineItem } from "../daemon/protocol";
 import { placeOf } from "../layout/history";
-import { checkDraft, cronToSchedule, describeSchedule, fieldsOf, formatWhen, newDraft, routineState, scheduleToCron } from "./RoutinesPage";
+import { activity, checkDraft, cronToSchedule, describeSchedule, fieldsOf, formatWhen, newDraft, routineFile, runState, scheduleToCron } from "./RoutinesPage";
 
 const routine = (extra: Partial<RoutineItem> = {}): RoutineItem => ({
   id: "r1",
+  error: null,
   name: "Daily check",
   prompt: "Check it",
   cwd: "C:/p",
@@ -79,13 +80,25 @@ describe("the form", () => {
 });
 
 describe("the state of a routine", () => {
-  it("shows the most important state", () => {
-    expect(routineState(routine())).toBe("scheduled");
-    expect(routineState(routine({ enabled: false }))).toBe("off");
-    expect(routineState(routine({ last_run: run("failed") }))).toBe("failed");
-    expect(routineState(routine({ running: true, last_run: run("running") }))).toBe("running");
-    expect(routineState(routine({ running: true, last_run: run("waiting") }))).toBe("waiting");
-    expect(routineState(routine({ queued: true, enabled: false }))).toBe("queued");
+  it("is active or inactive", () => {
+    expect(activity(routine())).toBe("active");
+    expect(activity(routine({ enabled: false }))).toBe("inactive");
+    expect(activity(routine({ error: "schedule: bad" }))).toBe("inactive");
+  });
+
+  it("shows the run state next to it", () => {
+    expect(runState(routine())).toBeNull();
+    expect(runState(routine({ last_run: run("done") }))).toBeNull();
+    expect(runState(routine({ last_run: run("failed") }))).toBe("failed");
+    expect(runState(routine({ running: true, last_run: run("running") }))).toBe("running");
+    expect(runState(routine({ running: true, last_run: run("waiting") }))).toBe("waiting");
+    expect(runState(routine({ queued: true, enabled: false }))).toBe("queued");
+    expect(runState(routine({ error: "bad", running: true }))).toBe("file_error");
+  });
+
+  it("names the file of a routine", () => {
+    expect(routineFile("C:\\Users\\me\\.harness\\routines", "daily")).toBe("C:\\Users\\me\\.harness\\routines\\daily.md");
+    expect(routineFile("/home/me/.harness/routines/", "daily")).toBe("/home/me/.harness/routines/daily.md");
   });
 
   it("formats times near today", () => {
