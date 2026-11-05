@@ -277,6 +277,15 @@ class Agent:
             self.chat_search = search
             self._sync_chat_tool()
 
+    def enable_session_start(self, start: Callable[..., Any]) -> None:
+        """The session gives the start of a nested session (tools/sessions.py). Only the agent that the user
+        talks to gets it: a subagent has no user to approve the new session."""
+        if self.user_facing:
+            from .tools.sessions import StartSessionTool
+
+            self.tools[StartSessionTool.name] = StartSessionTool(start)
+            self._known_tokens = None
+
     def _sync_chat_tool(self) -> None:
         """The setting "chat_search" off removes the conversation_search tool."""
         self.tools.pop(ConversationSearchTool.name, None)

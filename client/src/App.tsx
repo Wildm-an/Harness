@@ -310,6 +310,13 @@ export default function App() {
   const [prStatus, setPrStatus] = useState<Map<string, PrStatus>>(() => new Map()); // By pathKey of the folder.
   const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
+  // The sessions with no window that work or wait: routine runs and nested sessions (start_session).
+  const [backgroundSessions, setBackgroundSessions] = useState<RunningSession[]>([]);
+  // The sidebar shows both lists. A session of this window is first: it has the newer state.
+  const allRunning = useMemo(() => {
+    const ids = new Set(runningSessions.map((r) => r.session_id));
+    return [...runningSessions, ...backgroundSessions.filter((r) => !ids.has(r.session_id))];
+  }, [runningSessions, backgroundSessions]);
   // The sessions with a turn that ended while the user was in another session (a blue dot in the sidebar).
   // The messages that wait for the running turn, for each session. The next one goes when the turn ends.
   const [queues, setQueues] = useState<Record<string, QueuedItem[]>>({});
@@ -728,6 +735,10 @@ export default function App() {
           setRunningSessions(msg.items);
           listRecent(); // A turn in the background changes the title and the age of its session.
           return;
+        case "sessions.background":
+          setBackgroundSessions(msg.items);
+          listRecent(); // A new nested session, or the end of its turn.
+          return;
         case "sessions":
           // A list with no folder is the sidebar list.
           if (!msg.cwd) setRecent(msg.items);
@@ -1032,6 +1043,7 @@ export default function App() {
     setRecent([]);
     lastRunning.current = [];
     setRunningSessions([]);
+    setBackgroundSessions([]);
     setUnreadSessions(new Set());
     startPicked.current = false;
     conn.send({ type: "session.list", limit: SIDEBAR_SESSIONS });
@@ -1375,11 +1387,11 @@ export default function App() {
   const shownId = screen === "chat" ? (session?.id ?? null) : null;
   shownIdRef.current = shownId;
   useEffect(() => {
-    const now = new Set(runningSessions.map((r) => r.session_id));
+    const now = new Set(allRunning.map((r) => r.session_id));
     const ended = lastRunning.current.map((r) => r.session_id).filter((id) => !now.has(id) && id !== shownId);
-    lastRunning.current = runningSessions;
+    lastRunning.current = allRunning;
     if (ended.length > 0) setUnreadSessions((u) => new Set([...u, ...ended]));
-  }, [runningSessions, shownId]);
+  }, [allRunning, shownId]);
   useEffect(() => {
     if (!shownId) return;
     setUnreadSessions((u) => {
@@ -2771,7 +2783,7 @@ export default function App() {
   const sidebarView = (
     <Sidebar
       sessions={recent}
-      running={runningSessions}
+      running={allRunning}
       unread={unreadSessions}
       activeId={shownId}
       screen={screen}

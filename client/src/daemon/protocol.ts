@@ -253,6 +253,7 @@ export interface SessionSummary {
   archived?: boolean; // The sidebar shows it only with the "Archived" or "All" status filter.
   branch?: string | null; // The branch of a worktree session. null: the session works in its project folder.
   routine_id?: string | null; // The routine that started the session. null: the user started it.
+  parent_id?: string | null; // The session that started it (a fork, or start_session). The sidebar shows it nested.
 }
 
 /** The branches of the repository of a folder, for the "Branch to start from" menu. */
@@ -869,6 +870,8 @@ export type DaemonMessage =
   // The worktree of the session has uncommitted changes. Ask, then send session.update with force.
   | { type: "session.archive_confirm"; id: string; branch: string }
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).
+  // The sessions with no window that work or wait: routine runs and nested sessions. All windows get it.
+  | { type: "sessions.background"; items: RunningSession[] }
   // replay: the last output of a running shell. seq: the number of its last output.
   | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean; ref?: string }
   | { type: "term.output"; id: string; data: string; seq: number }

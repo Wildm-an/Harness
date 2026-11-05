@@ -3645,6 +3645,19 @@ select {
   min-height: 0;
 }
 
+/* The "Worktree" check box of the start screen, to the right of the folder chip (UI_RULES N3). */
+.checkbox.prompt-worktree {
+  flex: none;
+  min-height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.checkbox.prompt-worktree:hover {
+  color: var(--text);
+}
+
 .checkbox.auto-verify {
   margin-right: 6px;
   white-space: nowrap;
@@ -7158,6 +7171,84 @@ mark.word-del {
 .side-session-row.menu-open .side-session-more {
   background: var(--surface-2);
   color: var(--text);
+}
+
+/* A row with nested sessions: the count and the arrow at the far right (the user asked for this place).
+   The ⋮ button and the status mark move to the left of them. */
+.side-session-row.has-nested {
+  --side-nest-w: 34px;
+  --side-nest-right: calc((var(--side-row-h) - var(--side-ctl)) / 2);
+}
+
+.side-session-row.has-nested .side-session {
+  padding-right: calc(var(--side-nest-w) + var(--side-nest-right) + 6px);
+}
+
+.side-session-row.has-nested .side-session.has-status,
+.side-session-row.has-nested:hover .side-session,
+.side-session-row.has-nested:focus-within .side-session,
+.side-session-row.has-nested.menu-open .side-session {
+  padding-right: calc(var(--side-nest-w) + var(--side-row-h) + 6px);
+}
+
+.side-session-row.has-nested .side-session-more {
+  right: calc(var(--side-nest-right) + var(--side-nest-w) + 2px);
+}
+
+.side-session-row.has-nested .side-session-status {
+  right: calc(var(--side-nest-right) + var(--side-nest-w) + 2px + (var(--side-ctl) - 6px) / 2);
+}
+
+.side-nest-toggle {
+  position: absolute;
+  top: 50%;
+  right: var(--side-nest-right);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  width: var(--side-nest-w);
+  height: var(--side-ctl);
+  padding: 0 2px 0 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: 12px var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
+}
+
+.side-nest-toggle:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.side-nest-chevron {
+  flex: none;
+  transition: transform var(--duration) var(--ease-out);
+}
+
+.side-nest-toggle.open .side-nest-chevron {
+  transform: rotate(90deg);
+}
+
+/* A closed row: the count gets the color of a nested session that awaits input or has an unread response. */
+.side-nest-toggle.hidden-awaiting .side-nest-count {
+  color: var(--warning);
+}
+
+.side-nest-toggle.hidden-unread .side-nest-count {
+  color: var(--info);
+}
+
+/* The nested sessions, a little inside the title of the parent row. */
+.side-nested {
+  margin: 0;
+  padding: 0 0 0 12px;
+  list-style: none;
 }
 
 .side-session.renaming {

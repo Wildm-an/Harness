@@ -5,7 +5,7 @@ import type { PrStatus, ProjectItem, RunningSession, SessionSummary } from "../d
 import { loadPref, savePref } from "../lib/prefs";
 import { parentHints } from "../lib/projectLabels";
 import { PointMenu } from "./PointMenu";
-import { SessionRow, sessionState, type SessionActions } from "./SessionRow";
+import { SessionRow, sessionState, type SessionActions, type SessionState } from "./SessionRow";
 import { SidebarFilter, loadView, saveView, type SidebarView, type SortBy, type StatusFilter } from "./SidebarFilter";
 
 export { sessionState } from "./SessionRow";
@@ -27,6 +27,7 @@ const SHOWN_SESSIONS = 8;
 const EXPANDED_PREF = "sidebar.expanded";
 const MORE_PREF = "sidebar.more"; // "1": the "More" accordion is open.
 const ORDER_PREF = "sidebar.order"; // The project keys, in the order of the user.
+const NESTED_PREF = "sidebar.nested"; // The sessions with nested sessions that the user opened or closed.
 const PROJECT_DRAG = "application/x-harness-project";
 
 /** A key to compare folder paths: "/" separators, no trailing "/", and no case on Windows paths. */
@@ -57,6 +58,57 @@ export function sortSessions(sessions: SessionSummary[], sortBy: SortBy): Sessio
 export function filterStatus(sessions: SessionSummary[], status: StatusFilter): SessionSummary[] {
   if (status === "all") return sessions;
   return sessions.filter((s) => !!s.archived === (status === "archived"));
+}
+
+/**
+ * The nested sessions of each listed session, by parent id, in the order of the list. A session is nested
+ * when its parent is in the list and it is not pinned: a pinned session stays in the Pinned list.
+ */
+export function nestSessions(sessions: SessionSummary[]): Map<string, SessionSummary[]> {
+  const ids = new Set(sessions.map((s) => s.id));
+  const children = new Map<string, SessionSummary[]>();
+  for (const s of sessions) {
+    const parent = s.parent_id;
+    if (!parent || parent === s.id || !ids.has(parent) || s.pinned) continue;
+    const list = children.get(parent);
+    if (list) list.push(s);
+    else children.set(parent, [s]);
+  }
+  return children;
+}
+
+/** The sessions that are not nested in another listed session: the rows at the top level. */
+export function topSessions(sessions: SessionSummary[], children: Map<string, SessionSummary[]>): SessionSummary[] {
+  const nested = new Set([...children.values()].flat().map((s) => s.id));
+  return sessions.filter((s) => !nested.has(s.id));
+}
+
+/** The session and its parents, up to the top row. A loop in the data stops the walk. */
+export function ancestry(id: string | null, sessions: SessionSummary[], children: Map<string, SessionSummary[]>): string[] {
+  if (!id || !sessions.some((s) => s.id === id)) return [];
+  const parentOf = new Map<string, string>();
+  for (const [parent, list] of children) for (const s of list) parentOf.set(s.id, parent);
+  const chain = [id];
+  for (let at = parentOf.get(id); at && !chain.includes(at); at = parentOf.get(at)) chain.push(at);
+  return chain;
+}
+
+/** The state that a closed row shows on its count: a nested session (at any depth) that awaits input
+ * first, then one that runs, then one with an unread response. */
+export function hiddenState(id: string, children: Map<string, SessionSummary[]>, stateOf: (id: string) => SessionState["kind"]): SessionState["kind"] {
+  const found = new Set<SessionState["kind"]>();
+  const seen = new Set<string>([id]);
+  const walk = (parent: string) => {
+    for (const s of children.get(parent) ?? []) {
+      if (seen.has(s.id)) continue;
+      seen.add(s.id);
+      found.add(stateOf(s.id));
+      walk(s.id);
+    }
+  };
+  walk(id);
+  for (const kind of ["awaiting", "running", "unread"] as const) if (found.has(kind)) return kind;
+  return "idle";
 }
 
 const PR_ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
@@ -136,9 +188,9 @@ function loadOrder(): string[] {
   }
 }
 
-function loadExpanded(): Record<string, boolean> {
+function loadExpanded(pref = EXPANDED_PREF): Record<string, boolean> {
   try {
-    const value = JSON.parse(loadPref(EXPANDED_PREF, "{}"));
+    const value = JSON.parse(loadPref(pref, "{}"));
     return value && typeof value === "object" ? value : {};
   } catch {
     return {};
@@ -199,17 +251,18 @@ interface DropSpot {
   after: boolean;
 }
 
-function ProjectSection({ group, hint, pr, open, activeId, running, unread, disabled, onToggle, actions, onNewSession, onRemove, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove, canMove, onSort }: {
+function ProjectSection({ group, hint, pr, open, activeId, running, unread, disabled, onToggle, actions, renderRow, onNewSession, onRemove, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove, canMove, onSort }: {
   group: ProjectGroup;
   hint: string | null; // The parent folder, if another project has the same name.
   pr: PrStatus | null; // The pull request of the folder branch. null: "Show PR status" is off, or no data.
   open: boolean;
-  activeId: string | null;
+  activeId: string | null; // The open session, or the top row that holds it as a nested session.
   running: Map<string, RunningSession>;
   unread: Set<string>;
   disabled: boolean;
   onToggle: () => void;
   actions: SessionActions;
+  renderRow: (s: SessionSummary) => React.ReactNode; // A session row with its nested sessions.
   onNewSession: () => void;
   onRemove: (projectId: string) => void; // Remove the saved project from the list.
   dragging: boolean; // The user drags this project.
@@ -321,17 +374,7 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
       {open && (
         <ul id={listId} className="side-project-sessions">
           {group.sessions.length === 0 && <li className="side-empty">No sessions yet.</li>}
-          {shown.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              active={s.id === activeId}
-              state={sessionState(running.get(s.id), unread.has(s.id))}
-              unread={unread.has(s.id)}
-              disabled={disabled}
-              actions={actions}
-            />
-          ))}
+          {shown.map(renderRow)}
           {group.sessions.length > SHOWN_SESSIONS && (
             <li>
               <button type="button" className="side-more" onClick={() => setAll((v) => !v)}>
@@ -343,17 +386,7 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
       )}
       {pending.length > 0 && (
         <ul id={listId} className="side-project-sessions" aria-label={`Active sessions in ${group.name}`}>
-          {pending.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              active={s.id === activeId}
-              state={sessionState(running.get(s.id), unread.has(s.id))}
-              unread={unread.has(s.id)}
-              disabled={disabled}
-              actions={actions}
-            />
-          ))}
+          {pending.map(renderRow)}
         </ul>
       )}
     </li>
@@ -428,9 +461,12 @@ export function Sidebar({
     saveView(next);
   };
   const listed = filterStatus(sessions, view.status);
+  // A nested session (a fork, or a session that the agent started) shows under its parent row.
+  const children = nestSessions(sortSessions(listed, view.sortBy));
+  const top = topSessions(listed, children);
   // Pinned sessions are in their own list at the top, as in Claude.
-  const pinned = sortSessions(listed.filter((s) => s.pinned), view.sortBy);
-  const unpinned = listed.filter((s) => !s.pinned);
+  const pinned = sortSessions(top.filter((s) => s.pinned), view.sortBy);
+  const unpinned = top.filter((s) => !s.pinned);
   const [order, setOrder] = useState(loadOrder);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
@@ -439,7 +475,10 @@ export function Sidebar({
   const groups = view.showEmpty ? allGroups : allGroups.filter((g) => g.sessions.length > 0);
   const hints = parentHints(groups);
   const runningById = new Map(running.map((r) => [r.session_id, r]));
-  const activeKey = groups.find((g) => g.sessions.some((s) => s.id === activeId))?.key;
+  // The open session and its parents. The top row of the chain opens its project.
+  const activeChain = ancestry(activeId, listed, children);
+  const activeTop = activeChain[activeChain.length - 1] ?? activeId;
+  const activeKey = groups.find((g) => g.sessions.some((s) => s.id === activeTop))?.key;
   const newestKey = byRecency[0]?.key;
 
   // A folder that is not in the order yet goes into it at its first view. Then a new session does not move it.
@@ -486,6 +525,39 @@ export function Sidebar({
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prJoined holds the paths.
   }, [prJoined]);
+
+  // A row with nested sessions is closed until the user opens it. It opens for an open nested session.
+  const [nestedOpen, setNestedOpen] = useState(() => loadExpanded(NESTED_PREF));
+  const isNestedOpen = (id: string) => nestedOpen[id] ?? (activeChain.includes(id) && id !== activeId);
+  const toggleNested = (id: string) => {
+    const next = { ...nestedOpen, [id]: !isNestedOpen(id) };
+    setNestedOpen(next);
+    savePref(NESTED_PREF, JSON.stringify(next));
+  };
+  const stateOf = (id: string) => sessionState(runningById.get(id), unread.has(id));
+  const renderRow = (s: SessionSummary): React.ReactNode => {
+    const nested = children.get(s.id);
+    const listId = `side-nested-${s.id}`;
+    const opened = !!nested && isNestedOpen(s.id);
+    return (
+      <SessionRow
+        key={s.id}
+        session={s}
+        active={s.id === activeId}
+        state={stateOf(s.id)}
+        unread={unread.has(s.id)}
+        disabled={!open}
+        actions={actions}
+        nested={nested && { count: nested.length, open: opened, onToggle: () => toggleNested(s.id), hidden: hiddenState(s.id, children, (id) => stateOf(id).kind), listId }}
+      >
+        {nested && opened && (
+          <ul id={listId} className="side-nested" aria-label={`Nested sessions of ${s.title ?? "Untitled session"}`}>
+            {nested.map(renderRow)}
+          </ul>
+        )}
+      </SessionRow>
+    );
+  };
 
   // A project that the user did not open or close: open for the active session and the newest project.
   const isOpen = (g: ProjectGroup) => expanded[g.key] ?? (g.key === activeKey || g.key === newestKey);
@@ -539,19 +611,7 @@ export function Sidebar({
         {pinned.length > 0 && (
           <>
             <h2 className="side-label">Pinned</h2>
-            <ul className="side-pinned">
-              {pinned.map((s) => (
-                <SessionRow
-                  key={s.id}
-                  session={s}
-                  active={s.id === activeId}
-                  state={sessionState(runningById.get(s.id), unread.has(s.id))}
-                  unread={unread.has(s.id)}
-                  disabled={!open}
-                  actions={actions}
-                />
-              ))}
-            </ul>
+            <ul className="side-pinned">{pinned.map(renderRow)}</ul>
           </>
         )}
         <div className="side-label-row">
@@ -571,19 +631,7 @@ export function Sidebar({
           unpinned.length === 0 ? (
             <p className="side-empty">{!open ? "Connect to a computer to see its sessions." : view.status === "archived" ? "No archived sessions." : "No sessions yet."}</p>
           ) : (
-            <ul className="side-pinned side-flat">
-              {sortSessions(unpinned, view.sortBy).map((s) => (
-                <SessionRow
-                  key={s.id}
-                  session={s}
-                  active={s.id === activeId}
-                  state={sessionState(runningById.get(s.id), unread.has(s.id))}
-                  unread={unread.has(s.id)}
-                  disabled={!open}
-                  actions={actions}
-                />
-              ))}
-            </ul>
+            <ul className="side-pinned side-flat">{sortSessions(unpinned, view.sortBy).map(renderRow)}</ul>
           )
         ) : groups.length === 0 ? (
           <p className="side-empty">
@@ -602,12 +650,13 @@ export function Sidebar({
                 hint={hints.get(g.key) ?? null}
                 pr={view.showPr ? (prStatus.get(g.key) ?? null) : null}
                 open={isOpen(g)}
-                activeId={activeId}
+                activeId={activeTop}
                 running={runningById}
                 unread={unread}
                 disabled={!open}
                 onToggle={() => toggle(g)}
                 actions={actions}
+                renderRow={renderRow}
                 onNewSession={() => onNewSessionIn(g)}
                 onRemove={onRemoveProject}
                 dragging={g.key === dragKey}

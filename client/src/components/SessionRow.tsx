@@ -2,9 +2,11 @@
 // The title of a running session shimmers, as in Claude. A status mark at the right end shows a waiting
 // or unread session. An idle or running session has no mark.
 // The menu has the keys of Claude: P (pin), U (mark as unread), R (rename), and D (delete).
+// A session with nested sessions shows their count and an arrow at the far right. The arrow shows or
+// hides the nested sessions under the row.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, CalendarClock, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
+import { Archive, ArchiveRestore, CalendarClock, ChevronRight, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
 import type { RunningSession, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { modelName } from "../lib/modelName";
@@ -32,6 +34,27 @@ export function sessionState(running: RunningSession | undefined, unread: boolea
   if (running) return { kind: "running", label: "Running" };
   if (unread) return { kind: "unread", label: "Unread response" };
   return { kind: "idle", label: "Idle" };
+}
+
+/** The nested sessions of a row: their count, the open state, and the state of the sessions that the
+ * closed row hides (the count gets the color of a waiting or unread nested session). */
+export interface NestedInfo {
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  hidden: SessionState["kind"];
+  listId: string; // The id of the list of the nested sessions.
+}
+
+/** The text of the arrow button: "Show 2 nested sessions", with the state of the hidden sessions. */
+export function nestedLabel(nested: Pick<NestedInfo, "count" | "open" | "hidden">): string {
+  const noun = nested.count === 1 ? "nested session" : "nested sessions";
+  const base = `${nested.open ? "Hide" : "Show"} ${nested.count} ${noun}`;
+  if (nested.open) return base;
+  if (nested.hidden === "awaiting") return `${base} (one awaits input)`;
+  if (nested.hidden === "running") return `${base} (running)`;
+  if (nested.hidden === "unread") return `${base} (unread response)`;
+  return base;
 }
 
 const MENU_WIDTH = 210;
@@ -160,13 +183,15 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
   );
 }
 
-export function SessionRow({ session, active, state, unread, disabled, actions }: {
+export function SessionRow({ session, active, state, unread, disabled, actions, nested, children }: {
   session: SessionSummary;
   active: boolean;
   state: SessionState;
   unread: boolean;
   disabled: boolean;
   actions: SessionActions;
+  nested?: NestedInfo; // The session has nested sessions.
+  children?: React.ReactNode; // The list of the nested sessions, when the row is open.
 }) {
   // The open menu: under the ⋮ button ("button"), or at the mouse after a right click.
   const [menu, setMenu] = useState<false | "button" | { x: number; y: number }>(false);
@@ -195,71 +220,88 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
   };
 
   return (
-    <li
-      className={`side-session-row${menu ? " menu-open" : ""}`}
-      onContextMenu={(e) => {
-        if (renaming || disabled) return;
-        e.preventDefault();
-        e.stopPropagation();
-        setMenu({ x: e.clientX, y: e.clientY });
-      }}
-    >
-      {renaming ? (
-        <div className={`side-session renaming${active ? " active" : ""}`}>
-          <input
-            className="side-session-rename"
-            aria-label="The name of the session"
-            defaultValue={title}
-            autoFocus
-            onFocus={(e) => e.currentTarget.select()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") finishRename(e.currentTarget.value);
-              else if (e.key === "Escape") finishRename(null);
-            }}
-            onBlur={(e) => finishRename(e.currentTarget.value)}
+    <li className="side-session-item">
+      <div
+        className={`side-session-row${menu ? " menu-open" : ""}${nested ? " has-nested" : ""}`}
+        onContextMenu={(e) => {
+          if (renaming || disabled) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
+        {renaming ? (
+          <div className={`side-session renaming${active ? " active" : ""}`}>
+            <input
+              className="side-session-rename"
+              aria-label="The name of the session"
+              defaultValue={title}
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") finishRename(e.currentTarget.value);
+                else if (e.key === "Escape") finishRename(null);
+              }}
+              onBlur={(e) => finishRename(e.currentTarget.value)}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}${working ? " side-session-running" : ""}`}
+            onClick={() => !active && actions.onResume(session.id)}
+            disabled={disabled}
+            aria-current={active ? "true" : undefined}
+            title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}${session.routine_id ? "\nStarted by a routine" : ""}`}
+          >
+            <span className="side-session-title">{title}</span>
+            {working && <span className="sr-only">Running</span>}
+            {session.branch && <GitBranch size={12} className="side-session-branch" aria-label="Worktree" />}
+            {session.routine_id && <CalendarClock size={12} className="side-session-branch" aria-label="Routine" />}
+            {shown && <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />}
+          </button>
+        )}
+        {!renaming && (
+          <button
+            ref={moreRef}
+            type="button"
+            className="side-session-more"
+            aria-label={`Actions for ${title}`}
+            aria-haspopup="menu"
+            aria-expanded={menu !== false}
+            title="More actions"
+            disabled={disabled}
+            onClick={() => setMenu((v) => (v ? false : "button"))}
+          >
+            <EllipsisVertical size={14} aria-hidden />
+          </button>
+        )}
+        {nested && !renaming && (
+          <button
+            type="button"
+            className={`side-nest-toggle${nested.open ? " open" : ""}${nested.open ? "" : ` hidden-${nested.hidden}`}`}
+            onClick={nested.onToggle}
+            aria-expanded={nested.open}
+            aria-controls={nested.listId}
+            aria-label={nestedLabel(nested)}
+            title={nestedLabel(nested)}
+          >
+            <span className="side-nest-count">{nested.count}</span>
+            <ChevronRight size={14} className="side-nest-chevron" aria-hidden />
+          </button>
+        )}
+        {menu && moreRef.current && (
+          <SessionMenu
+            session={session}
+            unread={unread}
+            anchor={moreRef.current}
+            at={typeof menu === "object" ? menu : null}
+            onAction={act}
+            onClose={() => setMenu(false)}
           />
-        </div>
-      ) : (
-        <button
-          type="button"
-          className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}${working ? " side-session-running" : ""}`}
-          onClick={() => !active && actions.onResume(session.id)}
-          disabled={disabled}
-          aria-current={active ? "true" : undefined}
-          title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}${session.routine_id ? "\nStarted by a routine" : ""}`}
-        >
-          <span className="side-session-title">{title}</span>
-          {working && <span className="sr-only">Running</span>}
-          {session.branch && <GitBranch size={12} className="side-session-branch" aria-label="Worktree" />}
-          {session.routine_id && <CalendarClock size={12} className="side-session-branch" aria-label="Routine" />}
-          {shown && <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />}
-        </button>
-      )}
-      {!renaming && (
-        <button
-          ref={moreRef}
-          type="button"
-          className="side-session-more"
-          aria-label={`Actions for ${title}`}
-          aria-haspopup="menu"
-          aria-expanded={menu !== false}
-          title="More actions"
-          disabled={disabled}
-          onClick={() => setMenu((v) => (v ? false : "button"))}
-        >
-          <EllipsisVertical size={14} aria-hidden />
-        </button>
-      )}
-      {menu && moreRef.current && (
-        <SessionMenu
-          session={session}
-          unread={unread}
-          anchor={moreRef.current}
-          at={typeof menu === "object" ? menu : null}
-          onAction={act}
-          onClose={() => setMenu(false)}
-        />
-      )}
+        )}
+      </div>
+      {nested?.open && children}
     </li>
   );
 }

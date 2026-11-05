@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     pinned INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     worktree TEXT,  -- JSON: the git worktree of the session (worktrees.py). NULL: the session works in cwd.
-    routine_id TEXT  -- The routine that started the session (routines.py). NULL: the user started it.
+    routine_id TEXT,  -- The routine that started the session (routines.py). NULL: the user started it.
+    parent_id TEXT  -- The session that started this session (a fork, or the start_session tool). NULL: none.
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -105,6 +106,8 @@ class Storage:
             self.db.execute("ALTER TABLE sessions ADD COLUMN worktree TEXT")
         if "routine_id" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN routine_id TEXT")
+        if "parent_id" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT")
         self._migrate_routines()
         # The first start with the projects table: add the folders of the stored sessions.
         if self.db.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
@@ -208,13 +211,16 @@ class Storage:
     def close(self) -> None:
         self.db.close()
 
-    def create_session(self, cwd: str, provider: str, model: str, worktree: str | None = None) -> str:
-        """``cwd``: the project folder. ``worktree``: the JSON of the git worktree of the session, or None."""
+    def create_session(self, cwd: str, provider: str, model: str, worktree: str | None = None,
+                       parent_id: str | None = None) -> str:
+        """``cwd``: the project folder. ``worktree``: the JSON of the git worktree of the session, or None.
+        ``parent_id``: the session that started this session (the sidebar shows it nested), or None."""
         session_id = uuid.uuid4().hex
         now = time.time()
         self.db.execute(
-            "INSERT INTO sessions (id, cwd, provider, model, created_at, updated_at, worktree) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (session_id, cwd, provider, model, now, now, worktree),
+            "INSERT INTO sessions (id, cwd, provider, model, created_at, updated_at, worktree, parent_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, cwd, provider, model, now, now, worktree, parent_id),
         )
         self.db.commit()
         return session_id
@@ -224,8 +230,8 @@ class Storage:
         return dict(row) if row else None
 
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        sql = ("SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived, worktree, routine_id "
-               "FROM sessions")
+        sql = ("SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived, worktree, routine_id, "
+               "parent_id FROM sessions")
         params: tuple = ()
         sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
@@ -254,8 +260,20 @@ class Storage:
         self.db.execute(f"UPDATE sessions SET {assignments} WHERE id = ?", (*fields.values(), session_id))
         self.db.commit()
 
+    def session_depth(self, session_id: str) -> int:
+        """The number of parent sessions above a session: 0 for a session with no parent."""
+        depth, seen, current = 0, {session_id}, session_id
+        while True:
+            row = self.db.execute("SELECT parent_id FROM sessions WHERE id = ?", (current,)).fetchone()
+            if row is None or not row[0] or row[0] in seen:
+                return depth
+            depth += 1
+            current = row[0]
+            seen.add(current)
+
     def delete_session(self, session_id: str) -> None:
-        """Delete a session and its messages. It cannot be undone."""
+        """Delete a session and its messages. It cannot be undone. Its nested sessions stay, with no parent."""
+        self.db.execute("UPDATE sessions SET parent_id = NULL WHERE parent_id = ?", (session_id,))
         self.db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         self.db.execute("DELETE FROM checkpoints WHERE session_id = ?", (session_id,))
         self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 
 from .agent import Agent
 from .storage import Storage
 
 TITLE_CHARS = 80
+
+# Starts a nested session of a session: (parent, title, prompt, worktree, mode) -> {"id", "folder"}.
+# server.py sets it. None (for example in a test with no server): the agent has no start_session tool.
+CHILD_STARTER: Callable[..., Awaitable[dict[str, Any]]] | None = None
 
 
 class Session:
@@ -27,6 +32,10 @@ class Session:
         # "Search and reference chats": the agent can search the other sessions of the project.
         agent.enable_chat_search(lambda query, limit: storage.search_chats(
             str(self.project_dir), query, exclude=self.id, limit=limit))
+        # start_session: the agent starts a nested session, with this session as its parent.
+        if CHILD_STARTER is not None:
+            starter = CHILD_STARTER
+            agent.enable_session_start(lambda title, prompt, worktree, mode: starter(self, title, prompt, worktree, mode))
 
     @property
     def cwd(self):

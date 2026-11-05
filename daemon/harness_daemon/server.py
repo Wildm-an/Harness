@@ -69,6 +69,7 @@ from .references import expand_references, session_ids
 from .servers import ServerManager
 from .prstatus import pr_status
 from . import update
+from . import session as session_mod
 from .session import Session
 from .keepawake import AWAKE
 from .sidechat import NO_TOOLS_REPLY, clean_side_history, side_messages
@@ -752,6 +753,8 @@ class Connection:
         self._watcher = asyncio.create_task(self.watch_files())
         COOKBOOK.listen(self.send)  # Download and serve events of the Cookbook.
         ROUTINES.listen(self.send)  # The changes and runs of routines.
+        if HEADLESS is not None and HEADLESS is not self:  # The sessions with no window that work now.
+            await self.send(HEADLESS.background_message())
         try:
             while True:
                 try:
@@ -1235,7 +1238,12 @@ class HeadlessConnection(Connection):
         super().__init__(None, storage)  # type: ignore[arg-type]
 
     async def send(self, message: dict[str, Any]) -> None:
-        return
+        # The windows show the sessions with no window that work or wait: routine runs and nested sessions.
+        if message.get("type") == "sessions.running":
+            await ROUTINES.broadcast({"type": "sessions.background", "items": message["items"]})
+
+    def background_message(self) -> dict[str, Any]:
+        return {"type": "sessions.background", "items": list(self._running_sent or [])}
 
     async def close_all(self) -> None:
         for live in list(self.live.values()):
@@ -1254,6 +1262,7 @@ def adopt_session(conn: Connection, session_id: str) -> LiveSession | None:
         return None
     live.conn = conn
     conn.live[session_id] = live
+    asyncio.ensure_future(headless.send_running())  # The windows remove it from the background list.
     return live
 
 
@@ -1299,6 +1308,46 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
         report("done")
     else:
         report("failed", error=live.last_error or RUN_STOPS.get(stop or "", "The turn did not end."))
+
+
+# The deepest nesting: a nested session of a nested session can start no more sessions.
+MAX_SESSION_DEPTH = 2
+
+
+async def start_child_session(parent: Session, title: str, prompt: str, worktree: bool, mode: str) -> dict[str, Any]:
+    """Start a nested session of ``parent`` with no window (the start_session tool). Its turn runs the prompt.
+
+    It works in the project folder of the parent, with the model of the parent, and the mode ``mode`` in
+    memory only. A window that opens it takes it (adopt_session).
+    """
+    headless = HEADLESS
+    if headless is None:
+        raise ToolError("The daemon stops.")
+    if headless.storage.session_depth(parent.id) >= MAX_SESSION_DEPTH:
+        raise ToolError("This session is a nested session of a nested session. It cannot start more sessions. "
+                        "Do the work here, or tell the user to start a session.")
+    client = parent.agent.client
+    try:
+        live, _warnings = await create_session(headless, parent.project_dir, client.provider.name, client.model,
+                                               wt_arg={} if worktree else None, parent_id=parent.id)
+    except ProtocolError as e:
+        raise ToolError(str(e)) from None
+    session = live.session
+    assert session is not None
+    session.agent.settings["permission_mode"] = mode
+    session.title = title
+    headless.storage.update_session(session.id, title=title)
+    headless.live[session.id] = live
+    live.start()
+
+    async def work(target: LiveSession) -> None:
+        await target.conn.run_turn(target, prompt)
+
+    await headless.start_turn(work, live=live)
+    return {"id": session.id, "folder": str(session.cwd)}
+
+
+session_mod.CHILD_STARTER = start_child_session
 
 
 def _project_ref(storage: Storage, cwd: Path) -> dict[str, str] | None:
@@ -1360,11 +1409,12 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
 
 
 async def create_session(conn: Connection, cwd: Path, provider: str | None, model: str | None,
-                         mode: str | None = None, wt_arg: dict[str, Any] | None = None
-                         ) -> tuple[LiveSession, list[str]]:
+                         mode: str | None = None, wt_arg: dict[str, Any] | None = None,
+                         parent_id: str | None = None) -> tuple[LiveSession, list[str]]:
     """Make a new stored session and its agent. The caller opens it (open_session, or a routine run).
 
     ``mode``: the mode of the start page, saved in the project settings. ``wt_arg``: a new git worktree.
+    ``parent_id``: the session that started this session (start_session). The sidebar shows it nested.
     """
     if mode is not None:
         # The mode of the start page. It is a project setting, as with settings.set.
@@ -1395,7 +1445,7 @@ async def create_session(conn: Connection, cwd: Path, provider: str | None, mode
             await asyncio.to_thread(worktrees.remove, worktree)
         raise
     session_id = conn.storage.create_session(str(cwd), agent.client.provider.name, agent.client.model,
-                                             worktrees.dumps(worktree))
+                                             worktrees.dumps(worktree), parent_id=parent_id)
     conn.storage.touch_project(str(cwd))  # A new folder becomes a project.
     live.session = Session(conn.storage, session_id, agent, project_dir=cwd, worktree=worktree)
     return live, warnings
@@ -2519,7 +2569,9 @@ async def on_session_fork(conn: Connection, msg: dict[str, Any]) -> None:
     live = LiveSession(conn)
     agent, warnings = await conn.make_agent(live, source.cwd, client.provider.name, client.model, history, summary,
                                             stored=True)
-    session_id = conn.storage.create_session(str(source.cwd), agent.client.provider.name, agent.client.model)
+    # The sidebar shows the fork nested under its source session.
+    session_id = conn.storage.create_session(str(source.cwd), agent.client.provider.name, agent.client.model,
+                                             parent_id=source.id)
     conn.storage.append_messages(session_id, history)
     title = f"{source.title} (fork)" if source.title else None
     conn.storage.update_session(session_id, summary=summary, title=title)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { filterStatus, folderName, groupByProject, mergeOrder, moveKey, orderGroups, pathKey, sessionState, sessionsToShowFolded, sortSessions } from "./Sidebar";
+import { ancestry, filterStatus, folderName, groupByProject, hiddenState, mergeOrder, moveKey, nestSessions, orderGroups, pathKey, sessionState, sessionsToShowFolded, sortSessions, topSessions } from "./Sidebar";
+import { nestedLabel } from "./SessionRow";
 import { searchSessions } from "./SessionSearch";
 
 const session = (id: string, cwd: string, updated: number): SessionSummary => ({
@@ -111,5 +112,41 @@ describe("a folded project", () => {
     expect(sessionsToShowFolded(list, new Map(), new Set())).toEqual([]);
     // The open session stays in view too.
     expect(sessionsToShowFolded(list, new Map(), new Set(), "idle").map((s) => s.id)).toEqual(["idle"]);
+  });
+});
+
+describe("nested sessions", () => {
+  const s = (id: string, parent: string | null, extra: Partial<SessionSummary> = {}): SessionSummary => ({
+    id, cwd: "/p", provider: "p", model: "m", title: id, created_at: 1, updated_at: 1, parent_id: parent, ...extra,
+  });
+  const list = [s("top", null), s("fork", "top"), s("deep", "fork"), s("pinned", "top", { pinned: true }), s("lost", "gone")];
+
+  it("puts a session under its listed parent", () => {
+    const children = nestSessions(list);
+    expect([...children.entries()].map(([k, v]) => [k, v.map((x) => x.id)])).toEqual([["top", ["fork"]], ["fork", ["deep"]]]);
+    // A pinned session and a session with a parent that is not listed stay at the top level.
+    expect(topSessions(list, children).map((x) => x.id)).toEqual(["top", "pinned", "lost"]);
+  });
+
+  it("finds the parents of the open session", () => {
+    const children = nestSessions(list);
+    expect(ancestry("deep", list, children)).toEqual(["deep", "fork", "top"]);
+    expect(ancestry("top", list, children)).toEqual(["top"]);
+    expect(ancestry(null, list, children)).toEqual([]);
+    expect(ancestry("missing", list, children)).toEqual([]);
+  });
+
+  it("gives the closed row the state of a hidden nested session", () => {
+    const children = nestSessions(list);
+    const states: Record<string, "idle" | "running" | "awaiting" | "unread"> = { fork: "unread", deep: "awaiting" };
+    expect(hiddenState("top", children, (id) => states[id] ?? "idle")).toBe("awaiting");
+    expect(hiddenState("fork", children, (id) => (id === "deep" ? "running" : "idle"))).toBe("running");
+    expect(hiddenState("deep", children, () => "unread")).toBe("idle"); // No nested sessions.
+  });
+
+  it("names the arrow button with the count", () => {
+    expect(nestedLabel({ count: 1, open: false, hidden: "idle" })).toBe("Show 1 nested session");
+    expect(nestedLabel({ count: 3, open: false, hidden: "awaiting" })).toBe("Show 3 nested sessions (one awaits input)");
+    expect(nestedLabel({ count: 2, open: true, hidden: "unread" })).toBe("Hide 2 nested sessions");
   });
 });
