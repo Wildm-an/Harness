@@ -2,11 +2,12 @@
 // plan", the plan, then at the left "Reject" and "Revise…" (Esc), and at the right "Accept"
 // (Ctrl+Shift+Enter) and the primary "Accept and allow edits" (Ctrl+Enter) with a menu of the other modes.
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useContext, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Clock, ListChecks, PenLine, X } from "lucide-react";
 import type { PermissionMode, PlanDecision } from "../daemon/protocol";
 import type { PlanItem } from "../chat/state";
 import { Markdown } from "./Markdown";
+import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
 
 const MODE_NAMES: Partial<Record<PermissionMode, string>> = {
   acceptEdits: "Allow edits",
@@ -37,11 +38,13 @@ export const PlanCard = memo(function PlanCard({
   const actions = useRef<HTMLDivElement>(null);
   const decideRef = useRef(onDecide);
   decideRef.current = onDecide;
+  const inSplit = useContext(InSplitPane); // With a split view, the key is for the pane with the focus.
+  const promptId = usePromptInputId();
 
   const decide = (decision: PlanDecision, mode?: PermissionMode, text?: string) => {
     setMenu(false);
     decideRef.current(item.id, decision, mode, text);
-    document.getElementById("prompt-input")?.focus({ preventScroll: true });
+    document.getElementById(promptId)?.focus({ preventScroll: true });
   };
 
   // Ctrl+Enter accepts and allows edits, Ctrl+Shift+Enter accepts, from any place in the window.
@@ -49,13 +52,14 @@ export const PlanCard = memo(function PlanCard({
     if (!pending || revising) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat || e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (!keyForPane(e.target, inSplit)) return;
       e.preventDefault();
       e.stopPropagation();
       decideRef.current(item.id, "accept", e.shiftKey ? "default" : "acceptEdits");
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [pending, revising, item.id]);
+  }, [pending, revising, item.id, inSplit]);
 
   useEffect(() => {
     if (!pending) return;

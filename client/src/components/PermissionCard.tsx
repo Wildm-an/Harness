@@ -1,8 +1,9 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useContext, useEffect, useRef } from "react";
 import { Check, Clock, FileDiff, ShieldAlert, X } from "lucide-react";
 import type { PermissionItem } from "../chat/state";
 import type { Decision } from "../daemon/protocol";
 import { parseUnifiedDiff } from "../lib/diff";
+import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
 import { DiffStats } from "./DiffStats";
 import { toolSummary } from "./ToolCard";
 
@@ -115,10 +116,12 @@ export function usePermissionShortcuts(item: PermissionItem | null, onDecide: (d
   const always = Boolean(item?.rule);
   const decide = useRef(onDecide);
   decide.current = onDecide;
+  const inSplit = useContext(InSplitPane); // With a split view, the key is for the pane with the focus.
   useEffect(() => {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat || e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (!keyForPane(e.target, inSplit)) return;
       if (e.shiftKey && !always) return;
       e.preventDefault();
       e.stopPropagation();
@@ -126,7 +129,7 @@ export function usePermissionShortcuts(item: PermissionItem | null, onDecide: (d
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [pending, always]);
+  }, [pending, always, inSplit]);
 }
 
 export const PermissionCard = memo(function PermissionCard({
@@ -153,10 +156,11 @@ export const PermissionCard = memo(function PermissionCard({
     options.current?.focus({ preventScroll: true });
   }, [decided]);
 
+  const promptId = usePromptInputId();
   const decide = (decision: Decision) => {
     onDecide(item.id, decision);
-    // The buttons go away. Give the focus back to the prompt.
-    document.getElementById("prompt-input")?.focus({ preventScroll: true });
+    // The buttons go away. Give the focus back to the prompt of the same pane.
+    document.getElementById(promptId)?.focus({ preventScroll: true });
   };
   usePermissionShortcuts(item, decide);
 

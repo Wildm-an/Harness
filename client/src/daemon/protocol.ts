@@ -658,6 +658,8 @@ export type ClientMessage =
     }
   | { type: "git.branches"; cwd: string }
   | { type: "session.resume"; session_id: string }
+  // Take an open session of another connection (the split view) as a background session. Reply: session.adopted.
+  | { type: "session.adopt"; session_id: string }
   | { type: "session.leave" } // The start screen. A running turn of the session continues.
   // Rename, pin, or archive. force: archive a worktree session with uncommitted changes.
   | { type: "session.update"; session_id: string; title?: string; pinned?: boolean; archived?: boolean; force?: boolean }
@@ -863,6 +865,7 @@ export type DaemonMessage =
       turn_tokens?: number; // The output tokens of the running turn so far.
     }
   | { type: "session.title"; id: string; title: string } // The model made the title from the first prompt.
+  | { type: "session.adopted"; id: string; moved: boolean } // The reply to session.adopt.
   | { type: "session.updated"; id: string; title: string | null; pinned: boolean; archived?: boolean }
   | { type: "pr_status"; items: PrStatus[] }
   | { type: "session.deleted"; id: string }

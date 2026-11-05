@@ -2,14 +2,17 @@
 // The title of a running session shimmers, as in Claude. A status mark at the right end shows a waiting
 // or unread session. An idle or running session has no mark.
 // The menu has the keys of Claude: P (pin), U (mark as unread), R (rename), and D (delete).
+// "Open in" > "Split view" opens the session at the right of the shown session. A drag of the row to
+// the right half of the main view does the same (lib/split.ts).
 // A session with nested sessions shows their count and an arrow at the far right. The arrow shows or
 // hides the nested sessions under the row.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, CalendarClock, ChevronRight, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
+import { Archive, ArchiveRestore, CalendarClock, ChevronRight, Columns2, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Mail, MailOpen } from "lucide-react";
 import type { RunningSession, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { modelName } from "../lib/modelName";
+import { setDraggedSession, startSessionDrag } from "../lib/split";
 
 export interface SessionActions {
   onResume: (id: string) => void;
@@ -18,6 +21,7 @@ export interface SessionActions {
   onMarkUnread: (id: string, unread: boolean) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onOpenSplit?: (id: string) => void; // "Open in" > "Split view", and a drop of the row on the main view.
 }
 
 export interface SessionState {
@@ -57,14 +61,22 @@ export function nestedLabel(nested: Pick<NestedInfo, "count" | "open" | "hidden"
   return base;
 }
 
-const MENU_WIDTH = 210;
+/** The "Open in" > "Split view" item: "off" (disabled) for the session of the main view. null: no item. */
+export function splitItem(actions: Pick<SessionActions, "onOpenSplit">, active: boolean): "on" | "off" | null {
+  if (!actions.onOpenSplit) return null;
+  return active ? "off" : "on";
+}
 
-type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete";
+const MENU_WIDTH = 210;
+const SUB_WIDTH = 160;
+
+type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split";
 const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete" };
 
-function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
+function SessionMenu({ session, unread, split, anchor, at, onAction, onClose }: {
   session: SessionSummary;
   unread: boolean;
+  split: "on" | "off" | null; // "Open in" > "Split view": "off" when the main view shows the session. null: no item.
   anchor: HTMLElement;
   at: { x: number; y: number } | null; // A right click: the menu opens at the mouse, not under the ⋮ button.
   onAction: (action: MenuAction) => void;
@@ -73,6 +85,10 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
   const ref = useRef<HTMLDivElement>(null);
   const [confirm, setConfirm] = useState(false); // Delete asks one more time: it cannot be undone.
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  // The "Open in" submenu: its place in the window, at the right of the menu (at the left when there is no room).
+  const [sub, setSub] = useState<{ top: number; left: number } | null>(null);
+  const openInRef = useRef<HTMLButtonElement>(null);
+  const subRef = useRef<HTMLDivElement>(null);
   useOverlay(true);
 
   // The sidebar list scrolls: the menu has a fixed position under the ⋮ button, in the window.
@@ -98,6 +114,15 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
     if (placed) ref.current?.querySelector<HTMLButtonElement>(confirm ? "button.btn-danger" : "button")?.focus({ preventScroll: true });
   }, [confirm, placed]);
 
+  const showSub = (focus: boolean) => {
+    const item = openInRef.current?.getBoundingClientRect();
+    const box = ref.current?.getBoundingClientRect();
+    if (!item || !box) return;
+    const left = box.right + SUB_WIDTH + 4 > window.innerWidth ? box.left - SUB_WIDTH - 4 : box.right + 4;
+    setSub({ top: item.top - 4, left: Math.max(8, left) });
+    if (focus) window.setTimeout(() => subRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true }), 0);
+  };
+
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (ref.current?.contains(e.target as Node) || anchor.contains(e.target as Node)) return;
@@ -108,6 +133,19 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
   }, [anchor]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const inSub = sub !== null && !!subRef.current?.contains(document.activeElement);
+    if (inSub && (e.key === "ArrowLeft" || e.key === "Escape")) {
+      e.preventDefault();
+      e.stopPropagation();
+      setSub(null);
+      openInRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (e.key === "ArrowRight" && document.activeElement === openInRef.current) {
+      e.preventDefault();
+      showSub(true);
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -117,7 +155,10 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
     }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+      // The arrow keys move in the submenu while it has the focus, else in the menu.
+      const items = inSub
+        ? [...(subRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])]
+        : [...(ref.current?.querySelectorAll<HTMLButtonElement>(":scope > button, :scope > .session-menu-confirm button") ?? [])];
       const at = items.indexOf(document.activeElement as HTMLButtonElement);
       items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus({ preventScroll: true });
       return;
@@ -170,6 +211,45 @@ function SessionMenu({ session, unread, anchor, at, onAction, onClose }: {
         </div>
       ) : (
         <>
+          {split && (
+            <>
+              <button
+                ref={openInRef}
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={sub !== null}
+                className={sub ? "sub-open" : undefined}
+                onClick={() => (sub ? setSub(null) : showSub(true))}
+                onMouseEnter={() => showSub(false)}
+              >
+                <SquareArrowOutUpRight size={14} aria-hidden />
+                <span className="session-menu-label">Open in</span>
+                <ChevronRight size={14} className="session-menu-sub" aria-hidden />
+              </button>
+              {sub && (
+                <div
+                  ref={subRef}
+                  className="menu session-menu session-submenu"
+                  role="menu"
+                  aria-label="Open in"
+                  style={{ top: sub.top, left: sub.left, width: SUB_WIDTH }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={split === "off"}
+                    title={split === "off" ? "The main view shows this session" : undefined}
+                    onClick={() => onAction("split")}
+                  >
+                    <Columns2 size={14} aria-hidden />
+                    <span className="session-menu-label">Split view</span>
+                  </button>
+                </div>
+              )}
+              <div className="menu-sep" role="separator" />
+            </>
+          )}
           {item("pin", session.pinned ? "Unpin" : "Pin", "P", session.pinned ? PinOff : Pin)}
           {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
           <div className="menu-sep" role="separator" />
@@ -210,6 +290,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
     else if (action === "unread") actions.onMarkUnread(session.id, !unread);
     else if (action === "rename") setRenaming(true);
     else if (action === "archive") actions.onArchive(session.id, !session.archived);
+    else if (action === "split") actions.onOpenSplit?.(session.id);
     else actions.onDelete(session.id);
   };
 
@@ -251,6 +332,9 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
             className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}${working ? " side-session-running" : ""}`}
             onClick={() => !active && actions.onResume(session.id)}
             disabled={disabled}
+            draggable={!disabled && actions.onOpenSplit !== undefined}
+            onDragStart={(e) => startSessionDrag(e, session.id)}
+            onDragEnd={() => setDraggedSession(null)}
             aria-current={active ? "true" : undefined}
             title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}${session.routine_id ? "\nStarted by a routine" : ""}`}
           >
@@ -294,6 +378,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
           <SessionMenu
             session={session}
             unread={unread}
+            split={splitItem(actions, active)}
             anchor={moreRef.current}
             at={typeof menu === "object" ? menu : null}
             onAction={act}
