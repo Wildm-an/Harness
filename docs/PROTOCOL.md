@@ -45,6 +45,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 | `session.list` | `cwd` (optional), `limit` (optional) | Asks for the stored sessions, newest first. With `cwd`, only the sessions of that folder (case-insensitive on Windows). `limit` is 50 by default, and at most 500. |
 | `session.leave` | — | The client shows the start screen. The current session closes, or stays open in the background if a turn or its shell runs. |
+| `session.adopt` | `session_id` | Takes an open session of another connection of the same daemon (the split view of a window has its own connection) as a background session of this connection. Its running turn and its permission requests stay. The reply is `session.adopted` `{"id", "moved"}` (not `session_id`: the client drops the events of a session that it does not show). `moved` is false when no other connection had the session open. |
 | `session.update` | `session_id`, `title` (optional), `pinned` (optional) | Renames or pins a session. The age of the session stays. The reply is `session.updated`. |
 | `session.delete` | `session_id` | Deletes a session and its messages. A running turn and a shell of the session stop. The reply is `session.deleted`. |
 | `session.move` | `session_id`, `cwd` | Moves a session to another folder ("Change folder"). The history stays. Not during a turn. The session opens again there, and the reply is `session.ready`. |
@@ -282,7 +283,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 
 - The daemon runs one turn at a time for each session. A `prompt` during a turn gets an `error`.
-- The client can go to another session (`session.new`, `session.resume`) or to the start screen (`session.leave`) during a turn. The turn continues in the background, and the client gets no events of it. A later `session.resume` of that session shows the turn again. When a turn in the background ends, the session closes: its servers, MCP servers, and agent browser stop. A session with a running shell stays open until the shell stops. When the connection closes, all turns and shells stop.
+- The client can go to another session (`session.new`, `session.resume`) or to the start screen (`session.leave`) during a turn. The turn continues in the background, and the client gets no events of it. A later `session.resume` of that session shows the turn again. A `session.resume` of a session that is open in another window connection (the split view) moves the session to this connection, with its running turn. When a turn in the background ends, the session closes: its servers, MCP servers, and agent browser stop. A session with a running shell stays open until the shell stops. When the connection closes, all turns and shells stop.
 - The terminal pane runs an interactive shell: PowerShell on Windows (ConPTY), or `$SHELL` on other systems. The `terminal_shell` setting selects another shell. Each session has one shell.
 - A tool that fails with an unexpected error gives an error result to the model. The turn continues. A `glob` or `grep` search stops after 30 seconds with an error result.
 - A `command` with a skill name starts the skill as a turn. Built-in commands have priority over skills with the same name. A skill with `user-invocable: false` gets an `error`.

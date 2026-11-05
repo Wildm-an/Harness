@@ -988,3 +988,50 @@ def test_rename_during_the_title_request_keeps_the_name_of_the_user(daemon, proj
     assert not any(m["type"] == "session.title" for m in seen + more)
     assert next(s for s in sessions["items"] if s["id"] == ready["session_id"])["title"] == "My name"
     c.close()
+
+
+def test_split_view_connection_takes_a_running_session(daemon, project, fake_model):
+    """The split view has its own connection. A session with a running turn moves between the two
+    connections (session.resume and session.adopt), and its turn does not stop."""
+    fake_model.script(
+        {"tool_calls": [{"name": "edit", "arguments": {"path": "hello.py", "old_string": "'hello'", "new_string": "'hey'"}}]},
+        {"text": "Changed."},
+    )
+    main = Client(daemon)
+    first = main.new_session(project)
+    main.send({"type": "prompt", "text": "edit it"})
+    request = main.until("permission.request")[0]
+    main.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    main.until("session.ready")
+
+    # The split view opens the first session: it moves, with the request that waits.
+    split = Client(daemon)
+    split.until("auth.ok")
+    split.send({"type": "session.resume", "session_id": first["session_id"]})
+    shown = split.until("session.ready")[0]
+    assert shown["running"] and shown["requests"][0]["request_id"] == request["request_id"]
+    running = main.until("sessions.running")[0]
+    while running["items"]:
+        running = main.until("sessions.running")[0]
+
+    # The split view closes: the main connection takes the session first.
+    main.send({"type": "session.adopt", "session_id": first["session_id"]})
+    adopted, seen = main.until("session.adopted")
+    assert adopted == {"type": "session.adopted", "id": first["session_id"], "moved": True}
+    running = [m for m in seen if m["type"] == "sessions.running"]
+    assert running[-1]["items"] == [{"session_id": first["session_id"], "waiting": True}]
+    split.close()
+
+    # The turn still waits. The main connection shows it and allows the edit.
+    main.send({"type": "session.resume", "session_id": first["session_id"]})
+    back = main.until("session.ready")[0]
+    assert back["running"] and back["requests"][0]["request_id"] == request["request_id"]
+    main.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
+    end = main.until("turn.end")[0]
+    assert end["session_id"] == first["session_id"] and end["stop_reason"] == "end"
+    assert "'hey'" in (project / "hello.py").read_text()
+
+    # No other connection has the session: nothing moves.
+    main.send({"type": "session.adopt", "session_id": first["session_id"]})
+    assert main.until("session.adopted")[0]["moved"] is False
+    main.close()

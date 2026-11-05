@@ -204,7 +204,8 @@ class ProtocolError(Exception):
 ROUTINES = HUB
 # The connection of the sessions that the daemon starts with no window: the runs of routines.
 HEADLESS: HeadlessConnection | None = None
-# The connections of the open windows. offer_session finds an open session in them.
+# The connections of the open windows. offer_session finds an open session in them. The split view of a
+# window uses a second connection: a session can move between them (take_session).
 WINDOWS: set[Connection] = set()
 
 
@@ -1295,6 +1296,29 @@ def adopt_session(conn: Connection, session_id: str) -> LiveSession | None:
     return live
 
 
+def take_session(conn: Connection, session_id: str) -> LiveSession | None:
+    """Move an open session from another window connection to this connection.
+
+    The split view of a window has its own connection. When it opens a session that runs in the
+    background of the main connection, or when it closes and the main connection takes its session,
+    the session moves. Its running turn and its permission requests stay.
+    """
+    for other in list(WINDOWS):
+        if other is conn:
+            continue
+        live = other.live.pop(session_id, None)
+        if live is None:
+            continue
+        if other.current is live:
+            other.current = None
+            other.watched.clear()
+        live.conn = conn
+        conn.live[session_id] = live
+        asyncio.ensure_future(other.send_running())  # The other window removes it from its running list.
+        return live
+    return None
+
+
 # The text of a run that failed, by the stop reason of its turn (agent.py), when no error event came.
 RUN_STOPS = {
     "denied": "A permission request was denied.",
@@ -1530,6 +1554,8 @@ async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
     session_id = _text_arg(msg, "session_id")
     if adopt_session(conn, session_id) is not None:  # A routine run with no window.
         await conn.send_running()
+    elif session_id not in conn.live and take_session(conn, session_id) is not None:  # Open in another window connection.
+        await conn.send_running()
     live = conn.live.get(session_id)
     if live is not None:
         # The session is open: the current session, or a session with a running turn.
@@ -1670,7 +1696,8 @@ async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
     row = conn.storage.get_session(session_id)
     if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
-    adopt_session(conn, session_id)  # A routine run with no window stops too.
+    if adopt_session(conn, session_id) is None:  # A routine run with no window stops too.
+        take_session(conn, session_id)  # And a session in the split view (another window connection).
     live = conn.live.get(session_id)
     if live is not None:
         if live is conn.current:
@@ -1692,6 +1719,22 @@ async def on_git_branches(conn: Connection, msg: dict[str, Any]) -> None:
     cwd = _project_dir(msg.get("cwd"))
     info = await asyncio.to_thread(worktrees.branches, cwd)
     await conn.send({"type": "git.branches", "cwd": msg["cwd"], **info})
+
+
+@handler("session.adopt")
+async def on_session_adopt(conn: Connection, msg: dict[str, Any]) -> None:
+    """Take an open session of another window connection as a background session: {"session_id"}.
+
+    The split view sends it on the main connection before it closes its own connection. A close of a
+    connection stops its turns, so the running turn of the split view moves first. The reply is
+    "session.adopted" with "moved": false when no other connection had the session open.
+    """
+    session_id = _text_arg(msg, "session_id")
+    live = take_session(conn, session_id) if session_id not in conn.live else None
+    if live is not None:
+        await conn.send_running()
+        await conn.close_if_done(live)
+    await conn.send({"type": "session.adopted", "id": session_id, "moved": live is not None})
 
 
 @handler("session.leave")

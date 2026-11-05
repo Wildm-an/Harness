@@ -6,6 +6,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { Check, Clock, MessageCircleQuestion, SkipForward } from "lucide-react";
 import type { AskQuestion } from "../daemon/protocol";
 import type { QuestionItem } from "../chat/state";
+import { usePromptInputId } from "../lib/split";
 
 /** The answer text of one question: the picked labels, then the text of "Something else". */
 export function answerText(picked: string[], other: string): string {
@@ -51,9 +52,10 @@ export const QuestionCard = memo(function QuestionCard({
     if (q && otherOpen[q.question]) otherInput.current?.focus();
   }, [at, q, otherOpen]);
 
+  const promptId = usePromptInputId();
   const finish = (answers: Record<string, string> | null) => {
     onAnswer(item.id, answers);
-    document.getElementById("prompt-input")?.focus({ preventScroll: true });
+    document.getElementById(promptId)?.focus({ preventScroll: true });
   };
 
   const submit = (nextPicks = picks) => finish(collectAnswers(item.questions, nextPicks, others));

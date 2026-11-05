@@ -81,10 +81,10 @@ Harness now has a "More" accordion for Permission rules, and a Settings gear in 
   5. Settings: "Transcript view" > "Normal" / "Thinking" / "Verbose", "Output style", "Keep computer awake for this session".
   6. Remove: "Archive" (Ctrl+Alt+A), "Delete".
 
-  Harness now uses the single keys P, U, R, A, D in this menu. Change them to the Ctrl+Alt chords above.
+  Harness now uses the single keys P, U, R, A, D in this menu. Change them to the Ctrl+Alt chords above. Harness has "Open in" > "Split view" (V7a), but not "Open PR" or "New window" yet.
 - **S8.** Archive asks first only when the session has uncommitted changes: "Archive session with uncommitted changes?" with "Archive anyway". Delete always asks first. The focus starts on the "Delete" button of that question, so Enter deletes the session (the user asked for this).
 - **S13.** The project menu has "Remove from sidebar" under "Archive all" (the user asked for this). It is available only for a saved project with no sessions in the list. The folder, its files, and its sessions stay.
-- **S9.** A drag of a row shows a label pill: "Open in split view", "Release to unpin", "Move to {label}".
+- **S9.** A drag of a row shows a label pill: "Open in split view", "Release to unpin", "Move to {label}". Harness shows "Open in split view" now (V7a). The browser fixes the drag image at the start of the drag, so the pill text does not change during the drag.
 - **S12.** The edge at the right of the sidebar changes its width, from 216px to 384px (the widest sidebar of the Claude app, the user asked for it). The default is 264px. A double-click sets the default.
 - **S11.** A folded project still shows the open session and its sessions that are running, awaiting input, or unread, under the project name (the user asked for this). The other sessions show when the project opens.
 - **S14.** Nested sessions, as the linked sessions of the Claude app. A fork, and a session that the agent starts with the `start_session` tool, show under the session that started them (`parent_id`). A pinned session stays in the Pinned list. A session with a parent that is not in the list shows at the top level. The parent row is closed until the user opens it (the user asked for this): the nested sessions do not show. The number of nested sessions shows at the far right of the parent row, with an arrow to its right (the user asked for this place). The arrow opens and closes the list. The ⋮ button and the status mark move to the left of the number. A closed row opens when the open session is one of its nested sessions. When a hidden nested session (at any depth) works, awaits input, or has an unread response, a muted line with an elbow shows under the closed row, as in the Claude app (the user asked for this): "{n} nested session(s) · {n} working · {n} awaiting input · {n} unread", with only the parts that are not zero. A click on the line opens the row. The open state of each row is saved. A nested session of a nested session cannot start more sessions.
@@ -334,6 +334,15 @@ Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 ### 7.3 Split view
 
 - **V7.** "Open in" > "Split view" in the row menu, or a drag of a row to the side, opens a split. Shortcuts: "New session on the right" Ctrl+Alt+\, "New session below" Ctrl+Alt+-, "Focus next split view" Ctrl+], "Focus previous split view" Ctrl+[.
+- **V7a.** Harness shows one split pane at the right of the shown session (`SplitView.tsx`, `lib/split.ts`). The split pane is a full chat with its own prompt box, mode menu, model name, and context ring. Its header shows the title, the folder, and an X ("Close split view").
+  - A drag of a session row over the right half of the main view shows the drop zone: a blue outline over that half with the label "Split view", as in the Claude app. A release there opens the session in the split pane. A drop of another row replaces the session of the split pane. The session of the main view cannot go into the split pane: no drop zone shows for it, and its "Split view" menu item is off.
+  - "Open in" is the first item of the row menu, with a submenu: "Split view". The pointer or ArrowRight opens the submenu. ArrowLeft or Esc closes it. With no session in the main view, or in the IDE view, "Split view" opens the session in the main view.
+  - The edge between the panes changes their widths. The split pane gets 25% to 75% of the width. A double-click sets equal widths. ArrowLeft and ArrowRight move the edge. The width is saved.
+  - The session rail does not show while the split pane shows: the split pane gets its room, as a pane does (V6t).
+  - A click on the sidebar row of the split session puts the focus in the prompt box of the split pane. If the main view opens that session (Back, search), the split pane closes.
+  - The split pane has its own connection to the daemon: the daemon sends the events of one session to each connection. The X gives a running turn to the main connection first (`session.adopt`), so the turn continues and the sidebar keeps its mark. The split pane shows only in the Code view. It closes when the connection to the daemon changes.
+  - Ctrl+Enter on a permission card or a plan card is for the pane that has the focus. After an answer, the focus goes to the prompt box of the same pane.
+  - Harness has no split below and no split shortcuts yet.
 
 ### 7.4 Updates and notifications
 

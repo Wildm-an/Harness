@@ -136,6 +136,8 @@ import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
 import { MessageList, type QueuedItem, type RewindOptions } from "./components/MessageList";
+import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
+import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
 import { setVisualDaemon } from "./lib/visual";
 import { SessionSearch } from "./components/SessionSearch";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
@@ -312,11 +314,18 @@ export default function App() {
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
   // The sessions with no window that work or wait: routine runs and nested sessions (start_session).
   const [backgroundSessions, setBackgroundSessions] = useState<RunningSession[]>([]);
-  // The sidebar shows both lists. A session of this window is first: it has the newer state.
+  // Split view (SplitView.tsx): the session at the right, with its own connection to the daemon.
+  const [split, setSplit] = useState<string | null>(null);
+  const [splitRunning, setSplitRunning] = useState<RunningSession | null>(null); // From the connection of the split pane.
+  const [splitShare, setSplitShare] = useState(() => clampSplit(Number(loadPref("split.width", String(SPLIT_DEFAULT)))));
+  const [splitFocus, setSplitFocus] = useState(0);
+  const splitRowRef = useRef<HTMLDivElement>(null);
+  // The sidebar shows all lists. A session of this window is first: it has the newer state.
   const allRunning = useMemo(() => {
-    const ids = new Set(runningSessions.map((r) => r.session_id));
-    return [...runningSessions, ...backgroundSessions.filter((r) => !ids.has(r.session_id))];
-  }, [runningSessions, backgroundSessions]);
+    const own = splitRunning ? [...runningSessions, splitRunning] : runningSessions;
+    const ids = new Set(own.map((r) => r.session_id));
+    return [...own, ...backgroundSessions.filter((r) => !ids.has(r.session_id))];
+  }, [runningSessions, backgroundSessions, splitRunning]);
   // The sessions with a turn that ended while the user was in another session (a blue dot in the sidebar).
   // The messages that wait for the running turn, for each session. The next one goes when the turn ends.
   const [queues, setQueues] = useState<Record<string, QueuedItem[]>>({});
@@ -1389,19 +1398,26 @@ export default function App() {
   shownIdRef.current = shownId;
   useEffect(() => {
     const now = new Set(allRunning.map((r) => r.session_id));
-    const ended = lastRunning.current.map((r) => r.session_id).filter((id) => !now.has(id) && id !== shownId);
+    const ended = lastRunning.current.map((r) => r.session_id).filter((id) => !now.has(id) && id !== shownId && id !== split);
     lastRunning.current = allRunning;
     if (ended.length > 0) setUnreadSessions((u) => new Set([...u, ...ended]));
-  }, [allRunning, shownId]);
+  }, [allRunning, shownId, split]);
   useEffect(() => {
-    if (!shownId) return;
+    const seen = [shownId, split].filter((id): id is string => id !== null);
+    if (seen.length === 0) return;
     setUnreadSessions((u) => {
-      if (!u.has(shownId)) return u;
+      if (!seen.some((id) => u.has(id))) return u;
       const next = new Set(u);
-      next.delete(shownId);
+      seen.forEach((id) => next.delete(id));
       return next;
     });
-  }, [shownId]);
+  }, [shownId, split]);
+  // The split pane cannot show the session of the main view, for example after Back or a search.
+  // A change of the daemon connection closes the split pane too.
+  useEffect(() => {
+    if (split !== null && session?.id === split) setSplit(null);
+  }, [session?.id, split]);
+  useEffect(() => setSplit(null), [current?.id]);
 
   /** Shows the start screen, with the folder block in its center. */
   const newSession = () => {
@@ -2550,7 +2566,9 @@ export default function App() {
 
   // The menu of a session row: open, pin, mark as unread, rename, and delete.
   const sessionActions: SessionActions = {
-    onResume: (id) => fromSidebar(() => resumeSession(id))(),
+    // The session of the split pane stays there: a click puts the focus in its prompt box.
+    onResume: (id) => (id === split ? setSplitFocus((k) => k + 1) : fromSidebar(() => resumeSession(id))()),
+    onOpenSplit: (id) => openSplit(id),
     onPin: (id, pinned) => void sendSafely({ type: "session.update", session_id: id, pinned }),
     onArchive: (id, archived) => void sendSafely({ type: "session.update", session_id: id, archived }),
     onMarkUnread: (id, on) =>
@@ -2561,8 +2579,24 @@ export default function App() {
         return next;
       }),
     onRename: (id, title) => void sendSafely({ type: "session.update", session_id: id, title }),
-    onDelete: (id) => void sendSafely({ type: "session.delete", session_id: id }),
+    onDelete: (id) => {
+      if (id === split) setSplit(null);
+      sendSafely({ type: "session.delete", session_id: id });
+    },
   };
+
+  /** "Open in" > "Split view", or a drop on the main view: the session opens at the right of the shown session. */
+  const openSplit = (id: string) => {
+    if (screen !== "chat" || !session || view !== "code") {
+      fromSidebar(() => resumeSession(id))(); // No session to split with: the session opens in the main view.
+      return;
+    }
+    if (id === session.id) return;
+    setSplit(id);
+    setSplitFocus((k) => k + 1);
+  };
+  const splitShown = split !== null && screen === "chat" && session !== null && view === "code";
+  const splitDrop = useSplitDrop(screen === "chat" && session !== null && view === "code", session?.id ?? null, openSplit);
 
   const narrow = () => window.matchMedia(NARROW_QUERY).matches;
   const showSidebar = (open: boolean) => {
@@ -3263,9 +3297,11 @@ export default function App() {
         )}
         {screen === "chat" && session && (
           <OpenPathContext.Provider value={openPath}>
+            <div className="split-row" ref={splitRowRef} {...splitDrop.handlers}>
             <div className="session-body">
               <Workspace layout={layout} onChange={setLayout} panes={panes} reveal={reveal} />
-              {rail && view === "code" && (
+              {/* The split pane gets the room of the session rail, as a pane does (V6t). */}
+              {rail && view === "code" && !splitShown && (
                 <SessionRail
                   environment={{
                     placeKind: current?.kind ?? "local",
@@ -3296,6 +3332,31 @@ export default function App() {
                   onClose={closeRail}
                 />
               )}
+            </div>
+            {splitShown && split && (
+              <>
+                <SplitEdge
+                  share={splitShare}
+                  row={splitRowRef}
+                  onChange={setSplitShare}
+                  onDone={(share) => {
+                    setSplitShare(share);
+                    savePref("split.width", String(share));
+                  }}
+                />
+                <div className="split-slot" style={{ width: `${splitShare * 100}%` }}>
+                  <SplitPane
+                    sessionId={split}
+                    target={status === "open" ? targetRef.current : null}
+                    main={conn}
+                    focusKey={splitFocus}
+                    onClose={() => setSplit(null)}
+                    onState={setSplitRunning}
+                  />
+                </div>
+              </>
+            )}
+            {splitDrop.over && <SplitDropZone />}
             </div>
           </OpenPathContext.Provider>
         )}
