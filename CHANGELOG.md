@@ -3,6 +3,30 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.49 (2026-11-05)
+
+### Agent
+
+- The agent uses its tools better. The system prompt has new rules: use the file tools in place
+  of bash commands, make independent tool calls in one reply, and check the result with tool
+  output before the agent says that a task is done.
+- Each model family gets its own prompt text, as in Hermes Agent and opencode. GPT, Gemini,
+  DeepSeek, Qwen, Kimi, and similar models get rules to act with tools and not only describe
+  a plan. Small local models (14B or less) make one tool call for each reply.
+- The bash, read, edit, write, glob, and grep tools have longer descriptions: when to use each
+  tool, and which bash commands to avoid.
+- Loop guards:
+  - A tool name with the wrong case or form (for example "Bash" or "read_file") runs the
+    correct tool, and the model gets a note with the correct name.
+  - After 3 identical calls with the same result in one turn, the model gets a reminder to try
+    a different approach.
+  - When a short reply says what the model will do now but makes no tool call, the Harness asks
+    the model to continue (2 times at most in each turn).
+- DeepSeek models with thinking mode now work with tools: the reasoning of each reply goes back
+  to the model.
+- The system prompt stays the same in a session, so the prompt cache of the endpoint stays
+  valid. Plan mode and memory changes go to the model as notes. The chat does not show them.
+
 ## 0.1.48 (2026-11-05)
 
 ### Settings
