@@ -178,7 +178,7 @@ Each provider is an entry in `~/.harness/providers.json`:
   - The daemon adds the token as the `Authorization` header at each connection.
   - GitHub: the token of the GitHub CLI (`gh auth token`) on the daemon computer, or a personal access token. The daemon checks the token with the GitHub API before it keeps it.
   - Microsoft Outlook: a local stdio server (`@softeria/ms-365-mcp-server`, with an exact version) that npx runs. The daemon runs it with `--login`, and the client shows the Microsoft device code. The server keeps and refreshes its own tokens. The user chooses a personal or a work account, and read-only. The user can add more than one account: the accounts of one type share one server and one token cache, and "Remove" signs out one account.
-  - Gmail: a local Python server (`workspace-mcp`, with an exact version) that uvx runs. The user makes an OAuth client in Google Cloud and pastes its ID and secret. Harness signs in to Google itself (a browser sign-in with PKCE and a loopback redirect) and writes one credential file for each account. The daemon gives the client secret to the server in its environment at each start, not in `mcp.json`.
+  - Email (IMAP): a mail server that is part of Harness (`mail_server.py`, the standard library only). The daemon runs itself with `--mcp-server mail`. Each account signs in with an app password; Harness checks the login first, and gives the passwords to the server in its environment, not in `mcp.json`.
 
 ### 5.8 Plugins
 

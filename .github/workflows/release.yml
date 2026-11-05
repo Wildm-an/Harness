@@ -85,27 +85,6 @@ jobs:
         working-directory: daemon
         run: python -m pytest -q
 
-      # The Google OAuth client of Harness, for "Continue with Google" (connectors.py). git ignores the file,
-      # so the secret is not in the repository. With no secrets, the build has no Harness client.
-      - name: Write the Google client
-        shell: bash
-        env:
-          HARNESS_GOOGLE_CLIENT_ID: ${{ secrets.HARNESS_GOOGLE_CLIENT_ID }}
-          HARNESS_GOOGLE_CLIENT_SECRET: ${{ secrets.HARNESS_GOOGLE_CLIENT_SECRET }}
-        run: |
-          if [ -n "$HARNESS_GOOGLE_CLIENT_ID" ] && [ -n "$HARNESS_GOOGLE_CLIENT_SECRET" ]; then
-            python - <<'PY'
-          import json, os
-          with open("daemon/harness_daemon/_google_client.py", "w", encoding="utf-8") as f:
-              f.write('"""The Google OAuth client of Harness. The release workflow writes this file."""\n')
-              f.write(f"CLIENT_ID = {json.dumps(os.environ['HARNESS_GOOGLE_CLIENT_ID'])}\n")
-              f.write(f"CLIENT_SECRET = {json.dumps(os.environ['HARNESS_GOOGLE_CLIENT_SECRET'])}\n")
-          PY
-            echo "The build has the Harness Google client."
-          else
-            echo "No Google client secrets: the build has no Harness Google client."
-          fi
-
       - name: Build the sidecar
         working-directory: daemon
         run: python scripts/build_sidecar.py

@@ -783,11 +783,6 @@ export default function App() {
           // A device sign-in (Outlook): the row shows the code. The user opens the page and enters it.
           setDeviceCode({ id: msg.id, url: msg.url, code: msg.code });
           return;
-        case "connectors.auth_url":
-          // A browser sign-in (Gmail): open the page in the default browser. The row can open it again.
-          setDeviceCode({ id: msg.id, url: msg.url, code: "" });
-          if (/^https?:\/\//.test(msg.url)) void openExternal(msg.url);
-          return;
         case "mcp.auth_url":
           // The daemon sends it only after the user clicked Authenticate. Open the sign-in page in the browser.
           if (/^https?:\/\//.test(msg.url)) void openExternal(msg.url);
@@ -1847,16 +1842,12 @@ export default function App() {
       sendSafely({ type: "connectors.cancel", id: action.id });
       return;
     }
-    if (action.kind === "auth_code") {
-      sendSafely({ type: "connectors.auth_code", id: action.id, url: action.url });
-      return;
-    }
     let sent: boolean;
     if (action.kind === "disconnect") sent = sendSafely({ type: "connectors.disconnect", id: action.id });
     else if (action.kind === "remove_account") sent = sendSafely({ type: "connectors.remove_account", id: action.id, login: action.login });
     else if (action.source === "token") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "token", token: action.token });
     else if (action.source === "device") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "device", options: action.options });
-    else if (action.source === "google") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "google", options: action.options });
+    else if (action.source === "mail") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "mail", options: action.options });
     else sent = sendSafely({ type: "connectors.connect", id: action.id, source: "gh" });
     if (!sent) setConnectorBusy(null);
   };

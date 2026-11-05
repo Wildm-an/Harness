@@ -153,7 +153,8 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 | `harness_daemon/providers.py` | Providers, the tool support check, and the streaming model client. |
 | `harness_daemon/mcp_client.py` | The MCP client: the configuration, the connections in their own thread, and the `mcp__*` tools. |
 | `harness_daemon/mcp_auth.py` | OAuth for HTTP and SSE MCP servers: the token store, the callback listener, and the provider of the MCP SDK. |
-| `harness_daemon/connectors.py` | The connectors of the Connectors tab: GitHub with the GitHub CLI token or a personal access token. |
+| `harness_daemon/connectors.py` | The connectors of the Connectors tab: GitHub (a token), Microsoft Outlook (a device code), and Email (IMAP). |
+| `harness_daemon/mail_server.py` | The built-in IMAP and SMTP server of the Email connector (`--mcp-server mail`). |
 | `harness_daemon/cookbook/` | The Cookbook: `hosts.py` (hosts, SSH, the host script runner), `hostscript.py` (runs on the host), `gguf.py` (the GGUF header), `fit.py` (the fit calculator), `hub.py` (the Hugging Face browser), `service.py` (downloads and serve control). |
 | `harness_daemon/provider_config.py` | Changes to `providers.json` from the Providers screen, the client keys, and the connection test. |
 | `harness_daemon/tools/` | The `read`, `glob`, `grep`, `edit`, `write`, `bash`, `skill`, and `preview_*` tools. |
@@ -313,42 +314,26 @@ Several accounts:
 - The server keeps and refreshes its own tokens. `mcp-auth.json` keeps only the account names, their types, and the read-only choice of each type.
 - "Cancel" stops a sign-in that waits. A device code expires after 15 minutes.
 
-#### Gmail
+#### Email (IMAP)
 
-The Gmail connector is a local stdio server: `workspace-mcp@2.3.0` (MIT) with `--tools gmail`. uvx runs it on the daemon computer, so that computer needs [uv](https://docs.astral.sh/uv/).
-
-Google has no dynamic client registration. There are two OAuth clients:
-
-- **The Harness client** ("Continue with Google" with no setup). The build gives it: the environment variables `HARNESS_GOOGLE_CLIENT_ID` and `HARNESS_GOOGLE_CLIENT_SECRET`, or the module `harness_daemon/_google_client.py` with `CLIENT_ID` and `CLIENT_SECRET`. git ignores that module, so the secret is not in the public repository. PyInstaller includes it in the sidecar when it exists. The record keeps only `"builtin": true`, and the daemon reads the secret from the build. Until Google verifies the app, Google shows a warning, and at most 100 users can sign in (Gmail scopes are restricted: verification needs a yearly CASA security assessment).
-- **The user's own client** ("Use your own OAuth client", and the only choice when the build has no Harness client). The user makes it once:
-
-1. In Google Cloud, make a project and turn on the Gmail API.
-2. On the Google Auth Platform page, set the audience to External and publish the app ("In production"). An app in testing loses its sign-in after 7 days.
-3. Make an OAuth client of the type "Desktop app". Paste its ID and secret into the Gmail row.
-
-To make the Harness client, do the same steps in the Google Cloud project of Harness (app name "Harness", with a support address). Then:
-
-- Local builds and the dev app: put the ID and secret in `daemon/harness_daemon/_google_client.py` (`CLIENT_ID`, `CLIENT_SECRET`). The file in a checkout has empty values.
-- Releases: add the repository secrets `HARNESS_GOOGLE_CLIENT_ID` and `HARNESS_GOOGLE_CLIENT_SECRET` (`gh secret set HARNESS_GOOGLE_CLIENT_ID`). The release workflow writes `_google_client.py` from them before it builds the sidecar and the installers. With no secrets, the release has no Harness client.
-
-"Continue with Google" then does the sign-in in Harness (`connectors.py`): a browser sign-in with PKCE, `access_type=offline`, and the loopback redirect `http://127.0.0.1:<port>/`. Harness asks Google for the address of the account and writes a credential file in the format of workspace-mcp (`token`, `refresh_token`, `client_id`, `client_secret`, `scopes`, `expiry`) to `~/.harness/connectors/gmail/credentials/<address>.json`. The server refreshes the tokens. Google shows a warning that the app is not verified: it is the user's own app, so the user can continue.
+The Email connector is part of Harness: `harness_daemon/mail_server.py`, an MCP server on stdio that uses only the Python standard library (imaplib and smtplib). It needs no npm, no uv, and no download. The MCP client runs the daemon itself with `--mcp-server mail` (the installed `harness-daemon`, or `python -m harness_daemon`), in place of the command in `mcp.json`:
 
 ```json
-"gmail": { "command": "uvx", "args": ["workspace-mcp@2.3.0", "--tools", "gmail"],
-           "env": { "WORKSPACE_MCP_CREDENTIALS_DIR": "~/.harness/connectors/gmail/credentials" }, "connector": "gmail" }
+"email": { "command": "harness-daemon", "args": ["--mcp-server", "mail"], "connector": "email" }
 ```
 
-- The client ID and secret are in `mcp-auth.json`. The MCP client adds `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` to the environment of the server at each start (`connectors.server_env`), so `mcp.json` has no secret.
-- Several accounts: "Add account" signs in to one more account with the same client. The tools of workspace-mcp take a `user_google_email` parameter.
-- Read-only (chosen with the first account) adds `--read-only` and asks only for `gmail.readonly`.
-- "Remove" revokes the refresh token of one account at Google and deletes its file. "Disconnect" does this for all the accounts, and removes the client and the entry.
-- For a remote daemon, the browser cannot open the callback page. The user pastes its URL into the field under the row (`connectors.auth_code`).
+- Each account signs in with an app password over IMAP (and SMTP to send). The row has the settings of Gmail, iCloud Mail, Yahoo Mail, Fastmail, Zoho Mail, and GMX (`connectors.MAIL_PROVIDERS`), and "Other IMAP server" for any other service. The service comes from the address, and the user can change it. "Make an app password" opens the page of the service.
+- Harness checks the login (IMAP, and SMTP unless read-only) before it keeps the account. The passwords are in `mcp-auth.json`. The MCP client gives them to the server in `HARNESS_MAIL_ACCOUNTS` at each start (`connectors.server_env`), so `mcp.json` has no password. iCloud can want only the part of the address before `@` for IMAP: the server tries both.
+- Several accounts: each tool takes `account` (the address); with one account it is optional.
+- The tools: `list_accounts`, `list_folders`, `search_messages` (text, sender, subject, dates, unread, and `gmail_query` for Gmail search syntax), and `read_message` (it does not mark the message as read). Unless read-only: `send_message` (with `reply_to_uid` for a reply in the thread), `mark_message`, `move_message`, and `delete_message` (a move to the folder with the `\Trash` flag).
+- Read-only (chosen with the first account) removes the tools that send, change, move, or delete (`HARNESS_MAIL_READ_ONLY`).
+- Outlook.com and Microsoft 365 do not take passwords for IMAP since 2024: use the Microsoft Outlook connector. A Google Workspace admin can block app passwords. "None" as the security is only for a mail server on the same computer.
 
 #### Removed connectors
 
-Harness 0.1.44 had a Chrome connector (Chrome DevTools MCP). It is removed. `connectors.RETIRED` lists it: the Connectors tab removes its entry from `~/.harness/mcp.json` and its record, and the MCP client shows a clear message for an entry that is still there.
+Harness 0.1.44 had a Chrome connector (Chrome DevTools MCP) and a Gmail connector (workspace-mcp with a Google OAuth client). They are removed. `connectors.RETIRED` lists them: the Connectors tab removes their entries from `~/.harness/mcp.json`, their records, and the Gmail credential files in `~/.harness/connectors/gmail/`. The MCP client shows a clear message for an entry that is still there.
 
-Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, `device`, or `google`, `token`, `options`), `connectors.cancel` (`id`), `connectors.auth_code` (`id`, `url`), `connectors.remove_account` (`id`, `login`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, `connectors.device_code` (`id`, `url`, `code`) for a device sign-in, and `connectors.auth_url` (`id`, `url`) for a browser sign-in. The items never include a token or a secret.
+Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, `device`, or `mail`, `token`, `options`), `connectors.cancel` (`id`), `connectors.remove_account` (`id`, `login`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, and `connectors.device_code` (`id`, `url`, `code`) for a device sign-in. The items never include a token or a secret.
 
 ## Cookbook
 

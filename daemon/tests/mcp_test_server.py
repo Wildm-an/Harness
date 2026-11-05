@@ -67,7 +67,6 @@ def oauth_app(port: int):
     PKCE. As GitHub, /token sends a form-encoded body unless the request asks for JSON. The client
     "fixed-client" is registered from the start. /debug gives the parameters of the last /authorize.
     The token "static-token" works from the start, and /user gives its account, as the GitHub API.
-    As Google, /userinfo gives the address of a token (/set-email changes it), and /revoke records a token.
     """
     import hashlib
     import json
@@ -77,7 +76,7 @@ def oauth_app(port: int):
     inner = server.streamable_http_app()
     base = f"http://127.0.0.1:{port}"
     data: dict = {"clients": {"fixed-client": {}}, "codes": {}, "tokens": {"static-token"}, "refresh": set(),
-                  "authorize": {}, "email": "pat@gmail.com", "revoked": []}
+                  "authorize": {}}
 
     async def body_of(receive) -> bytes:
         chunks = []
@@ -149,20 +148,6 @@ def oauth_app(port: int):
             if token not in data["tokens"]:
                 return await reply(send, 401, as_json({"message": "Bad credentials"}))
             return await reply(send, 200, as_json({"login": "octo"}))
-        if path == "/userinfo":  # As Google: the address of the account of the token.
-            token = headers.get("authorization", "")[len("Bearer "):]
-            if token not in data["tokens"]:
-                return await reply(send, 401, as_json({"error": "invalid_token"}))
-            return await reply(send, 200, as_json({"email": data["email"], "email_verified": True}))
-        if path == "/set-email":  # The account of the next sign-in.
-            data["email"] = query.get("email", data["email"])
-            return await reply(send, 200, b"{}")
-        if path == "/revoke":
-            form = {k: v[0] for k, v in parse_qs((await body_of(receive)).decode()).items()}
-            data["revoked"].append(form.get("token"))
-            return await reply(send, 200, b"{}")
-        if path == "/revoked":
-            return await reply(send, 200, as_json(data["revoked"]))
         if path == "/debug":
             return await reply(send, 200, as_json(data["authorize"]))
         if path.startswith("/mcp"):

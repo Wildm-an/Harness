@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectorSummary, matches, mcpSummary, skillStatus, skillsOfGroup } from "./CapabilitiesPage";
+import { connectorSummary, matches, mcpSummary, providerOf, skillStatus, skillsOfGroup } from "./CapabilitiesPage";
 import { placeOf } from "../layout/history";
 import { findGroupOf, parseLayout } from "../layout/model";
 import type { CommandItem, ConnectorItem, McpServerItem } from "../daemon/protocol";
@@ -107,5 +107,27 @@ describe("connectorSummary", () => {
     expect(connectorSummary({ ...outlook, accounts: [pat] })).toBe("pat@outlook.com · Personal account");
     expect(connectorSummary({ ...outlook, accounts: [jo] })).toBe("jo@contoso.com · Work or school account · read-only");
     expect(connectorSummary({ ...outlook, accounts: [jo, pat] })).toBe("2 accounts · jo@contoso.com, pat@outlook.com");
+  });
+});
+
+describe("the Email connector", () => {
+  const providers = [
+    { id: "gmail", name: "Gmail", domains: ["gmail.com", "googlemail.com"], imap: ["imap.gmail.com", 993, "ssl"], smtp: ["smtp.gmail.com", 465, "ssl"], password_url: "", help: "" },
+    { id: "other", name: "Other IMAP server", domains: [], imap: ["", 993, "ssl"], smtp: ["", 465, "ssl"], password_url: "", help: "" },
+  ] as ConnectorItem["providers"] & object;
+
+  it("chooses the mail service from the address", () => {
+    expect(providerOf("Pat@GMail.com ", providers)).toBe("gmail");
+    expect(providerOf("pat@example.org", providers)).toBe("other");
+    expect(providerOf("pat", providers)).toBe("other");
+  });
+
+  it("names the mail service of an account in the summary", () => {
+    const item: ConnectorItem = {
+      id: "email", name: "Email (IMAP)", description: "Mail.", kind: "mail", signing_in: false, url: "", installed: true,
+      source: "mail", login: "pat@gmail.com", providers,
+      accounts: [{ login: "pat@gmail.com", type: "gmail", read_only: true }],
+    };
+    expect(connectorSummary(item)).toBe("pat@gmail.com · Gmail · read-only");
   });
 });

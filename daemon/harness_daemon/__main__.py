@@ -79,6 +79,12 @@ def main(argv: list[str] | None = None) -> None:
         # The frozen daemon runs the Cookbook host script this way (cookbook/hosts.py).
         frozen.run_python_stdin()
         return
+    if argv[:2] == ["--mcp-server", "mail"]:
+        # The built-in mail server of the Email connector, on stdio (mail_server.py, connectors.py).
+        from .mail_server import main as mail_main
+
+        mail_main()
+        return
     parser = argparse.ArgumentParser(prog="harness-daemon")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address. Default 127.0.0.1.")
     parser.add_argument("--port", type=int, default=0, help="Port. 0 selects a random free port.")

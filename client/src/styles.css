@@ -2448,49 +2448,15 @@ textarea:focus-visible {
   margin-left: auto;
 }
 
-/* "Continue with Google" (CapabilitiesPage.tsx, GoogleButton), to Google's sign-in branding guidelines:
-   the dark colors in the dark theme, the light colors in the light theme, Google Sans Medium 14/20. */
-.gsi-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid #8e918f;
-  border-radius: 4px; /* The "Rectangular" shape of the guidelines (the user asked for it), not the pill. */
-  background: #131314;
-  color: #e3e3e3;
-  font-family: "Google Sans", Roboto, Arial, sans-serif;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-  white-space: nowrap;
-  cursor: pointer;
+/* The server fields of an Email account on an "Other IMAP server": the host, the port, and the security. */
+.mail-server-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px auto;
+  gap: 8px;
 }
 
-:root[data-theme="light"] .gsi-button {
-  border-color: #747775;
-  background: #ffffff;
-  color: #1f1f1f;
-}
-
-.gsi-button:hover:not(:disabled) {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
-}
-
-.gsi-button:disabled {
-  cursor: default;
-  opacity: 0.38;
-}
-
-.gsi-logo {
-  flex: none;
-}
-
-/* The one-time Google Cloud steps of the Gmail connector. */
-.connector-steps {
-  margin: 0;
-  padding-left: 18px;
+.mcp-signin > select {
+  width: fit-content;
 }
 
 .mcp-signin > input {

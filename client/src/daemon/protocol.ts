@@ -318,34 +318,51 @@ export interface ConnectorItem {
   id: string;
   name: string;
   description: string;
-  kind: "token" | "device" | "google";
+  kind: "token" | "device" | "mail";
   url: string; // The MCP server ("token"), or the page of the server ("device").
   installed: boolean; // The server entry is in ~/.harness/mcp.json.
-  source: "gh" | "token" | "device" | "google" | null; // How it signed in. null: not connected.
+  source: "gh" | "token" | "device" | "mail" | null; // How it signed in. null: not connected.
   login: string | null; // The account.
   signing_in: boolean; // A device sign-in waits for the user.
   gh_available?: boolean; // "token": the GitHub CLI is signed in on the daemon computer.
   token_url?: string; // "token": the page where the user makes a token.
   token_help?: string;
   package?: string; // "device": the npm package, with its version.
-  accounts?: ConnectorAccount[]; // "device" and "google": the signed-in accounts.
-  client_id?: string | null; // "google": the OAuth client of the user (the secret never comes to the client).
-  client_builtin?: boolean; // "google": the accounts use the Google client of Harness.
-  builtin_client?: boolean; // "google": this build of Harness has a Google client ("Continue with Google").
+  accounts?: ConnectorAccount[]; // "device" and "mail": the signed-in accounts.
+  providers?: MailProvider[]; // "mail": the mail services with known settings, and "other".
 }
 
-/** The options of a Gmail sign-in. The client ID and secret are needed only for the first account. */
-export interface GoogleConnectOptions {
-  builtin?: boolean; // Use the Google client of Harness.
-  client_id?: string;
-  client_secret?: string;
+/** A mail service of the Email connector, with its IMAP and SMTP settings: [host, port, security]. */
+export interface MailProvider {
+  id: string;
+  name: string;
+  domains: string[];
+  imap: [string, number, MailSecurity];
+  smtp: [string, number, MailSecurity];
+  password_url: string; // The page where the user makes an app password.
+  help: string;
+}
+
+export type MailSecurity = "ssl" | "starttls" | "plain";
+
+/** A new account of the Email connector. The host fields are for the provider "other". */
+export interface MailConnectOptions {
+  email: string;
+  password: string;
+  provider: string;
   read_only?: boolean;
+  imap_host?: string;
+  imap_port?: number;
+  imap_security?: MailSecurity;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_security?: MailSecurity;
 }
 
 /** A signed-in account of a "device" connector. The accounts of one type share one MCP server. */
 export interface ConnectorAccount {
   login: string;
-  type: ConnectorOptions["account"] | "google";
+  type: string; // "personal" or "work" (Outlook), or the mail service (Email): "gmail", "icloud", ..., "other".
   read_only: boolean; // For all the accounts of this type.
 }
 
@@ -641,11 +658,10 @@ export type ClientMessage =
   | {
       type: "connectors.connect";
       id: string;
-      source: "gh" | "token" | "device" | "google";
+      source: "gh" | "token" | "device" | "mail";
       token?: string;
-      options?: ConnectorOptions | GoogleConnectOptions;
+      options?: ConnectorOptions | MailConnectOptions;
     }
-  | { type: "connectors.auth_code"; id: string; url: string }
   | { type: "connectors.cancel"; id: string }
   | { type: "connectors.remove_account"; id: string; login: string }
   | { type: "connectors.disconnect"; id: string }
@@ -774,7 +790,6 @@ export type DaemonMessage =
   | { type: "mcp.auth_url"; name: string; url: string }
   | { type: "connectors"; items: ConnectorItem[] }
   | { type: "connectors.device_code"; id: string; url: string; code: string }
-  | { type: "connectors.auth_url"; id: string; url: string }
   | { type: "capabilities"; cwd: string | null; live: boolean; skills: CommandItem[]; mcp: McpStatus }
   | ({ type: "plugins" } & PluginsStatus)
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }

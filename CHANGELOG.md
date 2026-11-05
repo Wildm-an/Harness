@@ -7,8 +7,15 @@ this file on its Changelog page.
 
 ### Connectors
 
-- The Chrome connector is removed. If you connected it, Harness removes its server from
-  `~/.harness/mcp.json` when you open the Connectors tab.
+- A new Email (IMAP) connector replaces the Gmail connector. It works with Gmail, iCloud Mail,
+  Yahoo Mail, Fastmail, Zoho Mail, GMX, and any other IMAP service. Each account signs in with an
+  app password, and the row shows how to make one. There is no Google Cloud setup.
+- The mail server is part of Harness, so it needs nothing else on the daemon computer (no uv).
+  The agent can search, read, send, reply, mark, move, and delete mail. "Read-only" removes the
+  tools that change mail. You can add more than one account.
+- The Gmail and Chrome connectors are removed. If you connected them, Harness removes their servers
+  from `~/.harness/mcp.json` and the Gmail sign-in files when you open the Connectors tab. To
+  remove the Gmail access of Harness at Google too, open myaccount.google.com/permissions.
 
 ### Chat
 
