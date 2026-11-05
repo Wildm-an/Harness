@@ -979,9 +979,11 @@ def test_rename_during_the_title_request_keeps_the_name_of_the_user(daemon, proj
     c = Client(daemon)
     ready = c.new_session(project)
     c.send({"type": "prompt", "text": "Do a task"})
+    # Rename only after the title request starts. A rename before the turn starts gives no title
+    # request at all, and on a slow computer that can occur.
+    _wait(lambda: len(fake_model.title_requests) == 1)
     c.send({"type": "session.update", "session_id": ready["session_id"], "title": "My name"})
     _, seen = c.until("session.updated")
-    _wait(lambda: len(fake_model.title_requests) == 1)
     time.sleep(1.5)  # The title reply comes.
     c.send({"type": "session.list"})
     sessions, more = c.until("sessions")
