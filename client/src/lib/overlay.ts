@@ -24,6 +24,11 @@ export function useOverlay(open: boolean): void {
   }, [open]);
 }
 
+/** True while a menu, a dialog, or a drag overlay is open (outside React). */
+export function overlayOpen(): boolean {
+  return count > 0;
+}
+
 export function useOverlayOpen(): boolean {
   return useSyncExternalStore(
     (fn) => {

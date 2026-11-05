@@ -41,6 +41,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `session.rewind` | `id`, `conversation`, `code` | Go back to the time before the user message `id`. `conversation`: remove the message and all messages after it, then send `session.ready` and `prompt.fill`. `code`: the files that the `edit` and `write` tools changed after the message get their old content (changes of commands are not restored), then a `notice` gives the count. Only when no turn runs. |
 | `session.fork` | `id` | A new session with the conversation before the user message `id`, in the same folder. The daemon opens it and sends `session.ready` and `prompt.fill`. The files do not change. |
 | `daemon.update` | `filename`, `data` | Install the wheel of the daemon (`data` is base64), then restart with the same arguments. The replies are `daemon.update` with `state`: `installing`, `restarting`, or `error` (with `message`). After `restarting`, the connection closes. Only when `auth.ok` has `updatable: true`, and no turn runs. |
+| `git.changes` | `cwd` | The changes of a folder against its base branch, for the Changes section of the session rail. The reply is `git.changes`. |
 | `git.pr_status` | `paths` | The branch and the pull request of project folders, for the sidebar. The daemon reads the branch with `git` and the pull request with `gh pr view`. The reply is `pr_status`. The daemon keeps the results for 60 seconds. |
 
 | `session.list` | `cwd` (optional), `limit` (optional) | Asks for the stored sessions, newest first. With `cwd`, only the sessions of that folder (case-insensitive on Windows). `limit` is 50 by default, and at most 500. |
@@ -142,6 +143,7 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `steer.returned` | `ids` | The turn ended before its next step, or no turn ran. The client sends these messages as prompts. |
 | `prompt.fill` | `text` | After a rewind or a fork: the text of the user message. It replaces the text in the prompt box. |
 | `daemon.update` | `state`, `message` | The progress of `daemon.update`: `installing`, `restarting`, or `error`. |
+| `git.changes` | `cwd`, `repo`, `branch`, `base`, `added`, `removed`, `files`, `github` | Reply to `git.changes`. `base` is the remote base branch (for example `origin/main`), or null: then the count has only the uncommitted changes and the new files. Else it also has the commits that the base does not have. `github`: the `origin` remote is on GitHub and `gh` is installed, so a pull request is possible. |
 | `pr_status` | `items` | Reply to `git.pr_status`. Each item has `path`, `branch` (null outside a git repository), and `pr` (null if there is no pull request, or no `gh`): `number`, `state` (`open`, `draft`, `merged`, or `closed`), `url`, and `title`. |
 | `fs.dirs` | `path`, `parent`, `items`, `roots`, `is_project` | Reply to `fs.dirs`. `items` are folders only (`name`, `path`). `roots` are the drives on Windows, or `/`. `is_project` is true if the folder has `.git`, `HARNESS.md`, `CLAUDE.md`, `package.json`, or `pyproject.toml`. |
 

@@ -82,3 +82,86 @@ async def folder_status(path: str) -> dict[str, Any]:
 
 async def pr_status(paths: list[str]) -> list[dict[str, Any]]:
     return list(await asyncio.gather(*(folder_status(p) for p in paths)))
+
+
+# -- the changes of a folder, for the "Changes" section of the session rail -----------------
+
+MAX_UNTRACKED = 200  # Untracked files that count as added lines, at most.
+MAX_UNTRACKED_BYTES = 1_000_000  # A larger untracked file counts as one changed file with no lines.
+
+
+def parse_numstat(text: str) -> tuple[int, int, int]:
+    """The added lines, the removed lines, and the files of ``git diff --numstat``. A binary file has "-"."""
+    added = removed = files = 0
+    for line in text.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) < 3:
+            continue
+        files += 1
+        added += int(parts[0]) if parts[0].isdigit() else 0
+        removed += int(parts[1]) if parts[1].isdigit() else 0
+    return added, removed, files
+
+
+def _count_lines(path: str) -> int:
+    try:
+        with open(path, "rb") as f:
+            data = f.read(MAX_UNTRACKED_BYTES + 1)
+    except OSError:
+        return 0
+    if len(data) > MAX_UNTRACKED_BYTES or b"\0" in data[:8000]:
+        return 0  # A large or binary file.
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
+async def folder_changes(path: str) -> dict[str, Any]:
+    """The changes of a folder against its base, as Claude Code shows them in the session rail.
+
+    The base is the merge base of HEAD with the default branch of ``origin`` (for example
+    ``origin/main``), else HEAD. The count has the commits that the base does not have, the
+    uncommitted changes, and the new files that git does not ignore.
+
+    Return {"path", "repo", "branch", "base", "added", "removed", "files", "github"}. ``github``:
+    the ``origin`` remote is on GitHub and ``gh`` is installed, so a pull request is possible.
+    """
+    result: dict[str, Any] = {"path": path, "repo": False, "branch": None, "base": None,
+                              "added": 0, "removed": 0, "files": 0, "github": False}
+    git = shutil.which("git")
+    if not git:
+        return result
+    code, out = await _run([git, "rev-parse", "--abbrev-ref", "HEAD"], path, GIT_TIMEOUT)
+    if code != 0:
+        return result
+    result["repo"] = True
+    branch = out.strip()
+    result["branch"] = branch if branch and branch != "HEAD" else None
+    code, remote = await _run([git, "remote", "get-url", "origin"], path, GIT_TIMEOUT)
+    remote = remote.strip() if code == 0 else ""
+    result["github"] = "github.com" in remote.lower() and shutil.which("gh") is not None
+    base_ref = None
+    if remote:
+        code, out = await _run([git, "rev-parse", "--abbrev-ref", "origin/HEAD"], path, GIT_TIMEOUT)
+        base_ref = out.strip() if code == 0 and out.strip() else None
+        if base_ref is None:
+            for name in ("origin/main", "origin/master"):
+                code, _ = await _run([git, "rev-parse", "--verify", "--quiet", name], path, GIT_TIMEOUT)
+                if code == 0:
+                    base_ref = name
+                    break
+    base = "HEAD"
+    if base_ref:
+        code, out = await _run([git, "merge-base", "HEAD", base_ref], path, GIT_TIMEOUT)
+        if code == 0 and out.strip():
+            base = out.strip()
+            result["base"] = base_ref
+    code, out = await _run([git, "diff", "--numstat", base], path, GIT_TIMEOUT)
+    if code == 0:
+        result["added"], result["removed"], result["files"] = parse_numstat(out)
+    code, out = await _run([git, "ls-files", "--others", "--exclude-standard"], path, GIT_TIMEOUT)
+    if code == 0:
+        untracked = [line for line in out.splitlines() if line.strip()]
+        result["files"] += len(untracked)
+        counts = await asyncio.to_thread(
+            lambda: sum(_count_lines(f"{path}/{name}") for name in untracked[:MAX_UNTRACKED]))
+        result["added"] += counts
+    return result

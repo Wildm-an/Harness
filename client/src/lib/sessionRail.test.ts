@@ -14,7 +14,7 @@ const task = (id: string, status: TaskItem["status"], started_at: number): TaskI
 
 describe("the session rail sections", () => {
   it("use the order of Claude", () => {
-    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
   });
 
   it("read the folded sections and drop unknown ids", () => {
@@ -128,12 +128,12 @@ describe("the background tasks of the rail", () => {
 
 describe("section order", () => {
   it("keeps the saved order and puts a new section after its default neighbor", () => {
-    expect(parseOrder("not json")).toEqual(["environment", "context", "pullRequests", "servers", "browser", "backgroundTasks"]);
-    // A saved order from before the Browser section: Browser goes after Servers.
+    expect(parseOrder("not json")).toEqual(["environment", "context", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    // A saved order from before the Browser and Changes sections: each goes after its default neighbor.
     expect(parseOrder(JSON.stringify(["servers", "environment", "context", "pullRequests", "backgroundTasks"]))).toEqual([
-      "servers", "browser", "environment", "context", "pullRequests", "backgroundTasks",
+      "servers", "browser", "environment", "context", "changes", "pullRequests", "backgroundTasks",
     ]);
-    expect(parseOrder(JSON.stringify(["context", "nope", "context"]))).toEqual(["environment", "context", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(parseOrder(JSON.stringify(["context", "nope", "context"]))).toEqual(["environment", "context", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
   });
 
   it("moves a section before or after another, and one step in the shown list", () => {

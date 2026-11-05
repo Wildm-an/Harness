@@ -114,6 +114,7 @@ import { SIDEBAR_DEFAULT, SidebarResizer, clampSidebar } from "./components/Side
 import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
+import { overlayOpen } from "./lib/overlay";
 import { BrowserPane, agentBrowserOf, clearBrowserData, keepCookies, onAgentBrowser, runAgentCall, showAgentTab } from "./browser/BrowserPane";
 import { pendingServerApprovals } from "./browser/ServerBlock";
 import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
@@ -126,7 +127,7 @@ import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ClientMessage, ConnectorItem, Effort, GitBranches, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyRoutineRun, notifyTurnDone } from "./lib/notify";
 import { parseUnifiedDiff } from "./lib/diff";
@@ -294,6 +295,23 @@ function canHostAgentBrowser(kind: string | undefined): boolean {
   return isTauri() && kind === "local" && /Windows/i.test(navigator.userAgent);
 }
 
+// The prompts of the buttons of the Changes section in the session rail, as "Create PR" of the Claude app.
+const CREATE_PR_PROMPT = `Create a pull request for the changes in this session, ready for review (not a draft).
+
+1. Check for uncommitted changes. If any exist, stage and commit them with a message that says what changed and why. Do not commit files that another session or the user changed for other work: ask first.
+2. If the current branch is the default branch of the repository, make a new branch for the changes first.
+3. Push the branch to the remote.
+4. Open the pull request with \`gh pr create\`. Write a title that summarizes the change, and a body that says what changed, why, and what a reviewer must know. Follow the pull request template of the repository if it has one.
+5. If a pull request already exists for this branch, push the new commits and give its URL. Do not make a second pull request.
+6. Give the URL of the pull request at the end.`;
+
+const COMMIT_PROMPT = `Commit the changes in this session.
+
+1. Look at the uncommitted changes with git status and git diff.
+2. Stage the files of this session. Do not commit files that another session or the user changed for other work: ask first.
+3. Commit with a message that says what changed and why.
+4. Give the commit hash and a one-line summary at the end.`;
+
 export default function App() {
   // A ref, not useMemo: React Fast Refresh runs useMemo again, and a second connection object would be closed.
   const connRef = useRef<DaemonConnection | null>(null);
@@ -315,6 +333,8 @@ export default function App() {
   // The stored sessions of one folder (cwd), or of all folders (cwd null).
   const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
   const [prStatus, setPrStatus] = useState<Map<string, PrStatus>>(() => new Map()); // By pathKey of the folder.
+  // The changes of the session folder against its base branch, for the Changes section of the rail.
+  const [gitChanges, setGitChanges] = useState<(GitChanges & { cwd: string }) | null>(null);
   const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
   // The sessions with no window that work or wait: routine runs and nested sessions (start_session).
@@ -390,7 +410,7 @@ export default function App() {
   // The same empty session until the user sends a prompt. A switch back to the Code view removes it
   // and shows the start screen again: only the view changed.
   const ideEmptyFor = useRef<string | null>(null);
-  const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Diff pane.
+  const [reviewId, setReviewId] = useState<string | null>(null); // The chat item in the Changes pane.
   const [promptInsert, setPromptInsert] = useState<{ text: string; key: number; replace?: boolean } | null>(null);
   // A block of context for the prompt box, for example a browser annotation (a chip in the box).
   const [promptAttach, setPromptAttach] = useState<{ item: PromptAttachment; key: number } | null>(null);
@@ -711,6 +731,11 @@ export default function App() {
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
           return;
+        case "git.changes": {
+          const { type: _type, ...changes } = msg;
+          if (sessionRef.current && samePath(changes.cwd, sessionRef.current.cwd)) setGitChanges(changes);
+          return;
+        }
         case "pr_status":
           setPrStatus((m) => {
             const next = new Map(m);
@@ -1751,6 +1776,25 @@ export default function App() {
     }
   };
 
+  // Esc stops the agent from anywhere in the window, not only in the prompt box (the user asked for
+  // this). An open menu or dialog, a text field, the terminal, the editor, and the split pane keep
+  // their own Esc. The prompt box handles its Esc itself (defaultPrevented).
+  const interruptRef = useRef(interrupt);
+  interruptRef.current = interrupt;
+  useEffect(() => {
+    if (!chat.running) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (overlayOpen()) return; // The menu or the dialog closes first.
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"], .xterm, .monaco-editor, [role="dialog"], [role="menu"], [role="listbox"], .split-pane')) return;
+      e.preventDefault();
+      interruptRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chat.running]);
+
   const openRules = () => {
     setLayout((l) => openPane(l, "rules"));
     setRules(null);
@@ -1849,6 +1893,11 @@ export default function App() {
     setRailShown(on);
   }, []);
   const closeRail = useCallback(() => showRail(false), [showRail]);
+  useEffect(() => {
+    if (!session || status !== "open" || !rail) return;
+    sendSafely({ type: "git.changes", cwd: session.cwd });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- A new session, the start and end of a turn, or the rail opens.
+  }, [session?.id, session?.cwd, chat.running, status, rail]);
   // The agent tab of the Browser pane for this session (desktop app), or the headless agent browser.
   const sessionId = session?.id ?? null;
   const [agentTab, setAgentTab] = useState(() => agentBrowserOf(sessionId));
@@ -2550,7 +2599,7 @@ export default function App() {
       ),
     },
     diff: {
-      title: "Diff",
+      title: "Changes",
       icon: FileDiff,
       closable: true,
       render: () =>
@@ -2563,7 +2612,7 @@ export default function App() {
             onClose={() => hidePane("diff")}
           />
         ) : (
-          <p className="pane-empty">No change to review. The Diff pane shows each change that the agent asks to make.</p>
+          <p className="pane-empty">No change to review. The Changes pane shows each change that the agent asks to make.</p>
         ),
     },
     rules: {
@@ -3021,7 +3070,7 @@ export default function App() {
               />
               <PaneToggle
                 icon={FileDiff}
-                label={`Diff (${shortcutLabel("diff")})`}
+                label={`Changes (${shortcutLabel("diff")})`}
                 active={paneVisible("diff")}
                 onClick={() => toggleShortcutPane("diff")}
               />
@@ -3358,6 +3407,7 @@ export default function App() {
               {/* The split pane gets the room of the session rail, as a pane does (V6t). */}
               {rail && view === "code" && !splitShown && (
                 <SessionRail
+                  key={session.id} // Each session starts with its Context section folded.
                   environment={{
                     placeKind: current?.kind ?? "local",
                     place: current?.kind === "local" || !current ? "This computer" : current.name,
@@ -3385,6 +3435,17 @@ export default function App() {
                         : null
                   }
                   onShowBrowser={showAgentBrowser}
+                  changes={gitChanges && samePath(gitChanges.cwd, session.cwd) ? gitChanges : null}
+                  onChangesAction={
+                    status === "open"
+                      ? (kind) =>
+                          submitOrQueue(
+                            kind === "pr"
+                              ? { kind: "prompt", text: CREATE_PR_PROMPT, display: "Create PR" }
+                              : { kind: "prompt", text: COMMIT_PROMPT, display: "Commit" },
+                          )
+                      : null
+                  }
                   tasks={tasks ?? []}
                   onShowTasks={() => showPane("tasks")}
                   keepAwake={keepAwake}

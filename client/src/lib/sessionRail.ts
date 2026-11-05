@@ -11,11 +11,12 @@ import { loadPref, savePref } from "./prefs";
  * the prompt box. "Browser" (the small live view of the page where the agent works) is under
  * "Servers" (the user asked for it). The user can drag the sections into another order.
  */
-export type RailSection = "browser" | "environment" | "context" | "pullRequests" | "servers" | "backgroundTasks";
+export type RailSection = "browser" | "environment" | "context" | "changes" | "pullRequests" | "servers" | "backgroundTasks";
 
 export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
   { id: "environment", title: "Environment" },
   { id: "context", title: "Context" },
+  { id: "changes", title: "Changes" },
   { id: "pullRequests", title: "Pull requests" },
   { id: "servers", title: "Servers" },
   { id: "browser", title: "Browser" },

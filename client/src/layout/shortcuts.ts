@@ -1,4 +1,4 @@
-// The pane shortcuts. Browser, Diff, and Terminal use the keys of the Code tab of Claude. Claude
+// The pane shortcuts. Browser, Changes, and Terminal use the keys of the Code tab of Claude. Claude
 // has no documented key for its Files pane: Ctrl+Shift+F toggles the Files pane (the file tree and the editor).
 // Cmd works in place of Ctrl on macOS, except for the terminal key, as in Claude.
 

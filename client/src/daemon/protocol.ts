@@ -61,6 +61,20 @@ export interface RunningSession {
   waiting: boolean;
 }
 
+/**
+ * The changes of a folder against its base branch: the commits that the base does not have, the
+ * uncommitted changes, and the new files. ``github``: the origin remote is on GitHub and gh is installed.
+ */
+export interface GitChanges {
+  repo: boolean;
+  branch: string | null;
+  base: string | null; // For example "origin/main". null: no remote base, only the uncommitted changes.
+  added: number;
+  removed: number;
+  files: number;
+  github: boolean;
+}
+
 /** A small picture of the headless agent browser page (SPEC.md section 8.7): live, or after an action. */
 export interface AgentFrame {
   url: string;
@@ -673,6 +687,7 @@ export type ClientMessage =
   | { type: "session.update"; session_id: string; title?: string; pinned?: boolean; archived?: boolean; force?: boolean }
   // The branch and the pull request of project folders, for the sidebar. The reply is "pr_status".
   | { type: "git.pr_status"; paths: string[] }
+  | { type: "git.changes"; cwd: string } // The changes of the folder against its base branch (the rail).
   | { type: "session.delete"; session_id: string }
   | { type: "session.move"; session_id: string; cwd: string } // Change the folder. The history stays.
   // The terminal pane: the shell of the session.
@@ -882,6 +897,7 @@ export type DaemonMessage =
   | { type: "pr_status"; items: PrStatus[] }
   | { type: "session.deleted"; id: string }
   | ({ type: "git.branches"; cwd: string } & GitBranches)
+  | ({ type: "git.changes"; cwd: string } & GitChanges)
   // The worktree of the session has uncommitted changes. Ask, then send session.update with force.
   | { type: "session.archive_confirm"; id: string; branch: string }
   | { type: "sessions.running"; items: RunningSession[] } // The sessions with a running turn (the sidebar).

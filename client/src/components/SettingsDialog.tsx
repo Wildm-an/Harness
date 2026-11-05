@@ -268,7 +268,7 @@ const SHORTCUTS: [string, string][] = [
   ["Switch the Code and IDE view", "Ctrl+E"],
   ["Terminal", "Ctrl+`"],
   ["Browser", "Ctrl+Shift+B"],
-  ["Diff", "Ctrl+Shift+D"],
+  ["Changes", "Ctrl+Shift+D"],
   ["Files", "Ctrl+Shift+F"],
   ["Next permission mode", "Shift+Tab"],
   ["Add files to the prompt", "Ctrl+U"],

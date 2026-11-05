@@ -9074,6 +9074,29 @@ textarea.setting-textarea:disabled {
   color: var(--text-muted);
 }
 
+/* The Changes section: the change count of the session and "Create PR". */
+.rail-changes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 6px;
+}
+
+.rail-changes-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rail-changes-count {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-changes-pr {
+  flex: none;
+}
+
 /* The small live view of the page where the agent works. A click opens it in the Browser pane. */
 .rail-browser {
   display: flex;
