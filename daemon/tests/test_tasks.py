@@ -30,7 +30,8 @@ def test_a_task_runs_ends_and_gives_a_note(project):
         changes: list[int] = []
         host = TaskHost(project, detect_shell(), on_change=lambda: changes.append(1))
         task = host.start("echo harness-task-ok", "Printed a line")
-        assert task.status == "running" and host.running == [task]
+        # A fast computer can end the echo before this line: "done" is also correct.
+        assert task.status in ("running", "done")
         await host.wait(task, 20)
         assert task.status == "done" and "harness-task-ok" in task.output
         await asyncio.sleep(0.1)  # The end goes to the loop.
