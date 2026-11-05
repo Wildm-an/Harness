@@ -174,7 +174,9 @@ def test_context_breakdown_counts_tool_results(daemon, project, harness_home, fa
     (project / "notes.txt").write_text("A long line of notes. " * 300)
     c = Client(daemon)
     c.new_session(project)
-    fake_model.script({"tool_calls": [{"name": "read", "arguments": {"path": "notes.txt"}}]}, {"text": "Read it."})
+    # A real endpoint count: the default of 100 tokens scales the small parts down to 0.
+    fake_model.script({"tool_calls": [{"name": "read", "arguments": {"path": "notes.txt"}}]},
+                      {"text": "Read it.", "prompt_tokens": 8000})
     c.send({"type": "prompt", "text": "Read the notes."})
     c.until("turn.end")
     c.send({"type": "context.get"})
