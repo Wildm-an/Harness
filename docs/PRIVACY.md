@@ -11,7 +11,7 @@ This page lists each connection.
 
 | Connection | Data | When | How to turn it off |
 |---|---|---|---|
-| The update check: `https://github.com/Wildm-an/Harness/releases/latest/download/latest.json` | A plain HTTPS request. It has no data about you, your computer, or your projects. GitHub sees your IP address. | Once, a few seconds after the app starts. | Settings > General > Updates > "Check for updates at start". |
+| The update check: `https://github.com/Wildm-an/Harness/releases/latest/download/latest.json` | A plain HTTPS request. It has no data about you, your computer, or your projects. GitHub sees your IP address. | Only when the app window is visible: a few seconds after it shows, then when you open it again (at most once each 30 minutes). | Settings > General > Updates > "Check for updates when the app opens". |
 
 ## Connections to the services that you configure
 

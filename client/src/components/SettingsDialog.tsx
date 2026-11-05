@@ -1089,10 +1089,10 @@ function UpdatesRow() {
           </button>
         )}
       </Row>
-      <Row label="Check for updates at start" help="The app asks github.com for the newest version number. The request has no data about your projects.">
+      <Row label="Check for updates when the app opens" help="The app asks github.com for the newest version number. The request has no data about your projects.">
         <Switch
           checked={atStart}
-          label="Check for updates at start"
+          label="Check for updates when the app opens"
           onChange={(on) => {
             setAtStart(on);
             setCheckAtStart(on);

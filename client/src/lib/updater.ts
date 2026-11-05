@@ -1,8 +1,8 @@
 // App updates with tauri-plugin-updater (docs/RELEASE.md). The update address goes in
 // tauri.conf.json when the public repository exists. Until then, a check gives a clear message.
 //
-// The app checks once, a few seconds after it starts (checkOnLaunch), if the setting "Check for updates
-// at start" is on (the default). The state is shared: the dot on the Settings button, the popup at the
+// The app checks only when the user can see its window (checkWhenShown), if the setting "Check for
+// updates when the app opens" is on (the default). The state is shared: the dot on the Settings button, the popup at the
 // bottom left, and Settings > General > Updates read it.
 
 import { useSyncExternalStore } from "react";
@@ -32,6 +32,7 @@ export type UpdateState =
   | { kind: "error"; message: string };
 
 const LAUNCH_DELAY_MS = 4000; // The app and the daemon start first.
+const RECHECK_GAP_MS = 30 * 60 * 1000; // The shortest time between two quiet checks.
 const CHECK_AT_START_PREF = "updates.check_at_start";
 
 /** True if the app looks for a new version when it starts. The default is on. */
@@ -98,13 +99,50 @@ export async function checkForUpdate(quiet = false): Promise<void> {
   }
 }
 
-let launched = false;
+/** True if the user can see the app window: not hidden in the tray, and not minimized. */
+async function windowShown(): Promise<boolean> {
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") return false;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    return (await win.isVisible()) && !(await win.isMinimized());
+  } catch {
+    return true; // The window state is not known. The document state above is then the answer.
+  }
+}
 
-/** The quick check after the app starts. It runs once, only in the desktop app, and only if the setting is on. */
-export function checkOnLaunch(): void {
-  if (launched || !isTauri() || !checkAtStart()) return;
-  launched = true;
-  window.setTimeout(() => void checkForUpdate(true), LAUNCH_DELAY_MS);
+let watching = false;
+let ready = false; // False during the launch delay.
+let lastCheck = 0;
+
+/** A quiet check, if the setting is on, the user can see the window, and no check ran in the last RECHECK_GAP_MS. */
+async function checkIfShown(): Promise<void> {
+  if (!ready || !checkAtStart()) return;
+  if (state.kind === "available" || state.kind === "installing") return;
+  if (lastCheck && Date.now() - lastCheck < RECHECK_GAP_MS) return;
+  if (!(await windowShown())) return;
+  lastCheck = Date.now();
+  await checkForUpdate(true);
+}
+
+/**
+ * The quiet checks of the desktop app. The app does not check while its window is hidden (for example,
+ * after a start at sign-in, the window stays in the tray). The first check runs a few seconds after the
+ * window shows. A later check runs each time the user opens the window again, at most one each RECHECK_GAP_MS.
+ */
+export function checkWhenShown(): void {
+  if (watching || !isTauri()) return;
+  watching = true;
+  const onShow = () => void checkIfShown();
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onShow);
+  window.addEventListener("focus", onShow);
+  void import("@tauri-apps/api/window")
+    .then(({ getCurrentWindow }) => getCurrentWindow().onFocusChanged(({ payload }) => payload && onShow()))
+    .catch(() => undefined);
+  window.setTimeout(() => {
+    ready = true;
+    onShow();
+  }, LAUNCH_DELAY_MS);
 }
 
 /** Download and install the update, then start the new version. Windows closes the app for the installer. */

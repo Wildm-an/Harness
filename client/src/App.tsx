@@ -102,7 +102,7 @@ import { TerminalPane, forgetSessionTerminals } from "./components/TerminalPane"
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
 import { UpdateToast } from "./components/UpdateToast";
-import { availableVersion, checkOnLaunch, useUpdateState } from "./lib/updater";
+import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
 import { StorageDialog } from "./components/StorageDialog";
@@ -210,6 +210,11 @@ function loadLayout(connectionId: string, cwd: string, mode: ViewMode): LayoutNo
   } catch {
     return fallback();
   }
+}
+
+/** The layout with no editor and no Files pane: the Code view at a new session or after a switch from the IDE view. */
+function withoutEditor(layout: LayoutNode): LayoutNode {
+  return closePane(closePane(layout, "files"), "editor");
 }
 
 /** An icon button in the top bar that shows or hides a pane. */
@@ -359,6 +364,8 @@ export default function App() {
   // opens a file or sends a prompt. ideBlockNext: the next new session gets the block.
   const [ideBlockFor, setIdeBlockFor] = useState<string | null>(null);
   const ideBlockNext = useRef(false);
+  // The next new session starts in the Code view: it opens with the chat only, with no editor or Files pane.
+  const codeStartNext = useRef(false);
   // The same empty session until the user sends a prompt. A switch back to the Code view removes it
   // and shows the start screen again: only the view changed.
   const ideEmptyFor = useRef<string | null>(null);
@@ -437,7 +444,7 @@ export default function App() {
   const [remoteUpdate, setRemoteUpdate] = useState<DaemonUpdate | null>(null); // "Update daemon" in progress.
   useEffect(() => {
     if (isTauri()) void appVersionOf().then(setAppVersion, () => undefined);
-    checkOnLaunch(); // A quick look for a new version, a few seconds after the start.
+    checkWhenShown(); // A quick look for a new version, only when the user can see the window.
   }, []);
   const newVersion = availableVersion(useUpdateState());
   useEffect(
@@ -602,7 +609,10 @@ export default function App() {
             setRules(null);
             setAgentFrame(null);
             setMcpStatus(null);
-            setLayout(loadLayout(currentRef.current?.id ?? "local", msg.cwd, viewRef.current));
+            const saved = loadLayout(currentRef.current?.id ?? "local", msg.cwd, viewRef.current);
+            const codeStart = codeStartNext.current && viewRef.current === "code";
+            codeStartNext.current = false;
+            setLayout(codeStart ? withoutEditor(saved) : saved);
             // When no provider gives the model of the session, the model by network replaces it, or the chat asks.
             requestModels();
             sendSafely({ type: "user_settings.get" });
@@ -1345,6 +1355,7 @@ export default function App() {
     firstPrompt.current = prompt;
     if (!ideStarting.current) switchViewRef.current("code"); // A new session starts in the Code view.
     ideBlockNext.current = ideStarting.current;
+    codeStartNext.current = !ideStarting.current;
     ideStarting.current = false;
     railAuto.current = false;
     setRail(true); // Each new session opens with the session rail. The saved preference does not change.
@@ -1356,6 +1367,7 @@ export default function App() {
     firstPrompt.current = null;
     setBusy(true);
     setStartError(null);
+    codeStartNext.current = false; // An old session opens with its saved layout.
     conn.send({ type: "session.resume", session_id: id });
   };
 
@@ -1820,7 +1832,7 @@ export default function App() {
     if (session) {
       const next = loadLayout(currentRef.current?.id ?? "local", session.cwd, mode);
       // The Files window belongs to the IDE view: a switch to the Code view closes it.
-      setLayout(mode === "code" ? closePane(closePane(next, "files"), "editor") : next);
+      setLayout(mode === "code" ? withoutEditor(next) : next);
     }
     if (mode === "ide") {
       sidebarBeforeIde.current = sidebarOpen;

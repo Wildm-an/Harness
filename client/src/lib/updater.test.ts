@@ -11,7 +11,21 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: async () => void (relau
 const calls: string[] = [];
 vi.mock("@tauri-apps/api/core", () => ({ invoke: async (command: string) => void calls.push(command) }));
 
-const { availableVersion, checkAtStart, checkForUpdate, checkOnLaunch, getUpdateState, installUpdate, setCheckAtStart } =
+// The app window: visible or hidden in the tray, and the focus event of the window.
+let windowVisible = true;
+let focusChanged: (focused: boolean) => void = () => {};
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    isVisible: async () => windowVisible,
+    isMinimized: async () => false,
+    onFocusChanged: async (fn: (e: { payload: boolean }) => void) => {
+      focusChanged = (focused) => fn({ payload: focused });
+      return () => {};
+    },
+  }),
+}));
+
+const { availableVersion, checkAtStart, checkForUpdate, checkWhenShown, getUpdateState, installUpdate, setCheckAtStart } =
   await import("./updater");
 const { updateToastView } = await import("../components/UpdateToast");
 
@@ -76,16 +90,44 @@ describe("the check at start", () => {
       calls += 1;
       return null;
     };
-    checkOnLaunch();
+    windowVisible = true;
+    vi.stubGlobal("addEventListener", () => {}); // Node has no window events.
+    checkWhenShown();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(calls).toBe(0);
 
     setCheckAtStart(true);
-    checkOnLaunch();
-    await vi.advanceTimersByTimeAsync(10_000);
+    focusChanged(true);
+    await vi.advanceTimersByTimeAsync(0);
     expect(calls).toBe(1);
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("does not check while the window is hidden, and checks when the user opens it", async () => {
+    // checkWhenShown ran in the test above. The watch stays on.
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 60 * 60 * 1000); // After the gap between two checks.
+    let calls = 0;
+    check = async () => {
+      calls += 1;
+      return null;
+    };
+    windowVisible = false;
+    focusChanged(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(0);
+
+    windowVisible = true;
+    focusChanged(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+
+    // A second open soon after does not check again.
+    focusChanged(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+    vi.useRealTimers();
   });
 });
 
