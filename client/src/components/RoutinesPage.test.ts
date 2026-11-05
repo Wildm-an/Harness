@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, RoutineItem } from "../daemon/protocol";
 import { placeOf } from "../layout/history";
-import { activity, checkDraft, cronToSchedule, describeSchedule, fieldsOf, formatWhen, newDraft, routineFile, runState, scheduleToCron } from "./RoutinesPage";
+import { activity, checkDraft, cronToSchedule, curlExample, describeSchedule, fieldsOf, fireUrl, formatWhen, newDraft, routineFile, runState, scheduleToCron } from "./RoutinesPage";
 
 const routine = (extra: Partial<RoutineItem> = {}): RoutineItem => ({
   id: "r1",
@@ -110,5 +110,16 @@ describe("the state of a routine", () => {
 
   it("is a place in the history", () => {
     expect(placeOf("routines", null)).toEqual({ screen: "routines" });
+  });
+});
+
+describe("the API trigger of a routine", () => {
+  it("gives the fire URL and the example request", () => {
+    const url = fireUrl("http://127.0.0.1:47615", "daily check");
+    expect(url).toBe("http://127.0.0.1:47615/routines/daily%20check/fire");
+    const curl = curlExample(url);
+    expect(curl.split("\n")[0]).toBe(`curl -X POST ${url} \\`);
+    expect(curl).toContain('-H "Authorization: Bearer $TOKEN"');
+    expect(curl).toContain(`-d '{"text": "optional extra text after the prompt"}'`);
   });
 });

@@ -701,6 +701,26 @@ export function GeneralSettings({
         <Switch checked={values?.subagents !== false} label="Subagents" disabled={off} onChange={(on) => set({ subagents: on })} />
       </Row>
 
+      {/* "Archive inactive sessions", as in the Claude app. The daemon checks one time each hour. */}
+      <Row
+        label="Archive inactive sessions"
+        help="Archive sessions after a stretch with no activity. Running sessions and uncommitted changes are kept."
+        htmlFor="setting-auto-archive"
+      >
+        <select
+          id="setting-auto-archive"
+          value={String(values?.auto_archive_days ?? 0)}
+          disabled={off}
+          onChange={(e) => set({ auto_archive_days: Number(e.target.value) })}
+        >
+          {ARCHIVE_DAYS.map((days) => (
+            <option key={days} value={days}>
+              {days === 0 ? "Never" : days === 1 ? "1 day" : `${days} days`}
+            </option>
+          ))}
+        </select>
+      </Row>
+
       {/* The setting of the Claude app (Settings > Claude Code), with its labels. The daemon uses it in offer_session. */}
       <Row
         label="When you ask for an unrelated task"
@@ -925,6 +945,9 @@ function BackgroundRows() {
     </>
   );
 }
+
+// "Archive inactive sessions": the choices of the Claude app (0: never).
+const ARCHIVE_DAYS = [0, 1, 2, 7, 14, 30];
 
 // The search providers of the web_search tool (daemon web.py).
 export const WEB_SEARCH_OPTIONS: [WebSearchProvider, string][] = [

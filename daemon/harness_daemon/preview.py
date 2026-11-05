@@ -72,12 +72,29 @@ class SessionBrowser:
             raise BrowserError(PANE_GONE)
         return self.current
 
-    async def navigate(self, url: str) -> dict[str, Any]:
-        if self.pane is not None and self.relay is not None and self.relay.available():
-            self.current = self.pane
-        else:
-            self.current = self.headless
+    def _pane_ready(self) -> PaneBrowser | None:
+        return self.pane if self.pane is not None and self.relay is not None and self.relay.available() else None
+
+    async def tabs(self) -> list[dict[str, Any]] | None:
+        """The tabs of the session in the Browser pane. None: no pane (the headless browser has one page)."""
+        pane = self._pane_ready()
+        return await pane.tabs() if pane is not None else None
+
+    async def use_tab(self, tab: str) -> None:
+        """Work in an open tab of the session (its id), or in a new tab ("new")."""
+        pane = self._pane_ready()
+        if pane is None:
+            raise BrowserError("The Browser pane is not available: the headless browser has only one page.")
+        self.current = pane
         self.host.touch()
+        await pane.use_tab(tab)
+
+    async def navigate(self, url: str, tab: str | None = None) -> dict[str, Any]:
+        pane = self._pane_ready()
+        self.current = pane if pane is not None else self.headless
+        self.host.touch()
+        if tab and pane is not None:
+            await pane.use_tab(tab)
         return await self.current.navigate(url)
 
     async def snapshot(self) -> dict[str, Any]:

@@ -13,6 +13,30 @@ const GAP = 6;
 const EDGE = 8;
 
 /** Splits "Close the sidebar (Ctrl+B)" into the text and the key. */
+const TIP_CHARS = 160;
+
+/** A short hover tip of a long text: its first line, 160 characters or less, with "…" when text is cut.
+ * A tip never shows the full content of a file or of a long command (the user asked for this). */
+export function shortTip(text: string): string {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const first = lines[0]?.trim() ?? "";
+  if (first.length > TIP_CHARS) return `${first.slice(0, TIP_CHARS).trimEnd()}…`;
+  return lines.length > 1 ? `${first} …` : first;
+}
+
+const MAX_TIP_LINES = 6;
+const MAX_TIP_CHARS = 300;
+
+/** The limit of each hover tip: at most 6 lines and 300 characters, with "…" when the text is cut. A tip
+ * then never shows the full content of a file (for example a .py file) or of a long command. */
+export function limitTip(tip: string): string {
+  const lines = tip.split(/\r?\n/);
+  let text = lines.slice(0, MAX_TIP_LINES).map((l) => (l.length > TIP_CHARS ? `${l.slice(0, TIP_CHARS).trimEnd()}…` : l)).join("\n");
+  if (text.length > MAX_TIP_CHARS) text = `${text.slice(0, MAX_TIP_CHARS).trimEnd()}…`;
+  else if (lines.length > MAX_TIP_LINES) text = `${text.trimEnd()} …`;
+  return text;
+}
+
 export function splitTip(tip: string): { text: string; keys: string | null } {
   const m = /^([\s\S]*\S)\s+\(((?:Ctrl|Alt|Shift|Cmd|Win|Esc|F\d{1,2})\b[^()]*)\)$/.exec(tip.trim());
   return m ? { text: m[1], keys: m[2] } : { text: tip.trim(), keys: null };
@@ -59,7 +83,7 @@ export function Tooltips() {
     };
 
     const show = () => {
-      if (current?.isConnected && tip) setShown({ tip, anchor: current.getBoundingClientRect() });
+      if (current?.isConnected && tip) setShown({ tip: limitTip(tip), anchor: current.getBoundingClientRect() });
     };
 
     const take = (el: HTMLElement) => {

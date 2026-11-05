@@ -165,6 +165,7 @@ export interface UserSettings {
   offline_model?: string | null;
   effort?: Effort | null; // The effort level of the model menu. null: the model decides.
   new_task_prompt?: NewTaskPrompt; // "When you ask for an unrelated task" (offer_session). Default "ask".
+  auto_archive_days?: number; // "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.
   // The agent instructions of the user. The system prompt includes them. null: no instructions.
   instructions_thinking?: string | null;
   instructions_research?: string | null;
@@ -337,6 +338,8 @@ export interface RoutineItem extends RoutineFields {
   last_run: RoutineRun | null;
   running: boolean;
   queued: boolean; // It waits for a free place (at most 3 routines run at the same time).
+  // The API trigger (POST /routines/{id}/fire): active when a token exists. hint: its last 4 characters.
+  api?: { active: boolean; hint: string | null };
 }
 
 /** One folder or item of the Storage dialog, with its size in bytes. */
@@ -721,6 +724,8 @@ export type ClientMessage =
   | ({ type: "routines.save"; id?: string } & RoutineFields)
   | { type: "routines.delete"; id: string }
   | { type: "routines.run"; id: string } // "Run now".
+
+  | { type: "routines.token"; id: string; action: "generate" | "delete" } // The API trigger token of a routine.
   | { type: "disk.usage" } // Settings > General > Storage.
   // Settings > Your Harness > Memory. cwd: the project folder. Each project has its own memory.
   | { type: "memory.list"; cwd: string }
@@ -890,6 +895,7 @@ export type DaemonMessage =
       requests?: PermissionRequest[];
       turn_started_at?: number | null; // Epoch seconds.
       turn_tokens?: number; // The output tokens of the running turn so far.
+      steering?: string[]; // The ids of the steer messages that the agent holds for its next step.
     }
   | { type: "session.title"; id: string; title: string } // The model made the title from the first prompt.
   | { type: "session.adopted"; id: string; moved: boolean } // The reply to session.adopt.
@@ -972,6 +978,10 @@ export type DaemonMessage =
   | { type: "memory.export"; cwd: string; name: string; data: string; count: number } // data: the .zip as base64.
   | { type: "routines"; items: RoutineItem[]; saved?: string; folder?: string } // To all clients. saved: the id after routines.save. folder: the routine files.
   | { type: "routine.runs"; routine_id: string; items: RoutineRun[] }
+  // "Archive inactive sessions" archived these sessions. All windows get it.
+  | { type: "sessions.archived"; ids: string[] }
+  // The reply to routines.token: the new token, shown one time. null: the token was deleted.
+  | { type: "routine.token"; id: string; token: string | null }
   // A turn ended, also in a session in the background: the client shows a notification if the user does not see it.
   | { type: "turn.done"; session_id: string; title: string | null; summary: string; stop_reason: string }
   | {

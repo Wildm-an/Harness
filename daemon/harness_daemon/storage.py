@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS routine_state (
     id TEXT PRIMARY KEY,  -- The file name of the routine, with no ".md".
     created_at REAL NOT NULL,
-    last_fire_at REAL  -- The last due time that the scheduler handled.
+    last_fire_at REAL,  -- The last due time that the scheduler handled.
+    api_token_hash TEXT,  -- The SHA-256 of the API trigger token (hex). NULL: no API trigger.
+    api_token_hint TEXT  -- The last 4 characters of the token, to tell the user which token is active.
 );
 -- One run of a routine. The session stays when the routine is deleted.
 CREATE TABLE IF NOT EXISTS routine_runs (
@@ -109,6 +111,10 @@ class Storage:
         if "parent_id" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT")
         self._migrate_routines()
+        state_columns = {row[1] for row in self.db.execute("PRAGMA table_info(routine_state)")}
+        if "api_token_hash" not in state_columns:
+            self.db.execute("ALTER TABLE routine_state ADD COLUMN api_token_hash TEXT")
+            self.db.execute("ALTER TABLE routine_state ADD COLUMN api_token_hint TEXT")
         # The first start with the projects table: add the folders of the stored sessions.
         if self.db.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
             rows = self.db.execute("SELECT cwd, MIN(created_at), MAX(updated_at) FROM sessions GROUP BY cwd").fetchall()
@@ -450,6 +456,8 @@ class Storage:
         state = self._state(item["id"])
         item["created_at"] = state["created_at"]
         item["last_fire_at"] = state["last_fire_at"]
+        # The API trigger: active when a token exists. The client never gets the token or its hash.
+        item["api"] = {"active": bool(state.get("api_token_hash")), "hint": state.get("api_token_hint")}
         try:
             item["updated_at"] = path.stat().st_mtime
         except OSError:
@@ -506,6 +514,17 @@ class Storage:
         self._state(routine_id)
         self.db.execute("UPDATE routine_state SET last_fire_at = ? WHERE id = ?", (fire_at, routine_id))
         self.db.commit()
+
+    def set_routine_token(self, routine_id: str, token_hash: str | None, hint: str | None) -> None:
+        """Set the API trigger token of a routine (its hash and a hint), or remove it (None)."""
+        self._state(routine_id)
+        self.db.execute("UPDATE routine_state SET api_token_hash = ?, api_token_hint = ? WHERE id = ?",
+                        (token_hash, hint, routine_id))
+        self.db.commit()
+
+    def routine_token_hash(self, routine_id: str) -> str | None:
+        row = self.db.execute("SELECT api_token_hash FROM routine_state WHERE id = ?", (routine_id,)).fetchone()
+        return row[0] if row else None
 
     def delete_routine(self, routine_id: str) -> None:
         """Delete the file of a routine (on Windows: to the Recycle Bin) and its run history.

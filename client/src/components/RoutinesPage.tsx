@@ -5,15 +5,19 @@ import { memo, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarClock,
+  Check,
   ChevronRight,
   CircleCheck,
   CircleSlash,
   CircleX,
   Clock,
+  Copy,
   FolderOpen,
+  KeyRound,
   LoaderCircle,
   Play,
   Plus,
+  RefreshCw,
   ShieldAlert,
   Trash2,
   type LucideIcon,
@@ -375,6 +379,7 @@ function RoutineForm({
   onRun,
   onOpenSession,
   onBack,
+  api = null,
 }: {
   item: RoutineItem | null; // null: a new routine.
   file: string | null; // The path of the routine file on the daemon computer.
@@ -392,6 +397,7 @@ function RoutineForm({
   onRun: () => void;
   onOpenSession: (id: string) => void;
   onBack: () => void;
+  api?: ApiProps | null; // The API trigger of a saved routine.
 }) {
   const [d, setD] = useState(initial);
   const [errors, setErrors] = useState<DraftErrors>({});
@@ -525,6 +531,8 @@ function RoutineForm({
           </button>
         </div>
       </form>
+      {item && api && <ApiAccess item={item} api={api} />}
+      {!item && <p className="help">Save the routine to add an API trigger: your own code can then start a run with a POST request.</p>}
       {item && (
         <section className="cap-section" aria-labelledby="rt-runs">
           <div className="cap-section-head">
@@ -547,6 +555,116 @@ function RoutineForm({
         </ConfirmDialog>
       )}
     </div>
+  );
+}
+
+interface ApiProps {
+  base: string | null; // http://host:port of the daemon.
+  token: string | null; // A new token, shown one time.
+  onToken: (action: "generate" | "delete") => void;
+  onDone: () => void;
+}
+
+/** The fire URL of the API trigger of a routine. */
+export function fireUrl(base: string, id: string): string {
+  return `${base}/routines/${encodeURIComponent(id)}/fire`;
+}
+
+/** The example request of the API trigger, as in the Claude app. */
+export function curlExample(url: string): string {
+  return [
+    `curl -X POST ${url} \\`,
+    '  -H "Authorization: Bearer $TOKEN" \\',
+    '  -H "Content-Type: application/json" \\',
+    `  -d '{"text": "optional extra text after the prompt"}'`,
+  ].join("\n");
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn btn-small"
+      onClick={() =>
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        })
+      }
+    >
+      {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
+
+/** "API access" of a routine, as the API trigger of the Claude app: the fire URL, the token, and an example request. */
+function ApiAccess({ item, api }: { item: RoutineItem; api: ApiProps }) {
+  const active = !!item.api?.active;
+  const url = api.base ? fireUrl(api.base, item.id) : null;
+  return (
+    <section className="cap-section routine-api" aria-labelledby="rt-api">
+      <div className="cap-section-head">
+        <h2 id="rt-api">API access</h2>
+        <span className={`routine-api-status${active ? " active" : ""}`}>{active ? "Active" : "Inactive"}</span>
+      </div>
+      <p className="help">Trigger from your own code by sending a POST request. The text of the request goes after the prompt of the run.</p>
+      <div className="field">
+        <label htmlFor="rt-fire-url">Fire URL</label>
+        <div className="field-row">
+          <input id="rt-fire-url" className="mono" readOnly value={url ?? "Connect to a computer to see the URL."} onFocus={(e) => e.currentTarget.select()} />
+          {url && <CopyButton text={url} label="Copy" />}
+        </div>
+      </div>
+      <div className="field">
+        <span className="field-label">Token</span>
+        {api.token ? (
+          <div className="routine-api-token" role="status">
+            <strong>Token generated</strong>
+            <div className="field-row">
+              <input className="mono" readOnly value={api.token} aria-label="The new token" onFocus={(e) => e.currentTarget.select()} />
+              <CopyButton text={api.token} label="Copy token" />
+            </div>
+            <p className="help">Copy this token now. It is not shown again. Use it as the Bearer credential.</p>
+            <button type="button" className="btn btn-small" onClick={api.onDone}>
+              Done
+            </button>
+          </div>
+        ) : (
+          <p className="help">{active ? `The token ends with ${item.api?.hint ?? "····"}.` : "Generate a token to activate API access."}</p>
+        )}
+        <div className="routine-actions">
+          {active ? (
+            <>
+              <button type="button" className="btn btn-small" onClick={() => api.onToken("generate")}>
+                <RefreshCw size={14} aria-hidden />
+                Regenerate
+              </button>
+              <button type="button" className="btn btn-small btn-danger" onClick={() => api.onToken("delete")}>
+                <Trash2 size={14} aria-hidden />
+                Delete token
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn btn-small btn-primary" onClick={() => api.onToken("generate")}>
+              <KeyRound size={14} aria-hidden />
+              Generate token
+            </button>
+          )}
+        </div>
+        {active && <p className="help">Regenerating makes the previous token stop working. Delete the token to turn off API access.</p>}
+      </div>
+      {url && (
+        <div className="field">
+          <span className="field-label">Example request</span>
+          <pre className="tool-pre routine-api-curl">{curlExample(url)}</pre>
+          <div className="routine-actions">
+            <CopyButton text={curlExample(url)} label="Copy curl" />
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -589,6 +707,10 @@ export const RoutinesPage = memo(function RoutinesPage({
   onToggle,
   onRequestRuns,
   onOpenSession,
+  apiBase = null,
+  newToken = null,
+  onToken,
+  onTokenDone,
 }: {
   routines: RoutineItem[] | null; // null: loading.
   folder: string | null; // The folder of the routine files on the daemon computer (~/.harness/routines).
@@ -606,6 +728,10 @@ export const RoutinesPage = memo(function RoutinesPage({
   onToggle: (item: RoutineItem, enabled: boolean) => void;
   onRequestRuns: (id: string) => void;
   onOpenSession: (sessionId: string) => void;
+  apiBase?: string | null; // http://host:port of the daemon. null: not connected.
+  newToken?: { id: string; token: string } | null; // A new API token, shown one time.
+  onToken?: (id: string, action: "generate" | "delete") => void;
+  onTokenDone?: () => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null); // "new": the form of a new routine.
   const [saving, setSaving] = useState(false);
@@ -661,6 +787,16 @@ export const RoutinesPage = memo(function RoutinesPage({
         onRun={() => item && onRun(item.id)}
         onOpenSession={onOpenSession}
         onBack={() => setOpenId(null)}
+        api={
+          item && onToken
+            ? {
+                base: apiBase,
+                token: newToken?.id === item.id ? newToken.token : null,
+                onToken: (action) => onToken(item.id, action),
+                onDone: () => onTokenDone?.(),
+              }
+            : null
+        }
       />
     );
   } else {

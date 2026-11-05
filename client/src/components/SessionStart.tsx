@@ -312,7 +312,7 @@ export function SessionStart({
   onBrowse: (current: string) => Promise<string | null>; // The native dialog, or the remote folder picker.
   models: ModelList | null; // The models of the connections that are on. null: loading.
   localProviders?: ReadonlySet<string>; // The providers on the computer of the daemon: the "Local models" submenu.
-  effort?: { value: Effort | null; onChange: (value: Effort | null) => void }; // The "Effort" submenu.
+  effort?: { value: Effort | null; onChange: (value: Effort) => void }; // The "Effort" submenu.
   onRequestModels: () => void;
   onManageProviders: () => void;
   onSaveProject: (draft: ProjectDraft) => Promise<string>;

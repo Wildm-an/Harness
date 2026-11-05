@@ -23,8 +23,8 @@ describe("the model menu lists", () => {
   });
 
   it("names the effort levels as the Claude app does", () => {
-    expect(EFFORT_LEVELS.map((l) => l.label)).toEqual(["Default", "Low", "Medium", "High", "Extra high", "Max"]);
+    expect(EFFORT_LEVELS.map((l) => l.label)).toEqual(["Low", "Medium", "High", "Extra high", "Max"]);
     expect(effortLabel("xhigh")).toBe("Extra high");
-    expect(effortLabel(null)).toBe("Default");
+    expect(effortLabel(null)).toBe("High"); // No choice yet: High, as in the Claude app.
   });
 });

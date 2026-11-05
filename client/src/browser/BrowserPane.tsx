@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -92,7 +92,19 @@ export interface BrowserTab {
   title: string; // The page title. Empty until the page gives one.
   loading: boolean;
   frame: number; // The iframe key outside the desktop app. A change reloads the page.
-  agent?: string; // The session id of the agent that works in this tab.
+  agent?: string; // Old versions: the session of an agent tab. A tab of the agent is now a normal tab.
+  owner?: string; // The session that the tab belongs to ("" for the start screen). The agent and the user share its tabs.
+}
+
+/** The session of a tab. Each session shows only its own tabs (the user asked for this). */
+export function ownerOf(tab: BrowserTab): string {
+  return tab.agent ?? tab.owner ?? "";
+}
+
+/** The tabs of one session, and the tab that it shows: its last active tab, else its first tab. */
+export function sessionTabs(tabs: BrowserTab[], session: string, active: Record<string, string>): { mine: BrowserTab[]; shown: BrowserTab | undefined } {
+  const mine = tabs.filter((t) => ownerOf(t) === session);
+  return { mine, shown: mine.find((t) => t.id === active[session]) ?? mine[0] };
 }
 
 let tabCounter = 0;
@@ -113,17 +125,20 @@ export function tabLabel(tab: BrowserTab): string {
 }
 
 // The tabs stay when the pane closes: the next time it opens, it shows the same pages. The webviews
-// of the tabs stay too (hidden), so a page keeps its state.
-let kept: { tabs: BrowserTab[]; active: string } | null = null;
+// of the tabs stay too (hidden), so a page keeps its state. "active": the shown tab of each session.
+// All sessions use one browser engine with the same cookies. Only the tab lists are separate, so a
+// session costs no more memory than its own tabs.
+let kept: { tabs: BrowserTab[]; active: Record<string, string> } | null = null;
 const opened = new Set<string>(); // The tabs that have a webview.
 let handledRequest = 0; // The key of the last navigation request from the app. It stays when the pane closes.
 
 // A new page of the app has no tabs yet. Webviews from an earlier page (a reload) must go.
 if (isTauri()) void browserView.closeAll().catch(() => undefined);
 
-// -- The agent tabs ----------------------------------------------------------------------------
-// The agent works in its own tab of this browser, one tab for each session (SPEC.md section 8.7).
-// The user sees the same page, live, and can use it too. All tabs share the cookies, so the agent
+// -- The tabs of the agent -------------------------------------------------------------------------
+// The agent and the user use the same tabs of the session (the user asked for this). The agent lists
+// them (Harness.listTabs), continues in a tab of the user (Harness.useTab), or opens a new tab
+// (Harness.newTab). "agentTabs" is the tab that the agent works in now. All tabs share the cookies, so the agent
 // is signed in where the user is. While the agent works, a tab that the pane does not show is
 // "parked": it moves out of sight with a real size and stays visible, so the page keeps drawing.
 // The agent can then take its screenshots, and the session rail shows the page live.
@@ -139,7 +154,18 @@ let parkSize = { width: 1280, height: 800 }; // The last size of the pane area.
 let agentTimer = 0;
 let agentEvents = false;
 // The open pane: it adds and shows the agent tabs. With no pane, the tabs go into "kept".
-let paneHooks: { add: (tab: BrowserTab) => void; activate: (id: string) => void; has: (id: string) => boolean; resync: (id: string) => void } | null = null;
+let paneHooks: {
+  add: (tab: BrowserTab) => void;
+  activate: (id: string) => void;
+  has: (id: string) => boolean;
+  resync: (id: string) => void;
+  list: () => { tabs: BrowserTab[]; active: Record<string, string> };
+} | null = null;
+
+/** All tabs, and the shown tab of each session: from the open pane, else from "kept". */
+function allTabs(): { tabs: BrowserTab[]; active: Record<string, string> } {
+  return paneHooks ? paneHooks.list() : (kept ?? { tabs: [], active: {} });
+}
 
 function agentChanged() {
   agentListeners.forEach((listener) => listener());
@@ -175,7 +201,7 @@ export function showAgentTab(session: string): void {
   const tab = agentTabs.get(session);
   if (!tab) return;
   if (paneHooks) paneHooks.activate(tab);
-  else if (kept?.tabs.some((t) => t.id === tab)) kept = { ...kept, active: tab };
+  else if (kept?.tabs.some((t) => t.id === tab)) kept = { ...kept, active: { ...kept.active, [session]: tab } };
 }
 
 function parkBounds(): Bounds {
@@ -226,17 +252,52 @@ function watchAgentTabs() {
   }, 5_000);
 }
 
-/** The agent tab of a session. The first call opens it, out of sight. */
-async function agentTabFor(session: string): Promise<string> {
+/** The tabs of a session for the agent (Harness.listTabs). */
+function listTabs(session: string): { id: string; url: string | null; title: string; shown: boolean; used: boolean }[] {
+  const { tabs, active } = allTabs();
+  const { mine, shown: shownTab } = sessionTabs(tabs, session, active);
+  return mine.map((t) => ({
+    id: t.id,
+    url: t.url && t.url !== "about:blank" ? t.url : null,
+    title: t.title,
+    shown: t.id === shownTab?.id,
+    used: agentTabs.get(session) === t.id,
+  }));
+}
+
+/** The agent works in an open tab of its session (Harness.useTab). A tab with no webview gets one, out of sight. */
+async function useTab(session: string, id: string): Promise<string> {
+  const tab = allTabs().tabs.find((t) => t.id === id && ownerOf(t) === session);
+  if (!tab) throw new Error(`The session has no tab ${id}. Use an id from preview_tabs, or "new".`);
+  watchAgentTabs();
+  agentTabs.set(session, id);
+  agentInfo.set(id, { session, last: Date.now(), url: tab.url ?? "about:blank", title: tab.title });
+  if (!opened.has(id)) {
+    opened.add(id);
+    parked.add(id);
+    await browserView.open(id, tab.url ?? "about:blank", parkBounds(), false);
+    paneHooks?.resync(id);
+  }
+  agentChanged();
+  return id;
+}
+
+/** The tab that the agent of a session works in. With no tab yet: the shown tab of the session when it
+ * has no page, else a new tab, out of sight. ``fresh``: always a new tab (Harness.newTab). */
+async function agentTabFor(session: string, fresh = false): Promise<string> {
   const known = agentTabs.get(session);
-  if (known && opened.has(known) && tabExists(known)) return known;
+  if (!fresh && known && opened.has(known) && tabExists(known)) return known;
+  if (!fresh) {
+    const blank = listTabs(session).find((t) => t.shown && !t.url);
+    if (blank) return useTab(session, blank.id);
+  }
   const pending = creating.get(session);
   if (pending) return pending;
   const make = (async () => {
     watchAgentTabs();
-    const tab: BrowserTab = { ...newTab("about:blank"), agent: session };
+    const tab: BrowserTab = { ...newTab("about:blank"), owner: session };
     if (paneHooks) paneHooks.add(tab);
-    else kept = kept ? { ...kept, tabs: [...kept.tabs, tab] } : { tabs: [tab], active: tab.id };
+    else kept = kept ? { ...kept, tabs: [...kept.tabs, tab] } : { tabs: [tab], active: { [session]: tab.id } };
     agentTabs.set(session, tab.id);
     agentInfo.set(tab.id, { session, last: Date.now(), url: "about:blank", title: "" });
     opened.add(tab.id);
@@ -270,6 +331,16 @@ async function agentTabFor(session: string): Promise<string> {
  */
 export async function runAgentCall(session: string, method: string, params: unknown, timeoutMs: number): Promise<{ tab: string; result: Record<string, unknown> }> {
   if (!isTauri()) throw new Error("This client cannot host the agent browser.");
+  // The tabs of the session: the client answers these calls itself.
+  if (method === "Harness.listTabs") return { tab: agentTabs.get(session) ?? "", result: { tabs: listTabs(session) } };
+  if (method === "Harness.useTab") {
+    const id = await useTab(session, String((params as { id?: unknown } | null)?.id ?? ""));
+    return { tab: id, result: { id } };
+  }
+  if (method === "Harness.newTab") {
+    const id = await agentTabFor(session, true);
+    return { tab: id, result: { id } };
+  }
   const tab = await agentTabFor(session);
   const info = agentInfo.get(tab);
   const wasLive = agentLive(tab);
@@ -363,6 +434,7 @@ function Menu({ children, label, icon }: { children: (close: () => void) => Reac
 }
 
 export function BrowserPane({
+  session = null,
   request,
   serverApi,
   agentFrame,
@@ -380,6 +452,7 @@ export function BrowserPane({
   onAnnotate,
   onScreenshot,
 }: {
+  session?: string | null; // The open session. The pane shows only its tabs. null: the start screen.
   request: { url: string; key: number } | null; // A navigation request from the app.
   serverApi: ServersApi; // The dev servers of the project (.harness/launch.json), as in the Claude app.
   agentFrame: (AgentFrame & { key: number }) | null; // The newest page of the headless agent browser.
@@ -399,12 +472,24 @@ export function BrowserPane({
 }) {
   const tauri = isTauri();
   const area = useRef<HTMLDivElement>(null);
-  const [tabs, setTabs] = useState<BrowserTab[]>(() => kept?.tabs ?? [newTab()]);
-  const [activeId, setActiveId] = useState<string>(() => kept?.active ?? tabs[0].id);
-  const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
+  const key = session ?? "";
+  const keyRef = useRef(key);
+  keyRef.current = key;
+  const [tabs, setTabs] = useState<BrowserTab[]>(() => kept?.tabs ?? [{ ...newTab(), owner: key }]);
+  const [actives, setActives] = useState<Record<string, string>>(() => kept?.active ?? {});
+  const { mine, shown: shownTab } = sessionTabs(tabs, key, actives);
+  // A session with no tab gets one new tab. The update runs before React shows this render.
+  const fresh = useMemo(() => ({ ...newTab(), owner: key }), [key, mine.length === 0]);
+  if (mine.length === 0) setTabs([...tabs, fresh]);
+  const active = shownTab ?? fresh;
+  const activeId = active.id;
+  const activeRef = useRef(activeId);
+  activeRef.current = activeId;
+  const activesRef = useRef(actives);
+  activesRef.current = actives;
+  const setActiveId = useCallback((id: string) => setActives((a) => ({ ...a, [keyRef.current]: id })), []);
   // "page": the browser of the user. "agent": the newest screenshot of the agent browser.
   const [view, setView] = useState<"page" | "agent">("page");
-  const [unseen, setUnseen] = useState(false); // A new agent frame came while the user looks at the page.
   const [device, setDevice] = useState<Device>(() => (loadPref("browserDevice", "desktop") as Device) || "desktop");
   const [keep, setKeep] = useState<KeepCookies>(keepCookies);
   const [inPane, setInPane] = useLinksInPane(); // The same preference as Settings > General > "Open links in".
@@ -414,8 +499,8 @@ export function BrowserPane({
   const selectOnFocus = useRef(false);
 
   useEffect(() => {
-    kept = { tabs, active: active.id };
-  }, [tabs, active.id]);
+    kept = { tabs, active: { ...actives, [key]: active.id } };
+  }, [tabs, actives, key, active.id]);
 
   const update = useCallback((id: string, change: Partial<BrowserTab>) => {
     setTabs((list) => list.map((t) => (t.id === id ? { ...t, ...change } : t)));
@@ -431,11 +516,15 @@ export function BrowserPane({
         setTabs((list) => [...list, tab]);
       },
       activate: (id) => {
-        setActiveId(id);
-        setView("page");
+        // The tab shows in its own session. The pane of another session does not change.
+        const tab = tabsRef.current.find((t) => t.id === id);
+        const owner = tab ? ownerOf(tab) : keyRef.current;
+        setActives((a) => ({ ...a, [owner]: id }));
+        if (owner === keyRef.current) setView("page");
       },
       has: (id) => tabsRef.current.some((t) => t.id === id),
       resync: (id) => lastSync.current.delete(id),
+      list: () => ({ tabs: tabsRef.current, active: { ...activesRef.current, [keyRef.current]: activeRef.current } }),
     };
     return () => {
       paneHooks = null;
@@ -551,34 +640,36 @@ export function BrowserPane({
 
   const addTab = useCallback(
     (url: string | null = null) => {
-      if (tabs.length >= MAX_TABS) {
+      if (mine.length >= MAX_TABS) {
         onError(`The browser can have at most ${MAX_TABS} tabs. Close a tab first.`);
         return null;
       }
-      const tab = newTab(url);
+      const tab = { ...newTab(url), owner: key };
       setTabs((list) => [...list, tab]);
       setActiveId(tab.id);
       setView("page");
       return tab;
     },
-    [tabs.length, onError],
+    [mine.length, key, onError, setActiveId],
   );
 
   const closeTab = (id: string) => {
     if (opened.delete(id)) void browserView.close(id).catch(() => undefined);
     lastSync.current.delete(id);
     dropAgentTab(id);
-    const index = tabs.findIndex((t) => t.id === id);
-    const rest = tabs.filter((t) => t.id !== id);
+    const index = mine.findIndex((t) => t.id === id);
+    const rest = mine.filter((t) => t.id !== id);
+    const others = tabs.filter((t) => t.id !== id);
     if (rest.length === 0) {
-      const tab = newTab(); // The next time, the pane opens with one new tab.
-      kept = { tabs: [tab], active: tab.id }; // The pane closes now: the effect that saves the tabs does not run.
-      setTabs([tab]);
+      const tab = { ...newTab(), owner: key }; // The next time, the pane opens with one new tab.
+      // The pane closes now: the effect that saves the tabs does not run.
+      kept = { tabs: [...others, tab], active: { ...actives, [key]: tab.id } };
+      setTabs([...others, tab]);
       setActiveId(tab.id);
       onEmpty();
       return;
     }
-    setTabs(rest);
+    setTabs(others);
     if (id === active.id) setActiveId(rest[Math.max(0, index - 1)].id);
   };
 
@@ -596,7 +687,6 @@ export function BrowserPane({
   useEffect(() => {
     if (!agentFrame) return;
     if (!active.url) setView("agent");
-    else if (view === "page") setUnseen(true);
   }, [agentFrame?.key]);
 
   useEffect(() => {
@@ -632,9 +722,12 @@ export function BrowserPane({
       .then((stop) => (live ? stops.push(stop) : stop()));
     void browserView
       .onNewTab((event) => {
-        const tab = newTab(event.url);
-        setTabs((list) => (list.length >= MAX_TABS ? list : [...list, tab]));
-        setActiveId(tab.id);
+        // The new tab belongs to the session of the tab that opened it.
+        const source = tabsRef.current.find((t) => t.id === event.id);
+        const owner = source ? ownerOf(source) : keyRef.current;
+        const tab = { ...newTab(event.url), owner };
+        setTabs((list) => (list.filter((t) => ownerOf(t) === owner).length >= MAX_TABS ? list : [...list, tab]));
+        setActives((a) => ({ ...a, [owner]: tab.id }));
       })
       .then((stop) => (live ? stops.push(stop) : stop()));
     return () => {
@@ -791,7 +884,7 @@ export function BrowserPane({
       <PaneHeader>
         <WindowTabs
           kind="Browser"
-          tabs={tabs.map((t) => ({ id: t.id, label: t.agent ? `Agent: ${tabLabel(t)}` : tabLabel(t), icon: t.loading ? LoaderCircle : t.agent ? Bot : Globe, busy: t.loading }))}
+          tabs={mine.map((t) => ({ id: t.id, label: tabLabel(t), icon: t.loading ? LoaderCircle : Globe, busy: t.loading }))}
           active={active.id}
           onSelect={(id) => {
             setActiveId(id);
@@ -967,21 +1060,6 @@ export function BrowserPane({
           spellCheck={false}
           autoComplete="off"
         />
-        <button
-          type="button"
-          className={`icon-btn ghost agent-toggle${agentView ? " active" : ""}`}
-          onClick={() => {
-            setView(agentView ? "page" : "agent");
-            setUnseen(false);
-          }}
-          disabled={!agentFrame}
-          aria-pressed={agentView}
-          aria-label={unseen ? "Agent browser (new page)" : "Agent browser"}
-          title={agentFrame ? "Show the page of the agent browser" : "The agent has not opened a page yet"}
-        >
-          <Bot size={15} aria-hidden />
-          {unseen && <span className="agent-dot" aria-hidden />}
-        </button>
         <button
           type="button"
           className={`icon-btn ghost annotate-toggle${annotating ? " active" : ""}`}

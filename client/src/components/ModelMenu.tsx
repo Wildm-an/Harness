@@ -14,9 +14,10 @@ export interface ModelList {
   default?: string | null; // The model of "Default model" now ("provider/model"). null or absent: not known.
 }
 
-/** The effort levels, as in the Claude app. null: the model decides (some local models have no levels). */
-export const EFFORT_LEVELS: { value: Effort | null; label: string }[] = [
-  { value: null, label: "Default" },
+/** The effort levels, as in the Claude app. The daemon saves the choice of the user. With no choice: High. */
+export const DEFAULT_EFFORT: Effort = "high";
+
+export const EFFORT_LEVELS: { value: Effort; label: string }[] = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
@@ -27,7 +28,7 @@ export const EFFORT_LEVELS: { value: Effort | null; label: string }[] = [
 export const EFFORT_HELP = "Higher effort means more thorough responses, but takes longer and uses your limits faster.";
 
 export function effortLabel(value: Effort | null | undefined): string {
-  return EFFORT_LEVELS.find((l) => l.value === (value ?? null))?.label ?? "Default";
+  return EFFORT_LEVELS.find((l) => l.value === (value ?? DEFAULT_EFFORT))?.label ?? "High";
 }
 
 /** The models by connection, in the order of the list. */
@@ -73,7 +74,7 @@ export function ModelMenu({
   alignRight?: boolean; // The right edges of the menu and the chip are in line.
   heading?: string; // "Model · this session" in a session.
   localProviders?: ReadonlySet<string>; // The providers on the computer of the daemon. Their models go in "Local models".
-  effort?: { value: Effort | null; onChange: (value: Effort | null) => void };
+  effort?: { value: Effort | null; onChange: (value: Effort) => void }; // null: the default level, High.
   onOpen: () => void; // Asks the daemon for the models again: a connection can change at any time.
   onSelect: (spec: string) => void;
   onManage: () => void; // Opens the Providers page.
@@ -160,7 +161,8 @@ export function ModelMenu({
   // "Default model" shows the model that the daemon uses for it, when the daemon gives it.
   const fallback = models?.default ? modelName(models.default) : null;
   const shownName = value ? modelName(value) : fallback ?? "Default model";
-  const shownEffort = effort?.value ? effortLabel(effort.value) : null;
+  const shownEffort = effort ? effortLabel(effort.value) : null;
+  const currentEffort = effort?.value ?? DEFAULT_EFFORT;
 
   // ``inSub``: a model of the "Local models" submenu. The pointer on it keeps the submenu open.
   const radio = (spec: string, label: string, key?: number, inSub = false) => (
@@ -265,17 +267,17 @@ export function ModelMenu({
                   key={l.label}
                   type="button"
                   role="menuitemradio"
-                  aria-checked={(effort.value ?? null) === l.value}
+                  aria-checked={currentEffort === l.value}
                   onClick={() => {
                     close();
-                    if ((effort.value ?? null) !== l.value) effort.onChange(l.value);
+                    if (currentEffort !== l.value) effort.onChange(l.value);
                   }}
                 >
                   <span className="model-menu-name">{l.label}</span>
-                  <span className="model-menu-end">{(effort.value ?? null) === l.value && <Check size={15} className="model-menu-check" aria-hidden />}</span>
+                  <span className="model-menu-end">{currentEffort === l.value && <Check size={15} className="model-menu-check" aria-hidden />}</span>
                 </button>
               ))}
-              <p className="model-submenu-help">{EFFORT_HELP} Default: the model decides.</p>
+              <p className="model-submenu-help">{EFFORT_HELP}</p>
             </div>
           )}
           {sub === "local" && (

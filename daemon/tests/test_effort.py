@@ -6,12 +6,12 @@ from tests.test_server import Client, daemon  # noqa: F401 - the daemon fixture.
 
 
 def test_the_effort_setting_goes_to_the_model(daemon, harness_home, project, fake_model):  # noqa: F811
-    fake_model.script({"text": "No effort."}, {"text": "High effort."}, {"text": "Max effort."})
+    fake_model.script({"text": "Default effort."}, {"text": "High effort."}, {"text": "Max effort."})
     c = Client(daemon)
     c.new_session(project)
     c.send({"type": "prompt", "text": "one"})
     c.until("turn.end")
-    assert "reasoning_effort" not in fake_model.requests[-1]  # No setting: the model decides.
+    assert fake_model.requests[-1]["reasoning_effort"] == "high"  # No setting: High, as in the Claude app.
 
     c.send({"type": "user_settings.set", "values": {"effort": "high"}})
     assert c.until("user_settings")[0]["values"]["effort"] == "high"

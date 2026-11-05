@@ -165,7 +165,9 @@ fn open_log(logs: &Path) -> std::io::Result<(File, PathBuf)> {
 fn spawn_daemon(resource_dir: Option<&Path>) -> Result<Running, String> {
     let token = random_token()?;
     let (mut cmd, log_to_terminal) = daemon_command(resource_dir)?;
-    cmd.args(["--host", "127.0.0.1", "--port", "0", "--exit-on-stdin-eof"])
+    // --prefer-port: the same port at each start when it is free, so the fire URL of a routine API
+    // trigger stays the same. Else the daemon takes a random port.
+    cmd.args(["--host", "127.0.0.1", "--port", "0", "--prefer-port", "47615", "--exit-on-stdin-eof"])
         .env("HARNESS_TOKEN", &token)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());

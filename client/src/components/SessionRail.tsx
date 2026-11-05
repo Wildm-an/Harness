@@ -57,6 +57,7 @@ const LIVE_EVERY = 500; // ms between two pictures of the agent tab.
 export function SessionRail({
   changes,
   onChangesAction,
+  onOpenChanges,
   browser,
   onShowBrowser,
   environment,
@@ -80,6 +81,7 @@ export function SessionRail({
   changes: GitChanges | null; // The changes of the session folder against its base branch.
   // Asks the agent to open a pull request (a GitHub remote) or to commit (a local repository). null: not possible now.
   onChangesAction: ((kind: "pr" | "commit") => void) | null;
+  onOpenChanges?: () => void; // Open the Changes pane (the diff of the session), as a click on the counts in the Claude app.
   browser: RailBrowser | null;
   onShowBrowser: () => void; // Open the Browser pane on the page of the agent.
   environment: RailEnvironment;
@@ -184,16 +186,19 @@ export function SessionRail({
       changes?.repo ? (
         <div className="rail-changes">
           <Diff size={15} aria-hidden className="rail-changes-icon" />
-          <span
+          <button
+            type="button"
             className="rail-changes-count"
+            onClick={onOpenChanges}
+            disabled={!onOpenChanges}
             title={
               changes.files === 0
-                ? "No changes"
-                : `${changes.files} ${changes.files === 1 ? "file" : "files"} changed${changes.base ? ` since ${changes.base}` : " (not committed)"}`
+                ? "No changes. Click to open the Changes pane."
+                : `${changes.files} ${changes.files === 1 ? "file" : "files"} changed${changes.base ? ` since ${changes.base}` : " (not committed)"}. Click to see the changes.`
             }
           >
             <DiffCounts added={changes.added} removed={changes.removed} />
-          </span>
+          </button>
           {changes.github ? (
             // A branch with an open pull request: the Pull requests section shows it.
             !(pr && (pr.state === "open" || pr.state === "draft")) && (

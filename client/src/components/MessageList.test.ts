@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextFollow } from "./MessageList";
+import { nextFollow, reconcileQueue, type QueuedItem } from "./MessageList";
 
 describe("the list follows the agent", () => {
   it("only when the user is fully at the bottom", () => {
@@ -16,5 +16,21 @@ describe("the list follows the agent", () => {
   it("does not stop when the output grows under a list that follows", () => {
     // The scroll position stays, and the gap grows until the next follow scroll.
     expect(nextFollow(true, 120, 500, 500)).toBe(true);
+  });
+});
+
+describe("the queue after a return to a session", () => {
+  const item = (id: string, steering?: boolean): QueuedItem => ({ id, label: id, steering, submission: { kind: "prompt", text: id } as QueuedItem["submission"] });
+
+  it("drops a taken steer message and sends a returned one as a prompt", () => {
+    const list = [item("taken", true), item("returned", true), item("held", true), item("queued")];
+    const next = reconcileQueue(list, new Set(["taken"]), ["held"]);
+    expect(next.map((i) => [i.id, !!i.steering])).toEqual([["returned", false], ["held", true], ["queued", false]]);
+  });
+
+  it("keeps the queue when nothing changed, or with an old daemon", () => {
+    const list = [item("held", true)];
+    expect(reconcileQueue(list, new Set(), ["held"])).toBe(list);
+    expect(reconcileQueue(list, new Set(), undefined)).toBe(list);
   });
 });

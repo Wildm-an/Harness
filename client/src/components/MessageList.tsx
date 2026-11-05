@@ -77,6 +77,30 @@ export interface QueuedItem {
   steering?: boolean; // The daemon has it. The agent reads it at its next step.
 }
 
+/**
+ * The queue of a session after "session.ready". The daemon sends "steer.taken" and "steer.returned" only
+ * to a window that shows the session, so a window that showed another session can miss them. A steer
+ * message that is in the history now goes away. A steer message that the agent does not hold goes back
+ * to the queue as a prompt: it goes to the agent when the turn ends. ``steering`` undefined: an old daemon.
+ */
+export function reconcileQueue(list: QueuedItem[], historyIds: ReadonlySet<string>, steering: readonly string[] | undefined): QueuedItem[] {
+  if (!steering) return list;
+  const held = new Set(steering);
+  let changed = false;
+  const next: QueuedItem[] = [];
+  for (const item of list) {
+    if (item.steering && historyIds.has(item.id)) {
+      changed = true; // The agent took it.
+    } else if (item.steering && !held.has(item.id)) {
+      changed = true; // The turn ended first.
+      next.push({ ...item, steering: false });
+    } else {
+      next.push(item);
+    }
+  }
+  return changed ? next : list;
+}
+
 export type RewindOptions = { conversation: boolean; code: boolean };
 
 type UserItem = Extract<ChatItem, { kind: "user" }>;
@@ -403,6 +427,10 @@ export function MessageList({
               return <FileCard key={item.id} path={item.path} />;
           }
         })}
+        {/* A sent message that waits shows above the task list, as in the Claude app (the user asked for this). */}
+        {queued.map((item) => (
+          <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
+        ))}
         {plan && (
           <PlanBlock
             steps={plan.steps}
@@ -414,9 +442,6 @@ export function MessageList({
         )}
         {wrap && !running && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} />}
         {running && <WorkingLine turn={turn} items={items} model={model} tools={liveTools} reviewId={reviewId} onReview={onReview} />}
-        {queued.map((item) => (
-          <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
-        ))}
         {footer}
         {away && items.length > 0 && (
           <div className="scroll-bottom-wrap">

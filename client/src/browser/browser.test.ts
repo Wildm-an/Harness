@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deviceBounds, fileUrl, normalizeAddress } from "./BrowserPane";
+import { deviceBounds, fileUrl, normalizeAddress, ownerOf, sessionTabs, type BrowserTab } from "./BrowserPane";
 import { ruleForSite, siteOfRule } from "../components/AllowedSites";
 
 describe("browser address", () => {
@@ -42,5 +42,20 @@ describe("the More menu helpers", () => {
     expect(ruleForSite("not a site")).toBeNull();
     expect(siteOfRule("preview_navigate(https://example.com/*)")).toBe("https://example.com");
     expect(siteOfRule("bash(npm test)")).toBeNull();
+  });
+});
+
+describe("the browser tabs of each session", () => {
+  const tab = (id: string, extra: Partial<BrowserTab> = {}): BrowserTab => ({ id, url: null, address: "", title: "", loading: false, frame: 0, ...extra });
+
+  it("show only the tabs of the open session, with its last active tab", () => {
+    const tabs = [tab("a1", { owner: "a" }), tab("b1", { owner: "b" }), tab("agent", { agent: "a" }), tab("old")];
+    expect(ownerOf(tabs[2])).toBe("a"); // An agent tab belongs to its agent.
+    expect(ownerOf(tabs[3])).toBe(""); // A tab of an old version: the start screen.
+    const a = sessionTabs(tabs, "a", { a: "agent" });
+    expect(a.mine.map((t) => t.id)).toEqual(["a1", "agent"]);
+    expect(a.shown?.id).toBe("agent");
+    expect(sessionTabs(tabs, "b", {}).shown?.id).toBe("b1");
+    expect(sessionTabs(tabs, "c", {}).shown).toBeUndefined(); // The pane adds a new tab for it.
   });
 });

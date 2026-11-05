@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toolLabel, toolSummary } from "./ToolCard";
+import { toolLabel, toolSummary, toolTip } from "./ToolCard";
 import { chatReducer, emptyChat, historyToItems } from "../chat/state";
 
 describe("the tool names in the chat", () => {
@@ -45,5 +45,16 @@ describe("the preview tools in the chat", () => {
       { role: "tool", tool_call_id: "c1", content: "A screenshot.", image },
     ]);
     expect(items[1]).toMatchObject({ kind: "tool", name: "preview_screenshot", image });
+  });
+});
+
+describe("the hover tip of a tool row", () => {
+  it("never shows the full content of a file", () => {
+    const write = "cat > notes.md <<'EOF'\n# Notes\nline two\nline three\nEOF";
+    expect(toolTip("Bash", write)).toBe("Bash: cat > notes.md <<'EOF' …");
+    expect(toolTip("Read", "src/app.py")).toBe("Read: src/app.py");
+    const long = "x".repeat(400);
+    expect(toolTip("Bash", long)).toBe(`Bash: ${"x".repeat(160)}…`);
+    expect(toolTip("Browser", "")).toBe("Browser");
   });
 });

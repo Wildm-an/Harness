@@ -817,6 +817,22 @@ class PaneBrowser:
         if not self.started:
             raise BrowserError("No page is open. Open a page with preview_navigate.")
 
+    # -- the tabs of the session: the agent and the user use the same tabs --------------------------
+
+    async def tabs(self) -> list[dict[str, Any]]:
+        """The tabs of the session in the Browser pane: id, url, title, "shown" (the user sees it), and
+        "used" (the agent works in it). The client answers the pseudo method ``Harness.listTabs``."""
+        result = await self._send("Harness.listTabs", {}, 10)
+        return list(result.get("tabs") or [])
+
+    async def use_tab(self, tab: str) -> None:
+        """Work in a tab of the session: "new" opens a new tab, else the id of an open tab."""
+        if tab == "new":
+            await self._send("Harness.newTab", {}, 15)
+        else:
+            await self._send("Harness.useTab", {"id": tab}, 10)
+        self.started = True  # The tab can have a page already: snapshot and click work on it.
+
     async def navigate(self, url: str) -> dict[str, Any]:
         await self._eval(CONSOLE_HOOK_JS)  # The first call makes the tab.
         result = await self._call("Page.navigate", {"url": url}, NAVIGATE_TIMEOUT / 1000)

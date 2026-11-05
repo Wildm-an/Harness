@@ -6,6 +6,7 @@ import asyncio
 import base64
 import binascii
 import getpass
+import hashlib
 import hmac
 import json
 import logging
@@ -24,7 +25,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any, Awaitable, Callable
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 
 from . import __version__
@@ -224,9 +225,11 @@ async def lifespan(app: FastAPI):
     HEADLESS = HeadlessConnection(app.state.storage)
     ROUTINES.scheduler = RoutineScheduler(app.state.storage, run_routine, ROUTINES.broadcast)
     ROUTINES.scheduler.start()
+    archiver = asyncio.create_task(_archive_loop(app.state.storage))
     try:
         yield
     finally:
+        archiver.cancel()
         await ROUTINES.scheduler.stop()
         ROUTINES.scheduler = None
         await HEADLESS.close_all()
@@ -254,6 +257,12 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
     @app.get("/health")
     async def health():
         return {"ok": True}
+
+    @app.post("/routines/{routine_id}/fire")
+    async def fire_routine(routine_id: str, request: Request):
+        """The API trigger of a routine, as the Claude app has: POST with "Authorization: Bearer <token>"
+        and an optional JSON body {"text": "..."}. The text goes after the prompt of the run."""
+        return await _fire_from_api(request, app.state.storage, routine_id)
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket):
@@ -1147,6 +1156,9 @@ class Connection:
             "requests": list(live.requests.values()),
             "turn_started_at": live.turn_started if running else None,
             "turn_tokens": live.turn_tokens if running else 0,
+            # The steer messages that the agent holds for its next step. A window that showed another
+            # session did not get "steer.taken" or "steer.returned": it checks its queue with this list.
+            "steering": [sid for sid, _text, _display, origin in s.agent.user_steer if origin != "task"],
         })
 
     async def run_turn(self, live: LiveSession, text: str, display: str | None = None,
@@ -1584,6 +1596,51 @@ async def send_to_session(source: Session, target_id: str, prompt: str) -> dict[
 
 
 session_mod.SESSION_SENDER = send_to_session
+
+
+# "Archive inactive sessions" (user setting auto_archive_days), as in the Claude app.
+ARCHIVE_DAYS = (0, 1, 2, 7, 14, 30)
+ARCHIVE_CHECK_SECONDS = 3600
+
+
+async def archive_inactive(storage: Storage, now: float | None = None) -> list[str]:
+    """Archive the sessions with no activity for the days of the setting. Return their ids.
+
+    A session stays when it is open (in a window or with no window), pinned, or in a worktree with
+    changes that are not in a commit. The archive of a clean worktree session removes its folder, as
+    a manual archive does. The windows get the new session list.
+    """
+    days = load_settings(None).get("auto_archive_days")
+    if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
+        return []
+    cutoff = (time.time() if now is None else now) - days * 86400
+    archived: list[str] = []
+    for row in storage.list_sessions(limit=1_000_000):
+        if row["archived"] or row["pinned"] or row["updated_at"] >= cutoff or _find_live(row["id"]) is not None:
+            continue
+        worktree = worktrees.loads((storage.get_session(row["id"]) or {}).get("worktree"))
+        if worktree:
+            try:
+                if await asyncio.to_thread(worktrees.has_changes, worktree):
+                    continue
+                await asyncio.to_thread(worktrees.remove, worktree)
+            except WorktreeError:
+                continue  # Git cannot tell: keep the session.
+        storage.update_session(row["id"], touch=False, archived=1)
+        archived.append(row["id"])
+    if archived:
+        log.info("Archived %d inactive sessions", len(archived))
+        await ROUTINES.broadcast({"type": "sessions.archived", "ids": archived})
+    return archived
+
+
+async def _archive_loop(storage: Storage) -> None:
+    while True:
+        try:
+            await archive_inactive(storage)
+        except Exception:  # noqa: BLE001 - one failed check must not stop the next checks.
+            log.exception("The archive of inactive sessions failed")
+        await asyncio.sleep(ARCHIVE_CHECK_SECONDS)
 
 
 def _project_ref(storage: Storage, cwd: Path) -> dict[str, str] | None:
@@ -2753,6 +2810,64 @@ async def on_routines_run(conn: Connection, msg: dict[str, Any]) -> None:
         raise ProtocolError("The routine runs now. Wait for the end of the run.")
 
 
+# The API trigger of a routine (POST /routines/{id}/fire). The longest "text" of a call, in characters.
+FIRE_TEXT_LIMIT = 20_000
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _fire_from_api(request: Request, storage: Storage, routine_id: str) -> dict[str, Any]:
+    scheduler = ROUTINES.scheduler
+    expected = storage.routine_token_hash(routine_id) if storage.get_routine(routine_id) else None
+    auth = request.headers.get("authorization") or ""
+    given = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    # The same answer for an unknown routine and a bad token: a caller cannot find the routine ids.
+    if not expected or not given or not hmac.compare_digest(_token_hash(given), expected):
+        raise HTTPException(status_code=401, detail="Unknown routine, or a bad token. Send 'Authorization: Bearer <token>'.")
+    if scheduler is None:
+        raise HTTPException(status_code=503, detail="The routine scheduler does not run.")
+    text: str | None = None
+    body = await request.body()
+    if body.strip():
+        try:
+            data = json.loads(body)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="The body must be JSON, for example {\"text\": \"...\"}.") from None
+        value = data.get("text") if isinstance(data, dict) else None
+        if value is not None and not isinstance(value, str):
+            raise HTTPException(status_code=400, detail="'text' must be a string.")
+        if value and len(value) > FIRE_TEXT_LIMIT:
+            raise HTTPException(status_code=400, detail=f"'text' must have {FIRE_TEXT_LIMIT} characters or less.")
+        text = value.strip() if value else None
+    skipped = scheduler.fire(routine_id, text=text)
+    if skipped is not None:
+        raise HTTPException(status_code=409, detail="The routine runs now. Try again when the run ends.")
+    return {"ok": True, "routine_id": routine_id}
+
+
+@handler("routines.token")
+async def on_routines_token(conn: Connection, msg: dict[str, Any]) -> None:
+    """The API trigger token of a routine: {"id", "action": "generate" | "delete"}. "generate" makes a new
+    token (the old one stops working) and sends it one time. The daemon keeps only its hash."""
+    scheduler = _scheduler()
+    routine_id = _text_arg(msg, "id")
+    if conn.storage.get_routine(routine_id) is None:
+        raise ProtocolError("Unknown routine.")
+    action = msg.get("action")
+    if action == "generate":
+        token = "hrt_" + secrets.token_urlsafe(32)
+        conn.storage.set_routine_token(routine_id, _token_hash(token), token[-4:])
+        await conn.send({"type": "routine.token", "id": routine_id, "token": token})
+    elif action == "delete":
+        conn.storage.set_routine_token(routine_id, None, None)
+        await conn.send({"type": "routine.token", "id": routine_id, "token": None})
+    else:
+        raise ProtocolError("'action' must be generate or delete.")
+    await scheduler.send_items()
+
+
 @handler("routines.runs")
 async def on_routines_runs(conn: Connection, msg: dict[str, Any]) -> None:
     routine_id = _text_arg(msg, "id")
@@ -3268,8 +3383,9 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "auto_model": (bool,),
     "online_model": (str, type(None)),
     "offline_model": (str, type(None)),
-    "effort": (str, type(None)),  # The effort level of the model menu. None: the model decides.
-    "new_task_prompt": (str,),  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
+    "effort": (str, type(None)),  # The effort level of the model menu. None: the default level, High.
+    "new_task_prompt": (str,),
+    "auto_archive_days": (int,),  # "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
     "auto_memory": (bool,),
     "memory_sensitive": (bool,),
@@ -3315,6 +3431,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"The type of '{key}' must be {' or '.join('null' if k is type(None) else k.__name__ for k in kinds)}.")
         if key == "permission_mode" and value not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+        if key == "auto_archive_days" and value not in ARCHIVE_DAYS:
+            raise ProtocolError(f"'auto_archive_days' must be one of: {', '.join(map(str, ARCHIVE_DAYS))}.")
         if key == "new_task_prompt" and value not in NEW_TASK_CHOICES:
             raise ProtocolError(f"'new_task_prompt' must be one of: {', '.join(NEW_TASK_CHOICES)}.")
         if key == "effort" and value is not None and value not in EFFORT_API:
@@ -3344,6 +3462,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
         if live.session is not None:
             live.session.agent.reload_settings(load_settings(live.session.cwd))
     await _send_user_settings(conn)
+    if "auto_archive_days" in changes:
+        await archive_inactive(conn.storage)
 
 
 # Settings > Your Harness > Memory: see, add, change, delete, import, and export the memories of a

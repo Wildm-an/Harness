@@ -1379,6 +1379,9 @@ Function .onInstSuccess
     ${GetOptions} $CMDLINE "/R" $R0
     ${IfNot} ${Errors}
       ${GetOptions} $CMDLINE "/ARGS" $R0
+      ; The updater gives the arguments of the old process. A start at sign-in has --background,
+      ; which keeps the window hidden. After an update the user must see the app: remove it.
+      ${WordReplace} "$R0" "--background" "" "+" $R0
       nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"
     ${EndIf}
   ${EndIf}

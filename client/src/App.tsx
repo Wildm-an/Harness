@@ -136,7 +136,7 @@ import { normalizePath, openFolderBlocked } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
-import { MessageList, type QueuedItem, type RewindOptions } from "./components/MessageList";
+import { MessageList, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
 import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
 import { setVisualDaemon } from "./lib/visual";
@@ -469,6 +469,10 @@ export default function App() {
   const [routineError, setRoutineError] = useState<string | null>(null);
   const [routinesFolder, setRoutinesFolder] = useState<string | null>(null); // ~/.harness/routines on the daemon computer.
   const [routineSaved, setRoutineSaved] = useState<{ id: string; key: number } | null>(null);
+  // The new API token of a routine, shown one time on the Routines page.
+  const [routineToken, setRoutineToken] = useState<{ id: string; token: string } | null>(null);
+  // The HTTP address of the daemon (http://host:port): the fire URL of a routine API trigger.
+  const [daemonHttp, setDaemonHttp] = useState<string | null>(null);
   const shownIdRef = useRef<string | null>(null); // The session that the user sees now, for the message handler.
 
   /** Opens the Providers screen. Uses only refs and state setters: the message handler calls it too. */
@@ -645,6 +649,14 @@ export default function App() {
     const offMessage = conn.onMessage((msg) => {
       switch (msg.type) {
         case "session.ready": {
+          // The steer messages of this session: the window can have missed "steer.taken" or "steer.returned".
+          setQueues((q) => {
+            const list = q[msg.session_id];
+            if (!list?.length) return q;
+            const ids = new Set(msg.history.map((m) => (m as { id?: string }).id).filter((id): id is string => !!id));
+            const next = reconcileQueue(list, ids, msg.steering);
+            return next === list ? q : { ...q, [msg.session_id]: next };
+          });
           if (sessionRef.current?.id !== msg.session_id) {
             setIdeBlockFor(ideBlockNext.current ? msg.session_id : null);
             ideEmptyFor.current = ideBlockNext.current ? msg.session_id : null;
@@ -815,6 +827,12 @@ export default function App() {
           return;
         case "routine.runs":
           setRoutineRuns({ routine_id: msg.routine_id, items: msg.items });
+          return;
+        case "sessions.archived":
+          listRecent(); // The sidebar shows them only with the "Archived" or "All" status filter.
+          return;
+        case "routine.token":
+          setRoutineToken(msg.token ? { id: msg.id, token: msg.token } : null);
           return;
         case "turn.done": {
           const { type: _type, ...done } = msg;
@@ -1192,6 +1210,7 @@ export default function App() {
         const target = await resolveTarget(c);
         const { host, version, updatable } = await conn.connect(target.host, target.port, target.token);
         targetRef.current = target;
+        setDaemonHttp(`http://${target.host}:${target.port}`);
         setVisualDaemon(target.host, target.port);
         setHello(host);
         setDaemonVersion(version);
@@ -1266,6 +1285,7 @@ export default function App() {
         const target = await resolveTarget(c);
         const { host, version, updatable } = await conn.connect(target.host, target.port, target.token);
         targetRef.current = target;
+        setDaemonHttp(`http://${target.host}:${target.port}`);
         setVisualDaemon(target.host, target.port);
         setHello(host);
         setDaemonVersion(version);
@@ -2022,7 +2042,7 @@ export default function App() {
   const effortControl = useMemo(
     () =>
       status === "open" && userSettings
-        ? { value: effortValue, onChange: (effort: Effort | null) => void sendSafely({ type: "user_settings.set", values: { effort } }) }
+        ? { value: effortValue, onChange: (effort: Effort) => void sendSafely({ type: "user_settings.set", values: { effort } }) }
         : undefined,
     [status, userSettings !== null, effortValue, sendSafely],
   );
@@ -2639,6 +2659,7 @@ export default function App() {
       ownHeader: true, // Its tabs are in the window header.
       render: () => (
         <BrowserPane
+          session={session?.id ?? null}
           request={browserRequest}
           serverApi={servers}
           agentFrame={agentFrame}
@@ -3157,6 +3178,13 @@ export default function App() {
               })
             }
             onRequestRuns={(id) => sendSafely({ type: "routines.runs", id })}
+            apiBase={daemonHttp}
+            newToken={routineToken}
+            onToken={(id, action) => {
+              setRoutineToken(null);
+              sendSafely({ type: "routines.token", id, action });
+            }}
+            onTokenDone={() => setRoutineToken(null)}
             onOpenSession={resumeSession}
           />
         )}
@@ -3436,6 +3464,7 @@ export default function App() {
                   }
                   onShowBrowser={showAgentBrowser}
                   changes={gitChanges && samePath(gitChanges.cwd, session.cwd) ? gitChanges : null}
+                  onOpenChanges={() => setLayout((l) => openPane(l, "diff"))}
                   onChangesAction={
                     status === "open"
                       ? (kind) =>

@@ -169,17 +169,20 @@ class PreviewLogsTool(_PreviewTool):
 class PreviewNavigateTool(_PreviewTool):
     name = "preview_navigate"
     description = (
-        "Open a page in the agent browser. In the desktop app, this browser is your tab of the Browser "
-        "pane: the user sees the page live, can use it too, and shares its cookies. "
-        "Give a full URL, or a path such as /about. A path opens "
-        "on the current page, or on the running server. The URLs of the servers in launch.json need "
-        "no approval. Other URLs need approval."
+        "Open a page in the browser. In the desktop app, this is the Browser pane of the session: you and "
+        "the user use the same tabs, see the same pages, and share the cookies. With 'tab', choose the tab "
+        "first: an id from preview_tabs (to continue in a tab that the user opened for this task), or "
+        "\"new\" for a new tab (when no open tab is about this task). Without 'tab', the page opens in the "
+        "tab that you used last. Give a full URL, or a path such as /about. A path opens on the current "
+        "page, or on the running server. The URLs of the servers in launch.json need no approval. Other "
+        "URLs need approval."
     )
     parameters = {
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "A full URL or a path."},
             "server": {"type": "string", "description": "A server name. The path opens on this server. Optional."},
+            "tab": {"type": "string", "description": "Optional: a tab id from preview_tabs, or \"new\"."},
         },
         "required": ["url"],
     }
@@ -205,7 +208,8 @@ class PreviewNavigateTool(_PreviewTool):
         url = await self._url(host, args)
         if not url.startswith(("about:", "data:")) and not host.allowed(url):
             host.approve(url)  # The permission gate approved it.
-        info = await host.browser.navigate(url)
+        tab = str(args.get("tab") or "").strip() or None
+        info = await host.browser.navigate(url, tab)
         await host.send_frame("navigate")
         status = info["status"]
         lines = [f"Opened {info['url']}" + (f" (HTTP {status})." if status else ".")]
@@ -323,9 +327,41 @@ class PreviewScreenshotTool(_PreviewTool):
         return ToolResult(f"A screenshot of {info['url']}. The image is in the next message.", image=data_url(image))
 
 
+class PreviewTabsTool(_PreviewTool):
+    name = "preview_tabs"
+    description = (
+        "List the tabs of the Browser pane of this session, or switch to one. You and the user use the same "
+        "tabs. Before you open a page for a task, list the tabs: if the user opened a tab for this task, "
+        "continue in it (give its id in 'use'), and read it with preview_snapshot. If no tab is about the "
+        "task, open the page with preview_navigate and tab \"new\". Each tab has its id, URL, title, "
+        "\"shown\" (the user sees it now), and \"used\" (you work in it)."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {"use": {"type": "string", "description": "Optional: the id of a tab to work in, or \"new\"."}},
+    }
+
+    async def act(self, host: "PreviewHost", args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        use = str(args.get("use") or "").strip()
+        if use:
+            await host.browser.use_tab(use)
+        tabs = await host.browser.tabs()
+        if tabs is None:
+            return ToolResult("The Browser pane is not available. The headless browser has one page: open it with "
+                              "preview_navigate.")
+        if not tabs:
+            return ToolResult("The session has no tabs. Open a page with preview_navigate.")
+        lines = [f"Now in the tab {use}." if use else "The tabs of this session:"]
+        for t in tabs:
+            marks = [m for m, on in (("shown", t.get("shown")), ("used", t.get("used"))) if on]
+            lines.append(f"- {t.get('id')}: {t.get('title') or 'New tab'} {t.get('url') or '(no page)'}"
+                         + (f" [{', '.join(marks)}]" if marks else ""))
+        return ToolResult("\n".join(lines))
+
+
 def preview_tools(image_input: bool) -> list[Tool]:
     tools: list[Tool] = [
-        PreviewStartTool(), PreviewStopTool(), PreviewLogsTool(), PreviewNavigateTool(),
+        PreviewStartTool(), PreviewStopTool(), PreviewLogsTool(), PreviewTabsTool(), PreviewNavigateTool(),
         PreviewSnapshotTool(), PreviewClickTool(), PreviewFillTool(), PreviewConsoleTool(),
     ]
     if image_input:

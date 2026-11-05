@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="harness-daemon")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address. Default 127.0.0.1.")
     parser.add_argument("--port", type=int, default=0, help="Port. 0 selects a random free port.")
+    parser.add_argument("--prefer-port", type=int, default=0,
+                        help="With --port 0: try this port first (the desktop app, for a stable routine fire URL).")
     parser.add_argument("--token", default=None, help="Connection token. Prefer HARNESS_TOKEN or the token file.")
     parser.add_argument("--token-file", default=None, help="The token file. Default: ~/.harness/daemon-token.")
     parser.add_argument("--new-token", action="store_true", help="Write a new token to the token file.")
@@ -113,7 +115,17 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Warning: the daemon listens on {args.host}. Do not expose this port to the internet.", file=sys.stderr)
 
     update.enable(argv, sidecar=args.exit_on_stdin_eof)
-    sock = _bind(args.host, args.port, wait=bool(os.environ.pop(update.WAIT_PID_ENV, None)))
+    wait = bool(os.environ.pop(update.WAIT_PID_ENV, None))
+    sock = None
+    if args.port == 0 and args.prefer_port:
+        # The desktop app: the same port at each start when it is free, so the fire URL of a routine
+        # API trigger stays the same. Else a random port.
+        try:
+            sock = _bind(args.host, args.prefer_port, wait=wait)
+        except OSError:
+            sock = None
+    if sock is None:
+        sock = _bind(args.host, args.port, wait=wait)
     sock.listen(64)
     port = sock.getsockname()[1]
 

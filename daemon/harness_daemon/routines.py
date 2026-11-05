@@ -56,6 +56,7 @@ def next_fire(schedule: str, after: float) -> float | None:
 class _Queued:
     routine_id: str
     fire_at: float
+    text: str | None = None  # The "text" of an API call: one more paragraph after the prompt.
 
 
 @dataclass
@@ -173,15 +174,16 @@ class RoutineScheduler:
 
     # -- runs -----------------------------------------------------------------------------------
 
-    def fire(self, routine_id: str, fire_at: float | None = None) -> str | None:
-        """Start a run of a routine, or put it in the queue. Return the id of a skipped run, else None."""
+    def fire(self, routine_id: str, fire_at: float | None = None, text: str | None = None) -> str | None:
+        """Start a run of a routine, or put it in the queue. Return the id of a skipped run, else None.
+        ``text``: the text of an API call. The run gets the prompt, then this text."""
         fire_at = self.clock() if fire_at is None else fire_at
         if routine_id in self.active or any(q.routine_id == routine_id for q in self.queue):
             run_id = self.storage.add_run(routine_id, fire_at, "skipped",
                                           error="The routine was still running at this time.")
             asyncio.ensure_future(self.send_items())
             return run_id
-        self.queue.append(_Queued(routine_id, fire_at))
+        self.queue.append(_Queued(routine_id, fire_at, text))
         self._drain()
         asyncio.ensure_future(self.send_items())
         return None
@@ -192,6 +194,8 @@ class RoutineScheduler:
             routine = self.storage.get_routine(item.routine_id)
             if routine is None:  # Deleted while it waited.
                 continue
+            if item.text:
+                routine = {**routine, "prompt": f"{routine['prompt']}\n\n{item.text}"}
             self.active[routine["id"]] = asyncio.create_task(self._run(routine, item.fire_at))
 
     async def _run(self, routine: dict[str, Any], fire_at: float) -> None:

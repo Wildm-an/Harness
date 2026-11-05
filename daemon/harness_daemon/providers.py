@@ -548,6 +548,7 @@ log = logging.getLogger(__name__)
 # The effort levels of the model menu (setting "effort"), and the reasoning_effort value of the API.
 # The OpenAI API has no level above "xhigh": "max" sends "xhigh" too.
 EFFORT_API = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
+DEFAULT_EFFORT = "high"  # The level with no "effort" setting, as in the Claude app.
 
 
 class ModelClient:

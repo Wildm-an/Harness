@@ -4,6 +4,7 @@ import type { CommandItem } from "../daemon/protocol";
 import { isAddFilesShortcut } from "../lib/fileRefs";
 import { busySend, type BusySend } from "./SettingsDialog";
 import { imageFiles, imageToDataUrl, MAX_IMAGES } from "../lib/images";
+import { shortTip } from "./Tooltips";
 import {
   filterSessions,
   insertMention,
@@ -603,7 +604,7 @@ export function PromptBox({
           {attachments.length > 0 && (
             <ul className="prompt-attachments" aria-label="Attached context">
               {attachments.map((a) => (
-                <li key={a.id} className={`prompt-attachment${a.image ? " image" : ""}`} title={a.image ? a.label : a.text.trim()}>
+                <li key={a.id} className={`prompt-attachment${a.image ? " image" : ""}`} title={a.image ? a.label : shortTip(a.text)}>
                   {a.image ? (
                     <img src={a.image} alt={a.label} className="prompt-attachment-thumb" />
                   ) : (

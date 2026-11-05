@@ -5,6 +5,7 @@ import { toolAction } from "../chat/toolText";
 import { DiffStats } from "./DiffStats";
 import { InlineDiff } from "./InlineDiff";
 import { useOpenPath } from "../lib/openPath";
+import { shortTip } from "./Tooltips";
 
 // The names that Claude Code shows for its tools.
 const LABELS: Record<string, string> = {
@@ -28,6 +29,13 @@ export function toolLabel(name: string): string {
 }
 
 /** A one-line summary of the tool input: the path or the command. */
+/** The hover tip of a tool row: the tool name and a short summary. A command or a write can have the
+ * full content of a file: the tip does not show it (the user asked for this). */
+export function toolTip(label: string, summary: string): string {
+  const short = shortTip(summary);
+  return short ? `${label}: ${short}` : label;
+}
+
 export function toolSummary(name: string, input: unknown): string {
   if (name.startsWith("mcp__") && input && typeof input === "object") {
     // An MCP tool: the first short text argument, or the argument names.
@@ -85,7 +93,7 @@ export const ToolCard = memo(function ToolCard({
         className="tool-head"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={`${toolLabel(item.name)}: ${summary}`}
+        title={toolTip(toolLabel(item.name), summary)}
       >
         {item.status === "running" && <LoaderCircle size={13} className="tool-state spin" role="img" aria-label="Running" />}
         {item.status === "error" && <CircleX size={13} className="tool-state failed" role="img" aria-label="Failed" />}

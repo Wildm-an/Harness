@@ -36,7 +36,7 @@ from .loop_guards import (
     MAX_STALL_NUDGES, STALL_NOTICE, STALL_NUDGE, is_stall, repair_tool_name, repaired_note, repeat_key, repeat_note,
 )
 from .prompt import build_system_prompt, load_project_instructions, system_prompt_parts
-from .providers import DEFAULT_CONTEXT_LENGTH, EFFORT_API, ModelClient, ModelError, resolve_model
+from .providers import DEFAULT_CONTEXT_LENGTH, DEFAULT_EFFORT, EFFORT_API, ModelClient, ModelError, resolve_model
 from .skills import Skill, render_skill
 from .tools import (
     SkillTool,
@@ -945,9 +945,9 @@ class Agent:
 
     async def _request_config(self, turn: int, step: int) -> tuple[ModelClient, dict[str, Any]]:
         """request.before handlers can change the model and the call options of one model call.
-        The "effort" setting (the model menu) gives reasoning_effort. None: the model decides."""
+        The "effort" setting (the model menu) gives reasoning_effort. No setting: High, as in the Claude app."""
         client = self.client
-        effort = EFFORT_API.get(str(self.settings.get("effort") or ""))
+        effort = EFFORT_API.get(str(self.settings.get("effort") or DEFAULT_EFFORT), EFFORT_API[DEFAULT_EFFORT])
         if not self.hooks.has("request.before"):
             return client, {"reasoning_effort": effort} if effort else {}
         event = await self.hooks.emit("request.before", RequestEvent(
