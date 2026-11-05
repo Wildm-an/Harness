@@ -510,7 +510,19 @@ export function SessionStart({
                     onEdit={(p) => openForm({ id: p.id, name: p.name, path: p.path, create: false })}
                     onDelete={onDeleteProject}
                   />
-                  <WorktreeMenu choice={worktree} info={branchInfo} onChange={changeWorktree} />
+                  {/* As in Claude: a "Worktree" check box to the right of the folder. When it is on, the
+                      chip after it chooses the branch to start from. */}
+                  {branchInfo?.repo && (
+                    <label className="checkbox prompt-worktree" title="Work in an isolated copy of the repository">
+                      <input
+                        type="checkbox"
+                        checked={worktree.on}
+                        onChange={(e) => changeWorktree({ ...worktree, on: e.target.checked })}
+                      />
+                      Worktree
+                    </label>
+                  )}
+                  {worktree.on && <WorktreeMenu choice={worktree} info={branchInfo} onChange={changeWorktree} />}
                 </div>
                 <ModelMenu
                   value={model}
