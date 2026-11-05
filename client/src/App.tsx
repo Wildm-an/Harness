@@ -1857,7 +1857,6 @@ export default function App() {
     else if (action.source === "token") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "token", token: action.token });
     else if (action.source === "device") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "device", options: action.options });
     else if (action.source === "google") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "google", options: action.options });
-    else if (action.source === "local") sent = sendSafely({ type: "connectors.connect", id: action.id, source: "local", options: { profile: action.profile } });
     else sent = sendSafely({ type: "connectors.connect", id: action.id, source: "gh" });
     if (!sent) setConnectorBusy(null);
   };

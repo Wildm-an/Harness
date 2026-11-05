@@ -1,4 +1,4 @@
-"""Tests for the Gmail connector (the kind "google") and the Chrome connector (the kind "local")."""
+"""Tests for the Gmail connector (the kind "google"), and the removal of the old Chrome connector."""
 
 from __future__ import annotations
 
@@ -145,23 +145,26 @@ def test_the_gmail_server_gets_the_secret(harness_home, fake_google, project):
     asyncio.run(main())
 
 
-def test_chrome(harness_home):
-    assert asyncio.run(connectors.connect("chrome", "local", options={"profile": "own"})) == "own"
-    entry = user_servers()["chrome"]
-    assert entry == {"command": "npx", "args": ["-y", "chrome-devtools-mcp@1.12.0", "--no-usage-statistics",
-                                                "--autoConnect"], "connector": "chrome"}
-    status = next(i for i in asyncio.run(connectors.items())["items"] if i["id"] == "chrome")
-    assert (status["kind"], status["source"], status["profile"]) == ("local", "local", "own")
+def test_the_retired_chrome_connector(harness_home, project):
+    """Harness 0.1.44 had a Chrome connector. Its entry gives a clear message, and the Connectors tab removes it."""
+    from harness_daemon.mcp_client import load_mcp_config
 
-    asyncio.run(connectors.connect("chrome", "local", options={"profile": "separate"}))
-    assert user_servers()["chrome"]["args"] == ["-y", "chrome-devtools-mcp@1.12.0", "--no-usage-statistics"]
-    with pytest.raises(Exception, match="profile must be"):
-        asyncio.run(connectors.connect("chrome", "local", options={"profile": "incognito"}))
+    path = harness_home / "mcp.json"
+    path.write_text(json.dumps({"mcpServers": {
+        "chrome": {"command": "npx", "args": ["-y", "chrome-devtools-mcp@1.12.0"], "connector": "chrome"},
+        "mine": {"command": "my-server"},
+    }}), encoding="utf-8")
+    mcp_auth.update_record(connectors.record_key("chrome"), source="local", options={"profile": "own"})
+    servers, problems = load_mcp_config(project)
+    assert "chrome" not in servers and "mine" in servers
+    assert any("no longer has the Chrome" in p for p in problems)
 
-    asyncio.run(connectors.disconnect("chrome"))
-    assert "chrome" not in user_servers()
-    status = next(i for i in asyncio.run(connectors.items())["items"] if i["id"] == "chrome")
-    assert status["source"] is None
+    items = asyncio.run(connectors.items())["items"]
+    assert [i["id"] for i in items] == ["github", "outlook", "gmail"]
+    assert list(user_servers()) == ["mine"]  # The other server stays.
+    assert mcp_auth.read_record(connectors.record_key("chrome")) == {}
+    with pytest.raises(Exception):
+        asyncio.run(connectors.connect("chrome", "local"))
 
 
 def test_gmail_messages(daemon, project, fake_model, fake_google):  # noqa: F811

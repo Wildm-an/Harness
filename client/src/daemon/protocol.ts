@@ -318,10 +318,10 @@ export interface ConnectorItem {
   id: string;
   name: string;
   description: string;
-  kind: "token" | "device" | "google" | "local";
+  kind: "token" | "device" | "google";
   url: string; // The MCP server ("token"), or the page of the server ("device").
   installed: boolean; // The server entry is in ~/.harness/mcp.json.
-  source: "gh" | "token" | "device" | "google" | "local" | null; // How it signed in. null: not connected.
+  source: "gh" | "token" | "device" | "google" | null; // How it signed in. null: not connected.
   login: string | null; // The account.
   signing_in: boolean; // A device sign-in waits for the user.
   gh_available?: boolean; // "token": the GitHub CLI is signed in on the daemon computer.
@@ -332,7 +332,6 @@ export interface ConnectorItem {
   client_id?: string | null; // "google": the OAuth client of the user (the secret never comes to the client).
   client_builtin?: boolean; // "google": the accounts use the Google client of Harness.
   builtin_client?: boolean; // "google": this build of Harness has a Google client ("Continue with Google").
-  profile?: "own" | "separate" | null; // "local" (Chrome): the Chrome window of the user, or a separate profile.
 }
 
 /** The options of a Gmail sign-in. The client ID and secret are needed only for the first account. */
@@ -642,9 +641,9 @@ export type ClientMessage =
   | {
       type: "connectors.connect";
       id: string;
-      source: "gh" | "token" | "device" | "google" | "local";
+      source: "gh" | "token" | "device" | "google";
       token?: string;
-      options?: ConnectorOptions | GoogleConnectOptions | { profile: "own" | "separate" };
+      options?: ConnectorOptions | GoogleConnectOptions;
     }
   | { type: "connectors.auth_code"; id: string; url: string }
   | { type: "connectors.cancel"; id: string }

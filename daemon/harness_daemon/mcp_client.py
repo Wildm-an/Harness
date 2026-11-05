@@ -136,9 +136,12 @@ def _parse_server(name: str, raw: Any, scope: str, project: Path | None) -> tupl
     connector = raw.get("connector")
     if connector is not None:
         known = connectors.CONNECTORS.get(connector) if isinstance(connector, str) else None
+        if isinstance(connector, str) and connector in connectors.RETIRED:
+            raise ConfigError(f"MCP server {name}: Harness no longer has the {connectors.RETIRED[connector]} connector. "
+                              f"Open the Connectors tab to remove the entry, or remove '{name}' from mcp.json.")
         if known is None:
             raise ConfigError(f"MCP server {name}: unknown connector {connector!r}.")
-        local = known.kind in ("device", "google", "local")
+        local = known.kind in ("device", "google")
         if local != (kind == "stdio"):
             raise ConfigError(f"MCP server {name}: the connector {connector} needs a "
                               f"{'stdio' if local else 'http'} server.")

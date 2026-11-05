@@ -3,6 +3,19 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Connectors
+
+- The Chrome connector is removed. If you connected it, Harness removes its server from
+  `~/.harness/mcp.json` when you open the Connectors tab.
+
+### Chat
+
+- A click anywhere on the working line ("Running Bash…", the time, or the caret) now shows its
+  details. Before, only the caret did.
+- The working line no longer shows the hover tip "Esc to interrupt".
+
 ## 0.1.44 (2026-11-04)
 
 ### Connectors

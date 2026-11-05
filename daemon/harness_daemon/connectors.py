@@ -18,9 +18,8 @@ The MCP client asks ``token()`` for the token at each connection, and sends it a
 GitHub has no dynamic client registration, so the OAuth flow of mcp_auth.py does not work for it
 without a registered OAuth app. The ``oauth`` key in ``mcp.json`` is for that case.
 
-There are two more kinds, described at their code: ``google`` (Gmail, a local Python server; Harness signs
-in to Google with the OAuth client of the user and writes the credential files) and ``local`` (Chrome, a
-local server with no sign-in).
+There is one more kind, described at its code: ``google`` (Gmail, a local Python server; Harness signs in
+to Google with an OAuth client and writes the credential files).
 
 ``device`` (Microsoft Outlook): a local stdio server from npm that signs in by itself::
 
@@ -58,7 +57,7 @@ from .config import ConfigError, harness_home, read_json, write_json
 GH_TIMEOUT = 10
 LOGIN_TIMEOUT = 900  # Seconds. A Microsoft device code expires after 15 minutes.
 LOGOUT_TIMEOUT = 120  # The first npx run can download the package.
-SOURCES = ("gh", "token", "device", "google", "local")
+SOURCES = ("gh", "token", "device", "google")
 ACCOUNTS = ("personal", "work")
 
 OnCode = Callable[[str, str], Awaitable[None]]  # (url, code)
@@ -119,18 +118,11 @@ GMAIL = Connector(
     token_url="https://console.cloud.google.com/auth/clients",
 )
 
-CHROME = Connector(
-    id="chrome",
-    name="Chrome",
-    description="Your Chrome browser: open pages, click, type, take screenshots, and read the console and the "
-                "network, through Chrome DevTools MCP (Apache-2.0).",
-    kind="local",
-    package="chrome-devtools-mcp@1.12.0",
-    args=("--no-usage-statistics",),
-    home_url="https://github.com/ChromeDevTools/chrome-devtools-mcp",
-)
+CONNECTORS: dict[str, Connector] = {GITHUB.id: GITHUB, OUTLOOK.id: OUTLOOK, GMAIL.id: GMAIL}
 
-CONNECTORS: dict[str, Connector] = {GITHUB.id: GITHUB, OUTLOOK.id: OUTLOOK, GMAIL.id: GMAIL, CHROME.id: CHROME}
+# Connectors that Harness had and removed. The Connectors tab removes their entries from ~/.harness/mcp.json
+# (Harness made them), and the MCP client shows a clear message for an entry that is still there.
+RETIRED: dict[str, str] = {"chrome": "Chrome (Harness 0.1.44)"}
 
 # The commands. Tests replace them.
 GH: list[str] | None = None
@@ -724,23 +716,21 @@ def google_code(connector_id: str, url: str) -> str | None:
     return listener.resolve(url)
 
 
-# -- the kind "local" (Chrome) ------------------------------------------------------------------------------
-#
-# A local stdio server with no sign-in. The record keeps the options: {"source": "local", "options":
-# {"profile": "own" or "separate"}}. "own" attaches to the Chrome window of the user (--autoConnect, Chrome
-# 144 or newer, with remote debugging turned on in chrome://inspect/#remote-debugging). "separate" starts a
-# Chrome with a profile of its own.
-
-CHROME_PROFILES = ("own", "separate")
-
-
-def _chrome_command(connector: Connector, profile: str) -> tuple[str, list[str], dict[str, str]]:
-    args = list(connector.args)
-    if profile == "own":
-        args.append("--autoConnect")
-    if NPX is not None:
-        return NPX[0], [*NPX[1:], *args], {}
-    return "npx", ["-y", connector.package, *args], {}
+def remove_retired() -> list[str]:
+    """Remove the mcp.json entries and the records of the retired connectors. Return the removed names."""
+    try:
+        data, servers = _user_file()
+    except ConfigError:
+        return []
+    removed = [name for name, entry in list(servers.items())
+               if isinstance(entry, dict) and entry.get("connector") in RETIRED]
+    for name in removed:
+        del servers[name]
+    if removed:
+        write_json(harness_home() / "mcp.json", data)
+    for connector_id in RETIRED:
+        mcp_auth.clear_record(record_key(connector_id))
+    return removed
 
 
 def server_env(connector_id: str) -> dict[str, str]:
@@ -797,16 +787,13 @@ def _check_free(servers: dict[str, Any], connector: Connector, name: str | None 
 def install(connector: Connector, group: str | None = None, read_only: bool = False) -> None:
     """Add the server entry to ~/.harness/mcp.json, or update the entry of this connector (or of a group)."""
     data, servers = _user_file()
-    if connector.kind in ("device", "google", "local"):
+    if connector.kind in ("device", "google"):
         if connector.kind == "device":
             name = server_name(connector, group or "personal")
             command, args, env = server_command(connector, group or "personal", read_only)
-        elif connector.kind == "google":
-            name = connector.id
-            command, args, env = _uvx_command(connector, read_only)
         else:
             name = connector.id
-            command, args, env = _chrome_command(connector, group or "separate")
+            command, args, env = _uvx_command(connector, read_only)
         entry: dict[str, Any] = {"command": command, "args": args}
         if env:
             entry["env"] = env
@@ -862,12 +849,6 @@ def _status(connector: Connector, gh: bool) -> dict[str, Any]:
                      "client_builtin": data["builtin"] and bool(data["client_id"]),
                      "builtin_client": builtin_google_client() is not None,
                      "signing_in": connector.id in _GOOGLE_FLOWS})
-    elif connector.kind == "local":
-        options = record.get("options") if isinstance(record.get("options"), dict) else {}
-        profile = options.get("profile") if options.get("profile") in CHROME_PROFILES else None
-        on = record.get("source") == "local" and installed(connector.id)
-        body.update({"source": "local" if on else None, "login": None, "url": connector.home_url,
-                     "package": connector.package, "profile": profile if on else None})
     else:
         source = record.get("source") if record.get("source") in ("gh", "token") else None
         body.update({"source": source, "login": record.get("login") if source else None, "url": connector.url,
@@ -876,6 +857,7 @@ def _status(connector: Connector, gh: bool) -> dict[str, Any]:
 
 
 async def items() -> dict[str, Any]:
+    remove_retired()
     gh = await asyncio.to_thread(gh_token) is not None
     return {"type": "connectors", "items": [_status(c, gh) for c in CONNECTORS.values()]}
 
@@ -888,7 +870,7 @@ async def connect(connector_id: str, source: str, pasted: str | None = None, *,
     the source "device", the options, and ``on_code`` for the device code. It adds one more account.
     """
     connector = get(connector_id)
-    allowed = {"device": ("device",), "google": ("google",), "local": ("local",)}.get(connector.kind, ("gh", "token"))
+    allowed = {"device": ("device",), "google": ("google",)}.get(connector.kind, ("gh", "token"))
     if source not in allowed:
         raise ConfigError(f"The token source of {connector.name} must be one of: {', '.join(allowed)}.")
     if connector.kind == "device":
@@ -901,17 +883,6 @@ async def connect(connector_id: str, source: str, pasted: str | None = None, *,
             return None
 
         return await add_google_account(connector, options, on_url or no_url)
-    if connector.kind == "local":
-        raw = options if isinstance(options, dict) else {}
-        profile = raw.get("profile", "own")
-        if profile not in CHROME_PROFILES:
-            raise ConfigError(f"The profile must be one of: {', '.join(CHROME_PROFILES)}.")
-        _, servers = _user_file()
-        _check_free(servers, connector)
-        install(connector, profile)
-        mcp_auth.clear_record(record_key(connector_id))
-        mcp_auth.update_record(record_key(connector_id), source="local", options={"profile": profile})
-        return profile
     _, servers = _user_file()
     _check_free(servers, connector)  # Before the token check.
     if source == "gh":

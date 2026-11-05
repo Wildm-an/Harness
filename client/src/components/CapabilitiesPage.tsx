@@ -402,7 +402,6 @@ export type ConnectorAction =
   | { kind: "connect"; id: string; source: "token"; token: string }
   | { kind: "connect"; id: string; source: "device"; options: ConnectorOptions }
   | { kind: "connect"; id: string; source: "google"; options: GoogleConnectOptions }
-  | { kind: "connect"; id: string; source: "local"; profile: "own" | "separate" }
   | { kind: "auth_code"; id: string; url: string }
   | { kind: "cancel"; id: string }
   | { kind: "remove_account"; id: string; login: string }
@@ -425,15 +424,9 @@ function accountName(type: ConnectorOptions["account"] | "google"): string {
   return type === "google" ? "Google account" : ACCOUNT_NAMES[type];
 }
 
-const CHROME_PROFILES: Record<"own" | "separate", string> = {
-  own: "Your Chrome window",
-  separate: "A separate Chrome profile",
-};
-
 /** The short description of a connector: the account and the token source, or what it gives. */
 export function connectorSummary(item: ConnectorItem): string {
   if (!item.source) return item.description;
-  if (item.source === "local") return item.profile ? CHROME_PROFILES[item.profile] : "Connected";
   if (item.source === "device" || item.source === "google") {
     const accounts = item.accounts ?? [];
     if (accounts.length > 1) return `${accounts.length} accounts · ${accounts.map((a) => a.login).join(", ")}`;
@@ -792,39 +785,6 @@ function GoogleConnect({
   );
 }
 
-/** The setup of a "local" connector (Chrome): the Chrome window of the user, or a separate profile. */
-function LocalConnect({ item, busy, onAction }: { item: ConnectorItem; busy: boolean; onAction: (action: ConnectorAction) => void }) {
-  const [profile, setProfile] = useState<"own" | "separate">("own");
-  return (
-    <div className="mcp-signin">
-      <div className="mcp-signin-actions" role="radiogroup" aria-label="Chrome profile">
-        {(Object.keys(CHROME_PROFILES) as ("own" | "separate")[]).map((value) => (
-          <label key={value} className="checkbox">
-            <input type="radio" name={`${item.id}-profile`} checked={profile === value} onChange={() => setProfile(value)} />
-            {CHROME_PROFILES[value]}
-          </label>
-        ))}
-      </div>
-      {profile === "own" ? (
-        <p className="help">
-          The agent uses the Chrome that you have open, with its signed-in accounts. Chrome 144 or newer: open{" "}
-          <span className="mono">chrome://inspect/#remote-debugging</span> and turn on remote debugging. Chrome asks you to allow each connection.
-        </p>
-      ) : (
-        <p className="help">The agent starts a Chrome with a profile of its own. It has none of your accounts or cookies.</p>
-      )}
-      <div className="mcp-signin-actions">
-        <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => onAction({ kind: "connect", id: item.id, source: "local", profile })}>
-          Connect
-        </button>
-      </div>
-      <p className="help">
-        Harness runs <code>{item.package}</code> with npx on the daemon computer, so the daemon computer needs Node.js and Chrome.
-      </p>
-    </div>
-  );
-}
-
 /** The accounts of a device connector (Outlook), each with "Remove", and "Add account". */
 function DeviceAccounts({
   item,
@@ -942,12 +902,6 @@ function ConnectorRow({
                 The MCP server "{item.id}" is in your mcp.json, for all your projects. Each tool call needs approval, unless a rule
                 allows it, for example <code>mcp__{item.id}__*</code>.
               </p>
-              {item.profile === "own" && (
-                <p className="help">
-                  Turn on remote debugging in <span className="mono">chrome://inspect/#remote-debugging</span> (Chrome 144 or newer). Chrome asks you to
-                  allow each connection.
-                </p>
-              )}
               <div className="mcp-signin-actions">
                 <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
                   Disconnect
@@ -958,8 +912,6 @@ function ConnectorRow({
             <DeviceConnect item={item} busy={busy} code={code} onAction={onAction} />
           ) : item.kind === "google" ? (
             <GoogleConnect item={item} busy={busy} code={code} onAction={onAction} />
-          ) : item.kind === "local" ? (
-            <LocalConnect item={item} busy={busy} onAction={onAction} />
           ) : (
             <TokenConnect item={item} busy={busy} onAction={onAction} />
           )}

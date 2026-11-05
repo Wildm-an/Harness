@@ -1800,8 +1800,7 @@ async def on_connectors_connect(conn: Connection, msg: dict[str, Any]) -> None:
     "device", with "options" ({"account": "personal" or "work", "read_only": bool}). The daemon then sends
     "connectors.device_code" with the URL and the code, and the user signs in in the browser. Gmail: "source"
     is "google", with "options" ({"client_id", "client_secret", "read_only"}). The daemon sends
-    "connectors.auth_url", and the client opens it. Chrome: "source" is "local", with "options"
-    ({"profile": "own" or "separate"}).
+    "connectors.auth_url", and the client opens it.
     """
     connector_id = _connector_id(msg)
     source, value = msg.get("source"), msg.get("token")

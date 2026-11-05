@@ -344,15 +344,11 @@ To make the Harness client, do the same steps in the Google Cloud project of Har
 - "Remove" revokes the refresh token of one account at Google and deletes its file. "Disconnect" does this for all the accounts, and removes the client and the entry.
 - For a remote daemon, the browser cannot open the callback page. The user pastes its URL into the field under the row (`connectors.auth_code`).
 
-#### Chrome
+#### Removed connectors
 
-The Chrome connector is Chrome DevTools MCP: `chrome-devtools-mcp@1.12.0` (Apache-2.0) with `--no-usage-statistics`. npx runs it on the daemon computer, with Chrome there. It has no sign-in.
+Harness 0.1.44 had a Chrome connector (Chrome DevTools MCP). It is removed. `connectors.RETIRED` lists it: the Connectors tab removes its entry from `~/.harness/mcp.json` and its record, and the MCP client shows a clear message for an entry that is still there.
 
-- "Your Chrome window" adds `--autoConnect`: the server attaches to the Chrome that the user has open, with its signed-in accounts. It needs Chrome 144 or newer and remote debugging turned on in `chrome://inspect/#remote-debugging`. Chrome asks the user to allow each connection.
-- "A separate Chrome profile" starts a Chrome with a profile of its own, with no accounts or cookies of the user.
-- The agent browser of Harness (the Browser pane tools) stays for the app of the project. The Chrome connector is for the browser of the user.
-
-Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, `device`, `google`, or `local`, `token`, `options`), `connectors.cancel` (`id`), `connectors.auth_code` (`id`, `url`), `connectors.remove_account` (`id`, `login`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, `connectors.device_code` (`id`, `url`, `code`) for a device sign-in, and `connectors.auth_url` (`id`, `url`) for a browser sign-in. The items never include a token or a secret.
+Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, `device`, or `google`, `token`, `options`), `connectors.cancel` (`id`), `connectors.auth_code` (`id`, `url`), `connectors.remove_account` (`id`, `login`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, `connectors.device_code` (`id`, `url`, `code`) for a device sign-in, and `connectors.auth_url` (`id`, `url`) for a browser sign-in. The items never include a token or a secret.
 
 ## Cookbook
 

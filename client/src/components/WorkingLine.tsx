@@ -1,6 +1,6 @@
 // The working line at the bottom of the chat during a turn, as in the Claude app: a turning gyroscope, what the
-// agent does now (the step of its task list in progress, or "Writing…"), and the time of the turn. The caret
-// shows the details: "1.1k tokens · 1 running task · Waiting for qwen3…", and the tool calls at the end of the
+// agent does now (the step of its task list in progress, or "Writing…"), and the time of the turn. A click on the
+// text, the time, or the caret shows the details (the user asked for the whole line to open it): "1.1k tokens · 1 running task · Waiting for qwen3…", and the tool calls at the end of the
 // chat (the chat does not show them as a line during the turn). It scrolls with the chat.
 
 import { useEffect, useRef, useState } from "react";
@@ -95,22 +95,24 @@ export function WorkingLine({
 
   return (
     <div className="working-wrap">
-      <div className="working" title="Esc to interrupt">
+      <div className="working">
         <GyroLoader className="working-loader" />
-        <span className="working-text" aria-hidden>
-          {label}
-        </span>
-        <span className="working-time" aria-hidden>
-          {formatElapsed(now - (turn?.startedAt ?? mounted.current))}
-        </span>
         <button
           type="button"
-          className={`working-more${open ? " open" : ""}`}
+          className={`working-toggle${open ? " open" : ""}`}
           aria-expanded={open}
           aria-label={open ? "Hide the details" : "Show the details"}
           onClick={() => setOpen(!open)}
         >
-          <ChevronRight size={13} aria-hidden />
+          <span className="working-text" aria-hidden>
+            {label}
+          </span>
+          <span className="working-time" aria-hidden>
+            {formatElapsed(now - (turn?.startedAt ?? mounted.current))}
+          </span>
+          <span className="working-more" aria-hidden>
+            <ChevronRight size={13} />
+          </span>
         </button>
         {open && (
           <span className="working-details" aria-hidden>

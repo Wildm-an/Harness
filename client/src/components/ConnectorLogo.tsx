@@ -6,20 +6,19 @@
 // THIRD_PARTY_LICENSES.md (section 5).
 //
 // Exception: Microsoft and Google do not permit their product icons without a license or an approval,
-// so Microsoft Outlook, Gmail, and Chrome show generic icons (lucide "Mail", "Inbox", and "Globe") next
-// to their full names. The user chose this for Outlook, and the same rule applies to Google.
+// so Microsoft Outlook and Gmail show generic icons (lucide "Mail" and "Inbox") next to their full
+// names. The user chose this for Outlook, and the same rule applies to Google.
 //
 // GitHub: "mark-github-24" from Primer Octicons 19.42.0 (https://github.com/primer/octicons),
 // MIT License, Copyright (c) 2026 GitHub Inc. The GitHub logo is a trademark of GitHub, Inc.
 // Harness uses it only to name the GitHub connector.
 
-import { Globe, Inbox, Mail, Plug, type LucideIcon } from "lucide-react";
+import { Inbox, Mail, Plug, type LucideIcon } from "lucide-react";
 
 /** Connectors that show a generic icon, because the terms of the brand do not permit its logo. */
 const GLYPHS: Record<string, LucideIcon> = {
   outlook: Mail,
   gmail: Inbox,
-  chrome: Globe,
 };
 
 const LOGOS: Record<string, { viewBox: string; path: string }> = {
