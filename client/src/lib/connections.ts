@@ -8,6 +8,7 @@
 // operating system. In a normal browser (development) there is no keychain: the token stays in
 // session storage and is lost when the tab closes.
 
+import { prefsChanged } from "./prefs";
 import { isTauri, localDaemonInfo, secretDelete, secretGet, secretSet, tunnelClose, tunnelOpen } from "./tauri";
 
 export type ConnectionKind = "local" | "direct" | "ssh";
@@ -49,6 +50,7 @@ function write(storage: () => Storage, key: string, value: unknown): void {
   } catch {
     // Storage can be unavailable. The list is then kept only in memory.
   }
+  if (storage === local) prefsChanged(); // The prefs file keeps a copy (prefs.ts).
 }
 
 const local = () => window.localStorage;

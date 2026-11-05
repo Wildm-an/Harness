@@ -7,8 +7,19 @@
 
 import { useSyncExternalStore } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
-import { loadPref, savePref } from "./prefs";
+import { loadPref, savePref, storePrefs } from "./prefs";
 import { isTauri } from "./tauri";
+
+/** Save the app settings file and the window state. A failure does not stop the update. */
+async function keepSettings(): Promise<void> {
+  await storePrefs();
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("prepare_update");
+  } catch (e) {
+    console.warn("[harness] Cannot save the window state before the update:", e);
+  }
+}
 
 export type UpdateState =
   | { kind: "idle" }
@@ -105,13 +116,16 @@ export async function installUpdate(): Promise<void> {
   let total = 0;
   let done = 0;
   try {
-    await update.downloadAndInstall((event) => {
+    await update.download((event) => {
       if (event.event === "Started") total = event.data.contentLength ?? 0;
       else if (event.event === "Progress") {
         done += event.data.chunkLength;
         setState({ kind: "installing", version, step: "download", percent: total ? Math.min(100, Math.round((done / total) * 100)) : null });
       } else if (event.event === "Finished") setState({ kind: "installing", version, step: "install", percent: 100 });
     });
+    // On Windows, the install ends the app at once: save the settings and the window state first.
+    await keepSettings();
+    await update.install();
     const { relaunch } = await import("@tauri-apps/plugin-process");
     await relaunch();
   } catch (e) {

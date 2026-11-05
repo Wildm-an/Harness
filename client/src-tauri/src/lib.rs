@@ -1,5 +1,6 @@
 mod browser;
 mod forward;
+mod prefs;
 mod secrets;
 mod sidecar;
 mod tunnel;
@@ -132,6 +133,36 @@ async fn save_file(path: String, data: String) -> Result<(), String> {
     std::fs::write(&path, bytes).map_err(|e| format!("Cannot save the file: {e}"))
 }
 
+fn prefs_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().app_config_dir().map(|dir| prefs::path(&dir)).map_err(|e| e.to_string())
+}
+
+/// The app settings from the prefs file, or null when there is no file yet (src/lib/prefs.ts).
+#[tauri::command]
+fn prefs_load(app: AppHandle) -> Result<Option<prefs::Prefs>, String> {
+    Ok(prefs::load(&prefs_file(&app)?))
+}
+
+/// Saves all the app settings to the prefs file. A sync command: the calls run one at a time.
+#[tauri::command]
+fn prefs_store(app: AppHandle, prefs: prefs::Prefs) -> Result<(), String> {
+    prefs::store(&prefs_file(&app)?, &prefs)
+}
+
+/// The window state flags that the app saves and restores.
+fn window_state_flags() -> StateFlags {
+    // The app draws its own title bar on Windows. Do not restore the old system frame.
+    StateFlags::all() & !StateFlags::VISIBLE & !StateFlags::DECORATIONS
+}
+
+/// Saves the window position and size before the installer of an update runs. The updater ends
+/// the app with `std::process::exit`, so the window state plugin does not save them at the exit.
+#[tauri::command]
+fn prepare_update(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_window_state::AppHandleExt;
+    app.save_window_state(window_state_flags()).map_err(|e| e.to_string())
+}
+
 /// A PNG screenshot of the visible part of a tab, as a data URL: the annotation bar puts it in the prompt.
 #[tauri::command]
 async fn browser_capture(app: AppHandle, id: String) -> Result<String, String> {
@@ -258,10 +289,7 @@ pub fn run() {
         // The window starts hidden (tauri.conf.json). The setup shows it after the plugin
         // restores the state, so the window does not move after it opens.
         .plugin(
-            tauri_plugin_window_state::Builder::default()
-                // The app draws its own title bar on Windows. Do not restore the old system frame.
-                .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE & !StateFlags::DECORATIONS)
-                .build(),
+            tauri_plugin_window_state::Builder::default().with_state_flags(window_state_flags()).build(),
         )
         .manage(Sidecar::default())
         .manage(Tunnels::default())
@@ -314,7 +342,10 @@ pub fn run() {
             browser_close_all,
             browser_screenshot,
             browser_capture,
-            save_file
+            save_file,
+            prefs_load,
+            prefs_store,
+            prepare_update
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");

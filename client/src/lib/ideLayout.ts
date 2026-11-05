@@ -4,7 +4,7 @@
 // the panes: each project keeps that layout until the next change of these options.
 
 import { DEFAULT_IDE_OPTIONS, type IdeLayoutOptions, type IdePreset } from "../layout/model";
-import { loadPref, savePref } from "./prefs";
+import { loadPref, prefsChanged, savePref } from "./prefs";
 
 const PREF = "ideLayout";
 export const IDE_LAYOUT_EVENT = "harness:ide-layout"; // The app loads the new IDE layout.
@@ -58,5 +58,6 @@ export function setIdeOptions(options: IdeLayoutOptions): void {
   } catch {
     // Storage can be unavailable. The new options still apply to the open session.
   }
+  prefsChanged(); // The prefs file must lose the removed layouts too.
   window.dispatchEvent(new Event(IDE_LAYOUT_EVENT));
 }

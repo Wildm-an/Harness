@@ -7,6 +7,9 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ check: () => check() }));
 vi.mock("./tauri", () => ({ isTauri: () => true }));
 let relaunched = 0;
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: async () => void (relaunched += 1) }));
+// The Tauri commands and the install, in the order of the calls.
+const calls: string[] = [];
+vi.mock("@tauri-apps/api/core", () => ({ invoke: async (command: string) => void calls.push(command) }));
 
 const { availableVersion, checkAtStart, checkForUpdate, checkOnLaunch, getUpdateState, installUpdate, setCheckAtStart } =
   await import("./updater");
@@ -93,21 +96,25 @@ describe("the install", () => {
   it("reports a failed download", async () => {
     check = async () => ({
       version: "0.3.1",
-      downloadAndInstall: async () => {
+      download: async () => {
         throw new Error("network down");
       },
+      install: async () => void calls.push("install"),
     });
+    calls.length = 0;
     await checkForUpdate(true);
     await installUpdate();
     const state = getUpdateState();
     expect(state.kind === "error" && state.message).toBe("The update did not install: network down");
+    expect(calls).toEqual([]); // No install after a failed download.
   });
 
   it("shows the download percent, then the install step, then starts the app again", async () => {
     const seen: unknown[] = [];
     check = async () => ({
       version: "0.3.0",
-      downloadAndInstall: async (onEvent: (e: Event) => void) => {
+      install: async () => void calls.push("install"),
+      download: async (onEvent: (e: Event) => void) => {
         onEvent({ event: "Started", data: { contentLength: 200 } });
         seen.push(getUpdateState());
         onEvent({ event: "Progress", data: { chunkLength: 50 } });
@@ -121,7 +128,12 @@ describe("the install", () => {
     await checkForUpdate(true);
     expect(updateToastView(getUpdateState(), null)).toEqual({ kind: "offer", version: "0.3.0" });
     relaunched = 0;
+    calls.length = 0;
+    vi.stubGlobal("window", { localStorage: { length: 0, key: () => null, getItem: () => null } });
     await installUpdate();
+    vi.unstubAllGlobals();
+    // The settings file and the window state are saved before the installer ends the app.
+    expect(calls).toEqual(["prefs_store", "prepare_update", "install"]);
     expect(seen).toEqual([
       { kind: "installing", version: "0.3.0", step: "download", percent: null },
       { kind: "installing", version: "0.3.0", step: "download", percent: 25 },
