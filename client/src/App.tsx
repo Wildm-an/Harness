@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   Blocks,
+  CalendarClock,
 } from "lucide-react";
 import { chatReducer, emptyChat, type PermissionItem } from "./chat/state";
 import { DaemonConnection, type ConnectionStatus } from "./daemon/connection";
@@ -123,7 +124,9 @@ import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ClientMessage, ConnectorItem, GitBranches, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, ClientMessage, ConnectorItem, GitBranches, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import { RoutinesPage } from "./components/RoutinesPage";
+import { notifyRoutineRun } from "./lib/notify";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath, openFolderBlocked } from "./editor/paths";
@@ -166,7 +169,7 @@ import { filesPromptText } from "./lib/fileRefs";
 import { FolderMenu } from "./components/FolderMenu";
 import type { SessionActions } from "./components/SessionRow";
 
-type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities";
+type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines";
 
 const PROVIDER_REPLY_TIMEOUT = 15_000;
 
@@ -407,6 +410,12 @@ export default function App() {
   // The saved projects of the daemon (the start screen).
   const [projects, setProjects] = useState<ProjectItem[] | null>(null);
   const projectWait = useRef<{ resolve: (id: string) => void; reject: (e: Error) => void } | null>(null);
+  // The routines of the daemon (the Routines page and the red dot of its nav item).
+  const [routines, setRoutines] = useState<RoutineItem[] | null>(null);
+  const [routineRuns, setRoutineRuns] = useState<{ routine_id: string; items: RoutineRun[] } | null>(null);
+  const [routineError, setRoutineError] = useState<string | null>(null);
+  const [routineSaved, setRoutineSaved] = useState<{ id: string; key: number } | null>(null);
+  const shownIdRef = useRef<string | null>(null); // The session that the user sees now, for the message handler.
 
   /** Opens the Providers screen. Uses only refs and state setters: the message handler calls it too. */
   // The Settings dialog (Ctrl+,): General, Local Models, Providers, and Computers.
@@ -716,6 +725,51 @@ export default function App() {
           if (msg.saved) projectWait.current?.resolve(msg.saved);
           projectWait.current = null;
           return;
+        case "routines":
+          setRoutines(msg.items);
+          if (msg.saved) {
+            const id = msg.saved;
+            setRoutineError(null);
+            setRoutineSaved((s) => ({ id, key: (s?.key ?? 0) + 1 }));
+          }
+          return;
+        case "routine.runs":
+          setRoutineRuns({ routine_id: msg.routine_id, items: msg.items });
+          return;
+        case "routine.run": {
+          // A run started, waits for an answer, or ended. The list shows the new state at once.
+          const { routine_id, run_id, session_id, status: runStatus, error } = msg;
+          setRoutines((list) =>
+            list?.map((r) =>
+              r.id !== routine_id
+                ? r
+                : {
+                    ...r,
+                    running: runStatus === "running" || runStatus === "waiting",
+                    queued: false,
+                    last_run: {
+                      ...(r.last_run?.id === run_id ? r.last_run : { fire_at: Date.now() / 1000, started_at: Date.now() / 1000, ended_at: null }),
+                      id: run_id,
+                      routine_id,
+                      session_id,
+                      status: runStatus,
+                      error,
+                    },
+                  },
+            ) ?? list,
+          );
+          listRecent(); // The new session of the run shows in the sidebar.
+          if (session_id && runStatus !== "skipped") {
+            void notifyRoutineRun(
+              { name: msg.name, status: runStatus, session_id },
+              { windowVisible: !document.hidden, shownSessionId: shownIdRef.current },
+            );
+          }
+          if (session_id && (runStatus === "done" || runStatus === "failed" || runStatus === "waiting") && session_id !== shownIdRef.current) {
+            setUnreadSessions((u) => new Set([...u, session_id]));
+          }
+          return;
+        }
         case "settings":
           setAutoVerify(msg.auto_verify);
           if (msg.permission_mode) setPermissionMode(msg.permission_mode);
@@ -818,6 +872,10 @@ export default function App() {
             rulesSaving.current = false;
           }
           if (msg.ref === "skills.get") setSkillDetail(null);
+          if (msg.ref === "routines.save") {
+            setRoutineError(msg.message);
+            return;
+          }
           if (msg.ref === "mcp.restart" || msg.ref === "mcp") setMcpBusy(false);
           if (msg.ref === "capabilities.list") {
             // An older daemon has no capabilities.list. With a session, ask for the two lists one at a time.
@@ -934,6 +992,8 @@ export default function App() {
     // The daemon lists the providers. The reply makes the app send the keys from the keychain.
     conn.send({ type: "providers.list" });
     conn.send({ type: "projects.list" });
+    setRoutines(null);
+    conn.send({ type: "routines.list" }); // The red dot of the Routines nav item.
     setRecent([]);
     lastRunning.current = [];
     setRunningSessions([]);
@@ -1276,6 +1336,7 @@ export default function App() {
 
   // The session that the user sees now. Other sessions get a blue dot when their turn ends.
   const shownId = screen === "chat" ? (session?.id ?? null) : null;
+  shownIdRef.current = shownId;
   useEffect(() => {
     const now = new Set(runningSessions.map((r) => r.session_id));
     const ended = lastRunning.current.map((r) => r.session_id).filter((id) => !now.has(id) && id !== shownId);
@@ -1881,6 +1942,15 @@ export default function App() {
     sendSafely({ type: "connectors.list" }); // The Connectors tab. It needs no session.
   };
   openCapabilitiesRef.current = openCapabilities;
+
+  /** Opens the Routines page: the prompts that the daemon runs on a schedule. */
+  const openRoutines = () => {
+    setRoutineError(null);
+    setSettingsPage(null);
+    setScreen("routines");
+    sendSafely({ type: "routines.list" });
+    if (!projects) sendSafely({ type: "projects.list" }); // The folder menu of the form.
+  };
 
   const openSkill = useCallback(
     (name: string) => {
@@ -2549,6 +2619,8 @@ export default function App() {
         return openConnections();
       case "capabilities":
         return openCapabilities();
+      case "routines":
+        return openRoutines();
     }
   };
   const canNav = status === "open" && !busy;
@@ -2631,6 +2703,17 @@ export default function App() {
     title: mcpFailed > 0 ? (mcpFailed === 1 ? "1 MCP server failed" : `${mcpFailed} MCP servers failed`) : "Skills and MCP servers",
     onClick: fromSidebar(() => openCapabilities()),
   };
+  // The "Routines" nav item. A red dot shows when the last run of a routine failed.
+  const routinesFailed = routines?.filter((r) => r.last_run?.status === "failed").length ?? 0;
+  const routinesNav: SessionTool = {
+    key: "routines",
+    icon: CalendarClock,
+    label: "Routines",
+    active: screen === "routines",
+    alert: routinesFailed > 0,
+    title: routinesFailed > 0 ? (routinesFailed === 1 ? "The last run of 1 routine failed" : `The last run of ${routinesFailed} routines failed`) : "Prompts that run on a schedule",
+    onClick: fromSidebar(openRoutines),
+  };
 
   // The panes of the open session in the sidebar: Permission rules.
   const sessionTools: SessionTool[] =
@@ -2663,7 +2746,7 @@ export default function App() {
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
       head={titleNav(true)}
-      nav={[capabilitiesNav]}
+      nav={[routinesNav, capabilitiesNav]}
       tools={sessionTools}
       prStatus={prStatus}
       onRequestPr={(paths) => {
@@ -2834,6 +2917,40 @@ export default function App() {
             onDelete={(c) => void deleteConnection(c)}
             onTest={testConnection}
             onReturn={() => setScreen(session ? "chat" : "start")}
+          />
+        )}
+        {screen === "routines" && (
+          <RoutinesPage
+            routines={routines}
+            runs={routineRuns}
+            projects={projects ?? []}
+            models={models}
+            error={routineError}
+            saved={routineSaved}
+            onRequestModels={() => sendSafely({ type: "models.list" })}
+            onManageProviders={showProviders}
+            onBrowse={(initial) => browseFolder(initial || hello?.home || "")}
+            onSave={(fields, id) => {
+              setRoutineError(null);
+              sendSafely({ type: "routines.save", ...(id ? { id } : {}), ...fields });
+            }}
+            onDelete={(id) => sendSafely({ type: "routines.delete", id })}
+            onRun={(id) => sendSafely({ type: "routines.run", id })}
+            onToggle={(item, enabled) =>
+              sendSafely({
+                type: "routines.save",
+                id: item.id,
+                name: item.name,
+                prompt: item.prompt,
+                cwd: item.cwd,
+                model: item.model,
+                permission_mode: item.permission_mode,
+                schedule: item.schedule,
+                enabled,
+              })
+            }
+            onRequestRuns={(id) => sendSafely({ type: "routines.runs", id })}
+            onOpenSession={resumeSession}
           />
         )}
         {screen === "capabilities" && (

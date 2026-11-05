@@ -74,6 +74,8 @@ from .sidechat import NO_TOOLS_REPLY, clean_side_history, side_messages
 from .tasks import TaskError, TaskHost
 from .skills import Skill, discover_skills, inline_skill_text
 from .storage import Storage
+from .routines import HISTORY, RoutineHub, RoutineScheduler
+from .cron import CronError, parse_cron
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
@@ -193,12 +195,28 @@ class ProtocolError(Exception):
     pass
 
 
+# The routines (routines.py): the clients that get their events, and the scheduler.
+ROUTINES = RoutineHub()
+# The connection of the sessions that the daemon starts with no window: the runs of routines.
+HEADLESS: HeadlessConnection | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global HEADLESS
     await asyncio.to_thread(remove_old_deepseek_data)
-    yield
-    TUNNELS.close_all()  # Close the SSH tunnels to model endpoints.
-    stop_all_servers()
+    HEADLESS = HeadlessConnection(app.state.storage)
+    ROUTINES.scheduler = RoutineScheduler(app.state.storage, run_routine, ROUTINES.broadcast)
+    ROUTINES.scheduler.start()
+    try:
+        yield
+    finally:
+        await ROUTINES.scheduler.stop()
+        ROUTINES.scheduler = None
+        await HEADLESS.close_all()
+        HEADLESS = None
+        TUNNELS.close_all()  # Close the SSH tunnels to model endpoints.
+        stop_all_servers()
 
 
 def stop_all_servers() -> None:
@@ -423,6 +441,9 @@ class LiveSession:
         self._wake_handle: asyncio.TimerHandle | None = None
         # "Keep computer awake" (keepawake.py): only for this session, while the daemon keeps it open.
         self.keep_awake = False
+        self.last_error: str | None = None  # The last error event: a routine run reports it.
+        # A routine run: called with True when a permission request waits, and False after the answer.
+        self.on_waiting: Callable[[bool], None] | None = None
 
     @property
     def id(self) -> str | None:
@@ -497,6 +518,8 @@ class LiveSession:
         """Send an event of this session, with its session_id. Only the current session sends to the client."""
         if message.get("type") == "turn.usage":
             self.turn_tokens = int(message.get("completion_tokens") or 0)
+        elif message.get("type") == "error":
+            self.last_error = str(message.get("message") or "")
         if self.conn.current is self and self.session is not None:
             await self.conn.send({**message, "session_id": self.session.id})
 
@@ -512,12 +535,16 @@ class LiveSession:
         self.pending[request_id] = fut
         self.requests[request_id] = request
         await self.conn.send_running()  # The sidebar shows that the session waits for a decision.
+        if self.on_waiting is not None:
+            self.on_waiting(True)
         try:
             await self.send({"type": "permission.request", **request})
             return await fut
         finally:
             self.pending.pop(request_id, None)
             self.requests.pop(request_id, None)
+            if self.on_waiting is not None and not self.pending:
+                self.on_waiting(False)
             await self.conn.send_running()
 
     async def set_mode(self, mode: str) -> None:
@@ -718,6 +745,7 @@ class Connection:
     async def run(self) -> None:
         self._watcher = asyncio.create_task(self.watch_files())
         COOKBOOK.listen(self.send)  # Download and serve events of the Cookbook.
+        ROUTINES.listen(self.send)  # The changes and runs of routines.
         try:
             while True:
                 try:
@@ -750,6 +778,7 @@ class Connection:
         finally:
             self._open = False
             COOKBOOK.unlisten(self.send)
+            ROUTINES.unlisten(self.send)
             if self._watcher:
                 self._watcher.cancel()
             for live in list(self.live.values()):
@@ -963,7 +992,7 @@ class Connection:
         })
 
     async def run_turn(self, live: LiveSession, text: str, display: str | None = None,
-                       message_id: str | None = None, images: list[str] | None = None) -> None:
+                       message_id: str | None = None, images: list[str] | None = None) -> str:
         """Run a prompt. ``display`` is the text that the user sees, if it is not ``text``: the client
         shows a session reference with its name, and sends it with its id."""
         session = live.session
@@ -1002,6 +1031,7 @@ class Connection:
             session.persist()
         if stop == "end":
             self.start_suggestion(live)
+        return stop
 
     async def run_note_turn(self, live: LiveSession, text: str, display: str) -> None:
         """A turn that task notes start, with no prompt of the user (Claude Code does the same)."""
@@ -1045,7 +1075,7 @@ class Connection:
             session.title = title
             self.storage.update_session(session.id, title=title)
             # Not a session event: the sidebar shows the title also when the session is in the background.
-            await self.send({"type": "session.title", "id": session.id, "title": title})
+            await live.conn.send({"type": "session.title", "id": session.id, "title": title})
 
         live.title_task = asyncio.create_task(work())
 
@@ -1089,8 +1119,9 @@ class Connection:
                 live.turn = None  # The session is idle now. A new prompt can start.
             if live.wake_notes:
                 live.wake_soon()  # Notes came at the end of the turn: they start the next turn.
-            await self.send_running()
-            await self.close_if_done(live)
+            # live.conn, not self: a routine session can move to a window during its turn.
+            await live.conn.send_running()
+            await live.conn.close_if_done(live)
 
     def skills(self, live: LiveSession | None = None) -> dict[str, Skill]:
         """The skills now on disk. The user can add a skill during a session."""
@@ -1172,6 +1203,83 @@ class Connection:
             session.persist()
 
 
+class HeadlessConnection(Connection):
+    """The sessions that the daemon runs with no window: the runs of routines (routines.py).
+
+    It sends nothing. Its sessions close when their turn and their tasks end. A window that opens
+    one of its sessions takes it (adopt_session): the window then shows the turn and the
+    permission requests that wait.
+    """
+
+    def __init__(self, storage: Storage):
+        super().__init__(None, storage)  # type: ignore[arg-type]
+
+    async def send(self, message: dict[str, Any]) -> None:
+        return
+
+    async def close_all(self) -> None:
+        for live in list(self.live.values()):
+            await live.stop_turn()
+            await live.close()
+        self.live.clear()
+
+
+def adopt_session(conn: Connection, session_id: str) -> LiveSession | None:
+    """Move a session that runs with no window (a routine run) to the connection of a window."""
+    headless = HEADLESS
+    if headless is None or conn is headless:
+        return None
+    live = headless.live.pop(session_id, None)
+    if live is None:
+        return None
+    live.conn = conn
+    conn.live[session_id] = live
+    return live
+
+
+# The text of a run that failed, by the stop reason of its turn (agent.py), when no error event came.
+RUN_STOPS = {
+    "denied": "A permission request was denied.",
+    "blocked": "A hook or a plugin stopped the turn.",
+    "interrupted": "The turn was stopped.",
+    "error": "The model request failed.",
+}
+
+
+async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> None:
+    """Run a routine in a new session with no window (RoutineScheduler calls it)."""
+    headless = HEADLESS
+    if headless is None:
+        raise RuntimeError("The daemon stops.")
+    cwd = _project_dir(routine["cwd"])
+    live, _warnings = await create_session(headless, cwd, routine.get("provider"), routine.get("model"))
+    session = live.session
+    assert session is not None
+    # The mode of the routine, in memory only: the project settings file does not change.
+    session.agent.settings["permission_mode"] = routine["permission_mode"]
+    session.title = routine["name"]
+    headless.storage.update_session(session.id, title=routine["name"], routine_id=routine["id"])
+    live.on_waiting = lambda waiting: report("waiting" if waiting else "running")
+    headless.live[session.id] = live
+    live.start()
+    report("running", session_id=session.id)
+    outcome: dict[str, str] = {}
+
+    async def work(target: LiveSession) -> None:
+        outcome["stop"] = await target.conn.run_turn(target, routine["prompt"])
+
+    await headless.start_turn(work, live=live)
+    task = live.turn
+    if task is not None:
+        await asyncio.wait({task})  # It does not raise when a window stops the turn.
+    live.on_waiting = None
+    stop = outcome.get("stop")
+    if stop in ("end", "max_tool_calls"):
+        report("done")
+    else:
+        report("failed", error=live.last_error or RUN_STOPS.get(stop or "", "The turn did not end."))
+
+
 def _project_ref(storage: Storage, cwd: Path) -> dict[str, str] | None:
     """The saved project of a session folder: its id and name."""
     found = storage.find_project(str(cwd))
@@ -1224,9 +1332,19 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
 
     "worktree": true or {"base": <branch>}: the session works in a new git worktree of the project.
     """
-    cwd = _project_dir(msg.get("cwd"))
-    wt_arg = _worktree_arg(msg)
-    mode = msg.get("permission_mode")
+    live, warnings = await create_session(conn, _project_dir(msg.get("cwd")), msg.get("provider"), msg.get("model"),
+                                          msg.get("permission_mode"), _worktree_arg(msg))
+    await conn.open_session(live)
+    await conn.send_ready(warnings)
+
+
+async def create_session(conn: Connection, cwd: Path, provider: str | None, model: str | None,
+                         mode: str | None = None, wt_arg: dict[str, Any] | None = None
+                         ) -> tuple[LiveSession, list[str]]:
+    """Make a new stored session and its agent. The caller opens it (open_session, or a routine run).
+
+    ``mode``: the mode of the start page, saved in the project settings. ``wt_arg``: a new git worktree.
+    """
     if mode is not None:
         # The mode of the start page. It is a project setting, as with settings.set.
         if mode not in MODES:
@@ -1250,8 +1368,7 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
                 write_json(path, data)
     live = LiveSession(conn)
     try:
-        agent, warnings = await conn.make_agent(live, Path(worktree["path"]) if worktree else cwd,
-                                                msg.get("provider"), msg.get("model"))
+        agent, warnings = await conn.make_agent(live, Path(worktree["path"]) if worktree else cwd, provider, model)
     except BaseException:
         if worktree:  # No session uses the new worktree.
             await asyncio.to_thread(worktrees.remove, worktree)
@@ -1260,13 +1377,14 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
                                              worktrees.dumps(worktree))
     conn.storage.touch_project(str(cwd))  # A new folder becomes a project.
     live.session = Session(conn.storage, session_id, agent, project_dir=cwd, worktree=worktree)
-    await conn.open_session(live)
-    await conn.send_ready(warnings)
+    return live, warnings
 
 
 @handler("session.resume")
 async def on_session_resume(conn: Connection, msg: dict[str, Any]) -> None:
     session_id = _text_arg(msg, "session_id")
+    if adopt_session(conn, session_id) is not None:  # A routine run with no window.
+        await conn.send_running()
     live = conn.live.get(session_id)
     if live is not None:
         # The session is open: the current session, or a session with a running turn.
@@ -1400,6 +1518,7 @@ async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
     row = conn.storage.get_session(session_id)
     if row is None:
         raise ProtocolError(f"Unknown session: {session_id}")
+    adopt_session(conn, session_id)  # A routine run with no window stops too.
     live = conn.live.get(session_id)
     if live is not None:
         if live is conn.current:
@@ -2199,6 +2318,77 @@ async def on_serve_stop(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_serve_output(conn: Connection, msg: dict[str, Any]) -> None:
     name = _text_arg(msg, "name")
     _background(conn, "serve.output", lambda: COOKBOOK.serve_output(msg.get("host"), name))
+
+
+def _scheduler() -> RoutineScheduler:
+    if ROUTINES.scheduler is None:
+        raise ProtocolError("The routine scheduler does not run.")
+    return ROUTINES.scheduler
+
+
+def _routine_fields(msg: dict[str, Any]) -> dict[str, Any]:
+    name = str(msg.get("name") or "").strip()
+    if not name:
+        raise ProtocolError("A routine needs a name.")
+    prompt = str(msg.get("prompt") or "").strip()
+    if not prompt:
+        raise ProtocolError("A routine needs a prompt.")
+    schedule = " ".join(str(msg.get("schedule") or "").split())
+    try:
+        parse_cron(schedule)
+    except CronError as e:
+        raise ProtocolError(str(e)) from None
+    mode = msg.get("permission_mode") or "default"
+    if mode not in MODES:
+        raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+    return {"name": name[:200], "prompt": prompt, "cwd": str(_project_dir(msg.get("cwd"))),
+            "provider": msg.get("provider") or None, "model": msg.get("model") or None,
+            "permission_mode": mode, "schedule": schedule, "enabled": bool(msg.get("enabled", True))}
+
+
+@handler("routines.list")
+async def on_routines_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await conn.send({"type": "routines", "items": _scheduler().items()})
+
+
+@handler("routines.save")
+async def on_routines_save(conn: Connection, msg: dict[str, Any]) -> None:
+    """Add a routine, or change the routine "id". All clients get the new list."""
+    scheduler = _scheduler()
+    fields = _routine_fields(msg)
+    try:
+        saved = conn.storage.save_routine(fields, msg.get("id") or None)
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
+    scheduler.wake()
+    await scheduler.send_items(saved)
+
+
+@handler("routines.delete")
+async def on_routines_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    """Delete a routine and its run history. A run that runs now continues in its session."""
+    scheduler = _scheduler()
+    conn.storage.delete_routine(_text_arg(msg, "id"))
+    scheduler.wake()
+    await scheduler.send_items()
+
+
+@handler("routines.run")
+async def on_routines_run(conn: Connection, msg: dict[str, Any]) -> None:
+    """Run a routine now ("Run now"), also when it is off."""
+    scheduler = _scheduler()
+    routine_id = _text_arg(msg, "id")
+    if conn.storage.get_routine(routine_id) is None:
+        raise ProtocolError("Unknown routine.")
+    if scheduler.fire(routine_id) is not None:
+        raise ProtocolError("The routine runs now. Wait for the end of the run.")
+
+
+@handler("routines.runs")
+async def on_routines_runs(conn: Connection, msg: dict[str, Any]) -> None:
+    routine_id = _text_arg(msg, "id")
+    await conn.send({"type": "routine.runs", "routine_id": routine_id,
+                     "items": conn.storage.list_runs(routine_id, HISTORY)})
 
 
 @handler("projects.delete")

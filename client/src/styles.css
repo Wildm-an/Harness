@@ -9634,3 +9634,117 @@ textarea.setting-textarea:disabled {
   color: var(--text);
   font-size: 13px;
 }
+
+/* ---------- the Routines page (RoutinesPage.tsx) ---------- */
+.routine-item {
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+}
+
+.routine-item:hover {
+  background: var(--hover);
+}
+
+.routine-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 20px;
+}
+
+.routine-actions .help {
+  margin: 0 0 0 4px;
+}
+
+.routine-form textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: 13px var(--font-sans);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.routine-form .field-row select {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+}
+
+.routine-form .help.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.routine-schedule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.routine-schedule select,
+.routine-schedule input {
+  width: auto;
+  min-height: 36px;
+}
+
+.routine-schedule input.mono {
+  flex: 1;
+  min-width: 160px;
+}
+
+.routine-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.routine-inline input {
+  width: 72px;
+}
+
+.routine-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.routine-enabled {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.routine-enabled .field-label {
+  margin: 0;
+}
+
+.routine-form + .cap-section {
+  margin-top: 28px;
+}
+
+.routine-run {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.routine-run .cap-text {
+  flex: 1;
+  min-width: 0;
+}

@@ -249,6 +249,7 @@ export interface SessionSummary {
   pinned?: boolean; // The sidebar shows it in the Pinned list.
   archived?: boolean; // The sidebar shows it only with the "Archived" or "All" status filter.
   branch?: string | null; // The branch of a worktree session. null: the session works in its project folder.
+  routine_id?: string | null; // The routine that started the session. null: the user started it.
 }
 
 /** The branches of the repository of a folder, for the "Branch to start from" menu. */
@@ -270,6 +271,45 @@ export interface PrStatus {
   path: string;
   branch: string | null;
   pr: { number: number; state: "open" | "draft" | "merged" | "closed"; url: string | null; title: string | null } | null;
+}
+
+// -- Routines: prompts that the daemon runs in a new session at the times of a cron schedule --
+
+export type RoutineRunStatus = "running" | "waiting" | "done" | "failed" | "skipped";
+
+/** One run of a routine. "waiting": a permission request waits for an answer in the session. */
+export interface RoutineRun {
+  id: string;
+  routine_id: string;
+  session_id: string | null;
+  fire_at: number; // The due time. Epoch seconds.
+  started_at: number;
+  ended_at: number | null;
+  status: RoutineRunStatus;
+  error: string | null;
+}
+
+/** The fields that the user sets. */
+export interface RoutineFields {
+  name: string;
+  prompt: string;
+  cwd: string; // The project folder.
+  model: string | null; // "provider/model". null: the default model.
+  permission_mode: PermissionMode;
+  schedule: string; // A cron expression in the local time of the daemon computer.
+  enabled: boolean;
+}
+
+export interface RoutineItem extends RoutineFields {
+  id: string;
+  provider: string | null;
+  created_at: number;
+  updated_at: number;
+  last_fire_at: number | null;
+  next_fire_at: number | null; // null: the routine is off.
+  last_run: RoutineRun | null;
+  running: boolean;
+  queued: boolean; // It waits for a free place (at most 3 routines run at the same time).
 }
 
 /** A saved project: a folder on the daemon computer. The agent keeps its files in this folder. */
@@ -601,6 +641,11 @@ export type ClientMessage =
   | { type: "projects.list" }
   | { type: "projects.save"; id?: string; name: string; path: string; create?: boolean }
   | { type: "projects.delete"; id: string }
+  | { type: "routines.list" }
+  | ({ type: "routines.save"; id?: string } & RoutineFields)
+  | { type: "routines.delete"; id: string }
+  | { type: "routines.run"; id: string } // "Run now".
+  | { type: "routines.runs"; id: string } // The run history.
   | { type: "prompt"; text: string; display?: string; id?: string; images?: string[] } // display: the text that the user sees. id: for rewind and fork. images: data URLs.
   // Go back to the time before a user message: remove it and all after it, and/or restore the files that the agent changed.
   | { type: "session.rewind"; id: string; conversation: boolean; code: boolean }
@@ -829,6 +874,18 @@ export type DaemonMessage =
   | { type: "fs.found"; query: string; items: string[] } // Paths for the "@" menu. A folder ends with "/".
   | ({ type: "context.usage" } & ContextUsage) // The context breakdown, the reply to context.get.
   | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
+  | { type: "routines"; items: RoutineItem[]; saved?: string } // To all clients. saved: the id after routines.save.
+  | { type: "routine.runs"; routine_id: string; items: RoutineRun[] }
+  | {
+      // To all clients: a run started, waits for a permission answer, or ended.
+      type: "routine.run";
+      routine_id: string;
+      run_id: string;
+      name: string;
+      session_id: string | null;
+      status: RoutineRunStatus;
+      error: string | null;
+    }
   | { type: "token"; text: string }
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }

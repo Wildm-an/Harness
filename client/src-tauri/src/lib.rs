@@ -178,8 +178,68 @@ async fn browser_close_all(app: AppHandle) -> Result<(), String> {
     browser::close_all(&app)
 }
 
+/// The argument of the start at sign-in ("Run on startup"). The app then starts with no window.
+const BACKGROUND_ARG: &str = "--background";
+
+/// Shows the main window and gives it the focus (the tray, a second start of the app).
+fn show_main(app: &AppHandle) {
+    if let Some(window) = app.get_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// The tray icon. A left click shows the window. "Quit Harness" shows the window and asks the UI
+/// to quit: QuitGuard asks first when the agent works (docs/UI_RULES.md V10a).
+#[cfg(desktop)]
+fn make_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::Emitter;
+
+    let name = app.package_info().name.clone();
+    let open = MenuItem::with_id(app, "open", format!("Open {name}"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", format!("Quit {name}"), true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip(&name)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => show_main(app),
+            "quit" => {
+                show_main(app);
+                let _ = app.emit_to("main", "quit-requested", ());
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                show_main(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 pub fn run() {
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // A second start of the app shows the window of the first one, so two daemons never run.
+    // This plugin must be the first one.
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+            // "Run on startup" (Settings > General). The Run key of Windows starts the app with
+            // --background. The uninstaller removes the value (nsis/installer.nsi).
+            .plugin(tauri_plugin_autostart::Builder::new().arg(BACKGROUND_ARG).build())
+            .plugin(tauri_plugin_notification::init());
+    }
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // The main window opens at the position and size of its last close. The plugin saves them
@@ -202,9 +262,13 @@ pub fn run() {
             {
                 app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.handle().plugin(tauri_plugin_process::init())?;
+                make_tray(app)?;
             }
-            if let Some(window) = app.get_window("main") {
-                window.show()?;
+            // A start at sign-in keeps the window hidden. The tray icon shows it.
+            if !std::env::args().any(|a| a == BACKGROUND_ARG) {
+                if let Some(window) = app.get_window("main") {
+                    window.show()?;
+                }
             }
             // Start the daemon early, so that it is ready when the UI asks for it.
             let sidecar = app.state::<Sidecar>().inner().clone();

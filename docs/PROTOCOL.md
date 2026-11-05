@@ -66,6 +66,11 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `projects.list` | — | Asks for the saved projects, the last used first. This needs no session. |
 | `projects.save` | `path`, `name` (optional), `id` (optional), `create` (optional) | Adds a project, or changes the project `id`. `path` must be absolute. With `create`, the daemon makes a missing folder. Two projects cannot use the same folder. |
 | `projects.delete` | `id` | Removes a project from the list. The folder, its files, and its sessions stay. |
+| `routines.list` | — | Asks for the routines. This needs no session. |
+| `routines.save` | `name`, `prompt`, `cwd`, `schedule`, `model` (optional), `permission_mode` (optional, default `default`), `enabled` (optional, default true), `id` (optional) | Adds a routine, or changes the routine `id`. `schedule` is a 5-field cron expression in the local time of the daemon computer. A new or changed schedule starts now: no run for older times. |
+| `routines.delete` | `id` | Deletes a routine and its run history. The sessions of its runs stay. A run that runs now continues. |
+| `routines.run` | `id` | Runs the routine now, also when it is off. An error if it runs now. |
+| `routines.runs` | `id` | Asks for the last 20 runs of a routine. |
 
 | `fs.dirs` | `path` (optional), `hidden` (optional) | Asks for the folders in a folder of the daemon host. The default is the home folder. This needs no session: the client uses it to select a project folder on a remote daemon. |
 | `context.get` | none | Asks for the context breakdown of the session. The reply is `context.usage`. |
@@ -139,6 +144,9 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 | `session.ready` | `session_id`, `cwd`, `model`, `title`, `warnings`, `history`, `summary`, `context_length`, `context_source`, `context_tokens`, `instructions` | Reply to `session.new` and `session.resume`. `context_source` tells where the context length came from: `settings`, `providers.json`, `default`, or an endpoint (for example `llama-server` or `Ollama num_ctx`). `summary` replaces the messages before `history` (null if there is no summary). `instructions` is `HARNESS.md`, `CLAUDE.md`, or null. `history` holds the messages of the current context, in OpenAI chat format. A `tool` message also has `is_error`, and `diff` for a file change. The daemon does not send these fields to the model. |
 
+| `routines` | `items`, `saved` | To all connected clients, after each change and at the start and end of each run. Each item has the `routines.save` fields, `id`, `provider`, `created_at`, `updated_at`, `last_fire_at`, `next_fire_at` (null: off), `last_run`, `running`, and `queued`. `saved` is the id after `routines.save`. |
+| `routine.runs` | `routine_id`, `items` | Reply to `routines.runs`. Each run has `id`, `routine_id`, `session_id`, `fire_at`, `started_at`, `ended_at`, `status` (`running`, `waiting`, `done`, `failed`, `skipped`), and `error`. |
+| `routine.run` | `routine_id`, `run_id`, `name`, `session_id`, `status`, `error` | To all connected clients: a run started, waits for a permission answer (`waiting`), or ended. The daemon runs the session with no window. `session.resume` of that session moves it to the client, with its open permission requests. Session list items have `routine_id`. |
 | `projects` | `items`, `saved` | Reply to the `projects.*` messages. Each item has `id`, `name`, `path`, `exists`, `sessions` (the number of stored sessions in the folder), `created_at`, and `last_used`. `saved` is the id after `projects.save`. `session.new` adds its folder as a project if it is not one. The first daemon start with projects adds the folders of the stored sessions. |
 | `context.usage` | `tokens`, `length`, `compact_at`, `source`, `parts` | The size of each part of the next request: `system`, `instructions`, `skills`, `plugins`, `summary`, `tools`, `mcp_tools`, `messages`, and `tool_results` (the tool results of the turns, which are not in `messages`). The parts are estimates, scaled so that their sum is `tokens` (the endpoint count of the last request, when the endpoint gives it). |
 | `fs.found` | `query`, `items` | Reply to `fs.find`: at most 40 project paths, best match first. A folder ends with `/`. |

@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     summary TEXT,
     pinned INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
-    worktree TEXT  -- JSON: the git worktree of the session (worktrees.py). NULL: the session works in cwd.
+    worktree TEXT,  -- JSON: the git worktree of the session (worktrees.py). NULL: the session works in cwd.
+    routine_id TEXT  -- The routine that started the session (routines.py). NULL: the user started it.
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -48,7 +49,35 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at REAL NOT NULL,
     last_used REAL NOT NULL
 );
+-- A prompt that the daemon runs in a new session at the times of a cron schedule (routines.py).
+CREATE TABLE IF NOT EXISTS routines (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    provider TEXT,  -- NULL: the default provider and model.
+    model TEXT,
+    permission_mode TEXT NOT NULL DEFAULT 'default',
+    schedule TEXT NOT NULL,  -- A cron expression in local time (cron.py).
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    last_fire_at REAL  -- The last due time that the scheduler handled. NULL: none yet.
+);
+-- One run of a routine. The session stays when the routine is deleted.
+CREATE TABLE IF NOT EXISTS routine_runs (
+    id TEXT PRIMARY KEY,
+    routine_id TEXT NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+    session_id TEXT,
+    fire_at REAL NOT NULL,  -- The due time. A "Run now" uses the time of the click.
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    status TEXT NOT NULL,  -- running, waiting, done, failed, skipped.
+    error TEXT
+);
 """
+
+ROUTINE_FIELDS = ("name", "prompt", "cwd", "provider", "model", "permission_mode", "schedule", "enabled")
 
 
 def path_key(path: str) -> str:
@@ -79,6 +108,8 @@ class Storage:
             self.db.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         if "worktree" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN worktree TEXT")
+        if "routine_id" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN routine_id TEXT")
         # The first start with the projects table: add the folders of the stored sessions.
         if self.db.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
             rows = self.db.execute("SELECT cwd, MIN(created_at), MAX(updated_at) FROM sessions GROUP BY cwd").fetchall()
@@ -168,7 +199,8 @@ class Storage:
         return dict(row) if row else None
 
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        sql = "SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived, worktree FROM sessions"
+        sql = ("SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived, worktree, routine_id "
+               "FROM sessions")
         params: tuple = ()
         sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
@@ -187,7 +219,7 @@ class Storage:
     def update_session(self, session_id: str, touch: bool = True, **fields: Any) -> None:
         """Change fields of a session. ``touch``: the session is newer (for example after a prompt).
         A rename or a pin does not change the age of the session."""
-        allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "archived", "cwd"}
+        allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "archived", "cwd", "routine_id"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if touch:
             fields["updated_at"] = time.time()
@@ -292,3 +324,90 @@ class Storage:
         session = self.get_session(session_id)
         if session is not None:
             self.update_session(session_id, context_start=session["context_start"] + removed, summary=summary)
+
+    # -- routines ---------------------------------------------------------------------
+
+    @staticmethod
+    def _routine(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["enabled"] = bool(item["enabled"])
+        return item
+
+    def list_routines(self) -> list[dict[str, Any]]:
+        rows = self.db.execute("SELECT * FROM routines ORDER BY created_at, rowid")
+        return [self._routine(r) for r in rows]
+
+    def get_routine(self, routine_id: str) -> dict[str, Any] | None:
+        row = self.db.execute("SELECT * FROM routines WHERE id = ?", (routine_id,)).fetchone()
+        return self._routine(row) if row else None
+
+    def save_routine(self, fields: dict[str, Any], routine_id: str | None = None) -> str:
+        """Add a routine, or change the routine ``routine_id``. Raise ValueError for an unknown id."""
+        values = {k: fields[k] for k in ROUTINE_FIELDS if k in fields}
+        if "enabled" in values:
+            values["enabled"] = 1 if values["enabled"] else 0
+        now = time.time()
+        if routine_id is None:
+            routine_id = uuid.uuid4().hex[:12]
+            values.update(id=routine_id, created_at=now, updated_at=now, last_fire_at=now)
+            names = ", ".join(values)
+            self.db.execute(f"INSERT INTO routines ({names}) VALUES ({', '.join('?' * len(values))})",
+                            tuple(values.values()))
+        else:
+            values["updated_at"] = now
+            if "schedule" in values or values.get("enabled"):
+                # A new schedule, or a routine that is on again, starts now: no catch-up run for older times.
+                values["last_fire_at"] = now
+            assignments = ", ".join(f"{k} = ?" for k in values)
+            cur = self.db.execute(f"UPDATE routines SET {assignments} WHERE id = ?", (*values.values(), routine_id))
+            if cur.rowcount == 0:
+                raise ValueError("Unknown routine.")
+        self.db.commit()
+        return routine_id
+
+    def set_routine_fired(self, routine_id: str, fire_at: float) -> None:
+        self.db.execute("UPDATE routines SET last_fire_at = ? WHERE id = ?", (fire_at, routine_id))
+        self.db.commit()
+
+    def delete_routine(self, routine_id: str) -> None:
+        """Delete a routine and its run history. The sessions of the runs stay."""
+        self.db.execute("DELETE FROM routine_runs WHERE routine_id = ?", (routine_id,))
+        self.db.execute("DELETE FROM routines WHERE id = ?", (routine_id,))
+        self.db.commit()
+
+    def add_run(self, routine_id: str, fire_at: float, status: str, session_id: str | None = None,
+                error: str | None = None) -> str:
+        run_id = uuid.uuid4().hex[:12]
+        now = time.time()
+        ended = None if status in ("running", "waiting") else now
+        self.db.execute(
+            "INSERT INTO routine_runs (id, routine_id, session_id, fire_at, started_at, ended_at, status, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (run_id, routine_id, session_id, fire_at, now, ended, status, error))
+        self.db.commit()
+        return run_id
+
+    def update_run(self, run_id: str, **fields: Any) -> None:
+        fields = {k: v for k, v in fields.items() if k in {"session_id", "status", "error"}}
+        if fields.get("status") in ("done", "failed", "skipped"):
+            fields["ended_at"] = time.time()
+        if not fields:
+            return
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        self.db.execute(f"UPDATE routine_runs SET {assignments} WHERE id = ?", (*fields.values(), run_id))
+        self.db.commit()
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        row = self.db.execute("SELECT * FROM routine_runs WHERE id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_runs(self, routine_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """The runs of a routine, the newest first."""
+        rows = self.db.execute("SELECT * FROM routine_runs WHERE routine_id = ? ORDER BY started_at DESC, rowid DESC "
+                               "LIMIT ?", (routine_id, limit))
+        return [dict(r) for r in rows]
+
+    def end_open_runs(self) -> None:
+        """At the start of the daemon: a run that did not end stopped with the old daemon."""
+        self.db.execute("UPDATE routine_runs SET status = 'failed', error = ?, ended_at = ? "
+                        "WHERE status IN ('running', 'waiting')", ("Harness stopped during the run.", time.time()))
+        self.db.commit()

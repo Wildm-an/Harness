@@ -8,6 +8,7 @@ import type { PermissionMode, UserSettings, WebSearchProvider } from "../daemon/
 import type { WebKeyProvider } from "../lib/providerKeys";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
+import { KEEP_IN_BACKGROUND_PREF, loadKeepInBackground } from "./QuitGuard";
 import {
   CHAT_FONT_DEFAULT,
   CHAT_FONT_MAX,
@@ -175,10 +176,20 @@ export function SettingsDialog({
   );
 }
 
-/** One setting: the name and the help text on the left, the control on the right. */
-function Row({ label, help, htmlFor, children }: { label: string; help?: string; htmlFor?: string; children: ReactNode }) {
+/**
+ * One setting: the name and the help text on the left, the control on the right. A child row
+ * (docs/UI_RULES.md R2) is indented. ``title`` is the tooltip of a locked row (R5).
+ */
+function Row({ label, help, htmlFor, child, title, children }: {
+  label: string;
+  help?: string;
+  htmlFor?: string;
+  child?: boolean;
+  title?: string;
+  children: ReactNode;
+}) {
   return (
-    <div className="setting-row">
+    <div className={child ? "setting-row setting-row-child" : "setting-row"} style={child ? { paddingLeft: 24 } : undefined} title={title}>
       <div className="setting-text">
         {htmlFor ? <label htmlFor={htmlFor}>{label}</label> : <span className="setting-label">{label}</span>}
         {help && <span className="setting-help">{help}</span>}
@@ -791,6 +802,8 @@ export function GeneralSettings({
         </select>
       </Row>
 
+      {isTauri() && <BackgroundRows />}
+
       <h3 className="settings-section">Keyboard shortcuts</h3>
       <dl className="shortcut-list">
         {SHORTCUTS.map(([action, keys]) => (
@@ -817,6 +830,96 @@ export function GeneralSettings({
         )}
       </p>
     </div>
+  );
+}
+
+/** The R4 text when a setting does not save. */
+const SAVE_FAILED = "Couldn't save the setting. Try again.";
+
+/** "Run on startup" shows on only when its parent "Keep running in the background" is on. */
+export function startupShown(keepInBackground: boolean, startup: boolean | null): boolean {
+  return keepInBackground && startup === true;
+}
+
+async function autostart() {
+  return import("@tauri-apps/plugin-autostart");
+}
+
+/**
+ * "Keep running in the background" (a pref of this app) and its child row "Run on startup" (the
+ * Run key of Windows, through the autostart plugin). The start at sign-in uses --background, so
+ * the window stays hidden and the routines run.
+ */
+function BackgroundRows() {
+  const [keep, setKeep] = useState(loadKeepInBackground);
+  const [startup, setStartup] = useState<boolean | null>(null); // null: loading.
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    autostart()
+      .then((a) => a.isEnabled())
+      .then((on) => live && setStartup(on))
+      .catch(() => live && setStartup(false));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const changeKeep = async (on: boolean) => {
+    setError(null);
+    setKeep(on);
+    savePref(KEEP_IN_BACKGROUND_PREF, on ? "1" : "0");
+    // A start at sign-in with no window and no tray close makes no sense: turn it off too.
+    if (!on && startup) {
+      try {
+        await (await autostart()).disable();
+        setStartup(false);
+      } catch {
+        setError(SAVE_FAILED);
+      }
+    }
+  };
+
+  const changeStartup = async (on: boolean) => {
+    setError(null);
+    const old = startup;
+    setStartup(on);
+    try {
+      const a = await autostart();
+      if (on) await a.enable();
+      else await a.disable();
+    } catch {
+      setStartup(old);
+      setError(SAVE_FAILED);
+    }
+  };
+
+  return (
+    <>
+      <h3 className="settings-section">System</h3>
+      <Row label="Keep running in the background" help="Closing the window keeps Harness in the system tray, so routines can run.">
+        <Switch checked={keep} label="Keep running in the background" onChange={(on) => void changeKeep(on)} />
+      </Row>
+      <Row
+        label="Run on startup"
+        help="Start Harness hidden when you sign in to Windows."
+        child
+        title={keep ? undefined : "Available when Keep running in the background is on"}
+      >
+        <Switch
+          checked={startupShown(keep, startup)}
+          label="Run on startup"
+          disabled={!keep || startup === null}
+          onChange={(on) => void changeStartup(on)}
+        />
+      </Row>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
   );
 }
 

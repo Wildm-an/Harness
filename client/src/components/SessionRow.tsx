@@ -4,7 +4,7 @@
 // The menu has the keys of Claude: P (pin), U (mark as unread), R (rename), and D (delete).
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
+import { Archive, ArchiveRestore, CalendarClock, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, Trash2, Mail, MailOpen } from "lucide-react";
 import type { RunningSession, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { modelName } from "../lib/modelName";
@@ -226,11 +226,12 @@ export function SessionRow({ session, active, state, unread, disabled, actions }
           onClick={() => !active && actions.onResume(session.id)}
           disabled={disabled}
           aria-current={active ? "true" : undefined}
-          title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}`}
+          title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}${session.routine_id ? "\nStarted by a routine" : ""}`}
         >
           <span className="side-session-title">{title}</span>
           {working && <span className="sr-only">Running</span>}
           {session.branch && <GitBranch size={12} className="side-session-branch" aria-label="Worktree" />}
+          {session.routine_id && <CalendarClock size={12} className="side-session-branch" aria-label="Routine" />}
           {shown && <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />}
         </button>
       )}

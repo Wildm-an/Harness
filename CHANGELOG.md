@@ -5,6 +5,19 @@ this file on its Changelog page.
 
 ## Unreleased
 
+### Routines
+
+- A new Routines page (in the sidebar, over Capabilities) runs a prompt on a schedule, each time in a
+  new session. Choose the folder, the model, the permission mode, and the schedule (hourly, daily,
+  weekdays, weekly, or a cron expression). "Run now" runs it at once.
+- The daemon runs the routines also when no window is open. A run that needs a permission answer
+  waits: open its session to answer. Windows shows a notification when a run ends or waits.
+- If the computer was off at a due time, the routine runs one time at the next start.
+- Settings > General > System has "Keep running in the background" (closing the window keeps
+  Harness in the system tray) and "Run on startup" (Harness starts hidden when you sign in).
+  The tray menu has "Open Harness" and "Quit Harness". A second start of Harness shows the
+  open window.
+
 ### Connectors
 
 - A new Email (IMAP) connector replaces the Gmail connector. It works with Gmail, iCloud Mail,

@@ -1,11 +1,43 @@
 // The warning before the app closes while the agent works, as in the Claude app: "Quit anyway",
 // "Wait for the agent" (the app closes when the work ends), or "Cancel". Only for the daemon of
 // this computer: the turns of a remote daemon go on when the app closes.
+// With "Keep running in the background" (Settings > General), a close of the window hides it, and
+// the daemon and its routines continue. "Quit Harness" in the tray menu then quits the app.
 
 import { useEffect, useId, useRef, useState } from "react";
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
+import { loadPref } from "../lib/prefs";
 import { isTauri } from "../lib/tauri";
+
+/** The pref of "Keep running in the background": "1" is on. Settings > General writes it. */
+export const KEEP_IN_BACKGROUND_PREF = "keepInBackground";
+
+/** The tray menu item "Quit Harness" sends this event to the main window. */
+export const QUIT_REQUESTED_EVENT = "quit-requested";
+
+/** True when the saved pref value turns "Keep running in the background" on. */
+export function keepInBackgroundOn(value: string | null | undefined): boolean {
+  return value === "1";
+}
+
+export function loadKeepInBackground(): boolean {
+  return keepInBackgroundOn(loadPref(KEEP_IN_BACKGROUND_PREF, "0"));
+}
+
+/**
+ * What a close of the window does. "hide": the app stays in the tray. "close": the app quits.
+ * "ask": the dialog asks first, because the agent works in ``working`` sessions.
+ */
+export function closeAction(working: number, keepInBackground: boolean): "hide" | "close" | "ask" {
+  if (keepInBackground) return "hide";
+  return working > 0 ? "ask" : "close";
+}
+
+/** What "Quit Harness" in the tray menu does. "quit": the app quits. "ask": the dialog asks first. */
+export function quitAction(working: number): "quit" | "ask" {
+  return working > 0 ? "ask" : "quit";
+}
 
 async function appWindow() {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -70,8 +102,9 @@ function QuitDialog({ count, onQuit, onWait, onCancel }: { count: number; onQuit
 }
 
 /**
- * Catches the close of the window (the close button, Alt+F4, the taskbar) while ``working`` sessions
- * run on this computer. ``working`` is the count of sessions with a running turn.
+ * Catches the close of the window (the close button, Alt+F4, the taskbar) and "Quit Harness" in
+ * the tray menu while ``working`` sessions run on this computer. ``working`` is the count of
+ * sessions with a running turn.
  */
 export function QuitGuard({ working }: { working: number }) {
   const [asking, setAsking] = useState(false);
@@ -81,20 +114,30 @@ export function QuitGuard({ working }: { working: number }) {
 
   useEffect(() => {
     if (!isTauri()) return;
-    let stop: (() => void) | null = null;
     let live = true;
-    void appWindow()
-      .then((w) =>
-        w.onCloseRequested((event) => {
-          if (workingRef.current === 0) return; // Nothing runs: the window closes.
+    const stops: Array<() => void> = [];
+    const keep = (unlisten: () => void) => (live ? stops.push(unlisten) : unlisten());
+    void appWindow().then((w) => {
+      void w
+        .onCloseRequested((event) => {
+          const action = closeAction(workingRef.current, loadKeepInBackground());
+          if (action === "close") return; // Nothing runs: the window closes.
           event.preventDefault();
-          setAsking(true);
-        }),
-      )
-      .then((unlisten) => (live ? (stop = unlisten) : unlisten()));
+          if (action === "hide") void w.hide();
+          else setAsking(true);
+        })
+        .then(keep);
+      // "Quit Harness" in the tray menu. The tray shows the window first.
+      void w
+        .listen(QUIT_REQUESTED_EVENT, () => {
+          if (quitAction(workingRef.current) === "quit") quitNow();
+          else setAsking(true);
+        })
+        .then(keep);
+    });
     return () => {
       live = false;
-      stop?.();
+      for (const stop of stops.splice(0)) stop();
     };
   }, []);
 
