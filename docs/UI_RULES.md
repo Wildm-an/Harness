@@ -188,7 +188,7 @@ Harness has no "+" button now. Add it.
   | "Manual" | "Always ask before making changes" |
   | "Accept edits" | "Automatically accept all file edits" |
   | "Plan" | "Create a plan before making changes" |
-  | "Auto" | "Claude handles permission decisions" |
+  | "Auto" | "Claude handles permission decisions" (Harness: "The model handles permission decisions", the user asked for this) |
   | "Bypass permissions" | "Accepts all permissions" (warning color) |
 
 - **C12.** "Bypass permissions" shows only after the user turns on "Allow bypass permissions mode" in Settings.

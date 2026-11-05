@@ -9,7 +9,7 @@ export const MODES: { mode: PermissionMode; label: string; help: string; icon: L
   { mode: "default", label: "Manual", help: "Always ask before making changes", icon: ShieldCheck },
   { mode: "acceptEdits", label: "Accept edits", help: "Automatically accept all file edits", icon: FilePenLine },
   { mode: "plan", label: "Plan", help: "Create a plan before making changes", icon: ClipboardList },
-  { mode: "auto", label: "Auto", help: "Claude handles permission decisions", icon: RefreshCw },
+  { mode: "auto", label: "Auto", help: "The model handles permission decisions", icon: RefreshCw },
   { mode: "bypassPermissions", label: "Bypass permissions", help: "Accepts all permissions", icon: ShieldOff },
 ];
 
