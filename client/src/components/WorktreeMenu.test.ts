@@ -13,9 +13,9 @@ describe("the worktree chip", () => {
     expect(startBranch({ on: true, base: null }, null)).toBeNull();
   });
 
-  it("shows the branch, and the worktree when it is on", () => {
+  it("shows the branch to start from", () => {
     expect(worktreeLabel({ on: false, base: null }, info)).toBe("main");
-    expect(worktreeLabel({ on: true, base: "feature" }, info)).toBe("Worktree from feature");
-    expect(worktreeLabel({ on: true, base: null }, { repo: true, current: null, branches: [] })).toBe("Worktree");
+    expect(worktreeLabel({ on: true, base: "feature" }, info)).toBe("feature");
+    expect(worktreeLabel({ on: true, base: null }, { repo: true, current: null, branches: [] })).toBe("Branch");
   });
 });

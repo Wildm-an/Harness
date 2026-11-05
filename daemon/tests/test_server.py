@@ -137,7 +137,7 @@ def test_prompt_streams_and_resume_restores_history(daemon, project, fake_model)
     # The model makes the title from the first prompt. It can come before or after turn.end.
     title = next((m for m in seen if m["type"] == "session.title"), None) or c.until("session.title")[0]
     assert title == {"type": "session.title", "id": ready["session_id"], "title": "Fake session title"}
-    assert "Say hello" in fake_model.title_requests[0]["messages"][0]["content"]
+    assert "Say hello" in fake_model.title_requests[0]["messages"][-1]["content"]
     c.close()
 
     c2 = Client(daemon)
@@ -943,4 +943,48 @@ def test_a_rejected_plan_stops_the_turn_and_keeps_plan_mode(daemon, project, fak
     assert end["stop_reason"] == "denied"
     assert len([r for r in fake_model.requests if r.get("tools")]) == 1
     assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "plan"
+    c.close()
+
+
+def _wait(check, timeout: float = 5) -> None:
+    deadline = time.time() + timeout
+    while not check():
+        if time.time() > deadline:
+            raise AssertionError("The condition did not come true in time.")
+        time.sleep(0.05)
+
+
+def test_title_tries_again_on_the_next_prompt(daemon, project, fake_model):
+    fake_model.title_fail = 1
+    fake_model.script({"text": "One."}, {"text": "Two."})
+    c = Client(daemon)
+    ready = c.new_session(project)
+    c.send({"type": "prompt", "text": "First task"})
+    _, seen = c.until("turn.end")
+    _wait(lambda: len(fake_model.title_requests) == 1)
+    time.sleep(0.3)  # The failed title request ends.
+    assert not any(m["type"] == "session.title" for m in seen)
+    c.send({"type": "prompt", "text": "Second task"})
+    _, seen = c.until("turn.end")
+    title = next((m for m in seen if m["type"] == "session.title"), None) or c.until("session.title")[0]
+    assert title == {"type": "session.title", "id": ready["session_id"], "title": "Fake session title"}
+    # The second try names the first prompt, not the second prompt.
+    assert "First task" in fake_model.title_requests[1]["messages"][-1]["content"]
+    c.close()
+
+
+def test_rename_during_the_title_request_keeps_the_name_of_the_user(daemon, project, fake_model):
+    fake_model.title_delay = 1.0
+    fake_model.script({"text": "Done."})
+    c = Client(daemon)
+    ready = c.new_session(project)
+    c.send({"type": "prompt", "text": "Do a task"})
+    c.send({"type": "session.update", "session_id": ready["session_id"], "title": "My name"})
+    _, seen = c.until("session.updated")
+    _wait(lambda: len(fake_model.title_requests) == 1)
+    time.sleep(1.5)  # The title reply comes.
+    c.send({"type": "session.list"})
+    sessions, more = c.until("sessions")
+    assert not any(m["type"] == "session.title" for m in seen + more)
+    assert next(s for s in sessions["items"] if s["id"] == ready["session_id"])["title"] == "My name"
     c.close()

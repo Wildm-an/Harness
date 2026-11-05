@@ -7,6 +7,7 @@ Each request takes the next scripted reply. A reply is a dict:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import threading
@@ -24,6 +25,8 @@ class FakeModel:
         self.requests: list[dict[str, Any]] = []
         self.title_requests: list[dict[str, Any]] = []
         self.title = "Fake session title"
+        self.title_fail = 0  # The next title requests that get HTTP 500.
+        self.title_delay = 0.0  # Seconds before the title reply.
         self.suggestion_requests: list[dict[str, Any]] = []
         self.suggestion = "Run the tests"
         self.classifier_requests: list[dict[str, Any]] = []
@@ -75,8 +78,12 @@ class FakeModel:
             body = await request.json()
             # A session title request (titles.py) gets its own reply. It does not use a scripted reply.
             first = (body.get("messages") or [{}])[0].get("content")
-            if isinstance(first, str) and first.startswith("Write a short title for the task below"):
+            if isinstance(first, str) and first.startswith("You name coding sessions"):
                 self.title_requests.append(body)
+                await asyncio.sleep(self.title_delay)
+                if self.title_fail > 0:
+                    self.title_fail -= 1
+                    return JSONResponse({"error": {"message": "The title failed."}}, status_code=500)
                 return StreamingResponse(_sse({"text": self.title}), media_type="text/event-stream")
             # A prompt suggestion request (suggestions.py) gets its own reply too.
             if isinstance(first, str) and first.startswith("You predict the next message that the user"):

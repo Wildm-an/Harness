@@ -32,6 +32,8 @@ def fake_model(fake_model_server):
     fake_model_server.requests.clear()
     fake_model_server.title_requests.clear()
     fake_model_server.title = "Fake session title"
+    fake_model_server.title_fail = 0
+    fake_model_server.title_delay = 0.0
     fake_model_server.suggestion_requests.clear()
     fake_model_server.suggestion = "Run the tests"
     fake_model_server.classifier_requests.clear()

@@ -82,7 +82,7 @@ from .cron import CronError, parse_cron
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
-from .titles import summarize_title
+from .titles import MAX_TITLE_TRIES, summarize_title
 from .agents import agent_folders, discover_agents
 from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
@@ -435,6 +435,10 @@ class LiveSession:
         self.turn_started: float | None = None
         self.turn_tokens = 0
         self.title_task: asyncio.Task | None = None
+        # The first prompt, while the model did not make a title for it. Each prompt tries again (at most
+        # MAX_TITLE_TRIES times). None: the session has a model title, or the user renamed it.
+        self.title_prompt: str | None = None
+        self.title_tries = 0
         self.suggestion_task: asyncio.Task | None = None  # The next prompt of the user (suggestions.py).
         self.completion_task: asyncio.Task | None = None  # The editor autocomplete (completions.py).
         self.side_tasks: dict[str, asyncio.Task] = {}  # The answers of the side chat that run, by question id.
@@ -1007,7 +1011,8 @@ class Connection:
         session = live.session
         assert session is not None
         if session.set_title_from(display or text):
-            self.start_title(live, display or text)
+            live.title_prompt, live.title_tries = display or text, 0
+        self.start_title(live)
         # "@" references: add the files, lines, and sessions to the prompt. Load the referenced
         # sessions here: the file reads run in a thread, and the database stays in this loop.
         stored = {}
@@ -1073,15 +1078,29 @@ class Connection:
         live.turn = asyncio.create_task(self.guarded(live, work(live)))
         await self.send_running()
 
-    def start_title(self, live: LiveSession, prompt: str) -> None:
-        """Ask the model for a short title of the first prompt. It runs next to the turn."""
+    def start_title(self, live: LiveSession) -> None:
+        """Ask the model for a short title of the first prompt. It runs next to the turn.
+
+        The first line of the prompt is the title until the reply comes. If the request fails, the
+        next prompt tries again. A rename of the user during the request keeps the name of the user.
+        """
         session = live.session
-        assert session is not None
+        prompt = live.title_prompt
+        if session is None or prompt is None or (live.title_task is not None and not live.title_task.done()):
+            return
+        live.title_tries += 1
+        placeholder = session.title
 
         async def work() -> None:
             title = await summarize_title(session.agent.client, prompt)
-            if not title:
+            if session.title != placeholder:  # The user renamed the session.
+                live.title_prompt = None
                 return
+            if not title:
+                if live.title_tries >= MAX_TITLE_TRIES:
+                    live.title_prompt = None
+                return
+            live.title_prompt = None
             session.title = title
             self.storage.update_session(session.id, title=title)
             # Not a session event: the sidebar shows the title also when the session is in the background.
@@ -1210,7 +1229,11 @@ class Connection:
     async def run_skill(self, live: LiveSession, skill: Skill, args: str) -> None:
         session = live.session
         assert session is not None
-        session.set_title_from(f"/{skill.name} {args}")
+        command = f"/{skill.name} {args}".strip()
+        if session.set_title_from(command):
+            # The skill description tells the model what the command does.
+            live.title_prompt, live.title_tries = f"{command}\n\nThe skill /{skill.name}: {skill.description}", 0
+        self.start_title(live)
         await live.wait_for_mcp()
         try:
             await session.agent.run_skill(skill, args)
@@ -1576,6 +1599,7 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
     live = conn.live.get(session_id)
     if live is not None and live.session is not None and "title" in fields:
         live.session.title = fields["title"]
+        live.title_prompt = None  # The name of the user stays: no model title replaces it.
     row = conn.storage.get_session(session_id)
     await conn.send({"type": "session.updated", "id": session_id, "title": row["title"], "pinned": bool(row["pinned"]),
                      "archived": bool(row["archived"])})

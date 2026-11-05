@@ -1,7 +1,8 @@
 // The worktree option of the start screen (UI_RULES N3): "Work in an isolated copy of the
 // repository", and "Branch to start from". A worktree session gets a new branch and a new folder
-// (a git worktree). The project folder of the user does not change. The chip shows only for a
-// project in a git repository.
+// (a git worktree). The project folder of the user does not change. The "Worktree" check box of the
+// start screen turns the option on. The chip shows only while the box is on, for a project in a git
+// repository.
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Folder, GitBranch } from "lucide-react";
@@ -20,11 +21,11 @@ export function startBranch(choice: WorktreeChoice, info: GitBranches | null): s
   return info.current ?? info.branches[0] ?? null;
 }
 
-/** The text of the chip. */
+/** The text of the chip: the branch to start from. The "Worktree" check box before the chip says
+ *  that the session works in a worktree, so the chip does not say it again. */
 export function worktreeLabel(choice: WorktreeChoice, info: GitBranches | null): string {
   const branch = startBranch(choice, info);
-  if (!choice.on) return branch ?? "Project folder";
-  return branch ? `Worktree from ${branch}` : "Worktree";
+  return branch ?? (choice.on ? "Branch" : "Project folder");
 }
 
 const MAX_BRANCHES = 30;
