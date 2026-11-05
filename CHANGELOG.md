@@ -5,6 +5,14 @@ this file on its Changelog page.
 
 ## Unreleased
 
+### Notifications
+
+- When a turn ends and you do not see the session (the window is closed to the tray, minimized,
+  or shows another session), Windows shows a notification with the session title and a short
+  summary of what the agent did.
+- The notifications and the unread dots of routine runs now also show for runs in the
+  background. Before, the app dropped these events when another session was open.
+
 ### Routines
 
 - The agent can save a routine for you. Ask, for example, "summarize the new commits each weekday

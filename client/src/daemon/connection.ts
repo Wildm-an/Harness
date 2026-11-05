@@ -16,6 +16,16 @@ const AUTH_TIMEOUT_MS = 10_000;
 export const ALIVE_TIMEOUT_MS = 5_000;
 
 /** One WebSocket connection to a daemon. */
+/** Events with a session_id that are about any session, not only the open one: the app needs them all. */
+export const ALL_SESSIONS: ReadonlySet<string> = new Set(["routine.run", "turn.done"]);
+
+/** True if the app gets the message: it has no session_id, it is about any session, or it is about `sessionId`. */
+export function forSession(msg: DaemonMessage, sessionId: string | null): boolean {
+  if (ALL_SESSIONS.has(msg.type)) return true;
+  const id = (msg as { session_id?: unknown }).session_id;
+  return typeof id !== "string" || id === sessionId;
+}
+
 export class DaemonConnection {
   private ws: WebSocket | null = null;
   private messageListeners = new Set<MessageListener>();
@@ -134,8 +144,7 @@ export class DaemonConnection {
   }
 
   private forCurrentSession(msg: DaemonMessage): boolean {
-    const id = (msg as { session_id?: unknown }).session_id;
-    return typeof id !== "string" || id === this.sessionId;
+    return forSession(msg, this.sessionId);
   }
 
   close(): void {

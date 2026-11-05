@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routineNotice, type RoutineRunEvent } from "./notify";
+import { routineNotice, turnNotice, type RoutineRunEvent, type TurnDoneEvent } from "./notify";
 
 const run = (status: RoutineRunEvent["status"], name = "Daily summary"): RoutineRunEvent => ({ name, status, session_id: "s1" });
 const hidden = { windowVisible: false, shownSessionId: null };
@@ -30,5 +30,37 @@ describe("the notification of a routine run", () => {
 
   it("names a routine with no name", () => {
     expect(routineNotice(run("done", "  "), hidden)).toBe("A routine finished");
+  });
+});
+
+describe("the notification of a turn that ended", () => {
+  const done = (extra: Partial<TurnDoneEvent> = {}): TurnDoneEvent => ({
+    session_id: "s1",
+    title: "Fix the login bug",
+    summary: "The login bug is fixed and the tests pass.",
+    stop_reason: "end",
+    ...extra,
+  });
+  const away = { windowVisible: false, windowFocused: false, shownSessionId: null };
+
+  it("shows the session title and the summary", () => {
+    expect(turnNotice(done(), away)).toEqual({ title: "Fix the login bug", body: "The login bug is fixed and the tests pass." });
+  });
+
+  it("shows nothing when the user sees the session", () => {
+    expect(turnNotice(done(), { windowVisible: true, windowFocused: true, shownSessionId: "s1" })).toBeNull();
+  });
+
+  it("shows it when the window is in the background or shows another session", () => {
+    expect(turnNotice(done(), { windowVisible: true, windowFocused: false, shownSessionId: "s1" })).not.toBeNull();
+    expect(turnNotice(done(), { windowVisible: true, windowFocused: true, shownSessionId: "s2" })).not.toBeNull();
+  });
+
+  it("shows nothing when the user stopped the turn", () => {
+    expect(turnNotice(done({ stop_reason: "interrupted" }), away)).toBeNull();
+  });
+
+  it("has a title before the session has one", () => {
+    expect(turnNotice(done({ title: null, summary: " " }), away)).toEqual({ title: "Harness", body: "The agent finished the turn." });
   });
 });

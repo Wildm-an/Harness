@@ -41,15 +41,49 @@ function allowed(): Promise<boolean> {
   return permission;
 }
 
+/** Shows a Windows notification. Nothing happens outside the desktop app or with no permission. */
+async function show(title: string, body?: string): Promise<void> {
+  if (!isTauri() || !(await allowed())) return;
+  try {
+    const { sendNotification } = await import("@tauri-apps/plugin-notification");
+    sendNotification(body ? { title, body } : { title });
+  } catch {
+    // Ignore: the sidebar also shows the unread session.
+  }
+}
+
 /** Shows a Windows notification for a routine run when the user does not see its session. */
 export async function notifyRoutineRun(ev: RoutineRunEvent, opts: NotifyContext): Promise<void> {
   const text = routineNotice(ev, opts);
-  if (text === null || !isTauri()) return;
-  if (!(await allowed())) return;
-  try {
-    const { sendNotification } = await import("@tauri-apps/plugin-notification");
-    sendNotification({ title: text });
-  } catch {
-    // Ignore: the session in the sidebar also shows the run.
-  }
+  if (text !== null) await show(text);
+}
+
+/** The daemon event turn.done: a turn of a session ended. */
+export interface TurnDoneEvent {
+  session_id: string;
+  title: string | null; // The session title. null: the title is not ready yet.
+  summary: string; // The first sentence of the last reply, or the reason of an early stop.
+  stop_reason: string; // "interrupted": the user stopped the turn.
+}
+
+export interface SeenContext {
+  windowVisible: boolean; // The window is not hidden in the tray and not minimized.
+  windowFocused: boolean; // Harness is the active app.
+  shownSessionId: string | null; // The session that the window shows, if any.
+}
+
+/**
+ * The "task complete" notification of a turn (docs/UI_RULES.md V10): the session title and the summary.
+ * null when the user sees the session, or stopped the turn.
+ */
+export function turnNotice(ev: TurnDoneEvent, ctx: SeenContext): { title: string; body: string } | null {
+  if (ev.stop_reason === "interrupted") return null;
+  if (ctx.windowVisible && ctx.windowFocused && ctx.shownSessionId === ev.session_id) return null;
+  return { title: ev.title?.trim() || "Harness", body: ev.summary.trim() || "The agent finished the turn." };
+}
+
+/** Shows the "task complete" notification of a turn when the user does not see the session. */
+export async function notifyTurnDone(ev: TurnDoneEvent, ctx: SeenContext): Promise<void> {
+  const notice = turnNotice(ev, ctx);
+  if (notice) await show(notice.title, notice.body);
 }

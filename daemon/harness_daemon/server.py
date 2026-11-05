@@ -76,6 +76,7 @@ from .tasks import TaskError, TaskHost
 from .skills import Skill, discover_skills, inline_skill_text
 from .storage import Storage
 from .routines import HISTORY, HUB, RoutineScheduler
+from .turn_notice import summary as turn_summary
 from .cron import CronError, parse_cron
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
@@ -443,6 +444,8 @@ class LiveSession:
         # "Keep computer awake" (keepawake.py): only for this session, while the daemon keeps it open.
         self.keep_awake = False
         self.last_error: str | None = None  # The last error event: a routine run reports it.
+        self.last_stop: str | None = None  # The stop reason of the last turn.end of the running turn.
+        self.routine_id: str | None = None  # A routine run: the routine sends its own notice (routine.run).
         # A routine run: called with True when a permission request waits, and False after the answer.
         self.on_waiting: Callable[[bool], None] | None = None
 
@@ -521,6 +524,8 @@ class LiveSession:
             self.turn_tokens = int(message.get("completion_tokens") or 0)
         elif message.get("type") == "error":
             self.last_error = str(message.get("message") or "")
+        elif message.get("type") == "turn.end":
+            self.last_stop = str(message.get("stop_reason") or "end")
         if self.conn.current is self and self.session is not None:
             await self.conn.send({**message, "session_id": self.session.id})
 
@@ -1060,6 +1065,7 @@ class Connection:
             return
         live.cancel_suggestion()  # The model can start the turn at once.
         live.turn_started = time.time()
+        live.last_stop = live.last_error = None
         live.turn_tokens = 0
         live.turn = asyncio.create_task(self.guarded(live, work(live)))
         await self.send_running()
@@ -1122,7 +1128,20 @@ class Connection:
                 live.wake_soon()  # Notes came at the end of the turn: they start the next turn.
             # live.conn, not self: a routine session can move to a window during its turn.
             await live.conn.send_running()
+            await self.send_turn_done(live)
             await live.conn.close_if_done(live)
+
+    @staticmethod
+    async def send_turn_done(live: LiveSession) -> None:
+        """Tell the client that a turn ended, with the session title and a short summary. The client shows a
+        notification when the user does not see the session. Not a session event: it comes also for a
+        session in the background."""
+        session = live.session
+        if session is None or live.last_stop is None or live.routine_id is not None:
+            return
+        await live.conn.send({"type": "turn.done", "session_id": session.id, "title": session.title,
+                              "stop_reason": live.last_stop,
+                              "summary": turn_summary(session.agent.history, live.last_stop, live.last_error)})
 
     def skills(self, live: LiveSession | None = None) -> dict[str, Skill]:
         """The skills now on disk. The user can add a skill during a session."""
@@ -1261,6 +1280,7 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
     session.title = routine["name"]
     headless.storage.update_session(session.id, title=routine["name"], routine_id=routine["id"])
     live.on_waiting = lambda waiting: report("waiting" if waiting else "running")
+    live.routine_id = routine["id"]
     headless.live[session.id] = live
     live.start()
     report("running", session_id=session.id)

@@ -127,7 +127,7 @@ import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, ClientMessage, ConnectorItem, GitBranches, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
-import { notifyRoutineRun } from "./lib/notify";
+import { notifyRoutineRun, notifyTurnDone } from "./lib/notify";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath, openFolderBlocked } from "./editor/paths";
@@ -745,6 +745,15 @@ export default function App() {
         case "routine.runs":
           setRoutineRuns({ routine_id: msg.routine_id, items: msg.items });
           return;
+        case "turn.done": {
+          const { type: _type, ...done } = msg;
+          void notifyTurnDone(done, {
+            windowVisible: !document.hidden,
+            windowFocused: document.hasFocus(),
+            shownSessionId: shownIdRef.current,
+          });
+          return;
+        }
         case "routine.run": {
           // A run started, waits for an answer, or ended. The list shows the new state at once.
           const { routine_id, run_id, session_id, status: runStatus, error } = msg;

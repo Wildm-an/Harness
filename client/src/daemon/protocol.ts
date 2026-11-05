@@ -907,6 +907,8 @@ export type DaemonMessage =
   | { type: "memory.export"; cwd: string; name: string; data: string; count: number } // data: the .zip as base64.
   | { type: "routines"; items: RoutineItem[]; saved?: string; folder?: string } // To all clients. saved: the id after routines.save. folder: the routine files.
   | { type: "routine.runs"; routine_id: string; items: RoutineRun[] }
+  // A turn ended, also in a session in the background: the client shows a notification if the user does not see it.
+  | { type: "turn.done"; session_id: string; title: string | null; summary: string; stop_reason: string }
   | {
       // To all clients: a run started, waits for a permission answer, or ended.
       type: "routine.run";
