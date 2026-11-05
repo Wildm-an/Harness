@@ -32,6 +32,8 @@ class ToolContext:
     ask: Any = None
     # Change the permission mode of the session, for example after the user accepts a plan.
     set_mode: Any = None
+    # A function that returns the model of the session ("provider/model"), for example for routine_create.
+    model: Any = None
 
     def resolve(self, path: Any, read_only: bool = False) -> Path:
         try:

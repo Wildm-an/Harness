@@ -130,6 +130,7 @@ class Agent:
             read_roots = tuple(s.dir for s in self.skills.values())
         self.ctx = ToolContext(cwd=self.cwd, settings=self.settings, shell=detect_shell(self.settings.get("shell")),
                                read_roots=read_roots, image_input=image_input)
+        self.ctx.model = lambda: self.client.label  # The model can change during the session.
         self.command_hooks = CommandHooks(self.cwd, self.ctx.shell)
         tool_list = list(tools if tools is not None else default_tools())
         if any(s.model_invocable for s in self.skills.values()):
@@ -212,6 +213,10 @@ class Agent:
 
         self.ctx.tasks = host
         self.tools.update({t.name: t for t in task_tools(self.run_subagent if self.user_facing else None)})
+        if self.user_facing:  # A subagent has no user to approve a routine.
+            from .tools.routines import routine_tools
+
+            self.tools.update({t.name: t for t in routine_tools()})
         self._sync_agent_tool()
         self._rebuild_prompt()
 

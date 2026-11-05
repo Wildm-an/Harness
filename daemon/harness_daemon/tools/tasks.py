@@ -203,7 +203,8 @@ class CronCreateTool(Tool):
                 "in the running turn or in a new turn. Use it when the user asks for work at set times, for "
                 "example \"check the deploy every 10 minutes\" or \"run the report at 9:00 on weekdays\". A "
                 "recurring task ends after 7 days. Use schedule_wakeup for one check after a delay. The tasks "
-                "stay only while the session is open. List them with cron_list and stop one with cron_delete.")
+                "stay only while the session is open. List them with cron_list and stop one with cron_delete. "
+                "For work that must continue after this session, use routine_create.")
 
     async def prepare(self, args: dict[str, Any], ctx: ToolContext) -> None:
         from ..cron import CronError, parse_cron

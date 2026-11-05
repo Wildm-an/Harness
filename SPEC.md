@@ -120,6 +120,8 @@ Keep the tool set small. Small local models make more errors with many tools.
 | `bash` | Runs a shell command in the project folder. | Yes |
 | `skill` | Loads the body of a skill. | No |
 | `preview_*` | Controls servers and the agent browser. See section 8.7. | Some |
+| `routine_create` | Saves a routine (a prompt on a cron schedule) in `~/.harness/routines/`. The Routines page shows it. Its mode cannot be less limited than the mode of the session. | Yes |
+| `routine_list` | Lists the saved routines. | No |
 
 Rules:
 

@@ -228,3 +228,7 @@ class RoutineScheduler:
         finally:
             self.active.pop(routine["id"], None)
             self._drain()
+
+
+# The routine state of this daemon. server.py starts the scheduler, and the routine tools use it.
+HUB = RoutineHub()

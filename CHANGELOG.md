@@ -3,6 +3,15 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Routines
+
+- The agent can save a routine for you. Ask, for example, "summarize the new commits each weekday
+  morning". The agent asks for your approval, and the routine shows on the Routines page. It uses
+  the folder, the model, and the permission mode of the session, and it cannot get a mode with
+  fewer limits than the session.
+
 ## 0.1.46 (2026-11-04)
 
 ### Routines

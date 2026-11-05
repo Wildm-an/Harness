@@ -75,7 +75,7 @@ from .sidechat import NO_TOOLS_REPLY, clean_side_history, side_messages
 from .tasks import TaskError, TaskHost
 from .skills import Skill, discover_skills, inline_skill_text
 from .storage import Storage
-from .routines import HISTORY, RoutineHub, RoutineScheduler
+from .routines import HISTORY, HUB, RoutineScheduler
 from .cron import CronError, parse_cron
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
@@ -197,7 +197,7 @@ class ProtocolError(Exception):
 
 
 # The routines (routines.py): the clients that get their events, and the scheduler.
-ROUTINES = RoutineHub()
+ROUTINES = HUB
 # The connection of the sessions that the daemon starts with no window: the runs of routines.
 HEADLESS: HeadlessConnection | None = None
 

@@ -375,3 +375,59 @@ def test_routine_save_checks_the_fields(daemon, project):  # noqa: F811
     c.send({"type": "routines.save", "name": "", "prompt": "x", "cwd": str(project), "schedule": "0 9 * * *"})
     assert "name" in c.until("error")[0]["message"]
     c.close()
+
+
+# -- the routine tools (tools/routines.py) -----------------------------------------------------
+
+
+def test_the_mode_of_a_routine_from_a_session():
+    from harness_daemon.tools.base import ToolError
+    from harness_daemon.tools.routines import routine_mode
+
+    assert routine_mode(None, "auto") == "auto"
+    assert routine_mode(None, "plan") == "default"  # A routine in Plan mode cannot change anything.
+    assert routine_mode("plan", "default") == "plan"
+    assert routine_mode("acceptEdits", "auto") == "acceptEdits"
+    with pytest.raises(ToolError, match="less limited"):
+        routine_mode("bypassPermissions", "default")
+    with pytest.raises(ToolError, match="less limited"):
+        routine_mode("auto", "plan")
+    with pytest.raises(ToolError, match="must be one of"):
+        routine_mode("yolo", "auto")
+
+
+def test_the_agent_saves_a_routine(daemon, project, fake_model, tmp_path):  # noqa: F811
+    a, b = Client(daemon), Client(daemon)
+    a.new_session(project)
+    b.until("auth.ok")
+    fake_model.script(
+        # A mode above the session mode is refused before the user sees a request.
+        {"tool_calls": [{"name": "routine_create", "arguments": {
+            "name": "Morning summary", "prompt": "Summarize the new commits.", "schedule": "0 9 * * 1-5",
+            "permission_mode": "bypassPermissions"}}]},
+        {"tool_calls": [{"name": "routine_create", "arguments": {
+            "name": "Morning summary", "prompt": "Summarize the new commits.", "schedule": "0 9 * * 1-5"}}]},
+        {"tool_calls": [{"name": "routine_list", "arguments": {}}]},
+        {"text": "The routine runs at 09:00 on weekdays."},
+    )
+    a.send({"type": "prompt", "text": "Summarize the new commits each weekday morning"})
+    request = a.until("permission.request")[0]
+    assert request["tool"] == "routine_create"
+    assert request["input"]["permission_mode"] == "Manual" and request["input"]["model"] == "fake/test-model"
+    assert request["input"]["folder"] == str(project)
+    a.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
+    a.until("turn.end")
+
+    refused = next(m for m in fake_model.requests[1]["messages"] if m["role"] == "tool")["content"]
+    assert "less limited permission mode" in refused
+    tool_results = [m["content"] for m in fake_model.requests[-1]["messages"] if m["role"] == "tool"]
+    assert "Saved the routine 'Morning summary' (Active)" in tool_results[-2]
+    assert "morning-summary: Morning summary (Active), schedule '0 9 * * 1-5'" in tool_results[-1]
+
+    text = (tmp_path / "routines" / "morning-summary.md").read_text(encoding="utf-8")
+    assert "model: fake/test-model\npermission_mode: default\n" in text and "Summarize the new commits." in text
+    listing = b.until("routines")[0]  # The other window gets the new list.
+    assert [r["id"] for r in listing["items"]] == ["morning-summary"]
+    a.close()
+    b.close()
+
