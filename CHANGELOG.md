@@ -3,6 +3,33 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.48 (2026-11-05)
+
+### Settings
+
+- A new "Your Harness" page holds the agent instructions (moved from General) and a Memory
+  section, as in the Memory settings of Claude:
+  - "Search and reference chats": the agent can search the past sessions of the same project.
+  - "Generate memory from chats": the auto memory switch, moved from General.
+  - "Include sensitive topics in memory": off by default.
+  - "Your memory" > "Manage": see, add, edit, rename, and delete the memories of a project.
+  - "Import memory from other AI providers": copy a prompt to another assistant, paste its
+    reply, choose the facts, and import them.
+  - "Export memory": save the memories as a .zip of Markdown files.
+- Settings > General > System has a "Storage" row. "Manage" shows how much space Harness uses:
+  sessions and worktrees, local models, the runtime, memory and settings, and the app caches and
+  logs, with the details of each.
+
+### Start screen
+
+- The model chip shows the name of the default model, not only "Default model".
+
+### Updates
+
+- The app settings (theme, fonts, layouts, connections, and more) now also go to a file, and the
+  app restores them at the start. An update saves them and the window position and size before
+  the installer closes the app, so an update no longer loses recent changes.
+
 ## 0.1.47 (2026-11-04)
 
 ### Notifications
