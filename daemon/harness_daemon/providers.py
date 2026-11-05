@@ -38,6 +38,8 @@ import asyncio
 
 import httpx
 
+from .nethttp import async_client
+
 # The openai package loads at the first model request, not when the daemon starts: its import takes
 # about 1 second, and the client waits for the daemon at each start of the app.
 if TYPE_CHECKING:
@@ -222,13 +224,13 @@ async def model_capabilities(provider: Provider, model: str) -> list[str] | None
     Return None for other providers, or if the endpoint does not tell.
     """
     if provider.kind == "openrouter":
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with async_client(timeout=5) as client:
             entry = (await openrouter_models(client, provider)).get(model)
         return openrouter_capabilities(entry) if entry else None
     if provider.kind != "ollama":
         return None
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with async_client(timeout=5) as client:
             r = await client.post(f"{provider.root_url}/api/show", json={"model": model})
     except httpx.HTTPError:
         return None
@@ -480,7 +482,7 @@ async def resolve_context_length(provider: Provider, model: str, settings: dict[
     configured = configured_context(provider, model)
     if configured:
         return configured
-    async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as client:
+    async with async_client(timeout=PROBE_TIMEOUT) as client:
         probe = _probe_ollama if provider.kind == "ollama" else _probe_openai
         found = await probe(client, provider, model)
     if found:
@@ -508,7 +510,7 @@ async def model_contexts(provider: Provider, models: list[str],
             unknown.append(model)
     if not unknown:
         return found
-    async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as client:
+    async with async_client(timeout=PROBE_TIMEOUT) as client:
         if provider.kind == "ollama":
             loaded = await _ollama_loaded(client, provider)
             limit = asyncio.Semaphore(PROBE_CONCURRENCY)
@@ -576,7 +578,9 @@ class ModelClient:
             raise ModelError(str(e)) from e
         loop = asyncio.get_running_loop()
         if self._client is None or current.base_url != self._base_url or loop is not self._loop:
-            from openai import AsyncOpenAI
+            from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+
+            from .nethttp import ssl_context
 
             self._base_url = current.base_url
             self._loop = loop
@@ -585,6 +589,8 @@ class ModelClient:
                 api_key=current.api_key,
                 max_retries=1,
                 timeout=httpx.Timeout(600, connect=10),
+                # The shared SSL context: a new context blocks the event loop for about 300 ms.
+                http_client=DefaultAsyncHttpxClient(verify=ssl_context(), timeout=httpx.Timeout(600, connect=10)),
             )
         return self._client
 

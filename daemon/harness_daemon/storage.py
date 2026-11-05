@@ -175,12 +175,19 @@ class Storage:
         row = self.db.execute("SELECT * FROM projects WHERE path_key = ?", (path_key(path),)).fetchone()
         return dict(row) if row else None
 
+    def _project_time(self) -> float:
+        """The time for the "last used" order of the projects. Two changes in the same clock tick
+        (Windows time.time() can repeat a value) still get the order of the changes."""
+        now = max(time.time(), getattr(self, "_last_project_time", 0.0) + 1e-6)
+        self._last_project_time = now
+        return now
+
     def save_project(self, name: str, path: str, project_id: str | None = None) -> str:
         """Add a project, or change the project ``project_id``. Raise ValueError for a folder in another project."""
         other = self.find_project(path)
         if other and other["id"] != project_id:
             raise ValueError(f"The project {other['name']} already uses this folder.")
-        now = time.time()
+        now = self._project_time()
         if project_id is None:
             project_id = self._insert_project(name, path, now, now)
         else:
@@ -199,7 +206,7 @@ class Storage:
     def touch_project(self, path: str) -> str:
         """Mark the project of a folder as used now. Add the folder as a project if it is not one."""
         found = self.find_project(path)
-        now = time.time()
+        now = self._project_time()
         if found is None:
             project_id = self._insert_project(folder_name(path), path, now, now)
         else:

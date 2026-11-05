@@ -25,6 +25,8 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from .nethttp import async_client
+
 from .launch import ServerConfig, load_launch, server_dir
 from .tools.shell import ShellInfo, _kill_tree
 
@@ -218,7 +220,7 @@ class ServerManager:
         if has_pattern:
             await ready.wait()
         elif config.health_url:
-            async with httpx.AsyncClient(timeout=2) as client:
+            async with async_client(timeout=2) as client:
                 while True:
                     try:
                         if (await client.get(config.health_url)).status_code == 200:

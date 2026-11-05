@@ -32,6 +32,7 @@ from .agent import Agent
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, MODES, PermissionRules
+from . import nethttp
 from .plugins import Invocation, PluginHost, Prompt, run_command
 from .plugins.install import (InstallError, install as install_plugin, remove as remove_plugin, remove_old_deepseek_data,
                               set_bundle_enabled)
@@ -188,9 +189,16 @@ def note_message(notes: list[tuple[str, str]]) -> tuple[str, str]:
     shown = list(dict.fromkeys(short for _, short in notes))
     return f"{NOTE_LEAD}\n\n" + "\n\n".join(parts), " · ".join(shown)
 # The model checks of a session start: (provider, URL, kind, model, context_length setting) ->
-# (the time, the capabilities, the context length). A change to the providers clears it.
+# (the time, the capabilities, the context length). A change to the providers clears it. The same
+# result is also under ("last", provider, URL, model, context_length setting): a session open uses it at
+# once, with no request to the endpoint (Connection.quick_model_info).
 MODEL_CHECKS: dict[tuple[Any, ...], tuple[float, list[str] | None, ContextInfo]] = {}
 MODEL_CHECKS_TTL = 600
+MODEL_CHECK_WAIT = 20  # Seconds that the first turn waits for the model checks of the open.
+# The model checks that run now, by the key of MODEL_CHECKS.
+CHECKS_RUNNING: dict[tuple[Any, ...], asyncio.Future] = {}
+# The sessions that close in the background after the client left them (Connection.leave_current).
+CLOSING: set[asyncio.Task] = set()
 
 # Project settings that the client can change with "settings.set", and their types.
 CLIENT_SETTINGS: dict[str, type] = {"auto_verify": bool, "permission_mode": str}
@@ -240,6 +248,7 @@ def stop_all_servers() -> None:
 
 def create_app(token: str, storage: Storage | None = None) -> FastAPI:
     app = FastAPI(title="harness-daemon", version=__version__, lifespan=lifespan)
+    nethttp.warm_up()  # The first model check and request do not wait for the SSL context.
     app.state.storage = storage or Storage(harness_home() / "harness.db")
 
     @app.get("/health")
@@ -458,6 +467,7 @@ class LiveSession:
         self.routine_id: str | None = None  # A routine run: the routine sends its own notice (routine.run).
         # A routine run: called with True when a permission request waits, and False after the answer.
         self.on_waiting: Callable[[bool], None] | None = None
+        self.model_task: asyncio.Task | None = None  # The model checks after the open (check_model).
 
     @property
     def id(self) -> str | None:
@@ -611,6 +621,8 @@ class LiveSession:
         self.cancel_suggestion()
         self.cancel_completion()
         self.cancel_side()
+        if self.model_task is not None:
+            self.model_task.cancel()
         if self.tasks is not None:
             self.tasks.close()
         AWAKE.hold(self, False)
@@ -663,6 +675,36 @@ class LiveSession:
                               host.mcp_servers if host is not None else None)
         MCPS.add(self.mcp)
         asyncio.create_task(self._start_mcp(self.mcp))
+        if getattr(session.agent, "model_checks_pending", False):
+            session.agent.model_checks_pending = False
+            self.model_task = asyncio.create_task(self.check_model())
+
+    async def check_model(self) -> None:
+        """Check the model endpoint after the open: tool support, context length, image input.
+
+        A change goes to the client as ``session.model_info``, with the new warnings only.
+        """
+        session = self.session
+        if session is None:
+            return
+        agent = session.agent
+        client = agent.client
+        try:
+            warnings, context, images = await Connection.model_checks(client.provider, client.model, agent.settings)
+        except Exception as e:  # noqa: BLE001 - the first request of a turn reports a bad endpoint.
+            log.info("The model checks after the open failed: %s", e)
+            return
+        if self.session is not session or agent.client is not client:
+            return  # The session closed, or the user switched the model.
+        changed = (context.length, context.source, images) != (agent.context_length, agent.context_source, agent.image_input)
+        if changed:
+            agent.set_client(client, context.length, images, context.source)
+        new = [w for w in warnings if w not in getattr(agent, "model_warnings", [])]
+        agent.model_warnings = list(warnings)
+        if changed or new:
+            await self.send({"type": "session.model_info", "context_length": agent.context_length,
+                             "context_source": agent.context_source, "image_input": agent.image_input,
+                             "warnings": new})
 
     async def _start_mcp(self, manager: McpManager) -> None:
         try:
@@ -672,6 +714,10 @@ class LiveSession:
             await self.error(f"The MCP servers did not start: {e}", ref="mcp")
 
     async def wait_for_mcp(self) -> None:
+        """Before a turn: the MCP servers and the model checks of the open (check_model) finish first."""
+        task = self.model_task
+        if task is not None and not task.done():
+            await asyncio.wait({task}, timeout=MODEL_CHECK_WAIT)
         if self.mcp is not None:
             await self.mcp.ready(MCP_WAIT)
 
@@ -870,7 +916,20 @@ class Connection:
         live, self.current = self.current, None
         self.watched.clear()
         if live is not None and not live.keep_open:
-            await self.close_live(live)
+            # Its MCP servers, dev servers, and browser can take seconds to stop. The next session
+            # does not wait for them.
+            if live.id is not None and self.live.get(live.id) is live:
+                del self.live[live.id]
+            task = asyncio.create_task(self._close_quietly(live))
+            CLOSING.add(task)
+            task.add_done_callback(CLOSING.discard)
+
+    @staticmethod
+    async def _close_quietly(live: LiveSession) -> None:
+        try:
+            await live.close()
+        except Exception:  # noqa: BLE001 - the session is gone for the client.
+            log.exception("A session did not close cleanly")
 
     async def close_if_done(self, live: LiveSession) -> None:
         """Close a session in the background when its turn and its shell have stopped."""
@@ -948,6 +1007,7 @@ class Connection:
         session. With "auto_model" on, the session gets the model by network. Else (or if that model
         is not available too) the client asks the user to switch to an available model."""
         settings = load_settings(cwd)
+        pending = False  # The model checks must run after the open.
         await self.drop_start_plugins()  # The session loads its own plugins.
         # The plugins load first: a plugin can register the provider of the model.
         plugins = PluginHost(cwd)
@@ -968,7 +1028,10 @@ class Connection:
                 context = (ContextInfo(int(configured), "settings") if configured
                            else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default"))
             else:
-                warnings, context, images = await self.model_checks(provider, model_name, settings)
+                # A session opens at once: the saved checks of the model, or defaults. The checks
+                # of the endpoint run after the open (LiveSession.check_model).
+                warnings, context, images, fresh = self.quick_model_info(provider, model_name, settings)
+                pending = not fresh
             if note:
                 warnings.insert(0, note)  # The local model, because the online model did not answer.
             agent = Agent(cwd=cwd, client=ModelClient(provider, model_name), emit=live.send,
@@ -976,12 +1039,46 @@ class Connection:
                           summary=summary, context_length=context.length,
                           skills=discover_skills(cwd, plugins.skill_roots()),
                           image_input=images, context_source=context.source, plugins=plugins)
+            agent.model_checks_pending = pending
+            agent.model_warnings = list(warnings)
         except BaseException:
             await plugins.dispose()
             raise
         warnings += [f"The plugin {s.row.id} did not load: {s.error}" for s in plugins.rows.values()
                      if s.state == "failed"]
         return agent, warnings
+
+    @staticmethod
+    def quick_model_info(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], ContextInfo, bool, bool]:
+        """The model info with no request: the last checks of the model, or defaults.
+
+        Return the warnings, the context length, the image input flag, and ``fresh``: the checks are
+        newer than MODEL_CHECKS_TTL. A result that is not fresh needs Connection.model_checks.
+        """
+        saved = MODEL_CHECKS.get(("last", provider.name, provider.base_url, model, settings.get("context_length")))
+        if saved is not None:
+            warnings, context, images = Connection._model_info(provider, model, settings, saved[1], saved[2])
+            return warnings, context, images, time.monotonic() - saved[0] < MODEL_CHECKS_TTL
+        configured = settings.get("context_length") or provider.context_length
+        context = ContextInfo(int(configured), "settings") if configured else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default")
+        warnings, context, images = Connection._model_info(provider, model, settings, None, context)
+        return warnings, context, images, False
+
+    @staticmethod
+    def _model_info(provider, model: str, settings: dict[str, Any], caps: list[str] | None,
+                    context: ContextInfo) -> tuple[list[str], ContextInfo, bool]:
+        support = None if caps is None else "tools" in caps
+        warnings = []
+        if provider.key_missing:
+            warnings.append(f"The provider {provider.name} has no API key. {provider.key_missing} "
+                            "Open the Connections screen to enter the key.")
+        if support is False:
+            warnings.append(f"The model {model} does not support tool calls. "
+                            "The agent cannot read files, edit files, or run commands.")
+        if context.warning:
+            warnings.append(context.warning)
+        # "provider" (not "reachable"): the models of providers.json use the configured name.
+        return warnings, context, image_input(provider, model, settings, caps)
 
     @staticmethod
     async def model_checks(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], ContextInfo, bool]:
@@ -1001,21 +1098,17 @@ class Connection:
         if saved is not None and time.monotonic() - saved[0] < MODEL_CHECKS_TTL:
             caps, context = saved[1], saved[2]
         else:
-            caps, context = await asyncio.gather(
-                model_capabilities(reachable, model), resolve_context_length(reachable, model, settings))
+            # Two sessions that open at the same time share one check.
+            running = CHECKS_RUNNING.get(key)
+            if running is None:
+                running = asyncio.ensure_future(asyncio.gather(
+                    model_capabilities(reachable, model), resolve_context_length(reachable, model, settings)))
+                CHECKS_RUNNING[key] = running
+                running.add_done_callback(lambda _: CHECKS_RUNNING.pop(key, None))
+            caps, context = await asyncio.shield(running)
             MODEL_CHECKS[key] = (time.monotonic(), caps, context)
-        support = None if caps is None else "tools" in caps
-        warnings = []
-        if provider.key_missing:
-            warnings.append(f"The provider {provider.name} has no API key. {provider.key_missing} "
-                            "Open the Connections screen to enter the key.")
-        if support is False:
-            warnings.append(f"The model {model} does not support tool calls. "
-                            "The agent cannot read files, edit files, or run commands.")
-        if context.warning:
-            warnings.append(context.warning)
-        # "provider" (not "reachable"): the models of providers.json use the configured name.
-        return warnings, context, image_input(provider, model, settings, caps)
+            MODEL_CHECKS[("last", provider.name, provider.base_url, model, settings.get("context_length"))] = (time.monotonic(), caps, context)
+        return Connection._model_info(provider, model, settings, caps, context)
 
     async def send_ready(self, warnings: list[str]) -> None:
         """Send the current session to the client. Build the message before the first await:

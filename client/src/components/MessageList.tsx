@@ -403,7 +403,15 @@ export function MessageList({
               return <FileCard key={item.id} path={item.path} />;
           }
         })}
-        {plan && <PlanBlock steps={plan.steps} running={running && plan.current} />}
+        {plan && (
+          <PlanBlock
+            steps={plan.steps}
+            running={running && plan.current}
+            finished={plan.finished}
+            // A plan of an older turn, or a message that the user wrote during the turn: the plan can change.
+            stale={!plan.current || (running && queued.length > 0)}
+          />
+        )}
         {wrap && !running && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} />}
         {running && <WorkingLine turn={turn} items={items} model={model} tools={liveTools} reviewId={reviewId} onReview={onReview} />}
         {queued.map((item) => (

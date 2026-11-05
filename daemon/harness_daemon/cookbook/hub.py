@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from ..nethttp import async_client
+
 from .fit import quant_of, split_key
 from .gguf import GgufError, ModelShape, fetch_shape
 
@@ -231,7 +233,7 @@ class Hub:
 
     async def _card(self, repo_id: str) -> str:
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            async with async_client(timeout=15, follow_redirects=True) as client:
                 r = await client.get(f"{HF}/{repo_id}/raw/main/README.md", headers=self.headers())
         except httpx.HTTPError:
             return ""
@@ -249,7 +251,7 @@ class Hub:
             if gguf:
                 first = gguf[0]["files"][0]  # All quants of a repository have the same shape.
                 return await fetch_shape(f"{HF}/{repo_id}/resolve/main/{first}", self.token), None
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            async with async_client(timeout=15, follow_redirects=True) as client:
                 r = await client.get(f"{HF}/{repo_id}/resolve/main/config.json", headers=self.headers())
             if r.status_code == 200:
                 return shape_from_config(r.json()), None

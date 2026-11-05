@@ -51,6 +51,8 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from .nethttp import async_client
+
 from . import mcp_auth
 from .config import ConfigError, harness_home, read_json, write_json
 
@@ -209,7 +211,7 @@ def token(connector_id: str) -> str | None:
 async def check_token(connector: Connector, value: str) -> str:
     """Ask the service for the account of the token. Return the account name."""
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with async_client(timeout=20) as client:
             response = await client.get(connector.user_api, headers={
                 "Authorization": f"Bearer {value}", "Accept": "application/vnd.github+json",
                 "User-Agent": "Harness"})

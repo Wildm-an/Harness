@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from ..nethttp import async_client
+
 MAGIC = b"GGUF"
 FIRST_READ = 512 * 1024
 MAX_READ = 32 * 1024 * 1024
@@ -139,7 +141,7 @@ async def fetch_shape(url: str, token: str | None = None) -> ModelShape:
     """Read the header of a remote GGUF file. Reads more bytes until the model keys are complete."""
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     size = FIRST_READ
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with async_client(timeout=30, follow_redirects=True) as client:
         while True:
             response = await client.get(url, headers={**headers, "Range": f"bytes=0-{size - 1}"})
             if response.status_code in (401, 403):

@@ -28,6 +28,8 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 
+from .nethttp import async_client
+
 from . import __version__
 
 PROVIDERS = ("duckduckgo", "brave", "tavily", "searxng", "off")
@@ -71,7 +73,7 @@ def _client(**kwargs: Any) -> httpx.AsyncClient:
     transport = _transport()
     if transport is not None:
         kwargs["transport"] = transport
-    return httpx.AsyncClient(timeout=FETCH_TIMEOUT, headers={"User-Agent": USER_AGENT}, **kwargs)
+    return async_client(timeout=FETCH_TIMEOUT, headers={"User-Agent": USER_AGENT}, **kwargs)
 
 
 # -- URLs and domains --------------------------------------------------------------------------------

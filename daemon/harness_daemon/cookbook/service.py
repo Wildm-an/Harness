@@ -16,6 +16,8 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from ..nethttp import async_client
+
 from ..config import write_json
 from ..provider_config import providers_path
 from ..providers import read_provider_entries
@@ -360,7 +362,7 @@ class Cookbook:
         if host.remote:
             return True  # The port check of the host script is enough. A tunnel opens on the first model call.
         try:
-            async with httpx.AsyncClient(timeout=3) as client:
+            async with async_client(timeout=3) as client:
                 return (await client.get(f"http://127.0.0.1:{port}/health")).status_code == 200
         except httpx.HTTPError:
             return False

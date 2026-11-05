@@ -987,6 +987,8 @@ export type DaemonMessage =
   | { type: "prompt.fill"; text: string }
   | { type: "pong" }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string } // For example, a plugin added a message.
+  // The checks of the model endpoint after a session open: the context length, the image input, and new warnings.
+  | { type: "session.model_info"; context_length: number; context_source?: string; image_input: boolean; warnings: string[] }
   // The token counts of the turn so far, after each model reply.
   | { type: "turn.usage"; prompt_tokens: number; completion_tokens: number; last_prompt_tokens: number }
   | { type: "fs.changed"; path: string; hash: string | null; by: "agent" | "external" }

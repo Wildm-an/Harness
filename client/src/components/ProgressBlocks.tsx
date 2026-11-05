@@ -1,17 +1,44 @@
 // The task list and the end-of-turn box of the agent, as in Claude Code (lib/progress.ts).
 
-import { CircleCheck, LoaderCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronRight, CircleCheck, CircleEllipsis, LoaderCircle } from "lucide-react";
 import type { PlanStep, WrapUp } from "../lib/progress";
 
-/** The plan of the agent: a check mark for a completed step, a spinner for the step in progress, a dashed circle for the rest. */
-export function PlanBlock({ steps, running }: { steps: PlanStep[]; running: boolean }) {
+/**
+ * The plan of the agent: a check mark for a completed step, a spinner for the step in progress, a
+ * dashed circle for the rest. A finished plan folds into one line. A click on the line opens it.
+ */
+export function PlanBlock({ steps, running, finished, stale = false }: { steps: PlanStep[]; running: boolean; finished: boolean; stale?: boolean }) {
   const done = steps.filter((s) => s.status === "completed").length;
+  const [open, setOpen] = useState(!finished);
+  useEffect(() => setOpen(!finished), [finished]);
+  if (finished && !open) {
+    return (
+      <button type="button" className="plan-folded" aria-expanded={false} onClick={() => setOpen(true)} title="Show the steps">
+        <CircleCheck size={16} aria-hidden className="plan-icon" />
+        <span className="plan-text">
+          Plan finished · {steps.length} {steps.length === 1 ? "step" : "steps"}
+        </span>
+        <ChevronRight size={14} aria-hidden className="plan-chevron" />
+      </button>
+    );
+  }
   return (
     <div className="plan-block" role="list" aria-label={`Plan: ${done} of ${steps.length} steps completed`}>
+      {/* The user wrote after this plan: the agent can change it. As in Claude Code. */}
+      {stale && !finished && <p className="plan-stale">Plan from before your last message</p>}
+      {finished && (
+        <button type="button" className="plan-fold" aria-expanded onClick={() => setOpen(false)} title="Hide the steps">
+          <span>Plan finished</span>
+          <ChevronRight size={14} aria-hidden className="plan-chevron open" />
+        </button>
+      )}
       {steps.map((step, i) => (
         <div key={i} role="listitem" className={`plan-step ${step.status}`}>
           {step.status === "completed" ? (
             <CircleCheck size={16} aria-hidden className="plan-icon" />
+          ) : step.status === "in_progress" && stale ? (
+            <CircleEllipsis size={16} aria-hidden className="plan-icon paused" />
           ) : step.status === "in_progress" && running ? (
             <LoaderCircle size={16} aria-hidden className="plan-icon spin" />
           ) : (

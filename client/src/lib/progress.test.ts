@@ -50,4 +50,11 @@ describe("latestPlan", () => {
     expect(shown?.current).toBe(true);
     expect(shown?.steps[0].status).toBe("pending");
   });
+
+  it("marks a plan finished when all steps are completed, or after wrap_up", () => {
+    expect(latestPlan([user("u1"), plan("p1", ["completed", "in_progress"])])?.finished).toBe(false);
+    expect(latestPlan([user("u1"), plan("p1", ["completed", "completed"])])?.finished).toBe(true);
+    const wrap: ChatItem = { kind: "tool", id: "w1", name: "wrap_up", input: { recap: "Done." }, output: "Shown.", status: "done" };
+    expect(latestPlan([user("u1"), plan("p1", ["completed", "in_progress"]), wrap])?.finished).toBe(true);
+  });
 });

@@ -349,6 +349,11 @@ def test_session_switch_uses_the_saved_model_checks(daemon, project, fake_model,
     c.until("session.ready")
     c.send({"type": "session.resume", "session_id": first["session_id"]})
     c.until("session.ready")
+    # The checks run after the open, in the background: one time for the three opens.
+    deadline = time.monotonic() + 10
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.05)
+    time.sleep(0.3)
     assert calls == ["test-model"]
     c.close()
 
@@ -504,8 +509,10 @@ def test_unexpected_turn_error_ends_the_turn(daemon, project, fake_model, monkey
 def test_warning_for_model_without_tools(daemon, project, fake_model):
     fake_model.capabilities = ["completion"]
     c = Client(daemon)
-    ready = c.new_session(project)
-    assert "does not support tool calls" in ready["warnings"][0]
+    c.new_session(project)
+    # The checks of the endpoint run after the open: the warning comes just after session.ready.
+    info = c.until("session.model_info")[0]
+    assert "does not support tool calls" in info["warnings"][0]
     c.close()
 
 
@@ -804,8 +811,9 @@ def test_a_prompt_with_pasted_images(daemon, project, fake_model):
     # A model with image input gets the image as a part of the message.
     fake_model.capabilities = ["completion", "tools", "vision"]
     c = Client(daemon)
-    ready = c.new_session(project, model="fake/other-model")
-    assert ready["image_input"] is True
+    c.new_session(project, model="fake/other-model")
+    # The checks of the endpoint after the open find the image input.
+    assert c.until("session.model_info")[0]["image_input"] is True
     fake_model.script({"text": "I see a dot."})
     c.send({"type": "prompt", "text": "", "images": [PNG_DOT]})  # Only an image: the prompt can go.
     c.until("turn.end")

@@ -121,7 +121,9 @@ def test_session_through_a_tunnel(daemon, harness_home, project, fake_model, fak
     fake_model.script({"text": "Hello through SSH."})
     c = Client(daemon)
     ready = c.new_session(project, model="gpu/m")
-    assert ready["warnings"] == [] and ready["context_length"] == 32768  # The probes also use the tunnel.
+    assert ready["warnings"] == []
+    info = c.until("session.model_info")[0]  # The checks after the open.
+    assert info["warnings"] == [] and info["context_length"] == 32768  # The probes also use the tunnel.
     c.send({"type": "prompt", "text": "hi"})
     end, seen = c.until("turn.end")
     assert "".join(m["text"] for m in seen if m["type"] == "token") == "Hello through SSH."
@@ -132,6 +134,7 @@ def test_session_warns_when_the_tunnel_fails(daemon, harness_home, project, fake
     write_provider(harness_home, fake_model)
     monkeypatch.setenv("FAKE_SSH_FAIL", "ssh: Could not resolve hostname gpu-box")
     c = Client(daemon)
-    ready = c.new_session(project, model="gpu/m")
-    assert "Could not resolve hostname" in ready["warnings"][0]
+    c.new_session(project, model="gpu/m")
+    info = c.until("session.model_info")[0]  # The checks after the open open the tunnel.
+    assert "Could not resolve hostname" in info["warnings"][0]
     c.close()

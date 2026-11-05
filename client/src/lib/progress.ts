@@ -65,6 +65,9 @@ function isInterrupt(item: ChatItem): boolean {
 export interface ShownPlan {
   steps: PlanStep[];
   current: boolean; // False: the plan of an older turn. Its step in progress shows no spinner.
+  // All steps are completed, or the agent called wrap_up after the plan (wrap_up checks off the
+  // task list, as in Claude Code). The chat folds the list into one line.
+  finished: boolean;
 }
 
 /**
@@ -80,10 +83,13 @@ export function latestPlan(items: ChatItem[]): ShownPlan | null {
     if (item.kind !== "tool" || item.name !== "update_plan" || item.status === "error") continue;
     const steps = planSteps(item.input);
     if (!steps) continue;
-    if (i > turnStart) return { steps, current: true };
+    if (i > turnStart) {
+      const wrapped = items.slice(i + 1).some((t) => t.kind === "tool" && t.name === "wrap_up" && t.status !== "error");
+      return { steps, current: true, finished: wrapped || steps.every((s) => s.status === "completed") };
+    }
     if (steps.every((s) => s.status === "completed")) return null;
     if (items.slice(i + 1, turnStart).some(isInterrupt)) return null;
-    return { steps, current: false };
+    return { steps, current: false, finished: false };
   }
   return null;
 }

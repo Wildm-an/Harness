@@ -278,6 +278,12 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: "error", text: msg.message }] };
     case "notice":
       return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: msg.level, text: msg.text }] };
+    case "session.model_info": {
+      // The checks of the model endpoint finished after the open.
+      const notices: ChatItem[] = msg.warnings.map((text) => ({ kind: "notice", id: nextId("notice"), level: "warning", text }));
+      const context = state.context ? { ...state.context, length: msg.context_length, source: msg.context_source } : state.context;
+      return { ...state, items: notices.length ? [...state.items, ...notices] : state.items, context };
+    }
     case "command.result": {
       const notices: ChatItem[] = [];
       // A model switch shows only in the model label under the prompt box. An older daemon sends a text for it.

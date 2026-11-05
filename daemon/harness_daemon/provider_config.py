@@ -21,6 +21,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .nethttp import async_client
+
 from .config import ConfigError, harness_home, write_json
 from .providers import (CLIENT_KEYS, Provider, _provider_from_entry, default_kind, endpoint, is_enabled,
                         model_contexts, read_provider_entries)
@@ -229,7 +231,7 @@ async def _openrouter_key_problem(provider: Provider, timeout: float) -> str | N
         return f"OpenRouter needs an API key. {hint}"
     url = f"{provider.base_url}/key"
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with async_client(timeout=timeout) as client:
             response = await client.get(url, headers={"Authorization": f"Bearer {provider.api_key}"})
     except httpx.HTTPError as e:
         return f"Cannot check the API key at {url}: {e}"
@@ -262,7 +264,7 @@ async def list_models(provider: Provider, timeout: float = TEST_TIMEOUT, context
         headers["Authorization"] = f"Bearer {provider.api_key}"
     url = f"{reachable.base_url}/models"
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with async_client(timeout=timeout) as client:
             response = await client.get(url, headers=headers)
     except httpx.TimeoutException:
         return result(False, error=f"No answer from {provider.base_url} in {timeout:g} seconds.")
