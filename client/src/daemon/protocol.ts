@@ -318,17 +318,36 @@ export interface ConnectorItem {
   id: string;
   name: string;
   description: string;
-  kind: "token" | "device";
+  kind: "token" | "device" | "google" | "local";
   url: string; // The MCP server ("token"), or the page of the server ("device").
   installed: boolean; // The server entry is in ~/.harness/mcp.json.
-  source: "gh" | "token" | "device" | null; // How it signed in. null: not connected.
+  source: "gh" | "token" | "device" | "google" | "local" | null; // How it signed in. null: not connected.
   login: string | null; // The account.
   signing_in: boolean; // A device sign-in waits for the user.
   gh_available?: boolean; // "token": the GitHub CLI is signed in on the daemon computer.
   token_url?: string; // "token": the page where the user makes a token.
   token_help?: string;
   package?: string; // "device": the npm package, with its version.
-  options?: ConnectorOptions | null; // "device": the options of the sign-in.
+  accounts?: ConnectorAccount[]; // "device" and "google": the signed-in accounts.
+  client_id?: string | null; // "google": the OAuth client of the user (the secret never comes to the client).
+  client_builtin?: boolean; // "google": the accounts use the Google client of Harness.
+  builtin_client?: boolean; // "google": this build of Harness has a Google client ("Continue with Google").
+  profile?: "own" | "separate" | null; // "local" (Chrome): the Chrome window of the user, or a separate profile.
+}
+
+/** The options of a Gmail sign-in. The client ID and secret are needed only for the first account. */
+export interface GoogleConnectOptions {
+  builtin?: boolean; // Use the Google client of Harness.
+  client_id?: string;
+  client_secret?: string;
+  read_only?: boolean;
+}
+
+/** A signed-in account of a "device" connector. The accounts of one type share one MCP server. */
+export interface ConnectorAccount {
+  login: string;
+  type: ConnectorOptions["account"] | "google";
+  read_only: boolean; // For all the accounts of this type.
 }
 
 export interface McpStatus {
@@ -620,8 +639,16 @@ export type ClientMessage =
   | { type: "mcp.auth_cancel"; name: string }
   | { type: "mcp.logout"; name: string }
   | { type: "connectors.list" }
-  | { type: "connectors.connect"; id: string; source: "gh" | "token" | "device"; token?: string; options?: ConnectorOptions }
+  | {
+      type: "connectors.connect";
+      id: string;
+      source: "gh" | "token" | "device" | "google" | "local";
+      token?: string;
+      options?: ConnectorOptions | GoogleConnectOptions | { profile: "own" | "separate" };
+    }
+  | { type: "connectors.auth_code"; id: string; url: string }
   | { type: "connectors.cancel"; id: string }
+  | { type: "connectors.remove_account"; id: string; login: string }
   | { type: "connectors.disconnect"; id: string }
   | { type: "plugins.list" }
   | { type: "plugins.reload" }
@@ -748,6 +775,7 @@ export type DaemonMessage =
   | { type: "mcp.auth_url"; name: string; url: string }
   | { type: "connectors"; items: ConnectorItem[] }
   | { type: "connectors.device_code"; id: string; url: string; code: string }
+  | { type: "connectors.auth_url"; id: string; url: string }
   | { type: "capabilities"; cwd: string | null; live: boolean; skills: CommandItem[]; mcp: McpStatus }
   | ({ type: "plugins" } & PluginsStatus)
   | { type: "cookbook.hosts"; items: CookbookHost[]; public_key: string | null; key_path: string }

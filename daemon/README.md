@@ -294,19 +294,62 @@ The Outlook connector is a local stdio server: `@softeria/ms-365-mcp-server@0.17
 
 1. Choose "Personal account" or "Work or school account", and "Read-only" if you want it.
 2. Click "Sign in with Microsoft". The daemon runs the server with `--login`. The server prints a Microsoft device code, and the row shows it.
-3. Open `https://microsoft.com/devicelogin`, enter the code, and sign in. The server prints the account, and Harness adds the entry:
+3. Open `https://microsoft.com/devicelogin`, enter the code, and sign in. Harness reads the account list of the server (`--list-accounts`) to find the new account, and adds the entry:
 
 ```json
 "outlook": { "command": "npx", "args": ["-y", "@softeria/ms-365-mcp-server@0.179.1", "--preset", "outlook"],
-             "env": { "MS365_MCP_TENANT_ID": "consumers" }, "connector": "outlook" }
+             "env": { "MS365_MCP_TENANT_ID": "consumers",
+                      "MS365_MCP_TOKEN_CACHE_PATH": "~/.harness/connectors/outlook-personal/.token-cache.json",
+                      "MS365_MCP_SELECTED_ACCOUNT_PATH": "~/.harness/connectors/outlook-personal/.selected-account.json" },
+             "connector": "outlook" }
 ```
 
-- A personal account sets `MS365_MCP_TENANT_ID=consumers`, because a refresh token from the `common` authority fails at its first refresh. A work account adds `--org-mode` and no tenant.
-- Read-only adds `--read-only`. The server then has no tools that send, change, or delete.
-- The server keeps and refreshes its own tokens, in an encrypted cache on the daemon computer. `mcp-auth.json` keeps only the options and the account name.
-- "Cancel" stops a sign-in that waits. A device code expires after 15 minutes. "Disconnect" runs the server with `--logout`, then removes the record and the entry.
+Several accounts:
 
-Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, or `device`, `token`, `options`), `connectors.cancel` (`id`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, and `connectors.device_code` (`id`, `url`, `code`) for a device sign-in. The items never include a token.
+- "Add account" signs in to one more account. The server keeps all the accounts of one type in one cache, and with two or more accounts it adds an `account` parameter to each tool.
+- Personal accounts share the server `outlook`, and work or school accounts share the server `outlook-work`. The two types cannot share a server: a personal account needs `MS365_MCP_TENANT_ID=consumers` (a refresh token from the `common` authority fails at its first refresh), and a work account needs `--org-mode`. Each server has its own token cache in `~/.harness/connectors/outlook-<type>/`.
+- Read-only adds `--read-only` to the server of a type, so it applies to all the accounts of that type. The server then has no tools that send, change, or delete.
+- "Remove" runs `--remove-account <name>`. The last account of a type also removes the server of that type. "Disconnect all" runs `--logout` for each type, then removes the record and the entries.
+- The server keeps and refreshes its own tokens. `mcp-auth.json` keeps only the account names, their types, and the read-only choice of each type.
+- "Cancel" stops a sign-in that waits. A device code expires after 15 minutes.
+
+#### Gmail
+
+The Gmail connector is a local stdio server: `workspace-mcp@2.3.0` (MIT) with `--tools gmail`. uvx runs it on the daemon computer, so that computer needs [uv](https://docs.astral.sh/uv/).
+
+Google has no dynamic client registration. There are two OAuth clients:
+
+- **The Harness client** ("Continue with Google" with no setup). The build gives it: the environment variables `HARNESS_GOOGLE_CLIENT_ID` and `HARNESS_GOOGLE_CLIENT_SECRET`, or the module `harness_daemon/_google_client.py` with `CLIENT_ID` and `CLIENT_SECRET`. git ignores that module, so the secret is not in the public repository. PyInstaller includes it in the sidecar when it exists. The record keeps only `"builtin": true`, and the daemon reads the secret from the build. Until Google verifies the app, Google shows a warning, and at most 100 users can sign in (Gmail scopes are restricted: verification needs a yearly CASA security assessment).
+- **The user's own client** ("Use your own OAuth client", and the only choice when the build has no Harness client). The user makes it once:
+
+1. In Google Cloud, make a project and turn on the Gmail API.
+2. On the Google Auth Platform page, set the audience to External and publish the app ("In production"). An app in testing loses its sign-in after 7 days.
+3. Make an OAuth client of the type "Desktop app". Paste its ID and secret into the Gmail row.
+
+To make the Harness client, do the same steps in the Google Cloud project of Harness (app name "Harness", with a support address), then put the ID and secret in `_google_client.py` before the build.
+
+"Continue with Google" then does the sign-in in Harness (`connectors.py`): a browser sign-in with PKCE, `access_type=offline`, and the loopback redirect `http://127.0.0.1:<port>/`. Harness asks Google for the address of the account and writes a credential file in the format of workspace-mcp (`token`, `refresh_token`, `client_id`, `client_secret`, `scopes`, `expiry`) to `~/.harness/connectors/gmail/credentials/<address>.json`. The server refreshes the tokens. Google shows a warning that the app is not verified: it is the user's own app, so the user can continue.
+
+```json
+"gmail": { "command": "uvx", "args": ["workspace-mcp@2.3.0", "--tools", "gmail"],
+           "env": { "WORKSPACE_MCP_CREDENTIALS_DIR": "~/.harness/connectors/gmail/credentials" }, "connector": "gmail" }
+```
+
+- The client ID and secret are in `mcp-auth.json`. The MCP client adds `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` to the environment of the server at each start (`connectors.server_env`), so `mcp.json` has no secret.
+- Several accounts: "Add account" signs in to one more account with the same client. The tools of workspace-mcp take a `user_google_email` parameter.
+- Read-only (chosen with the first account) adds `--read-only` and asks only for `gmail.readonly`.
+- "Remove" revokes the refresh token of one account at Google and deletes its file. "Disconnect" does this for all the accounts, and removes the client and the entry.
+- For a remote daemon, the browser cannot open the callback page. The user pastes its URL into the field under the row (`connectors.auth_code`).
+
+#### Chrome
+
+The Chrome connector is Chrome DevTools MCP: `chrome-devtools-mcp@1.12.0` (Apache-2.0) with `--no-usage-statistics`. npx runs it on the daemon computer, with Chrome there. It has no sign-in.
+
+- "Your Chrome window" adds `--autoConnect`: the server attaches to the Chrome that the user has open, with its signed-in accounts. It needs Chrome 144 or newer and remote debugging turned on in `chrome://inspect/#remote-debugging`. Chrome asks the user to allow each connection.
+- "A separate Chrome profile" starts a Chrome with a profile of its own, with no accounts or cookies of the user.
+- The agent browser of Harness (the Browser pane tools) stays for the app of the project. The Chrome connector is for the browser of the user.
+
+Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, `device`, `google`, or `local`, `token`, `options`), `connectors.cancel` (`id`), `connectors.auth_code` (`id`, `url`), `connectors.remove_account` (`id`, `login`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, `connectors.device_code` (`id`, `url`, `code`) for a device sign-in, and `connectors.auth_url` (`id`, `url`) for a browser sign-in. The items never include a token or a secret.
 
 ## Cookbook
 

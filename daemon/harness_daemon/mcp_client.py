@@ -138,9 +138,10 @@ def _parse_server(name: str, raw: Any, scope: str, project: Path | None) -> tupl
         known = connectors.CONNECTORS.get(connector) if isinstance(connector, str) else None
         if known is None:
             raise ConfigError(f"MCP server {name}: unknown connector {connector!r}.")
-        if (known.kind == "device") != (kind == "stdio"):
+        local = known.kind in ("device", "google", "local")
+        if local != (kind == "stdio"):
             raise ConfigError(f"MCP server {name}: the connector {connector} needs a "
-                              f"{'stdio' if known.kind == 'device' else 'http'} server.")
+                              f"{'stdio' if local else 'http'} server.")
         config.connector = connector
     if kind == "stdio":
         command = raw.get("command")
@@ -444,8 +445,10 @@ class McpManager:
                     from mcp.client.stdio import stdio_client
 
                     errlog = stack.enter_context(open(s.log_path, "w", encoding="utf-8"))  # type: ignore[arg-type]
-                    params = StdioServerParameters(command=c.command, args=c.args, env={**os.environ, **c.env},
-                                                   cwd=c.cwd)
+                    # A connector adds its secrets here (for example the Gmail OAuth client), not in mcp.json.
+                    secret = await asyncio.to_thread(connectors.server_env, c.connector) if c.connector else {}
+                    params = StdioServerParameters(command=c.command, args=c.args,
+                                                   env={**os.environ, **c.env, **secret}, cwd=c.cwd)
                     read, write = await stack.enter_async_context(stdio_client(params, errlog=errlog))
                 else:
                     from mcp.client.streamable_http import create_mcp_http_client

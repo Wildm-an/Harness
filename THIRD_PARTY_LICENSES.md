@@ -168,6 +168,8 @@ The Python package `playwright 1.63.0` is Apache-2.0 (see section 3).
 | Built-in skills `skill-creator` and `mcp-builder` (`daemon/harness_daemon/builtin_skills/`) | Apache-2.0 | Yes | Anthropic skills, changed for Harness. Each folder keeps `LICENSE.txt` and lists the changes in `MODIFICATIONS.md`. The other built-in skills are the code of the project (MIT). |
 | GitHub logo (`client/src/components/ConnectorLogo.tsx`) | MIT | Yes | The `mark-github-24` icon of Primer Octicons 19.42.0 (https://github.com/primer/octicons), Copyright (c) 2026 GitHub Inc. The GitHub logo is a trademark of GitHub, Inc. Harness uses it only to name the GitHub connector. |
 | `@softeria/ms-365-mcp-server` (the Outlook connector) | MIT | Yes | Not in the installer. npx downloads it from npm on the daemon computer when the user connects Outlook. |
+| `workspace-mcp` (the Gmail connector) | MIT | Yes | Not in the installer. uvx downloads it from PyPI on the daemon computer when the user connects Gmail. |
+| `chrome-devtools-mcp` (the Chrome connector) | Apache-2.0 | Yes | Not in the installer. npx downloads it from npm on the daemon computer when the user connects Chrome. |
 | Microsoft Edge WebView2 bootstrapper | Microsoft terms | Not applicable | Not in the installer. The installer downloads it from Microsoft only when WebView2 is missing (`downloadBootstrapper`, the default). |
 
 The Linux AppImage contains copies of system libraries from the build machine, for example WebKitGTK, GTK, and GLib.

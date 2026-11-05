@@ -304,8 +304,9 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Harness</title
 class Callback:
     """The listener for one sign-in. It runs in the MCP event loop."""
 
-    def __init__(self, port: int):
+    def __init__(self, port: int, path: str = CALLBACK_PATH):
         self.port = port
+        self.path = path  # Google uses "/" for a loopback redirect.
         self.server: asyncio.base_events.Server | None = None
         self.future: asyncio.Future | None = None
 
@@ -358,7 +359,7 @@ class Callback:
                 pass  # The headers.
             parts = line.split()
             target = urlparse(parts[1]) if len(parts) >= 2 else None
-            if parts[:1] != ["GET"] or target is None or target.path != CALLBACK_PATH:
+            if parts[:1] != ["GET"] or target is None or target.path != self.path:
                 await self._reply(writer, 404, "Not found", "This address only takes the sign-in callback.")
                 return
             error = self.resolve(target.query)

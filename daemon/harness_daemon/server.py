@@ -1775,10 +1775,21 @@ def _connector_id(msg: dict[str, Any]) -> str:
 
 
 async def _connector_changed(conn: Connection, connector_id: str) -> None:
-    """Send the new list, and connect the server again in the session."""
+    """Send the new list, and connect the servers of the connector again in the session."""
     await conn.send(await connectors.items())
     if conn.current is not None and conn.mcp is not None:
-        await conn.mcp.restart(connector_id)
+        for name in connectors.server_names(connector_id):
+            try:
+                await conn.mcp.restart(name)
+            except ConfigError:
+                pass  # The server is not in the configuration and not in the session.
+
+
+def _connector_busy(conn: Connection, connector_id: str) -> None:
+    """A new connection stops the tool calls of a turn: wait for the turn to end."""
+    if conn.current is not None and conn.mcp is not None and any(
+            conn.mcp.is_connected(name) for name in connectors.server_names(connector_id)):
+        conn.require_idle()
 
 
 @handler("connectors.connect")
@@ -1787,7 +1798,10 @@ async def on_connectors_connect(conn: Connection, msg: dict[str, Any]) -> None:
 
     GitHub: "source" is "gh" (the token of the GitHub CLI) or "token" (with "token"). Outlook: "source" is
     "device", with "options" ({"account": "personal" or "work", "read_only": bool}). The daemon then sends
-    "connectors.device_code" with the URL and the code, and the user signs in in the browser.
+    "connectors.device_code" with the URL and the code, and the user signs in in the browser. Gmail: "source"
+    is "google", with "options" ({"client_id", "client_secret", "read_only"}). The daemon sends
+    "connectors.auth_url", and the client opens it. Chrome: "source" is "local", with "options"
+    ({"profile": "own" or "separate"}).
     """
     connector_id = _connector_id(msg)
     source, value = msg.get("source"), msg.get("token")
@@ -1796,15 +1810,19 @@ async def on_connectors_connect(conn: Connection, msg: dict[str, Any]) -> None:
     options = msg.get("options")
     if options is not None and not isinstance(options, dict):
         raise ProtocolError("'options' must be an object.")
-    if conn.current is not None and conn.mcp is not None and conn.mcp.is_connected(connector_id):
-        conn.require_idle()
+    _connector_busy(conn, connector_id)
 
     async def on_code(url: str, code: str) -> None:
         await conn.send({"type": "connectors.device_code", "id": connector_id, "url": url, "code": code})
 
+    async def on_url(url: str) -> None:
+        # A browser sign-in (Gmail): the client opens the page in the default browser.
+        await conn.send({"type": "connectors.auth_url", "id": connector_id, "url": url})
+
     async def work() -> None:
         try:
-            await connectors.connect(connector_id, str(source), value, options=options, on_code=on_code)
+            await connectors.connect(connector_id, str(source), value, options=options, on_code=on_code,
+                                     on_url=on_url)
         except connectors.ConnectorError as e:
             await conn.send(await connectors.items())
             await conn.error(str(e), ref="connectors.connect")
@@ -1818,14 +1836,43 @@ async def on_connectors_connect(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_connectors_disconnect(conn: Connection, msg: dict[str, Any]) -> None:
     """Sign out (Outlook), and remove the record of a connector and its server entry in ~/.harness/mcp.json."""
     connector_id = _connector_id(msg)
-    if conn.current is not None and conn.mcp is not None and conn.mcp.is_connected(connector_id):
-        conn.require_idle()
+    _connector_busy(conn, connector_id)
 
     async def work() -> None:
         await connectors.disconnect(connector_id)
         await _connector_changed(conn, connector_id)
 
     _background(conn, "connectors.disconnect", work)
+
+
+@handler("connectors.remove_account")
+async def on_connectors_remove_account(conn: Connection, msg: dict[str, Any]) -> None:
+    """Sign out one account of a device connector (Outlook). The other accounts stay."""
+    connector_id = _connector_id(msg)
+    login = msg.get("login")
+    if not isinstance(login, str) or not login:
+        raise ProtocolError("'login' must be the name of an account.")
+    _connector_busy(conn, connector_id)
+
+    async def work() -> None:
+        try:
+            await connectors.remove_account(connector_id, login)
+        except connectors.ConnectorError as e:
+            await conn.error(str(e), ref="connectors.remove_account")
+        await _connector_changed(conn, connector_id)
+
+    _background(conn, "connectors.remove_account", work)
+
+
+@handler("connectors.auth_code")
+async def on_connectors_auth_code(conn: Connection, msg: dict[str, Any]) -> None:
+    """The URL of the callback page of a browser sign-in (Gmail), that the user pasted (a remote daemon)."""
+    url = msg.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise ProtocolError("'url' must be the URL of the callback page.")
+    error = connectors.google_code(_connector_id(msg), url)
+    if error is not None:
+        await conn.error(error, ref="connectors.auth_code")
 
 
 @handler("connectors.cancel")

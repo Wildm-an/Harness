@@ -102,11 +102,10 @@ describe("connectorSummary", () => {
 
   it("shows the account type and read-only for a device connector", () => {
     const outlook = github({ id: "outlook", kind: "device", source: "device", login: "pat@outlook.com" });
-    expect(connectorSummary({ ...outlook, options: { account: "personal", read_only: false } })).toBe(
-      "pat@outlook.com · Personal account",
-    );
-    expect(connectorSummary({ ...outlook, options: { account: "work", read_only: true } })).toBe(
-      "pat@outlook.com · Work or school account · read-only",
-    );
+    const pat = { login: "pat@outlook.com", type: "personal" as const, read_only: false };
+    const jo = { login: "jo@contoso.com", type: "work" as const, read_only: true };
+    expect(connectorSummary({ ...outlook, accounts: [pat] })).toBe("pat@outlook.com · Personal account");
+    expect(connectorSummary({ ...outlook, accounts: [jo] })).toBe("jo@contoso.com · Work or school account · read-only");
+    expect(connectorSummary({ ...outlook, accounts: [jo, pat] })).toBe("2 accounts · jo@contoso.com, pat@outlook.com");
   });
 });

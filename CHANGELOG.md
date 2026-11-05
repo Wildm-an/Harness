@@ -3,6 +3,37 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Connectors
+
+- The Outlook connector can hold more than one account. Click "Add account" to sign in to one
+  more. Each account shows its type, and "Remove" signs out only that account. "Disconnect all"
+  signs out all of them.
+- Personal accounts share one MCP server (`outlook`), and work or school accounts share another
+  (`outlook-work`). Each has its own token cache in `~/.harness/connectors/`. With two or more
+  accounts of one type, the agent names the account in each tool call.
+- Read-only applies to all the accounts of one type.
+- If you signed in to Outlook with version 0.1.43, sign in again: the token cache moved.
+- A new Gmail connector gives the agent mail, labels, drafts, and filters of one or more Google
+  accounts. It runs the `workspace-mcp` server (MIT) with uvx, so the daemon computer needs uv.
+  Click "Continue with Google" (Google's own button style) to sign in in your browser. A build of
+  Harness with a Google client of its own needs no setup. Else, or with "Use your own OAuth client",
+  you make a "Desktop app" client in Google Cloud and paste its ID and secret; the row lists the
+  steps. Harness keeps the tokens and the client secret on the daemon computer, not in `mcp.json`.
+- A new Chrome connector lets the agent use Chrome through Chrome DevTools MCP (Apache-2.0):
+  open pages, click, type, take screenshots, and read the console and the network. Choose "Your
+  Chrome window" (with your signed-in accounts; turn on remote debugging in
+  `chrome://inspect/#remote-debugging` first) or "A separate Chrome profile".
+- Gmail and Chrome show generic icons, because Google does not permit its product icons without
+  an approval.
+- All connector rows are collapsed when the Connectors tab opens.
+
+### Fixes
+
+- "Open sign-in page", "Open in browser", and the other buttons that open a web page now open it in
+  your default browser. The desktop app did not permit any URL before.
+
 ## 0.1.43 (2026-11-04)
 
 ### Sidebar

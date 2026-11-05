@@ -26,7 +26,7 @@ import { SlashIcon } from "./SlashIcon";
 import { Markdown } from "./Markdown";
 import { openExternal } from "../lib/tauri";
 import { ConnectorLogo, hasConnectorLogo } from "./ConnectorLogo";
-import type { CommandItem, ConnectorItem, ConnectorOptions, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
+import type { CommandItem, ConnectorItem, ConnectorOptions, GoogleConnectOptions, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
 
 export type CapabilityStatus =
   | "connected"
@@ -401,7 +401,11 @@ export type ConnectorAction =
   | { kind: "connect"; id: string; source: "gh" }
   | { kind: "connect"; id: string; source: "token"; token: string }
   | { kind: "connect"; id: string; source: "device"; options: ConnectorOptions }
+  | { kind: "connect"; id: string; source: "google"; options: GoogleConnectOptions }
+  | { kind: "connect"; id: string; source: "local"; profile: "own" | "separate" }
+  | { kind: "auth_code"; id: string; url: string }
   | { kind: "cancel"; id: string }
+  | { kind: "remove_account"; id: string; login: string }
   | { kind: "disconnect"; id: string };
 
 /** The device code of a sign-in that waits for the user (daemon message "connectors.device_code"). */
@@ -416,14 +420,26 @@ const ACCOUNT_NAMES: Record<ConnectorOptions["account"], string> = {
   work: "Work or school account",
 };
 
+/** The name of an account type. Gmail accounts are "Google account". */
+function accountName(type: ConnectorOptions["account"] | "google"): string {
+  return type === "google" ? "Google account" : ACCOUNT_NAMES[type];
+}
+
+const CHROME_PROFILES: Record<"own" | "separate", string> = {
+  own: "Your Chrome window",
+  separate: "A separate Chrome profile",
+};
+
 /** The short description of a connector: the account and the token source, or what it gives. */
 export function connectorSummary(item: ConnectorItem): string {
   if (!item.source) return item.description;
-  if (item.source === "device") {
-    const parts = [item.login ?? "Connected"];
-    if (item.options) parts.push(ACCOUNT_NAMES[item.options.account]);
-    if (item.options?.read_only) parts.push("read-only");
-    return parts.join(" · ");
+  if (item.source === "local") return item.profile ? CHROME_PROFILES[item.profile] : "Connected";
+  if (item.source === "device" || item.source === "google") {
+    const accounts = item.accounts ?? [];
+    if (accounts.length > 1) return `${accounts.length} accounts · ${accounts.map((a) => a.login).join(", ")}`;
+    const [first] = accounts;
+    if (!first) return item.login ?? "Connected";
+    return [first.login, accountName(first.type), ...(first.read_only ? ["read-only"] : [])].join(" · ");
   }
   const source = item.source === "gh" ? "GitHub CLI" : "personal access token";
   return `${item.login ? `@${item.login}` : "Connected"} · ${source}`;
@@ -491,14 +507,23 @@ function DeviceConnect({
   busy,
   code,
   onAction,
+  onClose,
 }: {
   item: ConnectorItem;
   busy: boolean;
   code: DeviceCode | null;
   onAction: (action: ConnectorAction) => void;
+  onClose?: () => void;
 }) {
-  const [account, setAccount] = useState<ConnectorOptions["account"]>("personal");
-  const [readOnly, setReadOnly] = useState(false);
+  const accounts = item.accounts ?? [];
+  const groupReadOnly = (type: ConnectorOptions["account"]) => accounts.find((a) => a.type === type)?.read_only ?? false;
+  const [account, setAccountState] = useState<ConnectorOptions["account"]>("personal");
+  const [readOnly, setReadOnly] = useState(() => groupReadOnly("personal"));
+  const setAccount = (value: ConnectorOptions["account"]) => {
+    setAccountState(value);
+    setReadOnly(groupReadOnly(value));
+  };
+  const sameType = accounts.filter((a) => a.type === account).length;
   const [copied, setCopied] = useState(false);
   if (busy || item.signing_in) {
     return (
@@ -564,20 +589,302 @@ function DeviceConnect({
         <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
         Read-only: the agent can read mail and events, but not send, change, or delete them
       </label>
+      {sameType > 0 && (
+        <p className="help">Read-only applies to all your {ACCOUNT_NAMES[account].toLowerCase()}s. They share one MCP server.</p>
+      )}
       <div className="mcp-signin-actions">
         <button
           type="button"
           className="btn btn-small btn-primary"
           onClick={() => onAction({ kind: "connect", id: item.id, source: "device", options: { account, read_only: readOnly } })}
         >
-          Sign in with Microsoft
+          {accounts.length > 0 ? "Sign in to another account" : "Sign in with Microsoft"}
         </button>
+        {onClose && (
+          <button type="button" className="btn btn-small btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+        )}
       </div>
       <p className="help">
         Harness runs <code>{item.package}</code> with npx on the daemon computer, so the daemon computer needs Node.js. The server keeps its own
         sign-in in its encrypted cache there.
       </p>
     </div>
+  );
+}
+
+/**
+ * The "Continue with Google" button, made to the "Sign in with Google" branding guidelines
+ * (developers.google.com/identity/branding-guidelines): the standard color "G" from the official sample
+ * SVG, unchanged, at 20px; 12px before the logo, 10px after it, 12px after the text; a 1px inside stroke;
+ * the light colors in the light theme and the dark colors in the dark theme (styles.css, .gsi-button).
+ */
+function GoogleButton({ label, disabled, onClick }: { label: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className="gsi-button" disabled={disabled} onClick={onClick}>
+      <svg className="gsi-logo" width="20" height="20" viewBox="10 10 20 20" aria-hidden focusable="false">
+        <path
+          d="M29.6 20.2273C29.6 19.5182 29.5364 18.8364 29.4182 18.1818H20V22.05H25.3818C25.15 23.3 24.4455 24.3591 23.3864 25.0682V27.5773H26.6182C28.5091 25.8364 29.6 23.2727 29.6 20.2273Z"
+          fill="#4285F4"
+        />
+        <path
+          d="M20 30C22.7 30 24.9636 29.1045 26.6181 27.5773L23.3863 25.0682C22.4909 25.6682 21.3454 26.0227 20 26.0227C17.3954 26.0227 15.1909 24.2636 14.4045 21.9H11.0636V24.4909C12.7091 27.7591 16.0909 30 20 30Z"
+          fill="#34A853"
+        />
+        <path
+          d="M14.4045 21.9C14.2045 21.3 14.0909 20.6591 14.0909 20C14.0909 19.3409 14.2045 18.7 14.4045 18.1V15.5091H11.0636C10.3864 16.8591 10 18.3864 10 20C10 21.6136 10.3864 23.1409 11.0636 24.4909L14.4045 21.9Z"
+          fill="#FBBC04"
+        />
+        <path
+          d="M20 13.9773C21.4681 13.9773 22.7863 14.4818 23.8227 15.4727L26.6909 12.6045C24.9591 10.9909 22.6954 10 20 10C16.0909 10 12.7091 12.2409 11.0636 15.5091L14.4045 18.1C15.1909 15.7364 17.3954 13.9773 20 13.9773Z"
+          fill="#E94235"
+        />
+      </svg>
+      <span className="gsi-text">{label}</span>
+    </button>
+  );
+}
+
+/** The sign-in of a "google" connector (Gmail): the Google client of Harness or of the user, then a browser sign-in. */
+function GoogleConnect({
+  item,
+  busy,
+  code,
+  onAction,
+  onClose,
+}: {
+  item: ConnectorItem;
+  busy: boolean;
+  code: DeviceCode | null;
+  onAction: (action: ConnectorAction) => void;
+  onClose?: () => void;
+}) {
+  const accounts = item.accounts ?? [];
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [readOnly, setReadOnly] = useState(false);
+  const [pasted, setPasted] = useState("");
+  const [useOwn, setUseOwn] = useState(false);
+  if (busy || item.signing_in) {
+    return (
+      <div className="mcp-signin">
+        <p className="help">
+          {code ? "Sign in with your Google account on the page that opened in your browser." : "Starting the sign-in."} Harness connects
+          when the sign-in completes.
+        </p>
+        <div className="mcp-signin-actions">
+          {code && /^https:\/\//.test(code.url) && (
+            <button type="button" className="btn btn-small" onClick={() => void openExternal(code.url)}>
+              Open sign-in page
+            </button>
+          )}
+          <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "cancel", id: item.id })}>
+            Cancel
+          </button>
+        </div>
+        {code && (
+          <>
+            <p className="help">If the browser shows an error page after the sign-in, copy the URL from its address bar and paste it here.</p>
+            <form
+              className="field-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!pasted.trim()) return;
+                onAction({ kind: "auth_code", id: item.id, url: pasted.trim() });
+                setPasted("");
+              }}
+            >
+              <input
+                className="mono"
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+                placeholder="http://127.0.0.1:…/?code=…"
+                aria-label={`Callback URL for ${item.name}`}
+                spellCheck={false}
+              />
+              <button type="submit" className="btn" disabled={!pasted.trim()}>
+                Submit
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    );
+  }
+  const hasClient = !!item.client_id || !!item.client_builtin;
+  const own = !hasClient && (!item.builtin_client || useOwn);
+  const ready = hasClient || !own || (clientId.trim() !== "" && clientSecret.trim() !== "");
+  const options: GoogleConnectOptions = hasClient
+    ? { read_only: readOnly }
+    : own
+      ? { client_id: clientId.trim(), client_secret: clientSecret.trim(), read_only: readOnly }
+      : { builtin: true, read_only: readOnly };
+  return (
+    <div className="mcp-signin">
+      {hasClient ? (
+        <p className="help">
+          OAuth client: {item.client_builtin ? "Harness" : <span className="mono">{item.client_id}</span>}
+        </p>
+      ) : !own ? null : (
+        <>
+          <p className="help">
+            {item.builtin_client
+              ? "To use an OAuth client of your own, do these steps once:"
+              : "Gmail needs an OAuth client of your own, because this build of Harness has no Google client. Once:"}
+          </p>
+          <ol className="help connector-steps">
+            <li>In Google Cloud, make a project and turn on the Gmail API.</li>
+            <li>On the Google Auth Platform page, set the audience to External and publish the app ("In production"). In testing, Google stops the sign-in after 7 days.</li>
+            <li>Make an OAuth client of the type "Desktop app", and paste its ID and secret here.</li>
+          </ol>
+          <div className="mcp-signin-actions">
+            <button type="button" className="btn btn-small btn-ghost" onClick={() => item.token_url && void openExternal(item.token_url)}>
+              Open Google Cloud
+            </button>
+          </div>
+          <input className="mono" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Client ID" aria-label="OAuth client ID" spellCheck={false} />
+          <input
+            type="password"
+            className="mono"
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder="Client secret"
+            aria-label="OAuth client secret"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </>
+      )}
+      {accounts.length === 0 ? (
+        <label className="checkbox">
+          <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+          Read-only: the agent can read mail, but not send, change, or delete it
+        </label>
+      ) : (
+        <p className="help">{accounts[0].read_only ? "The accounts are read-only." : "The accounts can send, change, and delete mail."}</p>
+      )}
+      <p className="help">
+        {own || (hasClient && !item.client_builtin)
+          ? "Google shows a warning that the app is not verified. It is your own app, so you can continue."
+          : "Google can show a warning that Harness is not verified yet. You can continue."}
+      </p>
+      <div className="mcp-signin-actions">
+        <GoogleButton label="Continue with Google" disabled={!ready} onClick={() => onAction({ kind: "connect", id: item.id, source: "google", options })} />
+        {onClose && (
+          <button type="button" className="btn btn-small btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+        )}
+      </div>
+      {!hasClient && item.builtin_client && (
+        <div className="mcp-signin-actions">
+          <button type="button" className="btn btn-small btn-ghost" onClick={() => setUseOwn((v) => !v)}>
+            {useOwn ? "Use the Harness client" : "Use your own OAuth client"}
+          </button>
+        </div>
+      )}
+      <p className="help">
+        Harness runs <code>{item.package}</code> with uvx on the daemon computer, so the daemon computer needs uv. Harness keeps the tokens and the
+        client secret on the daemon computer, not in mcp.json.
+      </p>
+    </div>
+  );
+}
+
+/** The setup of a "local" connector (Chrome): the Chrome window of the user, or a separate profile. */
+function LocalConnect({ item, busy, onAction }: { item: ConnectorItem; busy: boolean; onAction: (action: ConnectorAction) => void }) {
+  const [profile, setProfile] = useState<"own" | "separate">("own");
+  return (
+    <div className="mcp-signin">
+      <div className="mcp-signin-actions" role="radiogroup" aria-label="Chrome profile">
+        {(Object.keys(CHROME_PROFILES) as ("own" | "separate")[]).map((value) => (
+          <label key={value} className="checkbox">
+            <input type="radio" name={`${item.id}-profile`} checked={profile === value} onChange={() => setProfile(value)} />
+            {CHROME_PROFILES[value]}
+          </label>
+        ))}
+      </div>
+      {profile === "own" ? (
+        <p className="help">
+          The agent uses the Chrome that you have open, with its signed-in accounts. Chrome 144 or newer: open{" "}
+          <span className="mono">chrome://inspect/#remote-debugging</span> and turn on remote debugging. Chrome asks you to allow each connection.
+        </p>
+      ) : (
+        <p className="help">The agent starts a Chrome with a profile of its own. It has none of your accounts or cookies.</p>
+      )}
+      <div className="mcp-signin-actions">
+        <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => onAction({ kind: "connect", id: item.id, source: "local", profile })}>
+          Connect
+        </button>
+      </div>
+      <p className="help">
+        Harness runs <code>{item.package}</code> with npx on the daemon computer, so the daemon computer needs Node.js and Chrome.
+      </p>
+    </div>
+  );
+}
+
+/** The accounts of a device connector (Outlook), each with "Remove", and "Add account". */
+function DeviceAccounts({
+  item,
+  busy,
+  code,
+  onAction,
+}: {
+  item: ConnectorItem;
+  busy: boolean;
+  code: DeviceCode | null;
+  onAction: (action: ConnectorAction) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const accounts = item.accounts ?? [];
+  useEffect(() => {
+    if (!busy && !item.signing_in) setAdding(false);
+  }, [busy, item.signing_in, accounts.length]);
+  if (adding || busy || item.signing_in) {
+    return item.kind === "google" ? (
+      <GoogleConnect item={item} busy={busy} code={code} onAction={onAction} onClose={() => setAdding(false)} />
+    ) : (
+      <DeviceConnect item={item} busy={busy} code={code} onAction={onAction} onClose={() => setAdding(false)} />
+    );
+  }
+  return (
+    <>
+      <ul className="connector-accounts" aria-label={`Accounts of ${item.name}`}>
+        {accounts.map((a) => (
+          <li key={a.login}>
+            <span className="connector-account-name">{a.login}</span>
+            <span className="help">
+              {accountName(a.type)}
+              {a.read_only ? " · read-only" : ""}
+            </span>
+            <button
+              type="button"
+              className="btn btn-small btn-ghost"
+              onClick={() => onAction({ kind: "remove_account", id: item.id, login: a.login })}
+              aria-label={`Remove ${a.login}`}
+            >
+              Remove
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="help">
+        {accounts.length > 1
+          ? "The agent names the account in each tool call. Each tool call needs approval, unless a rule allows it,"
+          : "Each tool call needs approval, unless a rule allows it,"}{" "}
+        for example <code>mcp__{item.id}__*</code>.
+      </p>
+      <div className="mcp-signin-actions">
+        <button type="button" className="btn btn-small" onClick={() => setAdding(true)}>
+          Add account
+        </button>
+        <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
+          {accounts.length > 1 ? "Disconnect all" : "Disconnect"}
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -595,7 +902,8 @@ function ConnectorRow({
   onAction: (action: ConnectorAction) => void;
 }) {
   const connected = item.source !== null;
-  const [open, setOpen] = useState(!connected);
+  // All rows start collapsed (the user asked for this). A device code opens its row.
+  const [open, setOpen] = useState(false);
   useEffect(() => {
     if (code) setOpen(true);
   }, [code]);
@@ -626,12 +934,20 @@ function ConnectorRow({
               <span>{error}</span>
             </div>
           )}
-          {connected && !busy ? (
+          {(item.kind === "device" || item.kind === "google") && (item.accounts?.length ?? 0) > 0 ? (
+            <DeviceAccounts item={item} busy={busy} code={code} onAction={onAction} />
+          ) : connected && !busy ? (
             <>
               <p className="help">
                 The MCP server "{item.id}" is in your mcp.json, for all your projects. Each tool call needs approval, unless a rule
                 allows it, for example <code>mcp__{item.id}__*</code>.
               </p>
+              {item.profile === "own" && (
+                <p className="help">
+                  Turn on remote debugging in <span className="mono">chrome://inspect/#remote-debugging</span> (Chrome 144 or newer). Chrome asks you to
+                  allow each connection.
+                </p>
+              )}
               <div className="mcp-signin-actions">
                 <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
                   Disconnect
@@ -640,6 +956,10 @@ function ConnectorRow({
             </>
           ) : item.kind === "device" ? (
             <DeviceConnect item={item} busy={busy} code={code} onAction={onAction} />
+          ) : item.kind === "google" ? (
+            <GoogleConnect item={item} busy={busy} code={code} onAction={onAction} />
+          ) : item.kind === "local" ? (
+            <LocalConnect item={item} busy={busy} onAction={onAction} />
           ) : (
             <TokenConnect item={item} busy={busy} onAction={onAction} />
           )}

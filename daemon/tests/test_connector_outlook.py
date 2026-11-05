@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from harness_daemon import connectors, mcp_auth
+from harness_daemon.config import harness_home
 from harness_daemon.mcp_client import McpManager, load_mcp_config
 
 from test_mcp import PYTHON, write_config
@@ -23,8 +24,8 @@ def fake_outlook(harness_home, monkeypatch, tmp_path):
     monkeypatch.setattr(connectors, "NPX", [PYTHON, FAKE])
     log = tmp_path / "ms365.log"
     monkeypatch.setenv("FAKE_MS365_LOG", str(log))
-    monkeypatch.delenv("FAKE_MS365_APPROVE", raising=False)
-    monkeypatch.delenv("FAKE_MS365_FAIL", raising=False)
+    for name in ("FAKE_MS365_APPROVE", "FAKE_MS365_FAIL", "FAKE_MS365_USER"):
+        monkeypatch.delenv(name, raising=False)
     return log
 
 
@@ -35,16 +36,31 @@ def runs(log: Path) -> list[dict]:
 
 
 def user_servers() -> dict:
-    return json.loads((mcp_auth.store_path().parent / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+    return json.loads((harness_home() / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
 
 
-def test_the_real_command():
-    command, args, env = connectors.server_command(connectors.OUTLOOK, {"account": "personal", "read_only": False})
+def outlook_status() -> dict:
+    return next(i for i in asyncio.run(connectors.items())["items"] if i["id"] == "outlook")
+
+
+def sign_in(monkeypatch, user: str, account: str = "personal", read_only: bool = False) -> str:
+    monkeypatch.setenv("FAKE_MS365_USER", user)
+    return asyncio.run(connectors.connect("outlook", "device", options={"account": account, "read_only": read_only}))
+
+
+def test_the_real_command(harness_home):
+    command, args, env = connectors.server_command(connectors.OUTLOOK, "personal", False)
     assert command == "npx"
     assert args == ["-y", "@softeria/ms-365-mcp-server@0.179.1", "--preset", "outlook"]
-    assert env == {"MS365_MCP_TENANT_ID": "consumers"}
-    _, args, env = connectors.server_command(connectors.OUTLOOK, {"account": "work", "read_only": True})
-    assert args[-2:] == ["--org-mode", "--read-only"] and env == {}
+    cache = harness_home / "connectors" / "outlook-personal"
+    assert env == {"MS365_MCP_TENANT_ID": "consumers",
+                   "MS365_MCP_TOKEN_CACHE_PATH": str(cache / ".token-cache.json"),
+                   "MS365_MCP_SELECTED_ACCOUNT_PATH": str(cache / ".selected-account.json")}
+    _, args, env = connectors.server_command(connectors.OUTLOOK, "work", True)
+    assert args[-2:] == ["--org-mode", "--read-only"] and "MS365_MCP_TENANT_ID" not in env
+    assert "outlook-work" in env["MS365_MCP_TOKEN_CACHE_PATH"]
+    assert connectors.server_names("outlook") == ["outlook", "outlook-work"]
+    assert connectors.server_names("github") == ["github"]
 
 
 def test_sign_in_with_a_personal_account(fake_outlook):
@@ -56,28 +72,46 @@ def test_sign_in_with_a_personal_account(fake_outlook):
     login = asyncio.run(connectors.connect("outlook", "device", options={"account": "personal"}, on_code=on_code))
     assert login == "pat@outlook.com"
     assert codes == [("https://microsoft.com/devicelogin", "FAKE1234X")]
-    assert runs(fake_outlook) == [{"args": ["--preset", "outlook", "--login"], "tenant": "consumers"}]
+    assert [r["args"][-1] for r in runs(fake_outlook)] == ["--list-accounts", "--login", "--list-accounts"]
+    assert all(r["tenant"] == "consumers" and "outlook-personal" in r["cache"] for r in runs(fake_outlook))
     entry = user_servers()["outlook"]
-    assert entry == {"command": PYTHON, "args": [FAKE, "--preset", "outlook"],
-                     "env": {"MS365_MCP_TENANT_ID": "consumers"}, "connector": "outlook"}
-    record = mcp_auth.read_record(connectors.record_key("outlook"))
-    assert record == {"source": "device", "login": "pat@outlook.com",
-                      "options": {"account": "personal", "read_only": False}}
-    status = next(i for i in asyncio.run(connectors.items())["items"] if i["id"] == "outlook")
-    assert (status["kind"], status["source"], status["login"], status["options"]) == (
-        "device", "device", "pat@outlook.com", {"account": "personal", "read_only": False})
+    assert entry["command"] == PYTHON and entry["args"] == [FAKE, "--preset", "outlook"]
+    assert entry["connector"] == "outlook" and entry["env"]["MS365_MCP_TENANT_ID"] == "consumers"
+    status = outlook_status()
+    assert (status["kind"], status["source"], status["login"]) == ("device", "device", "pat@outlook.com")
+    assert status["accounts"] == [{"login": "pat@outlook.com", "type": "personal", "read_only": False}]
+
+
+def test_several_accounts(fake_outlook, monkeypatch):
+    assert sign_in(monkeypatch, "pat@outlook.com") == "pat@outlook.com"
+    # The server reports the selected account (pat). Harness finds the new account in the list.
+    assert sign_in(monkeypatch, "sam@outlook.com") == "sam@outlook.com"
+    assert sign_in(monkeypatch, "jo@contoso.com", account="work", read_only=True) == "jo@contoso.com"
+    sign_in(monkeypatch, "sam@outlook.com")  # Again: the list has no second copy.
+    assert outlook_status()["accounts"] == [
+        {"login": "jo@contoso.com", "type": "work", "read_only": True},
+        {"login": "pat@outlook.com", "type": "personal", "read_only": False},
+        {"login": "sam@outlook.com", "type": "personal", "read_only": False},
+    ]
+    servers = user_servers()
+    assert set(servers) == {"outlook", "outlook-work"}  # One server for each account type.
+    assert servers["outlook-work"]["args"][-2:] == ["--org-mode", "--read-only"]
+    assert "outlook-work" in servers["outlook-work"]["env"]["MS365_MCP_TOKEN_CACHE_PATH"]
+
+    asyncio.run(connectors.remove_account("outlook", "SAM@outlook.com"))
+    assert runs(fake_outlook)[-1]["args"][-2:] == ["--remove-account", "sam@outlook.com"]
+    assert [a["login"] for a in outlook_status()["accounts"]] == ["jo@contoso.com", "pat@outlook.com"]
+    assert set(user_servers()) == {"outlook", "outlook-work"}
+
+    asyncio.run(connectors.remove_account("outlook", "jo@contoso.com"))
+    assert set(user_servers()) == {"outlook"}  # The last work account: its server goes away.
+    with pytest.raises(connectors.ConnectorError, match="no account"):
+        asyncio.run(connectors.remove_account("outlook", "nobody@outlook.com"))
 
     asyncio.run(connectors.disconnect("outlook"))
     assert runs(fake_outlook)[-1]["args"][-1] == "--logout"
-    assert "outlook" not in user_servers()
-    assert mcp_auth.read_record(connectors.record_key("outlook")) == {}
-
-
-def test_a_work_account_that_is_read_only(fake_outlook):
-    asyncio.run(connectors.connect("outlook", "device", options={"account": "work", "read_only": True}))
-    assert runs(fake_outlook)[0] == {"args": ["--preset", "outlook", "--org-mode", "--read-only", "--login"],
-                                     "tenant": None}
-    assert "env" not in user_servers()["outlook"]
+    assert user_servers() == {}
+    assert outlook_status()["accounts"] == [] and outlook_status()["source"] is None
 
 
 def test_a_failed_sign_in(fake_outlook, monkeypatch):
@@ -112,10 +146,12 @@ def test_cancel_a_sign_in(fake_outlook, monkeypatch, tmp_path):
     asyncio.run(main())
 
 
-def test_the_device_server_connects(fake_outlook, project):
-    asyncio.run(connectors.connect("outlook", "device"))
+def test_the_device_servers_connect(fake_outlook, project, monkeypatch):
+    sign_in(monkeypatch, "pat@outlook.com")
+    sign_in(monkeypatch, "jo@contoso.com", account="work")
     servers, problems = load_mcp_config(project)
-    assert problems == [] and servers["outlook"].connector == "outlook" and servers["outlook"].transport == "stdio"
+    assert problems == []
+    assert servers["outlook"].connector == "outlook" and servers["outlook-work"].connector == "outlook"
 
     async def main() -> None:
         box: dict = {"tools": []}
@@ -126,9 +162,10 @@ def test_the_device_server_connects(fake_outlook, project):
         manager = McpManager(project, emit, lambda tools: box.__setitem__("tools", tools))
         try:
             await manager.start()
-            assert manager.servers["outlook"].state == "connected", manager.servers["outlook"].error
-            echo = next(t for t in box["tools"] if t.name == "mcp__outlook__echo")
-            assert (await echo.run({"text": "mail"}, None)).output == "mail"
+            for name in ("outlook", "outlook-work"):
+                assert manager.servers[name].state == "connected", manager.servers[name].error
+            names = {t.name for t in box["tools"]}
+            assert {"mcp__outlook__echo", "mcp__outlook-work__echo"} <= names
         finally:
             await manager.close()
 
@@ -145,7 +182,7 @@ def test_a_device_connector_needs_a_stdio_entry(harness_home, project):
     assert any("github needs a http server" in p for p in problems)
 
 
-def test_device_code_messages(daemon, project, fake_model, fake_outlook):  # noqa: F811
+def test_device_code_messages(daemon, project, fake_model, fake_outlook, monkeypatch):  # noqa: F811
     c = Client(daemon)
     c.new_session(project)
     c.send({"type": "connectors.connect", "id": "outlook", "source": "device",
@@ -155,10 +192,21 @@ def test_device_code_messages(daemon, project, fake_model, fake_outlook):  # noq
                     "url": "https://microsoft.com/devicelogin", "code": "FAKE1234X"}
     listing = c.until("connectors", timeout=30)[0]
     outlook = next(i for i in listing["items"] if i["id"] == "outlook")
-    assert outlook["login"] == "pat@outlook.com" and outlook["options"]["read_only"] is True
+    assert outlook["accounts"] == [{"login": "pat@outlook.com", "type": "personal", "read_only": True}]
     status = c.until("mcp", timeout=60)[0]
     while not any(i["name"] == "outlook" and i["state"] == "connected" for i in status["items"]):
         status = c.until("mcp", timeout=60)[0]
+
+    monkeypatch.setenv("FAKE_MS365_USER", "sam@outlook.com")
+    c.send({"type": "connectors.connect", "id": "outlook", "source": "device", "options": {"account": "personal"}})
+    listing = c.until("connectors", timeout=30)[0]
+    outlook = next(i for i in listing["items"] if i["id"] == "outlook")
+    assert [a["login"] for a in outlook["accounts"]] == ["pat@outlook.com", "sam@outlook.com"]
+
+    c.send({"type": "connectors.remove_account", "id": "outlook", "login": "pat@outlook.com"})
+    listing = c.until("connectors", timeout=30)[0]
+    outlook = next(i for i in listing["items"] if i["id"] == "outlook")
+    assert [a["login"] for a in outlook["accounts"]] == ["sam@outlook.com"]
 
     c.send({"type": "connectors.disconnect", "id": "outlook"})
     listing = c.until("connectors", timeout=30)[0]

@@ -22,3 +22,6 @@ client/src-tauri/binaries/
 
 # The object files of the HarnessUI NSIS plugin (client/src-tauri/nsis/plugin/build.cmd)
 client/src-tauri/nsis/plugin/obj/
+
+# The Google OAuth client of Harness (connectors.py, builtin_google_client). Never commit it.
+daemon/harness_daemon/_google_client.py
