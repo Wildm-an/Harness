@@ -1,5 +1,5 @@
 // A file change inside an opened tool row: the lines of the unified diff, with the added lines in
-// green and the removed lines in red. The Diff pane shows the full review.
+// green and the removed lines in red. The Changes pane shows the full review.
 
 import { memo, useMemo } from "react";
 import { parseUnifiedDiff } from "../lib/diff";
@@ -23,7 +23,7 @@ export const InlineDiff = memo(function InlineDiff({ diff }: { diff: string }) {
         </div>
       ))}
       {lines.length > MAX_LINES && (
-        <div className="inline-diff-line hunk">{lines.length - MAX_LINES} more lines. The Diff pane shows the full change.</div>
+        <div className="inline-diff-line hunk">{lines.length - MAX_LINES} more lines. The Changes pane shows the full change.</div>
       )}
     </div>
   );

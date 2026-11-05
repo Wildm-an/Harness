@@ -3,7 +3,9 @@
 // window the rail covers the workspace, and Esc or a click outside closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, ChevronRight, Coffee, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, KeyRound, Monitor } from "lucide-react";
+import { Archive, ChevronRight, Coffee, Diff, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, KeyRound, Monitor } from "lucide-react";
+import type { GitChanges } from "../daemon/protocol";
+import { DiffCounts } from "./DiffStats";
 import { captureAgentTab } from "../browser/BrowserPane";
 import type { PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
 import type { ConnectionKind } from "../lib/connections";
@@ -53,6 +55,8 @@ export interface RailBrowser {
 const LIVE_EVERY = 500; // ms between two pictures of the agent tab.
 
 export function SessionRail({
+  changes,
+  onChangesAction,
   browser,
   onShowBrowser,
   environment,
@@ -73,6 +77,9 @@ export function SessionRail({
   keepAwakeDisabled,
   onClose,
 }: {
+  changes: GitChanges | null; // The changes of the session folder against its base branch.
+  // Asks the agent to open a pull request (a GitHub remote) or to commit (a local repository). null: not possible now.
+  onChangesAction: ((kind: "pr" | "commit") => void) | null;
   browser: RailBrowser | null;
   onShowBrowser: () => void; // Open the Browser pane on the page of the agent.
   environment: RailEnvironment;
@@ -93,7 +100,11 @@ export function SessionRail({
   keepAwakeDisabled: boolean; // Not connected.
   onClose: () => void; // Esc or a click outside, in a narrow window.
 }) {
-  const [folded, setFolded] = useState<RailSection[]>(foldedSections);
+  // The Context section always starts folded (the user asked for this). Its heading shows the share in use.
+  const [folded, setFolded] = useState<RailSection[]>(() => {
+    const saved = foldedSections();
+    return saved.includes("context") ? saved : [...saved, "context"];
+  });
   const [order, setOrder] = useState<RailSection[]>(sectionOrder);
   // The section that the user drags, and where it goes: before or after another section.
   const [dragging, setDragging] = useState<RailSection | null>(null);
@@ -167,6 +178,49 @@ export function SessionRail({
 
   const body: Record<RailSection, ReactNode | null> = {
     browser: browser ? <RailBrowserView browser={browser} onShow={onShowBrowser} /> : null,
+    // The changes of the session against its base branch, and "Create PR", as in the Claude app. Any
+    // git repository shows the count. A pull request needs a GitHub remote, else the button is "Commit".
+    changes:
+      changes?.repo ? (
+        <div className="rail-changes">
+          <Diff size={15} aria-hidden className="rail-changes-icon" />
+          <span
+            className="rail-changes-count"
+            title={
+              changes.files === 0
+                ? "No changes"
+                : `${changes.files} ${changes.files === 1 ? "file" : "files"} changed${changes.base ? ` since ${changes.base}` : " (not committed)"}`
+            }
+          >
+            <DiffCounts added={changes.added} removed={changes.removed} />
+          </span>
+          {changes.github ? (
+            // A branch with an open pull request: the Pull requests section shows it.
+            !(pr && (pr.state === "open" || pr.state === "draft")) && (
+              <button
+                type="button"
+                className="btn btn-small rail-changes-pr"
+                disabled={!onChangesAction || changes.files === 0}
+                title={changes.files === 0 ? "There are no changes for a pull request." : "Ask the agent to commit, push, and open a pull request"}
+                onClick={() => onChangesAction?.("pr")}
+              >
+                Create PR
+              </button>
+            )
+          ) : (
+            // No GitHub remote: no pull request is possible (the user asked for "Commit" here).
+            <button
+              type="button"
+              className="btn btn-small rail-changes-pr"
+              disabled={!onChangesAction || changes.files === 0}
+              title={changes.files === 0 ? "There are no changes to commit." : "Ask the agent to commit the changes"}
+              onClick={() => onChangesAction?.("commit")}
+            >
+              Commit
+            </button>
+          )}
+        </div>
+      ) : null,
     environment: (
       <>
       <dl className="rail-rows">
@@ -221,7 +275,7 @@ export function SessionRail({
           </div>
         )}
         <button type="button" className="btn btn-small rail-action" onClick={onCompact} disabled={running} title={running ? "Compaction waits for the end of the turn." : undefined}>
-          <Archive size={13} aria-hidden /> Compact this session
+          <Archive size={13} aria-hidden /> Compact
         </button>
       </div>
     ) : (

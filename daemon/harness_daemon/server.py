@@ -69,7 +69,7 @@ from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
-from .prstatus import pr_status
+from .prstatus import folder_changes, pr_status
 from . import update
 from . import session as session_mod
 from .tools.sessions import NEW_TASK_CHOICES
@@ -2089,6 +2089,24 @@ async def on_git_pr_status(conn: Connection, msg: dict[str, Any]) -> None:
             await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.pr_status")
             return
         await conn.send({"type": "pr_status", "items": items})
+
+    asyncio.create_task(work())
+
+
+@handler("git.changes")
+async def on_git_changes(conn: Connection, msg: dict[str, Any]) -> None:
+    """The changes of a folder against its base branch, for the "Changes" section of the rail:
+    {"cwd"}. The reply is "git.changes". It runs as a task: git can be slow on a large folder."""
+    cwd = str(_project_dir(msg.get("cwd")))
+
+    async def work() -> None:
+        try:
+            result = await folder_changes(cwd)
+        except Exception as e:  # noqa: BLE001 - the rail shows no changes.
+            log.exception("The change count failed")
+            await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.changes")
+            return
+        await conn.send({"type": "git.changes", "cwd": msg.get("cwd"), **{k: v for k, v in result.items() if k != "path"}})
 
     asyncio.create_task(work())
 
