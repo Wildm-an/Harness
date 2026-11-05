@@ -5,7 +5,7 @@
 // repository.
 
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Folder, GitBranch } from "lucide-react";
+import { Check, Folder, GitBranch } from "lucide-react";
 import type { GitBranches } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 
@@ -78,7 +78,6 @@ export function WorktreeMenu({ choice, info, onChange }: {
       >
         <GitBranch size={13} aria-hidden />
         <span className="prompt-chip-text">{worktreeLabel(choice, info)}</span>
-        <ChevronDown size={13} aria-hidden />
       </button>
       {open && (
         <div className="menu model-dropdown up worktree-dropdown" role="menu" aria-label="Where the agent works">

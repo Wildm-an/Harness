@@ -121,6 +121,12 @@ import type { ContextUsage } from "../lib/context";
 /** The permission mode of a project, as in Claude Code. See daemon/harness_daemon/permissions.py. */
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions";
 
+/** The effort level of the model menu. The daemon sends it to the model as reasoning_effort. */
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** "When you ask for an unrelated task": ask each time, always do it here, or always start a new session. */
+export type NewTaskPrompt = "ask" | "here" | "new_session";
+
 export interface ClientSettings {
   auto_verify: boolean;
   permission_mode: PermissionMode;
@@ -143,6 +149,8 @@ export interface UserSettings {
   auto_model?: boolean;
   online_model?: string | null;
   offline_model?: string | null;
+  effort?: Effort | null; // The effort level of the model menu. null: the model decides.
+  new_task_prompt?: NewTaskPrompt; // "When you ask for an unrelated task" (offer_session). Default "ask".
   // The agent instructions of the user. The system prompt includes them. null: no instructions.
   instructions_thinking?: string | null;
   instructions_research?: string | null;

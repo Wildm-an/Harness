@@ -126,7 +126,7 @@ import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ClientMessage, ConnectorItem, GitBranches, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, ClientMessage, ConnectorItem, Effort, GitBranches, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyRoutineRun, notifyTurnDone } from "./lib/notify";
 import { parseUnifiedDiff } from "./lib/diff";
@@ -152,7 +152,7 @@ import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { ModelUnavailable } from "./components/ModelUnavailable";
 import { isModelUnavailable, networkModel, proposedModel } from "./lib/modelAvailability";
-import { ModelChoice } from "./components/ModelChoice";
+import { ModelChoice, isLocalProvider } from "./components/ModelChoice";
 import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
 import {
@@ -1049,6 +1049,7 @@ export default function App() {
     conn.send({ type: "projects.list" });
     setRoutines(null);
     conn.send({ type: "routines.list" }); // The red dot of the Routines nav item.
+    conn.send({ type: "user_settings.get" }); // The effort level of the model menu on the start screen.
     setRecent([]);
     lastRunning.current = [];
     setRunningSessions([]);
@@ -1908,6 +1909,21 @@ export default function App() {
     [conn],
   );
 
+  // The model menus: the providers on the computer of the daemon ("Local models"), and the effort level
+  // (the user setting "effort").
+  const localProviders = useMemo(
+    () => new Set((providers?.items ?? []).filter((p) => p.enabled && isLocalProvider(p)).map((p) => p.name)),
+    [providers],
+  );
+  const effortValue = status === "open" ? (userSettings?.effort ?? null) : null;
+  const effortControl = useMemo(
+    () =>
+      status === "open" && userSettings
+        ? { value: effortValue, onChange: (effort: Effort | null) => void sendSafely({ type: "user_settings.set", values: { effort } }) }
+        : undefined,
+    [status, userSettings !== null, effortValue, sendSafely],
+  );
+
   // The Preview pane: a PDF or Word file of the session folder. The user opens it from the file tree
   // or a path in the chat. The agent opens it with the show_document tool. The daemon sends the
   // bytes ("fs.read_bytes"). Only the reply to the last request shows.
@@ -2361,6 +2377,9 @@ export default function App() {
                   allowDefault={false}
                   up
                   alignRight
+                  heading="Model · this session"
+                  localProviders={localProviders}
+                  effort={effortControl}
                   onOpen={requestModels}
                   onSelect={switchModel}
                   onManage={showProviders}
@@ -3094,6 +3113,8 @@ export default function App() {
             prefScope={current?.id ?? "local"}
             onBrowse={browseFolder}
             models={models}
+            localProviders={localProviders}
+            effort={effortControl}
             onRequestModels={requestModels}
             onManageProviders={showProviders}
             onSaveProject={saveProject}

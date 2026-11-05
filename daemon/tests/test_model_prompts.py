@@ -72,3 +72,10 @@ def test_a_memory_change_is_a_note(harness_home, project, fake_model):
     last = fake_model.requests[0]["messages"][-1]["content"]
     assert last.startswith("hi\n\n[Harness: The user changed the memory in Settings.")
     assert "The user writes Python." in last
+
+
+def test_the_prompt_asks_for_links_that_the_user_can_click():
+    for model in ("anthropic/claude-sonnet-5-5", "ollama/qwen2.5-coder:7b"):
+        prompt = base_prompt(model)
+        assert "Write each URL as a Markdown link" in prompt
+        assert "Do not put a URL in backticks or in a code block" in prompt

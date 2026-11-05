@@ -1477,7 +1477,7 @@ textarea:focus-visible {
   right: auto;
   display: flex;
   flex-direction: column;
-  width: min(400px, calc(100vw - 32px));
+  width: min(320px, calc(100vw - 32px));
 }
 
 .model-dropdown.up {
@@ -1758,10 +1758,11 @@ textarea:focus-visible {
 .ctx-buffer { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); }
 .context-bar > .ctx-free { box-shadow: none; }
 
-/* The model of a session is text, not a pill. The text is brighter on hover and when the menu is open. */
+/* The chips under the prompt box are text, not pills, with no arrow. On hover and while the menu is
+   open, the full chip gets a highlight, as in the Claude app (the user asked for this). */
 .prompt-below .prompt-chip {
   min-height: 24px;
-  padding: 0 4px;
+  padding: 0 6px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1769,7 +1770,7 @@ textarea:focus-visible {
 
 .prompt-below .prompt-chip:hover,
 .prompt-below .prompt-chip.active {
-  background: transparent;
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -1785,11 +1786,92 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
+/* The model menu, as in the Claude app: a heading, the models with their number keys, then the
+   "Effort" and "Local models" rows that open a submenu, and "Manage providers". */
+.model-menu-heading {
+  padding: 8px 10px 4px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.menu.model-dropdown button {
+  min-height: 34px;
+  font-size: 14px;
+}
+
 .model-menu-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+}
+
+.model-menu-end {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.model-menu-key {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: 12.5px var(--font-sans);
+}
+
+.model-menu-check {
+  color: var(--accent);
+}
+
+.model-menu-detail {
+  font-size: 13px;
+}
+
+/* A submenu opens next to the menu: on the left for a menu at the right edge of the window. */
+.menu.model-submenu {
+  top: auto;
+  bottom: -5px;
+  left: calc(100% + 4px);
+  right: auto;
+  width: min(260px, calc(100vw - 32px));
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+}
+
+.model-dropdown.right .menu.model-submenu {
+  left: auto;
+  right: calc(100% + 4px);
+}
+
+.model-dropdown:not(.up) .menu.model-submenu {
+  top: -5px;
+  bottom: auto;
+}
+
+.model-submenu-help {
+  margin: 6px 10px 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* The model button: the model name, then the effort level in muted text. No icon. */
+.model-chip {
+  gap: 6px;
+}
+
+.model-chip-effort {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.prompt-below .model-chip {
+  color: var(--text);
+  font-size: 13px;
 }
 
 .menu-note {
@@ -7235,13 +7317,44 @@ mark.word-del {
   transform: rotate(90deg);
 }
 
-/* A closed row: the count gets the color of a nested session that awaits input or has an unread response. */
-.side-nest-toggle.hidden-awaiting .side-nest-count {
-  color: var(--warning);
+/* A closed row with active nested sessions: a line under it, as in the Claude app,
+   "1 nested session · 1 working". A click opens the row. */
+.side-nest-activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 22px;
+  padding: 0 8px 2px calc(var(--side-label-x) + 10px);
+  border: none;
+  border-radius: var(--side-radius);
+  background: transparent;
+  color: var(--text-muted);
+  font: 12px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
 }
 
-.side-nest-toggle.hidden-unread .side-nest-count {
-  color: var(--info);
+.side-nest-activity:hover {
+  color: var(--text);
+}
+
+/* The elbow line from the parent title to the text. */
+.side-nest-elbow {
+  flex: none;
+  width: 8px;
+  height: 10px;
+  margin-top: -8px;
+  border-bottom: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-bottom-left-radius: 3px;
+}
+
+.side-nest-activity-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The nested sessions, a little inside the title of the parent row. */
@@ -9355,7 +9468,7 @@ textarea.setting-textarea:disabled {
 }
 
 .pane-content .model-dropdown {
-  width: min(400px, calc(100cqw - 56px)); /* The context ring is to the right of the model name. */
+  width: min(320px, calc(100cqw - 56px)); /* The context ring is to the right of the model name. */
 }
 
 .pane-content .mode-dropdown {
@@ -9615,9 +9728,10 @@ textarea.setting-textarea:disabled {
 }
 
 /* The row under the prompt box when the mode and the model names do not fit side by side
-   (PromptBox.tsx): only the icons show. The hover hint of each chip still names it. */
-.prompt-below.compact .prompt-chip-text,
-.prompt-below.compact .prompt-chip > svg:last-child {
+   (PromptBox.tsx): a chip with an icon shows only the icon. The model chip has no icon: it shows
+   the model name with no effort level. The hover hint of each chip still names it. */
+.prompt-below.compact .prompt-chip:has(> svg) .prompt-chip-text,
+.prompt-below.compact .model-chip-effort {
   display: none;
 }
 

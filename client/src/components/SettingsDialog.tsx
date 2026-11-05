@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
-import type { PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
+import type { NewTaskPrompt, PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
 import type { WebKeyProvider } from "../lib/providerKeys";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
@@ -699,6 +699,24 @@ export function GeneralSettings({
 
       <Row label="Subagents" help="Let the agent give tasks to subagents, also several at once in the background. Uses your limit faster.">
         <Switch checked={values?.subagents !== false} label="Subagents" disabled={off} onChange={(on) => set({ subagents: on })} />
+      </Row>
+
+      {/* The setting of the Claude app (Settings > Claude Code), with its labels. The daemon uses it in offer_session. */}
+      <Row
+        label="When you ask for an unrelated task"
+        help="A task that is not part of the work of a session can run in its own linked session, or in another session that fits it better. Choose whether Harness asks each time, keeps it in the session you typed it in, or opens a linked session for it."
+        htmlFor="setting-new-task"
+      >
+        <select
+          id="setting-new-task"
+          value={values?.new_task_prompt ?? "ask"}
+          disabled={off}
+          onChange={(e) => set({ new_task_prompt: e.target.value as NewTaskPrompt })}
+        >
+          <option value="ask">Ask me</option>
+          <option value="here">Always do it here</option>
+          <option value="new_session">Always start a new session</option>
+        </select>
       </Row>
 
       <Row label="Check the app after UI changes" help="The agent opens the preview and checks each change to the UI.">

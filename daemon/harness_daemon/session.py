@@ -13,6 +13,20 @@ TITLE_CHARS = 80
 # Starts a nested session of a session: (parent, title, prompt, worktree, mode) -> {"id", "folder"}.
 # server.py sets it. None (for example in a test with no server): the agent has no start_session tool.
 CHILD_STARTER: Callable[..., Awaitable[dict[str, Any]]] | None = None
+# Sends a prompt to another stored session and starts its turn: (source, target_id, prompt) -> {"id", "title"}.
+# server.py sets it. None: the agent can only start a new session.
+SESSION_SENDER: Callable[..., Awaitable[dict[str, Any]]] | None = None
+
+OTHER_SESSIONS = 12  # The other sessions of the project that the agent sees in the session list note.
+READ_MESSAGES = 8  # The last user and agent messages that session_read gives.
+READ_CHARS = 1200  # The longest message text that session_read gives.
+
+
+def _text_of(message: dict[str, Any]) -> str:
+    content = message.get("display") or message.get("content")
+    if isinstance(content, list):
+        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+    return " ".join(str(content or "").split())
 
 
 class Session:
@@ -36,6 +50,79 @@ class Session:
         if CHILD_STARTER is not None:
             starter = CHILD_STARTER
             agent.enable_session_start(lambda title, prompt, worktree, mode: starter(self, title, prompt, worktree, mode))
+        # The context of the other sessions: a list note, session_read, and offer_session.
+        sender = SESSION_SENDER
+        agent.enable_session_context(
+            self.session_list_note, self.read_session, self.find_other,
+            (lambda target, prompt: sender(self, target, prompt)) if sender is not None else None)
+
+    # -- the other sessions of the project ------------------------------------------------
+
+    def other_sessions(self) -> list[dict[str, Any]]:
+        """The other sessions of the project that are not archived, the newest first (by the creation time:
+        the list stays the same while the sessions work, so the agent does not get it again each turn)."""
+        from .memory import project_root
+        from .storage import path_key
+
+        key = path_key(str(project_root(self.project_dir)))
+        rows = [r for r in self.storage.list_sessions(limit=500)
+                if r["id"] != self.id and not r["archived"] and path_key(str(project_root(Path(r["cwd"])))) == key]
+        rows.sort(key=lambda r: -r["created_at"])
+        return rows[:OTHER_SESSIONS]
+
+    def session_list_note(self) -> str | None:
+        """The harness note with the other sessions of the project. None: no other session."""
+        rows = self.other_sessions()
+        if not rows:
+            return None
+        parent = (self.storage.get_session(self.id) or {}).get("parent_id")
+        lines = []
+        for r in rows:
+            relation = (" (a nested session of this session)" if r.get("parent_id") == self.id
+                        else " (the parent of this session)" if r["id"] == parent else "")
+            lines.append(f"- {r['id'][:8]}: {r['title'] or 'Untitled session'}{relation}")
+        return ("[Harness: The other sessions of this project, the newest first. The user can work in them "
+                "too. Use session_read to see the conversation of one. When the user asks for a task that is not "
+                "part of the work of this session, or that fits one of these sessions better, call offer_session "
+                "before you start the task.]\n" + "\n".join(lines))
+
+    def find_other(self, ref: str) -> dict[str, Any] | None:
+        """A session of the project by its id or the first characters of the id (8 or more)."""
+        ref = ref.strip().lower()
+        if len(ref) < 8:
+            return None
+        from .memory import project_root
+        from .storage import path_key
+
+        key = path_key(str(project_root(self.project_dir)))
+        for r in self.storage.list_sessions(limit=500):
+            if r["id"] != self.id and r["id"].startswith(ref) and path_key(str(project_root(Path(r["cwd"])))) == key:
+                return r
+        return None
+
+    def read_session(self, ref: str) -> str:
+        """The title, the first prompt, and the last messages of another session of the project."""
+        row = self.find_other(ref)
+        if row is None:
+            raise ValueError(f"No other session of this project has the id {ref}. Use an id of the session list.")
+        messages = [m for m in self.storage.load_messages(row["id"])
+                    if m.get("role") in ("user", "assistant") and m.get("origin") != "harness" and _text_of(m)]
+        lines = [f"# {row['title'] or 'Untitled session'} (id {row['id'][:8]}, model {row['model']})"]
+        summary = (self.storage.get_session(row["id"]) or {}).get("summary")
+        if summary:
+            lines.append(f"Summary of the earlier conversation: {summary[:READ_CHARS]}")
+        if not messages:
+            lines.append("The session has no messages.")
+            return "\n".join(lines)
+        first = messages[0]
+        shown = messages[-READ_MESSAGES:]
+        if first not in shown:
+            lines.append(f"First prompt: {_text_of(first)[:READ_CHARS]}")
+            lines.append(f"({len(messages) - len(shown) - 1} messages are not shown.)")
+        for m in shown:
+            who = "User" if m["role"] == "user" else "Agent"
+            lines.append(f"{who}: {_text_of(m)[:READ_CHARS]}")
+        return "\n".join(lines)
 
     @property
     def cwd(self):

@@ -26,6 +26,7 @@ The order for the API key: ``api_key``, then the ``api_key_env`` variable, then 
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -540,6 +541,13 @@ class ModelResponse:
 OnText = Callable[[str], Awaitable[None]]
 
 
+log = logging.getLogger(__name__)
+
+# The effort levels of the model menu (setting "effort"), and the reasoning_effort value of the API.
+# The OpenAI API has no level above "xhigh": "max" sends "xhigh" too.
+EFFORT_API = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
+
+
 class ModelClient:
     """Streams chat completions from an OpenAI-compatible endpoint."""
 
@@ -550,6 +558,8 @@ class ModelClient:
         self._client: AsyncOpenAI | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._send_stream_options = True
+        # False after the endpoint rejected a request with reasoning_effort: the model has no effort levels.
+        self._send_effort = True
 
     async def _openai(self) -> AsyncOpenAI:
         """The API client for the current address and event loop.
@@ -593,7 +603,8 @@ class ModelClient:
 
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
                      _retry_tunnel: bool = True, options: dict[str, Any] | None = None) -> ModelResponse:
-        """Stream one completion. ``options``: ``temperature``, ``max_tokens``, and ``stop``, from plugins."""
+        """Stream one completion. ``options``: ``temperature``, ``max_tokens``, and ``stop`` from plugins, and
+        ``reasoning_effort`` (the effort setting, or a plugin)."""
         import openai  # Loaded by _openai() already: this import only gives the name.
 
         client = await self._openai()
@@ -601,6 +612,9 @@ class ModelClient:
         for key in ("temperature", "max_tokens", "stop"):
             if options and options.get(key) is not None:
                 kwargs[key] = options[key]
+        effort = options.get("reasoning_effort") if options else None
+        if effort and self._send_effort:
+            kwargs["reasoning_effort"] = effort
         if tools:
             kwargs["tools"] = tools
         if self._send_stream_options:
@@ -611,6 +625,11 @@ class ModelClient:
             # Some servers reject stream_options. Try once more without it.
             if self._send_stream_options and "stream_options" in str(e):
                 self._send_stream_options = False
+                return await self.stream(messages, tools, on_text, options=options)
+            # A model with no effort levels can reject reasoning_effort. Try once more without it.
+            if "reasoning_effort" in kwargs:
+                log.info("%s rejected reasoning_effort=%s: %s", self.label, effort, e)
+                self._send_effort = False
                 return await self.stream(messages, tools, on_text, options=options)
             raise ModelError(f"The model endpoint rejected the request: {e}") from e
         except openai.APIConnectionError as e:

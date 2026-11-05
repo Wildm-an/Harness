@@ -78,7 +78,10 @@ def test_the_agent_starts_a_nested_session(daemon, project, fake_model):  # noqa
     assert request["input"]["folder"] == str(project) and request["input"]["worktree"] is False
     a.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
     a.until("turn.end")
-    result = [m["content"] for m in fake_model.requests[-1]["messages"] if m["role"] == "tool"][-1]
+    # The nested session sends its own requests at the same time: find the last request of the parent.
+    parent_requests = [r for r in fake_model.requests
+                       if any(m["role"] == "user" and m.get("content") == "Start a session for the docs" for m in r["messages"])]
+    result = [m["content"] for m in parent_requests[-1]["messages"] if m["role"] == "tool"][-1]
     assert "Started the session 'Write the docs'" in result
 
     child = None
@@ -129,3 +132,102 @@ def test_a_nested_session_of_a_nested_session_cannot_start_more(tmp_path, projec
     finally:
         server.HEADLESS = old
         storage.close()
+
+
+# -- the context of the other sessions, and offer_session ----------------------------------------
+
+
+def _first_session(c: Client, project, fake_model) -> str:
+    """A session with one turn. The client then starts a second session."""
+    fake_model.script({"when": "Fix the typo in README", "text": "Fixed the typo."})
+    first = c.new_session(project)["session_id"]
+    c.send({"type": "prompt", "text": "Fix the typo in README"})
+    c.until("turn.end")
+    return first
+
+
+def _tool_result(fake_model, prompt: str) -> str:
+    # The session whose first prompt is ``prompt``. The request joins the harness notes to the user
+    # message: compare the start of the text.
+    def first_user(r: dict) -> str:
+        return str(next((m.get("content") for m in r["messages"] if m["role"] == "user"), ""))
+    requests = [r for r in fake_model.requests if first_user(r).startswith(prompt)]
+    return [m["content"] for m in requests[-1]["messages"] if m["role"] == "tool"][-1]
+
+
+def test_the_agent_sees_and_reads_the_other_sessions(daemon, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    first = _first_session(c, project, fake_model)
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    c.until("session.ready")
+    fake_model.script(
+        {"when": "What did the other session do", "tool_calls": [{"name": "session_read", "arguments": {"session_id": first[:8]}}]},
+        {"when": "What did the other session do", "text": "It fixed a typo."},
+    )
+    c.send({"type": "prompt", "text": "What did the other session do"})
+    c.until("turn.end")
+    request = next(r for r in fake_model.requests
+                   if any(str(m.get("content")).startswith("What did the other session do") for m in r["messages"]))
+    notes = [m["content"] for m in request["messages"] if m["role"] == "user" and "[Harness: The other sessions" in str(m.get("content"))]
+    assert notes and f"- {first[:8]}: " in notes[0]
+    result = _tool_result(fake_model, "What did the other session do")
+    assert "User: Fix the typo in README" in result and "Agent: Fixed the typo." in result
+    c.close()
+
+
+def test_offer_session_sends_the_prompt_to_a_better_session(daemon, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    first = _first_session(c, project, fake_model)
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model"})
+    c.until("session.ready")
+    fake_model.script(
+        {"when": "Also fix the typo in CHANGELOG", "tool_calls": [{"name": "offer_session", "arguments": {
+            "title": "Typo fixes", "prompt": "Also fix the typo in CHANGELOG", "session_id": first[:8]}}]},
+        {"when": "Fix the typo in README", "text": "Fixed the CHANGELOG too."},  # The turn of the first session.
+        {"when": "Also fix the typo in CHANGELOG", "text": "Sent it to the typo session."},
+    )
+    c.send({"type": "prompt", "text": "Also fix the typo in CHANGELOG"})
+    request = c.until("permission.request")[0]
+    question = request["questions"][0]
+    assert question["question"].startswith("Send this to the session ")
+    assert [o["label"] for o in question["options"]] == ["Send to that session", "New session", "Do it here"]
+    c.send({"type": "question.reply", "request_id": request["request_id"],
+            "answers": {question["question"]: "Send to that session"}})
+    c.until("turn.end")
+    assert "Sent the prompt to the session" in _tool_result(fake_model, "Also fix the typo in CHANGELOG")
+    for _ in range(80):  # The first session works on the prompt with no window.
+        c.send({"type": "session.list"})
+        _msg, seen = c.until("sessions")
+        if any(m["type"] == "sessions.background" and not m["items"] for m in seen):
+            break
+        time.sleep(0.1)
+    c.send({"type": "session.resume", "session_id": first})
+    ready = c.until("session.ready")[0]
+    for _ in range(80):
+        if not ready["running"]:
+            break
+        time.sleep(0.1)
+        c.send({"type": "session.resume", "session_id": first})
+        ready = c.until("session.ready")[0]
+    users = [m.get("content") for m in ready["history"] if m["role"] == "user" and m.get("origin") != "harness"]
+    assert users[-1] == "Also fix the typo in CHANGELOG"
+    assert "Fixed the CHANGELOG too." in [m.get("content") for m in ready["history"] if m["role"] == "assistant"]
+    c.close()
+
+
+def test_the_setting_keeps_the_task_here(daemon, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "user_settings.set", "values": {"new_task_prompt": "here"}})
+    assert c.until("user_settings")[0]["values"]["new_task_prompt"] == "here"
+    fake_model.script(
+        {"tool_calls": [{"name": "offer_session", "arguments": {"title": "Docs", "prompt": "Write the docs."}}]},
+        {"text": "I do it here."},
+    )
+    c.send({"type": "prompt", "text": "Write the docs"})
+    _msg, seen = c.until("turn.end")
+    assert not any(m["type"] == "permission.request" for m in seen)  # No card.
+    assert "Always do it here" in _tool_result(fake_model, "Write the docs")
+    c.send({"type": "user_settings.set", "values": {"new_task_prompt": "sometimes"}})
+    assert "must be one of" in c.until("error")[0]["message"]
+    c.close()
