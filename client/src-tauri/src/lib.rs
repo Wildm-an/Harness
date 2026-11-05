@@ -149,6 +149,57 @@ fn prefs_store(app: AppHandle, prefs: prefs::Prefs) -> Result<(), String> {
     prefs::store(&prefs_file(&app)?, &prefs)
 }
 
+/// One folder of the app and its size in bytes, for Settings > General > Storage.
+#[derive(serde::Serialize)]
+struct AppFolder {
+    id: &'static str,
+    path: String,
+    size: u64,
+}
+
+/// The size of the files in a folder and its subfolders. A link is not followed.
+fn folder_size(root: &std::path::Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if kind.is_file() {
+                total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    total
+}
+
+/// The folders of the desktop app on this computer: the installed app, the data of its webview
+/// (the web cache and the app settings), and the profile of the Browser pane.
+#[tauri::command]
+async fn app_storage(app: AppHandle) -> Result<Vec<AppFolder>, String> {
+    let mut folders: Vec<(&'static str, std::path::PathBuf)> = Vec::new();
+    // A development build runs from the Cargo target folder, which is not an installed app.
+    if !cfg!(debug_assertions) {
+        if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|p| p.to_path_buf())) {
+            folders.push(("app", dir));
+        }
+    }
+    if let Ok(dir) = app.path().app_local_data_dir() {
+        folders.push(("webview", dir.join("EBWebView")));
+        folders.push(("browser", dir.join("browser-profile")));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        folders
+            .into_iter()
+            .map(|(id, path)| AppFolder { id, size: folder_size(&path), path: path.to_string_lossy().into_owned() })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// The window state flags that the app saves and restores.
 fn window_state_flags() -> StateFlags {
     // The app draws its own title bar on Windows. Do not restore the old system frame.
@@ -345,7 +396,8 @@ pub fn run() {
             save_file,
             prefs_load,
             prefs_store,
-            prepare_update
+            prepare_update,
+            app_storage
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri app");

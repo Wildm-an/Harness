@@ -9862,3 +9862,152 @@ textarea.setting-textarea:disabled {
 .memory-facts .cap-status {
   flex: none;
 }
+
+/* Settings > General > Storage > Manage (StorageDialog.tsx), as the Storage dialog of Claude. */
+.storage-dialog {
+  max-width: 640px;
+}
+
+.storage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 0;
+}
+
+.storage-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.storage-body {
+  overflow-y: auto;
+  padding: 8px 20px 4px;
+}
+
+.storage-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 0;
+}
+
+.storage-total,
+.storage-row-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.storage-total {
+  margin-top: 12px;
+}
+
+.storage-total strong,
+.storage-size {
+  flex: none;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  margin: 12px 0 10px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.storage-bar span {
+  min-width: 3px;
+  flex-basis: 0;
+}
+
+.storage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.storage-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.storage-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.storage-legend-size {
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-row {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.storage-row:first-of-type {
+  margin-top: 10px;
+}
+
+.storage-details {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.storage-details summary {
+  width: fit-content;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.storage-details ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.storage-details li {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0 3px 14px;
+}
+
+.storage-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-item-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-details .help {
+  margin: 6px 0 0 14px;
+  overflow-wrap: anywhere;
+}
+
+.storage-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border);
+}

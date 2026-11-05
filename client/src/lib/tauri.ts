@@ -71,6 +71,19 @@ export async function saveBase64File(name: string, data: string, filter: { name:
   return path;
 }
 
+/** A folder of the desktop app and its size in bytes (Settings > General > Storage). */
+export interface AppFolder {
+  id: "app" | "webview" | "browser";
+  path: string;
+  size: number;
+}
+
+/** The folders of the desktop app: the installed app, the webview data, and the Browser pane profile. */
+export async function appStorage(): Promise<AppFolder[]> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<AppFolder[]>("app_storage");
+}
+
 /** Shows a folder or a file in Explorer (Finder on macOS). Only for the daemon on this computer. */
 export async function revealInExplorer(path: string): Promise<void> {
   const { revealItemInDir } = await import("@tauri-apps/plugin-opener");

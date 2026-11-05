@@ -315,6 +315,32 @@ export interface RoutineItem extends RoutineFields {
   queued: boolean; // It waits for a free place (at most 3 routines run at the same time).
 }
 
+/** One folder or item of the Storage dialog, with its size in bytes. */
+export interface DiskItem {
+  name: string;
+  size: number;
+  path?: string;
+}
+
+/** The disk space of Harness on the daemon computer (daemon disk_usage.py). Sizes are bytes. */
+export interface DiskUsage {
+  checked_at: number; // Epoch seconds.
+  home: string; // ~/.harness of the daemon computer.
+  sessions: {
+    size: number; // The database and the worktrees.
+    database: number;
+    count: number;
+    stale_count: number; // Sessions with no activity in the last 30 days.
+    stale_size: number;
+    worktrees: (DiskItem & { project: string; path: string })[];
+    largest: { title: string; project: string; size: number; updated_at: number }[];
+  };
+  models: { size: number; path: string; items: DiskItem[] }; // The model files of the Hugging Face cache.
+  runtime: { size: number; path: string; items: DiskItem[] }; // The Chromium of the browser tools.
+  memory: { size: number; items: DiskItem[] }; // ~/.harness without the database, the logs, and the browser profile.
+  caches: { size: number; items: DiskItem[] }; // The logs and the browser connector profile.
+}
+
 export type MemoryType = "user" | "feedback" | "project" | "reference";
 
 /** One memory of a project (daemon memory.py). */
@@ -664,6 +690,7 @@ export type ClientMessage =
   | ({ type: "routines.save"; id?: string } & RoutineFields)
   | { type: "routines.delete"; id: string }
   | { type: "routines.run"; id: string } // "Run now".
+  | { type: "disk.usage" } // Settings > General > Storage.
   // Settings > Your Harness > Memory. cwd: the project folder. Each project has its own memory.
   | { type: "memory.list"; cwd: string }
   | { type: "memory.save"; cwd: string; name: string; old_name?: string; description: string; memory_type: MemoryType; content: string }
@@ -904,6 +931,7 @@ export type DaemonMessage =
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
   | { type: "memory.parsed"; items: MemoryFact[] }
+  | ({ type: "disk.usage" } & DiskUsage)
   | { type: "memory.export"; cwd: string; name: string; data: string; count: number } // data: the .zip as base64.
   | { type: "routines"; items: RoutineItem[]; saved?: string; folder?: string } // To all clients. saved: the id after routines.save. folder: the routine files.
   | { type: "routine.runs"; routine_id: string; items: RoutineRun[] }

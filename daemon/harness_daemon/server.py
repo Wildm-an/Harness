@@ -37,7 +37,7 @@ from .plugins.install import (InstallError, install as install_plugin, remove as
                               set_bundle_enabled)
 from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
-from . import provider_config
+from . import disk_usage, provider_config
 from . import connectors, mcp_auth
 from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, load_mcp_config, project_config_path, user_config_path
 from .cookbook import hosts as cookbook_hosts
@@ -3019,6 +3019,13 @@ async def _send_memory(conn: Connection, msg: dict[str, Any], store: MemoryStore
 def _memory_text(msg: dict[str, Any], key: str) -> str:
     value = msg.get(key)
     return value if isinstance(value, str) else ""
+
+
+@handler("disk.usage")
+async def on_disk_usage(conn: Connection, msg: dict[str, Any]) -> None:
+    """The disk space of Harness on the daemon computer, for Settings > General > Storage."""
+    report = await asyncio.to_thread(disk_usage.usage, conn.storage)
+    await conn.send({"type": "disk.usage", **report})
 
 
 @handler("memory.list")

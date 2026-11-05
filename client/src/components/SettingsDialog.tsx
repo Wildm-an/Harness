@@ -613,7 +613,9 @@ export function GeneralSettings({
   webKeys,
   onSaveWebKey,
   onSet,
+  onManageStorage,
 }: {
+  onManageStorage?: () => void; // Opens the Storage dialog. Absent: not connected.
   error: string | null; // The daemon did not save a setting.
   webKeys?: Record<WebKeyProvider, boolean>; // The web search API keys in the keychain.
   onSaveWebKey?: (provider: WebKeyProvider, key: string | null) => void;
@@ -780,7 +782,13 @@ export function GeneralSettings({
         </select>
       </Row>
 
+      <h3 className="settings-section">System</h3>
       {isTauri() && <BackgroundRows />}
+      <Row label="Storage" help="See how much space Harness uses on this computer.">
+        <button type="button" className="btn btn-small" disabled={!onManageStorage} onClick={onManageStorage}>
+          Manage
+        </button>
+      </Row>
 
       <h3 className="settings-section">Keyboard shortcuts</h3>
       <dl className="shortcut-list">
@@ -875,7 +883,6 @@ function BackgroundRows() {
 
   return (
     <>
-      <h3 className="settings-section">System</h3>
       <Row label="Keep running in the background" help="Closing the window keeps Harness in the system tray, so routines can run.">
         <Switch checked={keep} label="Keep running in the background" onChange={(on) => void changeKeep(on)} />
       </Row>

@@ -105,6 +105,7 @@ import { UpdateToast } from "./components/UpdateToast";
 import { availableVersion, checkOnLaunch, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
+import { StorageDialog } from "./components/StorageDialog";
 import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
 import { base64ToBytes, isPreviewFile, shownDocument, type PreviewDoc } from "./preview/document";
@@ -423,6 +424,10 @@ export default function App() {
   // The Settings dialog (Ctrl+,): General, Local Models, Providers, and Computers.
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  const [storageOpen, setStorageOpen] = useState(false); // Settings > General > Storage > Manage.
+  useEffect(() => {
+    if (!settingsPage) setStorageOpen(false); // The Storage dialog closes with Settings.
+  }, [settingsPage]);
   const defaultModelKey = useRef<string | null>(null); // The preferred model settings of the last user_settings message.
   const [userSettingsInfo, setUserSettingsInfo] = useState<{ path: string; version: string } | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -940,6 +945,7 @@ export default function App() {
             return;
           }
           if (msg.ref?.startsWith("memory.")) return; // Settings > Your Harness shows the error.
+          if (msg.ref === "disk.usage") return; // The Storage dialog shows the error.
           if (msg.ref === "daemon.update") {
             setRemoteUpdate((u) => (u ? { ...u, phase: "error", message: msg.message } : u));
             return;
@@ -3116,6 +3122,7 @@ export default function App() {
                   setSettingsError(null);
                   sendSafely({ type: "user_settings.set", values });
                 }}
+                onManageStorage={status === "open" ? () => setStorageOpen(true) : undefined}
               />
             )}
             {settingsPage === "harness" && (
@@ -3194,6 +3201,9 @@ export default function App() {
               />
             )}
           </SettingsDialog>
+        )}
+        {storageOpen && settingsPage && (
+          <StorageDialog conn={conn} remoteName={current?.kind === "local" ? null : (current?.name ?? null)} onClose={() => setStorageOpen(false)} />
         )}
         {picker && (
           <FolderPicker
