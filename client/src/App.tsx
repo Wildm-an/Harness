@@ -423,6 +423,7 @@ export default function App() {
   // The Settings dialog (Ctrl+,): General, Local Models, Providers, and Computers.
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  const defaultModelKey = useRef<string | null>(null); // The preferred model settings of the last user_settings message.
   const [userSettingsInfo, setUserSettingsInfo] = useState<{ path: string; version: string } | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -440,6 +441,11 @@ export default function App() {
         if (msg.type === "user_settings") {
           setUserSettings(msg.values);
           setUserSettingsInfo({ path: msg.path, version: msg.version });
+          // A change of the preferred models changes the name on the "Default model" chip.
+          const { auto_model, online_model, offline_model } = msg.values;
+          const key = JSON.stringify([auto_model, online_model, offline_model]);
+          if (defaultModelKey.current !== null && defaultModelKey.current !== key) conn.send({ type: "models.list" });
+          defaultModelKey.current = key;
         } else if (msg.type === "error" && msg.ref === "user_settings.set") {
           setSettingsError(msg.message);
           try {
@@ -790,7 +796,7 @@ export default function App() {
           return;
         }
         case "models":
-          setModels({ items: msg.items.map((i) => `${i.provider}/${i.model}`), errors: msg.errors });
+          setModels({ items: msg.items.map((i) => `${i.provider}/${i.model}`), errors: msg.errors, default: msg.default ?? null });
           return;
         case "preview.frame": {
           const { type: _type, ...frame } = msg;

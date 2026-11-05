@@ -855,7 +855,8 @@ export type DaemonMessage =
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
-  | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[] }
+  // default: the model that a new session with no model uses now, or null. An older daemon does not send it.
+  | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[]; default?: string | null }
   | ({ type: "mcp" } & McpStatus)
   | { type: "mcp.init"; path: string; created: boolean }
   | { type: "mcp.auth_url"; name: string; url: string }

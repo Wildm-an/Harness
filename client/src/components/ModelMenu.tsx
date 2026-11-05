@@ -6,6 +6,7 @@ import { modelName } from "../lib/modelName";
 export interface ModelList {
   items: string[]; // "provider/model", from the connections that are on.
   errors: { provider: string; message: string }[];
+  default?: string | null; // The model of "Default model" now ("provider/model"). null or absent: not known.
 }
 
 /** The models by connection, in the order of the list. */
@@ -80,6 +81,9 @@ export function ModelMenu({
     items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
   };
 
+  // "Default model" shows the model that the daemon uses for it, when the daemon gives it.
+  const fallback = models?.default ? modelName(models.default) : null;
+
   const radio = (spec: string, label: string) => (
     <button key={spec || "default"} type="button" role="menuitemradio" aria-checked={spec === value} onClick={() => choose(spec)}>
       <span className="menu-check">{spec === value && <Check size={14} aria-hidden />}</span>
@@ -95,17 +99,23 @@ export function ModelMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={value ? `The model: ${modelName(value)}. Click to select another model.` : "The default model of the daemon. Click to select a model."}
+        title={
+          value
+            ? `The model: ${modelName(value)}. Click to select another model.`
+            : fallback
+              ? `The default model: ${models!.default}. Click to select another model.`
+              : "The default model of the daemon. Click to select a model."
+        }
       >
         <Cpu size={13} aria-hidden />
         {/* Only the model name: the menu shows the provider of each model. */}
-        <span className="prompt-chip-text mono">{value ? modelName(value) : "Default model"}</span>
+        <span className="prompt-chip-text mono">{value ? modelName(value) : fallback ?? "Default model"}</span>
         <ChevronDown size={13} aria-hidden />
       </button>
       {open && (
         <div className={`menu model-dropdown${up ? " up" : ""}${alignRight ? " right" : ""}`} role="menu" aria-label="Models">
           <div className="model-menu-list">
-            {allowDefault && radio("", "Default model")}
+            {allowDefault && radio("", fallback ? `Default model (${fallback})` : "Default model")}
             {models === null ? (
               <p className="menu-note">
                 <LoaderCircle size={14} className="spin" aria-hidden /> Asking the connections for their models.

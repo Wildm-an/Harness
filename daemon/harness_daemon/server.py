@@ -2770,9 +2770,13 @@ async def on_providers_test(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("models.list")
 async def on_models_list(conn: Connection, msg: dict[str, Any]) -> None:
-    """The models of each provider that is on, for the model field of the client."""
+    """The models of each provider that is on, for the model field of the client. "default" is the
+    model that a new session with no model uses now (the user settings), or null: the start screen
+    shows its name on the "Default model" chip."""
     async def run() -> None:
-        await conn.send({"type": "models", **await provider_config.all_models()})
+        models, (default, _) = await asyncio.gather(provider_config.all_models(),
+                                                    default_model_for_network(load_settings(None)))
+        await conn.send({"type": "models", **models, "default": default})
 
     asyncio.create_task(run())
 
