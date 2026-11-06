@@ -5370,6 +5370,121 @@ input.tree-rename-input[aria-invalid="true"] {
   text-align: center;
 }
 
+/* The annotation bar (AnnotateBar.tsx): a row under the page, as in the Claude app. The pane gives it
+   its own space, so the page gets smaller and the bar covers no part of it. */
+.annotate-bar {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.annotate-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.annotate-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.annotate-tool:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.annotate-tool.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.annotate-tool:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.annotate-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.annotate-add {
+  margin: 0 2px;
+}
+
+@media (max-width: 520px) {
+  .annotate-add-text {
+    display: none;
+  }
+}
+
+.annotate-mwrap {
+  position: relative;
+}
+
+/* The menus of the bar open up, over the page. */
+.annotate-menu {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 160px;
+}
+
+.annotate-dot {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.annotate-wline {
+  display: inline-block;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.annotate-colors {
+  display: grid;
+  grid-template-columns: repeat(4, 24px);
+  gap: 8px;
+  padding: 6px;
+}
+
+.menu .annotate-swatch {
+  width: 24px;
+  min-height: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.menu .annotate-swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .agent-toggle.active {
   color: var(--accent);
   background: var(--accent-soft);

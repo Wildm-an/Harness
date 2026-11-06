@@ -7,9 +7,10 @@
 // webview stops that navigation and gives the data to the app (src-tauri/src/browser.rs). In a
 // normal browser (development), the pane uses iframes: the script sends the note with postMessage.
 //
-// The annotation bar is in the page too: the page is a native window over the app, so a bar of the
-// app cannot float over it. The bar is in a drawer at the bottom of the page. The handle on the bar
-// slides it down out of the way, so the user can mark the part of the page behind it.
+// The annotation bar is in the app, under the page, as in the Claude app (AnnotateBar.tsx). The pane
+// gives the bar its own space at the bottom: the page gets smaller, so the bar covers no part of it.
+// The bar sends each choice to the page script with annotateCall. The page script draws the marks,
+// the outline of the element, the note box, and the hint.
 // Tools: element selection, a pen, shapes (line, arrow, rectangle, ellipse, numbered step), and text.
 // No tool is on when the bar opens: the user picks one. The color and the line width show only for
 // the tools that use them. "Add to prompt" puts a screenshot of the page with the marks into the
@@ -57,53 +58,13 @@ export function usesWidth(tool: AnnotateTool): boolean {
   return usesColor(tool) && tool !== "text" && tool !== "step";
 }
 
-// The icons of the bar: the inner SVG of the Lucide icons that the app uses (ISC license), and a step icon.
-const ICONS: Record<string, string> = {
-  select: '<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>',
-  pen: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
-  line: '<path d="M22 2 2 22"/>',
-  arrow: '<path d="M13 5H19V11"/><path d="M19 5L5 19"/>',
-  rect: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
-  ellipse: '<circle cx="12" cy="12" r="10"/>',
-  step: '<circle cx="12" cy="12" r="9.5"/><text x="12" y="16.5" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor" stroke="none">1</text>',
-  text: '<path d="M12 4v16"/><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2"/><path d="M9 20h6"/>',
-  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
-  clear: '<path d="M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"/><path d="m5.082 11.09 8.828 8.828"/>',
-  image: '<path d="M16 5h6"/><path d="M19 2v6"/><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><circle cx="9" cy="9" r="2"/>',
-  close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
-  loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
-  check: '<path d="M20 6 9 17l-5-5"/>',
-  chevron: '<path d="m6 9 6 6 6-6"/>',
-};
-
-/** The app colors that the bar in the page uses (CSS variables of the app theme). */
-const THEME_VARS = [
-  "surface", "surface-2", "surface-sunken", "hover", "border", "border-strong", "text", "text-muted", "accent",
-  "accent-soft", "accent-fill", "accent-fill-hover", "accent-text", "shadow", "font-sans", "radius", "radius-sm",
-];
-
-/** The values of the app theme for the bar in the page. */
-export function annotateTheme(): Record<string, string> {
-  const theme: Record<string, string> = {};
-  if (typeof document === "undefined") return theme;
-  const style = getComputedStyle(document.documentElement);
-  for (const name of THEME_VARS) {
-    const value = style.getPropertyValue(`--${name}`).trim();
-    if (value) theme[name] = value;
-  }
-  return theme;
-}
-
-/** The start state of the bar in the page. */
+/** The start state of the page script: the color and the line width of the bar. */
 export interface AnnotateOptions {
-  shape: ShapeTool; // The shape of the shape button: the last shape that the user chose.
   color: string;
   width: number; // The line width of the pen and the shapes.
-  capture: boolean; // False: "Add to prompt" needs the desktop app.
-  theme: Record<string, string>;
 }
 
-const DEFAULT_OPTIONS: AnnotateOptions = { shape: "rect", color: COLORS[0][0], width: WIDTHS[1][0], capture: false, theme: {} };
+const DEFAULT_OPTIONS: AnnotateOptions = { color: COLORS[0][0], width: WIDTHS[1][0] };
 
 /** The address that the page script opens to send a note. The webview blocks it (browser.rs). */
 export const ANNOTATE_URL = "https://harness-annotate.invalid/";
@@ -122,7 +83,7 @@ export interface Annotation {
 
 const MAX_TEXT = 160;
 
-/** A message of the page script: a note, "stop", "add" (the screenshot), or "prefs" (the bar settings). */
+/** A message of the page script: a note, or "stop" (Esc in the page). */
 export function pageMessage(data: unknown): (Record<string, unknown> & { type: string }) | null {
   let value: unknown = data;
   if (typeof data === "string") {
@@ -201,12 +162,14 @@ export function annotationAttachment(a: Annotation): PromptAttachment {
  * webview of the desktop app, "post" for an iframe (postMessage to the parent).
  */
 export function annotateScript(on: boolean, send: "nav" | "post", options: Partial<AnnotateOptions> = {}): string {
-  const opts = { ...DEFAULT_OPTIONS, ...options, icons: ICONS, shapes: SHAPES, colors: COLORS, widths: WIDTHS };
+  const opts = { ...DEFAULT_OPTIONS, ...options };
   return `(${pageScript.toString()})(${JSON.stringify(on)}, ${JSON.stringify(send)}, ${JSON.stringify(ANNOTATE_URL)}, ${JSON.stringify(opts)});`;
 }
 
-/** A call of the page script while the mode runs: clear, capture ("prepare"), or the busy state of "Add to prompt". */
-export function annotateCall(method: "clear" | "prepare" | "busy", ...args: (string | boolean | number)[]): string {
+/** A call of the page script while the mode runs: a choice of the bar, undo, clear, or capture ("prepare"). */
+export type AnnotateMethod = "setTool" | "setColor" | "setWidth" | "undo" | "clear" | "prepare";
+
+export function annotateCall(method: AnnotateMethod, ...args: (string | boolean | number)[]): string {
   return `window.__harnessAnnotate && window.__harnessAnnotate.${method}(${args.map((a) => JSON.stringify(a)).join(",")});`;
 }
 
@@ -224,48 +187,8 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
   host.setAttribute("data-harness-annotate", "");
   host.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483647;";
   const root = host.attachShadow({ mode: "open" });
-  // The colors of the app theme. A value cannot end the CSS rule.
-  const themeCss = Object.entries((opts.theme || {}) as Record<string, string>)
-    .map(([k, v]) => `--${k.replace(/[^a-z0-9-]/gi, "")}:${String(v).replace(/[;{}<>]/g, "")};`)
-    .join("");
   root.innerHTML = `<style>
     :host{all:initial}
-    .ui{--surface:#30302e;--surface-2:#3a3a37;--surface-sunken:#1f1e1d;--hover:rgba(250,249,245,.06);--border:#45443f;--border-strong:#5a5852;--text:#faf9f5;--text-muted:#a8a59c;--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--accent-fill:#faf9f5;--accent-fill-hover:#e8e6dc;--accent-text:#1f1e1d;--shadow:0 12px 32px rgba(0,0,0,.35);--font-sans:system-ui,-apple-system,"Segoe UI",sans-serif;--radius:8px;--radius-sm:6px;${themeCss}}
-    .dock{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;max-width:calc(100vw - 24px);pointer-events:auto;transition:transform .22s cubic-bezier(.2,.8,.2,1);font:13px/1.4 var(--font-sans);color:var(--text);-webkit-user-select:none;user-select:none}
-    .dock.closed{transform:translate(-50%,calc(100% - 16px))}
-    .dock.closed .bar{box-shadow:none}
-    .dock button{font:inherit;color:inherit;margin:0}
-    .handle{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:6px;width:48px;height:16px;margin-bottom:-1px;padding:0;box-sizing:border-box;border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;background:var(--surface-2);color:var(--text-muted);cursor:pointer;touch-action:none}
-    .handle:hover{color:var(--text)}
-    .dock.closed .handle{width:auto;height:28px;padding:0 12px;border-color:var(--border-strong);color:var(--text)!important;font:500 12px var(--font-sans)!important;box-shadow:0 -2px 12px rgba(0,0,0,.3);cursor:grab}
-    .handle svg{transition:transform .22s}
-    .dock.closed .handle svg{transform:rotate(180deg)}
-    .bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:2px;max-width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);box-shadow:0 4px 16px rgba(0,0,0,.25)}
-    .tool{display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:32px;height:30px;padding:0 7px;box-sizing:border-box;border:1px solid transparent;border-radius:var(--radius);background:transparent;color:var(--text-muted)!important;cursor:pointer}
-    .tool:hover{background:var(--hover);color:var(--text)!important}
-    .tool.active{border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft);color:var(--accent)!important}
-    .sep{width:1px;height:18px;margin:0 4px;background:var(--border)}
-    .add{display:inline-flex;align-items:center;gap:6px;min-height:26px;margin:0 2px!important;padding:0 8px;box-sizing:border-box;border:1px solid var(--accent-fill);border-radius:var(--radius-sm);background:var(--accent-fill);color:var(--accent-text)!important;font:500 12px var(--font-sans)!important;cursor:pointer}
-    .add:hover:not(:disabled){border-color:var(--accent-fill-hover);background:var(--accent-fill-hover)}
-    .add:disabled{opacity:.55;cursor:not-allowed}
-    .add .ico{display:none}
-    .add.busy .ico{display:inline-flex}
-    @media (max-width:520px){.add .txt{display:none}.add .ico{display:inline-flex}}
-    .spin{animation:harness-spin 1s linear infinite}
-    @keyframes harness-spin{to{transform:rotate(360deg)}}
-    .mwrap{position:relative}
-    .menu{position:absolute;bottom:calc(100% + 6px);left:0;min-width:160px;padding:4px;box-sizing:border-box;border:1px solid var(--border-strong);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow)}
-    .item{display:flex;align-items:center;gap:10px;width:100%;min-height:30px;padding:0 10px;box-sizing:border-box;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--text)!important;font:13px var(--font-sans)!important;text-align:left;white-space:nowrap;cursor:pointer}
-    .item:hover{background:var(--surface-2)}
-    .colors{display:grid;grid-template-columns:repeat(4,24px);gap:8px;padding:6px}
-    .swatch{width:24px;height:24px;padding:0;box-sizing:border-box;border:1px solid var(--border-strong);border-radius:50%;cursor:pointer}
-    .swatch.active{outline:2px solid var(--accent);outline-offset:2px}
-    .dot{display:inline-block;width:14px;height:14px;box-sizing:border-box;border:1px solid var(--border-strong);border-radius:50%}
-    .wline{display:inline-block;width:18px;border-radius:999px;background:currentColor}
-    .item .wline{width:28px}
-    .check{display:inline-flex;width:14px;margin-left:auto;color:var(--accent)}
-    .tip{position:fixed;display:none;align-items:baseline;gap:10px;max-width:320px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-sunken);box-shadow:var(--shadow);color:var(--text);font:400 12.5px/1.4 var(--font-sans);white-space:nowrap;pointer-events:none}
-    .tip .key{color:var(--text-muted)}
     .box{position:fixed;border:2px solid #2a78d6;background:rgba(42,120,214,.12);border-radius:3px;pointer-events:none;display:none}
     .tag{position:fixed;padding:2px 6px;border-radius:4px;background:#2a78d6;color:#fff;font:12px/1.4 system-ui,sans-serif;pointer-events:none;display:none;white-space:nowrap}
     .badge{position:absolute;min-width:20px;height:20px;padding:0 5px;box-sizing:border-box;border-radius:10px;background:#2a78d6;color:#fff;font:600 12px/20px system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.3)}
@@ -285,8 +208,7 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     <textarea placeholder="What should the agent know about this element?"></textarea>
     <div class="row"><button type="button" class="cancel">Cancel</button><button type="button" class="primary add">Add to prompt</button></div>
   </div>
-  <div class="hint"></div>
-  <div class="ui"><div class="dock"><button type="button" class="handle" data-act="drawer"></button><div class="bar" role="toolbar" aria-label="Annotate"></div></div><div class="tip" role="tooltip"></div></div>`;
+  <div class="hint"></div>`;
   document.documentElement.appendChild(host);
   const box = root.querySelector(".box") as HTMLElement;
   const tag = root.querySelector(".tag") as HTMLElement;
@@ -297,23 +219,15 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
   const svg = root.querySelector("svg.draw") as SVGSVGElement;
   const defs = svg.querySelector("defs") as SVGDefsElement;
   const shapes = svg.querySelector("g.shapes") as SVGGElement;
-  const dock = root.querySelector(".dock") as HTMLElement;
-  const handle = root.querySelector(".handle") as HTMLElement;
-  const bar = root.querySelector(".bar") as HTMLElement;
-  const tip = root.querySelector(".tip") as HTMLElement;
   let tool = "none"; // No tool at the start: the user picks one in the bar.
-  let shape: string = opts.shape;
   let color: string = opts.color;
   let width: number = opts.width; // The line width of the pen and the shapes.
-  let menu: string | null = null; // The open menu of the bar: "shape", "color", or "width".
-  let busy = false; // The screenshot of "Add to prompt" is in progress.
-  let closed = false; // The drawer is down: only its handle shows.
   let picked: Element | null = null;
   let count = 0;
   let steps = 0;
   const marks: { el: Element; badge: HTMLElement }[] = [];
   const HINTS: Record<string, string> = {
-    none: "Pick a tool in the bar. Esc stops.",
+    none: "Pick a tool in the bar under the page. Esc stops.",
     select: "Click an element to add a note for the agent. Esc stops.",
     pen: "Draw on the page. Esc stops.",
     text: "Click to add text. Esc stops.",
@@ -424,97 +338,6 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     closePop();
   };
 
-  // The bar. Each change of its state draws it again.
-  const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-  const icon = (name: string, size = 15, cls = "") =>
-    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${cls ? ` class="${cls}"` : ""}>${opts.icons[name] || ""}</svg>`;
-  const usesColor = (t: string) => t !== "none" && t !== "select";
-  const usesWidth = (t: string) => usesColor(t) && t !== "text" && t !== "step";
-  const wline = (px: number) => `<span class="wline" style="height:${Math.max(2, Math.min(px, 10))}px"></span>`;
-  const button = (act: string, label: string, inner: string, extra = "", key = "") =>
-    `<button type="button" class="tool" data-act="${act}" data-tip="${esc(label)}"${key ? ` data-key="${esc(key)}"` : ""} aria-label="${esc(label)}" ${extra}>${inner}</button>`;
-  const toolButton = (id: string, label: string) =>
-    button(`tool:${id}`, label, icon(id), `aria-pressed="${tool === id}"`).replace('class="tool"', `class="tool${tool === id ? " active" : ""}"`);
-  const menuButton = (id: string, label: string, inner: string, active = false) =>
-    button(`menu:${id}`, label, inner + icon("chevron", 12), `aria-haspopup="menu" aria-expanded="${menu === id}"`).replace(
-      'class="tool"',
-      `class="tool${active ? " active" : ""}"`,
-    );
-  const render = () => {
-    hideTip();
-    const current = opts.shapes.find((s: any) => s.id === shape) || opts.shapes[2];
-    const isShape = opts.shapes.some((s: any) => s.id === tool);
-    const widthName = (opts.widths.find((x: any) => x[0] === width) || [0, "Medium"])[1];
-    let html = toolButton("select", "Select an element and add a note") + toolButton("pen", "Pen");
-    html += `<div class="mwrap">${menuButton("shape", `Shape: ${current.label}`, icon(current.id), isShape)}`;
-    if (menu === "shape") {
-      html += `<div class="menu" role="menu">${opts.shapes
-        .map((s: any) => `<button type="button" class="item" role="menuitemradio" aria-checked="${tool === s.id}" data-act="shape:${s.id}">${icon(s.id)} ${esc(s.label)}</button>`)
-        .join("")}</div>`;
-    }
-    html += `</div>${toolButton("text", "Text")}`;
-    if (usesColor(tool)) {
-      html += `<span class="sep"></span><div class="mwrap">${menuButton("color", "Color", `<span class="dot" style="background:${esc(color)}"></span>`)}`;
-      if (menu === "color") {
-        html += `<div class="menu" role="menu"><div class="colors" role="group" aria-label="Colors">${opts.colors
-          .map(
-            ([value, name]: [string, string]) =>
-              `<button type="button" class="swatch${color === value ? " active" : ""}" role="menuitemradio" aria-checked="${color === value}" aria-label="${esc(name)}" data-tip="${esc(name)}" data-act="color:${esc(value)}" style="background:${esc(value)}"></button>`,
-          )
-          .join("")}</div></div>`;
-      }
-      html += "</div>";
-    }
-    if (usesWidth(tool)) {
-      html += `<div class="mwrap">${menuButton("width", `Line width: ${widthName}`, wline(width))}`;
-      if (menu === "width") {
-        html += `<div class="menu" role="menu">${opts.widths
-          .map(
-            ([value, name]: [number, string]) =>
-              `<button type="button" class="item" role="menuitemradio" aria-checked="${width === value}" aria-label="${esc(name)}" data-tip="${esc(name)}" data-act="width:${value}">${wline(value)}<span class="check">${width === value ? icon("check", 14) : ""}</span></button>`,
-          )
-          .join("")}</div>`;
-      }
-      html += "</div>";
-    }
-    html += `<span class="sep"></span>${button("undo", "Undo the last mark", icon("undo"))}${button("clear", "Clear all marks", icon("clear"))}<span class="sep"></span>`;
-    const addTip = opts.capture ? "Put a screenshot of the page with the marks into the prompt" : "The screenshot needs the desktop app";
-    html += `<button type="button" class="add${busy ? " busy" : ""}" data-act="add" data-tip="${esc(addTip)}" aria-label="Add to prompt"${busy || !opts.capture ? " disabled" : ""}>${
-      busy ? icon("loader", 13, "ico spin") : icon("image", 13, "ico")
-    }<span class="txt">Add to prompt</span></button>`;
-    html += button("done", "Done", icon("close"), "", "Esc");
-    bar.innerHTML = html;
-    // The closed drawer: a tab at the bottom edge to pull the bar back out (a click or a drag up).
-    handle.innerHTML = closed ? `${icon("pen", 13)}<span>Annotate</span>${icon("chevron", 14)}` : icon("chevron", 14);
-    const handleTip = closed ? "Show the annotation bar" : "Hide the annotation bar";
-    handle.setAttribute("data-tip", handleTip);
-    handle.setAttribute("aria-label", handleTip);
-    handle.setAttribute("aria-expanded", String(!closed));
-    dock.classList.toggle("closed", closed);
-  };
-  // The hover tip: the same look as the tips of the app (a small dark box, the key in a muted color).
-  const hideTip = () => {
-    tip.style.display = "none";
-  };
-  const showTip = (node: HTMLElement) => {
-    const text = node.getAttribute("data-tip");
-    // With a menu open, only the items of the menu show a tip: a tip must not cover the menu.
-    if (!text || (menu && !node.closest(".menu"))) return hideTip();
-    const key = node.getAttribute("data-key");
-    tip.innerHTML = `<span>${esc(text)}</span>${key ? `<span class="key">${esc(key)}</span>` : ""}`;
-    tip.style.display = "flex";
-    const r = node.getBoundingClientRect();
-    const t = tip.getBoundingClientRect();
-    tip.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - t.width / 2), window.innerWidth - t.width - 8)}px`;
-    tip.style.top = `${Math.max(8, r.top - t.height - 8)}px`;
-  };
-  dock.addEventListener("mouseover", (e) => {
-    const node = (e.target as Element).closest("[data-tip]") as HTMLElement | null;
-    if (node) showTip(node);
-    else hideTip();
-  });
-  dock.addEventListener("mouseleave", hideTip);
-  const report = () => deliver({ type: "prefs", shape, color, width });
   const applyTool = () => {
     svg.classList.toggle("active", tool !== "select" && tool !== "none");
     if (tool !== "select") {
@@ -533,67 +356,6 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     shapes.textContent = "";
     steps = 0;
   };
-  dock.addEventListener("click", (e) => {
-    const node = (e.target as Element).closest("[data-act]") as HTMLElement | null;
-    if (!node || (node as HTMLButtonElement).disabled) return;
-    const [act, value] = (node.getAttribute("data-act") || "").split(/:(.*)/s);
-    if (act !== "menu") menu = null;
-    if (act === "tool") {
-      tool = tool === value ? "none" : value;
-      applyTool();
-    } else if (act === "menu") {
-      menu = menu === value ? null : value;
-    } else if (act === "shape") {
-      shape = value;
-      tool = value;
-      applyTool();
-      report();
-    } else if (act === "color") {
-      color = value;
-      report();
-    } else if (act === "width") {
-      width = Number(value) || width;
-      report();
-    } else if (act === "undo") undo();
-    else if (act === "clear") clear();
-    else if (act === "add") {
-      if (opts.capture && !busy) deliver({ type: "add" });
-    } else if (act === "drawer") {
-      if (e.detail !== 0) return; // A pointer: the pointerup of the handle did it. 0: the keyboard.
-      closed = !closed;
-    } else if (act === "done") {
-      stop();
-      deliver({ type: "stop" });
-      return;
-    }
-    render();
-  });
-  // The handle: a click opens or closes the drawer. A drag up opens it, and a drag down closes it.
-  let dragFrom: number | null = null;
-  handle.addEventListener("pointerdown", (e) => {
-    dragFrom = e.clientY;
-    handle.setPointerCapture(e.pointerId);
-  });
-  handle.addEventListener("pointerup", (e) => {
-    if (dragFrom === null) return;
-    const dy = e.clientY - dragFrom;
-    dragFrom = null;
-    menu = null;
-    closed = Math.abs(dy) > 6 ? dy > 0 : !closed;
-    render();
-  });
-  handle.addEventListener("pointercancel", () => {
-    dragFrom = null;
-  });
-  // A click out of an open menu closes it.
-  const onOutside = (e: Event) => {
-    if (menu && !e.composedPath().includes(dock)) {
-      menu = null;
-      render();
-    }
-  };
-  const inDock = (e: Event) => e.composedPath().includes(dock);
-
   // Drawing: the SVG layer takes the pointer for every tool except "none" and "select".
   let drawing: SVGElement | null = null;
   let from = { x: 0, y: 0 };
@@ -686,13 +448,12 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
 
   const onMove = (e: MouseEvent) => {
     if (picked || tool !== "select") return;
-    if (inDock(e)) return hideBox();
     const found = target(e.clientX, e.clientY);
     if (found) place(found);
   };
   const onClick = (e: MouseEvent) => {
     if (tool !== "select") return;
-    if (e.composedPath().includes(pop) || inDock(e)) return; // A click in the note box or in the bar.
+    if (e.composedPath().includes(pop)) return; // A click in the note box.
     e.preventDefault();
     e.stopPropagation();
     const found = target(e.clientX, e.clientY);
@@ -706,7 +467,7 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     area.focus();
   };
   const block = (e: Event) => {
-    if (tool !== "select" || e.composedPath().includes(pop) || inDock(e)) return;
+    if (tool !== "select" || e.composedPath().includes(pop)) return;
     e.preventDefault();
     e.stopPropagation();
   };
@@ -714,10 +475,7 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      if (menu) {
-        menu = null;
-        render();
-      } else if (picked) closePop();
+      if (picked) closePop();
       else {
         stop();
         deliver({ type: "stop" });
@@ -733,7 +491,6 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
   document.addEventListener("click", onClick, true);
   document.addEventListener("mousedown", block, true);
   document.addEventListener("mouseup", block, true);
-  document.addEventListener("pointerdown", onOutside, true);
   document.addEventListener("keydown", onKey, true);
   window.addEventListener("scroll", placeBadges, true);
   window.addEventListener("resize", placeBadges);
@@ -742,27 +499,30 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     document.removeEventListener("click", onClick, true);
     document.removeEventListener("mousedown", block, true);
     document.removeEventListener("mouseup", block, true);
-    document.removeEventListener("pointerdown", onOutside, true);
     document.removeEventListener("keydown", onKey, true);
     window.removeEventListener("scroll", placeBadges, true);
     window.removeEventListener("resize", placeBadges);
     host.remove();
     delete w[KEY];
   };
-  render();
   w[KEY] = {
     stop,
     clear,
-    // "Add to prompt" shows a spinner while the app takes the screenshot.
-    busy(on: boolean) {
-      busy = on;
-      render();
+    undo,
+    // The choices of the bar in the app (AnnotateBar.tsx).
+    setTool(next: string) {
+      tool = next;
+      applyTool();
     },
-    // Before a screenshot: hide the hint, the bar, the outline, and the note box. After it: show them again.
+    setColor(next: string) {
+      color = next;
+    },
+    setWidth(next: number) {
+      width = next;
+    },
+    // Before a screenshot: hide the hint, the outline, and the note box. After it: show them again.
     prepare(capture: boolean) {
       hint.style.display = capture ? "none" : "";
-      dock.style.display = capture ? "none" : "";
-      hideTip();
       if (capture) {
         closePop();
         hideBox();

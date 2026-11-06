@@ -18,21 +18,23 @@ describe("the annotation bar", () => {
     expect(WIDTHS).toHaveLength(4);
   });
 
-  it("is in the page, with the start settings and the theme of the app", () => {
-    const script = annotateScript(true, "nav", { color: "#30a46c", width: 7, shape: "arrow", capture: true, theme: { accent: "#d97757" } });
+  it("is not in the page: the page script gets only the start color and line width", () => {
+    const script = annotateScript(true, "nav", { color: "#30a46c", width: 7 });
     expect(script).toContain('"color":"#30a46c"');
     expect(script).toContain('"width":7');
-    expect(script).toContain('"accent":"#d97757"');
+    expect(script).not.toContain('role="toolbar"');
     expect(() => new Function(script)).not.toThrow();
   });
 
-  it("shows a spinner while the app takes the screenshot", () => {
-    expect(annotateCall("busy", true)).toContain("busy(true)");
+  it("sends each choice of the bar to the page script", () => {
+    expect(annotateCall("setTool", "arrow")).toContain('setTool("arrow")');
+    expect(annotateCall("setColor", "#2a78d6")).toContain('setColor("#2a78d6")');
+    expect(annotateCall("setWidth", 4)).toContain("setWidth(4)");
+    expect(annotateCall("undo")).toContain("undo()");
   });
 
-  it("reads the messages of the bar", () => {
-    expect(pageMessage('{"type":"add"}')).toEqual({ type: "add" });
-    expect(pageMessage('{"type":"prefs","width":4}')).toMatchObject({ type: "prefs", width: 4 });
+  it("reads the messages of the page", () => {
+    expect(pageMessage('{"type":"stop"}')).toEqual({ type: "stop" });
     expect(pageMessage("not json")).toBeNull();
     expect(pageMessage('{"n":1}')).toBeNull();
   });

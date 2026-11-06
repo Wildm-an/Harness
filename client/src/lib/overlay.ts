@@ -67,6 +67,11 @@ export function setNativeRect(owner: string, rect: ScreenRect | null): void {
   nativeListeners.forEach((fn) => fn());
 }
 
+/** The places of the native webviews on the screen now (outside React). */
+export function nativeRects(): ScreenRect[] {
+  return nativeList;
+}
+
 /** The places of the native webviews on the screen now. */
 export function useNativeRects(): ScreenRect[] {
   return useSyncExternalStore(
