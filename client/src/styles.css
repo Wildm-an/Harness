@@ -23,26 +23,38 @@
   --accent-fill-hover: #b5563a;
   --accent-text: #ffffff;
   --accent-soft: rgba(217, 119, 87, 0.14);
-  --success: #86c386;
-  --success-soft: rgba(134, 195, 134, 0.12);
-  --danger: #f28b82;
-  --danger-soft: rgba(242, 139, 130, 0.12);
-  --warning: #e8b454;
-  --warning-soft: rgba(232, 180, 84, 0.1);
-  --info: #8fb4ea;
-  --focus: #8fb4ea;
+  /* The status colors: the "Clear Sight" palette (bright Okabe-Ito hues). People with red-green color
+     blindness can tell them apart. The green and the yellow are from the Signal palette (the user chose them).
+     Green: connected and done checks. Yellow: needs input. Blue: done, unread. Vermilion: errors. */
+  --success: #3fdc6e;
+  --success-soft: rgba(63, 220, 110, 0.14);
+  --danger: #ff5e1a;
+  --danger-soft: rgba(255, 94, 26, 0.14);
+  --warning: #ffcc33;
+  --warning-soft: rgba(255, 204, 51, 0.12);
+  --info: #3aa0ff;
+  --focus: #3aa0ff;
+  /* The parts of the context breakdown (ContextRing.tsx): one hue for each part. */
+  --ctx-instructions: #3fdc6e;
+  --ctx-skills: #ffcc33;
+  --ctx-plugins: #ffa31f;
+  --ctx-summary: #e58ac8;
+  --ctx-tools: #3aa0ff;
+  --ctx-mcp-tools: #8fd3ff;
+  --ctx-messages: #ff5e1a;
+  --ctx-tool-results: #a98bff;
   --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
   --violet: #c3a6f0;
   --teal: #6fc8c0;
   --backdrop: rgba(15, 14, 13, 0.6);
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
-  --diff-add-bg: rgba(134, 195, 134, 0.14);
-  --diff-add-text: #a9d8a9;
-  --diff-del-bg: rgba(242, 139, 130, 0.14);
-  --diff-del-text: #f6b1aa;
-  --diff-add-word: rgba(134, 195, 134, 0.38);
-  --diff-del-word: rgba(242, 139, 130, 0.38);
+  --diff-add-bg: rgba(63, 220, 110, 0.14);
+  --diff-add-text: #95ecaf;
+  --diff-del-bg: rgba(255, 94, 26, 0.14);
+  --diff-del-text: #ffa781;
+  --diff-add-word: rgba(63, 220, 110, 0.38);
+  --diff-del-word: rgba(255, 94, 26, 0.38);
   --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(168, 165, 156, 0.06) 6px 12px);
 
   --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -85,26 +97,36 @@
   --accent-fill-hover: #ae5230;
   --accent-text: #ffffff;
   --accent-soft: rgba(198, 97, 63, 0.1);
-  --success: #2f7d32;
-  --success-soft: rgba(47, 125, 50, 0.1);
-  --danger: #b42318;
-  --danger-soft: rgba(180, 35, 24, 0.08);
-  --warning: #9a5b00;
-  --warning-soft: rgba(154, 91, 0, 0.08);
-  --info: #2463a8;
-  --focus: #2463a8;
+  /* Darker shades of the Clear Sight hues: these tokens also color text, so each has 4.5:1 or more on --bg. */
+  --success: #0a7a43;
+  --success-soft: rgba(10, 122, 67, 0.1);
+  --danger: #b34700;
+  --danger-soft: rgba(179, 71, 0, 0.08);
+  --warning: #8a6200;
+  --warning-soft: rgba(217, 154, 0, 0.12);
+  --info: #0072b2;
+  --focus: #0072b2;
+  /* The context parts are fills, not text: they keep the bright hues. */
+  --ctx-instructions: #0f9d58;
+  --ctx-skills: #d99a00;
+  --ctx-plugins: #e69f00;
+  --ctx-summary: #cc79a7;
+  --ctx-tools: #0072b2;
+  --ctx-mcp-tools: #3a9fd6;
+  --ctx-messages: #d55e00;
+  --ctx-tool-results: #7e57c2;
   --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
   --violet: #7a4fc0;
   --teal: #1f7f78;
   --backdrop: rgba(31, 30, 29, 0.35);
   --shadow: 0 12px 32px rgba(31, 30, 29, 0.12);
   --shadow-lg: 0 24px 64px rgba(31, 30, 29, 0.18);
-  --diff-add-bg: #e3f1df;
-  --diff-add-text: #1e5a22;
-  --diff-del-bg: #fbe4e1;
-  --diff-del-text: #7f1d14;
-  --diff-add-word: #b5dcae;
-  --diff-del-word: #f3b7ae;
+  --diff-add-bg: #dcf5e3;
+  --diff-add-text: #06572f;
+  --diff-del-bg: #fbe6d9;
+  --diff-del-text: #8a3300;
+  --diff-add-word: #a8e6bb;
+  --diff-del-word: #f6c3a3;
   --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(95, 93, 87, 0.07) 6px 12px);
 }
 
@@ -1756,14 +1778,14 @@ textarea:focus-visible {
 
 /* The colors of the context parts. The free space is empty, and the buffer has stripes. */
 .ctx-system { background: var(--text-muted); }
-.ctx-instructions { background: var(--success); }
-.ctx-skills { background: var(--warning); }
-.ctx-plugins { background: var(--success); }
-.ctx-summary { background: var(--violet); }
-.ctx-tools { background: var(--info); }
-.ctx-mcp_tools { background: var(--teal); }
-.ctx-messages { background: var(--accent); }
-.ctx-tool_results { background: color-mix(in srgb, var(--info) 50%, var(--violet)); }
+.ctx-instructions { background: var(--ctx-instructions); }
+.ctx-skills { background: var(--ctx-skills); }
+.ctx-plugins { background: var(--ctx-plugins); }
+.ctx-summary { background: var(--ctx-summary); }
+.ctx-tools { background: var(--ctx-tools); }
+.ctx-mcp_tools { background: var(--ctx-mcp-tools); }
+.ctx-messages { background: var(--ctx-messages); }
+.ctx-tool_results { background: var(--ctx-tool-results); }
 .ctx-free { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); }
 .ctx-buffer { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); }
 .context-bar > .ctx-free { box-shadow: none; }
