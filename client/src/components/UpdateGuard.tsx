@@ -4,8 +4,9 @@
 // Each start of an install (the update toast, Settings > Updates) goes through this guard.
 
 import { useEffect, useId, useRef, useState } from "react";
-import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
+import { WaitNote } from "./WaitNote";
 import { setInstallGuard } from "../lib/updater";
 
 /** The text of the question. */
@@ -103,16 +104,7 @@ export function UpdateGuard({ working }: { working: number }) {
         </div>
       )}
       {waiting && working > 0 && (
-        <div className="quit-wait" role="status">
-          <LoaderCircle size={14} className="spin" aria-hidden />
-          <span>Harness updates when the agent is done.</span>
-          <button type="button" className="btn btn-small" onClick={() => finish(false)}>
-            Cancel
-          </button>
-          <button type="button" className="btn btn-small" onClick={() => finish(true)}>
-            Update now
-          </button>
-        </div>
+        <WaitNote text="Harness updates when the agent is done." action="Update now" onAction={() => finish(true)} onCancel={() => finish(false)} />
       )}
     </>
   );

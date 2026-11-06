@@ -104,6 +104,7 @@ import { TerminalPane, forgetSessionTerminals } from "./components/TerminalPane"
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
 import { UpdateToast } from "./components/UpdateToast";
+import { ToastStack } from "./components/ToastStack";
 import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
@@ -511,6 +512,12 @@ export default function App() {
   const [daemonVersion, setDaemonVersion] = useState<string | null>(null); // From auth.ok of the connection.
   const [daemonUpdatable, setDaemonUpdatable] = useState(false); // The daemon can install an update from the app.
   const [remoteUpdate, setRemoteUpdate] = useState<DaemonUpdate | null>(null); // "Update daemon" in progress.
+  const [remoteHidden, setRemoteHidden] = useState(false); // The user closed the progress of "Update daemon".
+  const [versionClosed, setVersionClosed] = useState<string | null>(null); // "{connection}:{app}:{daemon}" of a closed version warning.
+  // A new update, or an error, shows the daemon update popup again.
+  useEffect(() => {
+    if (!remoteUpdate || remoteUpdate.phase === "error") setRemoteHidden(false);
+  }, [remoteUpdate]);
   useEffect(() => {
     if (isTauri()) void appVersionOf().then(setAppVersion, () => undefined);
     checkWhenShown(); // A quick look for a new version, only when the user can see the window.
@@ -3359,14 +3366,15 @@ export default function App() {
             onClose={() => setSearchOpen(false)}
           />
         )}
-        {/* The popups at the bottom left: the app update, the daemon version, and the daemon update. */}
-        <div className="toast-stack">
+        {/* The popups at the bottom right: the app update, the daemon version, and the daemon update. */}
+        <ToastStack>
           {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("general")} />}
-          {/* No close button: the warning stays until the app connects to another daemon, or the update starts. */}
+          {/* The X hides the warning for this daemon and these versions. It shows again for another daemon or another version. */}
           {appVersion &&
             daemonVersion &&
             status === "open" &&
             compareVersions(appVersion, daemonVersion) !== 0 &&
+            versionClosed !== `${current?.id}:${appVersion}:${daemonVersion}` &&
             !(remoteUpdate && remoteUpdate.connectionId === current?.id && remoteUpdate.phase !== "error") && (
               <VersionWarning
                 appVersion={appVersion}
@@ -3375,10 +3383,20 @@ export default function App() {
                 canUpdate={isTauri() && daemonUpdatable && current?.kind !== "local" && compareVersions(daemonVersion, appVersion) < 0}
                 onUpdate={() => void startDaemonUpdate()}
                 onComputers={() => openSettings("computers")}
+                onClose={() => setVersionClosed(`${current?.id}:${appVersion}:${daemonVersion}`)}
               />
             )}
-          {remoteUpdate && <DaemonUpdateToast update={remoteUpdate} onClose={() => setRemoteUpdate(null)} />}
-        </div>
+          {remoteUpdate && !remoteHidden && (
+            <DaemonUpdateToast
+              update={remoteUpdate}
+              onClose={() => {
+                // A running update goes on: its popup shows again only for an error.
+                if (remoteUpdate.phase === "done" || remoteUpdate.phase === "error") setRemoteUpdate(null);
+                else setRemoteHidden(true);
+              }}
+            />
+          )}
+        </ToastStack>
         {archiveAsk && (
           <ArchiveConfirm
             title={recent.find((r) => r.id === archiveAsk.id)?.title ?? "this session"}

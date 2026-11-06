@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,7 +20,7 @@ import {
 import type { AgentFrame, Decision, ServerItem } from "../daemon/protocol";
 import { PaneActions, PaneHeader } from "../layout/Workspace";
 import { WindowTabs } from "../layout/WindowTabs";
-import { useOverlay, useOverlayOpen } from "../lib/overlay";
+import { setNativeRect, useOverlay, useOverlayOpen } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
 import { useLinksInPane } from "../lib/openLink";
 import { browserView, isTauri, openExternal, pickFile, pickSavePath, type Bounds } from "../lib/tauri";
@@ -519,6 +519,7 @@ export function BrowserPane({
   const [inPane, setInPane] = useLinksInPane(); // The same preference as Settings > General > "Open links in".
   const [sub, setSub] = useState<"viewport" | "cookies" | null>(null); // The open list of the More menu.
   const overlay = useOverlayOpen();
+  const nativeOwner = useId(); // The key of this pane for the place of its webview (setNativeRect).
   const lastSync = useRef(new Map<string, string>()); // The last bounds and visibility of each webview.
   const selectOnFocus = useRef(false);
   const addressRef = useRef<HTMLInputElement>(null);
@@ -854,6 +855,10 @@ export function BrowserPane({
       const box = area.current?.getBoundingClientRect();
       if (box && box.width >= 2 && box.height >= 2) parkSize = { width: Math.round(box.width), height: Math.round(box.height) };
       shown = null;
+      // The place of the webview, also while an overlay hides it: a popup that moves clear of the
+      // webview (useClearOfNative) must not move back while the webview hides for it.
+      const place = bounds && active.url && view === "page" && opened.has(active.id) ? bounds : null;
+      setNativeRect(nativeOwner, place && { left: place.x, top: place.y, right: place.x + place.width, bottom: place.y + place.height });
       for (const tab of tabs) {
         const show = tab.id === active.id && !!bounds && !covered && !!tab.url && view === "page";
         const unpark = show && parked.has(tab.id);
@@ -910,13 +915,14 @@ export function BrowserPane({
       window.removeEventListener("resize", sync);
       window.clearInterval(timer);
     };
-  }, [tauri, measure, covered, tabs, active.id, view, onError, keep]);
+  }, [tauri, measure, covered, tabs, active.id, view, onError, keep, nativeOwner]);
 
   // Hide the webviews when the pane closes. They stay open for the next time. A tab where the
   // agent works now stays parked.
   useEffect(
     () => () => {
       shown = null;
+      setNativeRect(nativeOwner, null);
       for (const id of opened) {
         if (agentLive(id)) {
           void park(id).catch(() => undefined);
@@ -927,7 +933,7 @@ export function BrowserPane({
       }
       lastSync.current.clear();
     },
-    [],
+    [nativeOwner],
   );
 
   const DeviceIcon = DEVICES[device].icon;

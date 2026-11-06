@@ -1,4 +1,4 @@
-// The popup at the bottom left when the check at launch finds a new version. It hides after a
+// The popup at the bottom right when the check at launch finds a new version. It hides after a
 // short time, but not while the pointer or the focus is on it. The dot on the Settings button and
 // Settings > General keep the update until the user installs it.
 //
@@ -6,8 +6,9 @@
 // download progress, then the install step. The app starts again when the install is complete.
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpCircle, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { ArrowUpCircle, LoaderCircle, TriangleAlert } from "lucide-react";
 import { installUpdate, useUpdateState, type UpdateState } from "../lib/updater";
+import { CloseButton } from "./VersionWarning";
 
 const SHOW_MS = 12000;
 
@@ -156,9 +157,7 @@ export function UpdateToast({ currentVersion, onView }: {
           </>
         )}
       </div>
-      <button type="button" className="icon-btn ghost update-toast-close" onClick={() => setClosed(version)} aria-label="Close" title="Close">
-        <X size={14} aria-hidden />
-      </button>
+      <CloseButton onClose={() => setClosed(version)} />
     </div>
   );
 }
