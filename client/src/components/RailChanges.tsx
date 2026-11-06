@@ -16,12 +16,15 @@ import { ACTION_LABELS, ACTION_TIPS, PR_STATE_TEXT, chosenAction, compareUrl, di
 import { DiffCounts } from "./DiffStats";
 import { PrCard, PrIcon, useHoverCard } from "./PrCard";
 
+const CLICK_WAIT = 10_000; // ms. With no turn after a click of the git button, the button shows again.
+
 const WORK_ICONS: Record<WorkKind, typeof FilePen> = { uncommitted: FilePen, unpushed: GitCommitHorizontal, pushed: CloudCheck };
 
 export function RailChanges({
   sessionId,
   changes,
   pr,
+  running,
   onAction,
   onOpenChanges,
   onOpenPr,
@@ -29,6 +32,7 @@ export function RailChanges({
   sessionId: string;
   changes: GitChanges;
   pr: PullRequest | null;
+  running: boolean; // A turn of the session runs: the git button does not show.
   onAction: ((action: GitAction) => void) | null; // null: not connected.
   onOpenChanges?: () => void;
   onOpenPr: (url: string) => void;
@@ -42,6 +46,25 @@ export function RailChanges({
   const [dismissed, setDismissed] = useState(() => isDismissed(sessionId, signature));
   useEffect(() => setDismissed(isDismissed(sessionId, signature)), [sessionId, signature]);
   const behind = changes.behind ?? 0;
+  // The git button goes away at the click, and while the agent works: the user cannot ask for the
+  // same pull request two times. It shows again after the turn, if there is still something to do.
+  const [clicked, setClicked] = useState(false);
+  const sawTurn = useRef(false);
+  useEffect(() => {
+    if (!clicked) return;
+    if (running) {
+      sawTurn.current = true;
+      return;
+    }
+    if (sawTurn.current) {
+      sawTurn.current = false;
+      setClicked(false);
+      return;
+    }
+    // No turn started (the prompt did not go): show the button again.
+    const timer = window.setTimeout(() => setClicked(false), CLICK_WAIT);
+    return () => window.clearTimeout(timer);
+  }, [clicked, running]);
   return (
     <div className="rail-changes-box">
       {pr && <RailPr pr={pr} onOpen={onOpenPr} />}
@@ -84,11 +107,17 @@ export function RailChanges({
           <DiffCounts added={changes.added} removed={changes.removed} />
           {parts && rows.length === 0 && <span className="rail-work-clean">{pr ? "All work is in the pull request" : "No changes"}</span>}
         </button>
-        {button.primary && !dismissed && (
+        {button.primary && !dismissed && !running && !clicked && (
           <ActionButton
             button={button}
             manualUrl={compareUrl(changes)}
-            onAction={onAction}
+            onAction={
+              onAction &&
+              ((action) => {
+                setClicked(true);
+                onAction(action);
+              })
+            }
             onChoose={(a) => {
               setChosenAction(a);
               setChosen(a);
