@@ -112,6 +112,7 @@ def test_user_messages_use_the_text_that_the_user_typed():
 class FakeTool:
     name: str
     needs_approval: bool = True
+    read_only: bool = False
 
 
 class ScriptedReviewer(AutoReviewer):
@@ -158,6 +159,33 @@ def test_hard_rule_and_fast_path_need_no_model(project):
     assert "Blocked by auto mode [Privilege Escalation]" in bash(gate, "sudo ls")
     assert bash(gate, "git status") is True
     assert gate.auto.calls == [] and asked == []
+
+
+def test_read_only_mcp_tools_need_no_model(project):
+    gate, asked = make_gate(project, [ALLOW])
+
+    def call(tool):
+        return asyncio.run(gate.check(tool, {"owner": "x"}, Approval(key='{"owner": "x"}', rule=tool.name)))
+
+    assert call(FakeTool("mcp__github__list_repos", read_only=True)) is True
+    assert gate.auto.calls == []
+    assert call(FakeTool("mcp__github__create_issue")) is True  # No hint: the model checks it.
+    assert gate.auto.calls == [("mcp__github__create_issue", '{"owner": "x"}')] and asked == []
+
+
+def test_mcp_tool_reads_the_read_only_hint():
+    from types import SimpleNamespace
+
+    from harness_daemon.mcp_client import McpTool
+
+    def tool(annotations):
+        return McpTool(None, "github", SimpleNamespace(name="t", description="d", input_schema={"type": "object"},
+                                                       annotations=annotations), "mcp__github__t")
+
+    assert tool(SimpleNamespace(read_only_hint=True)).read_only is True
+    assert tool(SimpleNamespace(read_only_hint=False)).read_only is False
+    assert tool(SimpleNamespace(read_only_hint=None)).read_only is False
+    assert tool(None).read_only is False
 
 
 def test_the_model_decides_other_commands(project):

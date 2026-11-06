@@ -78,6 +78,8 @@ class Tool:
     description: str = ""
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
     needs_approval: bool = False
+    # True if the tool changes nothing (an MCP tool with readOnlyHint). Auto mode then runs it with no check.
+    read_only: bool = False
 
     def describe(self, ctx: ToolContext) -> str:
         return self.description

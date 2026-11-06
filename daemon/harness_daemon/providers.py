@@ -652,6 +652,7 @@ class ModelClient:
                 return await self.stream(messages, tools, on_text, _retry_tunnel=False, options=options,
                                          on_reasoning=on_reasoning)
             where = f"{self.provider.base_url} through SSH {self.provider.ssh.label}" if self.provider.ssh else self.provider.base_url
+            log.warning("%s: no connection to %s: %r", self.label, where, e.__cause__ or e)
             raise ModelError(f"Cannot connect to the model endpoint at {where}.") from e
         except openai.APIStatusError as e:
             raise ModelError(f"The model endpoint returned HTTP {e.status_code}: {e.message}") from e
