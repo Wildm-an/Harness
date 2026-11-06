@@ -2239,7 +2239,8 @@ async def on_git_changes(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("git.pr_info")
 async def on_git_pr_info(conn: Connection, msg: dict[str, Any]) -> None:
-    """A pull request from its GitHub URL, for the hover card of a link in the chat: {"url"}.
+    """A pull request from its GitHub URL, for the hover card of a link in the chat and the PR list of
+    the rail: {"url", "fresh"?}. ``fresh`` uses a shorter cache, so a new state on GitHub shows soon.
     The reply is "git.pr_info": {"url", "pr"}. ``pr`` is None when gh cannot read it."""
     url = msg.get("url")
     if not isinstance(url, str) or not url.strip() or len(url) > 500:
@@ -2248,7 +2249,7 @@ async def on_git_pr_info(conn: Connection, msg: dict[str, Any]) -> None:
 
     async def work() -> None:
         try:
-            pr = await pr_info(url.strip())
+            pr = await pr_info(url.strip(), fresh=msg.get("fresh") is True)
         except Exception:  # noqa: BLE001 - the card shows only the link.
             log.exception("The pull request info failed")
             pr = None

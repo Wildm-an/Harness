@@ -3,12 +3,11 @@
 // window the rail covers the workspace, and Esc or a click outside closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, ChevronRight, Coffee, ExternalLink, Folder, GitBranch, Globe, GripVertical, KeyRound, Monitor } from "lucide-react";
+import { Archive, ChevronRight, Coffee, Folder, GitBranch, Globe, GripVertical, KeyRound, Monitor } from "lucide-react";
 import { useSortable } from "../lib/useSortable";
 import type { GitChanges } from "../daemon/protocol";
-import { RailChanges } from "./RailChanges";
-import { PrIcon } from "./PrCard";
-import type { GitAction } from "../lib/pr";
+import { RailChanges, RailPrList } from "./RailChanges";
+import { listedPrs, prKeyUrl, usePrInfos, usePrRefresh, type GitAction } from "../lib/pr";
 import { captureAgentTab } from "../browser/BrowserPane";
 import type { PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
 import type { ConnectionKind } from "../lib/connections";
@@ -21,7 +20,6 @@ import {
   foldedSections,
   foldedValue,
   percentText,
-  prStateText,
   railTasks,
   taskDetailText,
   taskSummary,
@@ -72,6 +70,7 @@ export function SessionRail({
   running,
   onCompact,
   pr,
+  sessionPrs,
   onOpenPr,
   servers,
   onOpenServer,
@@ -97,6 +96,7 @@ export function SessionRail({
   running: boolean; // A turn runs: the compaction waits.
   onCompact: () => void;
   pr: PrStatus["pr"];
+  sessionPrs: string[]; // The URLs of the pull requests that the agent made in this session, the newest first.
   onOpenPr: (url: string) => void;
   servers: ServerItem[];
   onOpenServer: (server: ServerItem) => void;
@@ -161,6 +161,12 @@ export function SessionRail({
   const branch = environment.worktree?.branch ?? environment.branch;
   // The pull request of the branch: from git.changes (a newer daemon), else from the sidebar status.
   const branchPr = changes && changes.pr !== undefined ? changes.pr : pr;
+  // The pull requests of the session, as in the Claude app. The rail keeps their state current: it asks
+  // when it opens, every 30 seconds while the window shows, when the window comes back, and after each turn.
+  const prInfo = usePrInfos();
+  const branchKey = prKeyUrl(branchPr?.url);
+  usePrRefresh(branchKey && !sessionPrs.includes(branchKey) ? [...sessionPrs, branchKey] : sessionPrs, running);
+  const prs = listedPrs(sessionPrs, branchPr, prInfo);
 
   // Under the environment: the computer of the agent does not sleep while the agent works in this session.
   const awake = (
@@ -188,7 +194,7 @@ export function SessionRail({
     // The pull request of the branch, the work in three parts (uncommitted, not pushed, pushed),
     // and the git button ("Create PR", "Commit", "Push"), as in the Claude app.
     changes: changes?.repo ? (
-      <RailChanges sessionId={sessionId} changes={changes} pr={branchPr} running={running} onAction={onChangesAction} onOpenChanges={onOpenChanges} onOpenPr={onOpenPr} />
+      <RailChanges sessionId={sessionId} changes={changes} pr={branchPr} prs={prs} running={running} onAction={onChangesAction} onOpenChanges={onOpenChanges} onOpenPr={onOpenPr} />
     ) : null,
     environment: (
       <>
@@ -252,18 +258,7 @@ export function SessionRail({
     ),
     // The Changes section shows the pull request of a git folder. This section shows it only when
     // the Changes section does not show.
-    pullRequests: branchPr && !changes?.repo ? (
-      <button type="button" className="rail-item" onClick={() => branchPr.url && onOpenPr(branchPr.url)} disabled={!branchPr.url} title={branchPr.url ? "Open the pull request" : undefined}>
-        <PrIcon state={branchPr.state} size={13} className="rail-pr-icon" />
-        <span className="rail-item-text">
-          <span className="rail-item-title">
-            #{branchPr.number} {branchPr.title ?? ""}
-          </span>
-          <span className="rail-item-detail">{prStateText(branchPr.state)}</span>
-        </span>
-        {branchPr.url && <ExternalLink size={12} aria-hidden className="rail-item-end" />}
-      </button>
-    ) : null,
+    pullRequests: prs.length > 0 && !changes?.repo ? <RailPrList prs={prs} onOpen={onOpenPr} /> : null,
     servers:
       servers.length > 0 ? (
         <ul className="rail-list">
