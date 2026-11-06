@@ -65,6 +65,7 @@ import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { FolderPicker } from "./components/FolderPicker";
 import { DiffReview } from "./components/DiffReview";
+import { ChangesView } from "./components/ChangesView";
 import { RulesPanel, type Rules } from "./components/RulesPanel";
 import { Workspace, type PaneSpec } from "./layout/Workspace";
 import {
@@ -129,7 +130,7 @@ import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
@@ -323,6 +324,9 @@ export default function App() {
   const [prStatus, setPrStatus] = useState<Map<string, PrStatus>>(() => new Map()); // By pathKey of the folder.
   // The changes of the session folder against its base branch, for the Changes section of the rail.
   const [gitChanges, setGitChanges] = useState<(GitChanges & { cwd: string }) | null>(null);
+  // The full change of the session folder, for the Changes pane when no single change is in review.
+  const [gitDiff, setGitDiff] = useState<(GitDiff & { cwd: string }) | null>(null);
+  const [diffScope, setDiffScope] = useState<GitDiffScope>("branch");
   const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
   // The sessions with no window that work or wait: routine runs and nested sessions (start_session).
@@ -772,6 +776,11 @@ export default function App() {
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
           return;
+        case "git.diff": {
+          const { type: _type, ...diff } = msg;
+          if (sessionRef.current && samePath(diff.cwd, sessionRef.current.cwd)) setGitDiff(diff);
+          return;
+        }
         case "git.changes": {
           const { type: _type, ...changes } = msg;
           if (sessionRef.current && samePath(changes.cwd, sessionRef.current.cwd)) setGitChanges(changes);
@@ -2475,6 +2484,17 @@ export default function App() {
   const reviewDiff = reviewItem && (reviewItem.kind === "tool" || reviewItem.kind === "permission") ? reviewItem.diff : null;
   const paneVisible = (pane: PaneId) => findGroupOf(layout, pane)?.active === pane;
 
+  // The Changes pane shows the full change of the folder: ask for it when the pane shows, at the start
+  // and the end of a turn, and when the scope changes.
+  const diffShown = paneVisible("diff") && !(reviewItem && reviewDiff);
+  const requestDiff = useCallback(() => {
+    if (session && status === "open") sendSafely({ type: "git.diff", cwd: session.cwd, scope: diffScope });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sendSafely is stable for the connection.
+  }, [session?.cwd, status, diffScope]);
+  useEffect(() => {
+    if (diffShown) requestDiff();
+  }, [diffShown, requestDiff, chat.running, session?.id]);
+
   // A Rules tab from the saved layout has no data yet: load it when the tab shows.
   const rulesShown = session !== null && status === "open" && paneVisible("rules");
   useEffect(() => {
@@ -2725,6 +2745,8 @@ export default function App() {
       title: "Changes",
       icon: FileDiff,
       closable: true,
+      // The branch changes draw "{base} → {branch}" and their buttons in the window header.
+      ownHeader: !(reviewItem && reviewDiff) && !!session,
       render: () =>
         reviewItem && reviewDiff ? (
           <DiffReview
@@ -2733,6 +2755,15 @@ export default function App() {
             permission={reviewItem.kind === "permission" ? (reviewItem as PermissionItem) : null}
             onDecide={decide}
             onClose={() => hidePane("diff")}
+          />
+        ) : session ? (
+          <ChangesView
+            diff={gitDiff && samePath(gitDiff.cwd, session.cwd) && gitDiff.scope === diffScope ? gitDiff : null}
+            scope={diffScope}
+            onScope={setDiffScope}
+            onRefresh={requestDiff}
+            onOpenFile={(path, line) => openPath(path, line)}
+            connected={status === "open"}
           />
         ) : (
           <p className="pane-empty">No change to review. The Changes pane shows each change that the agent asks to make.</p>
@@ -3606,7 +3637,10 @@ export default function App() {
                   }
                   onShowBrowser={showAgentBrowser}
                   changes={gitChanges && samePath(gitChanges.cwd, session.cwd) ? gitChanges : null}
-                  onOpenChanges={() => setLayout((l) => openPane(l, "diff"))}
+                  onOpenChanges={() => {
+                    setReviewId(null); // The pane shows all the changes of the branch, not an old single change.
+                    setLayout((l) => openPane(l, "diff"));
+                  }}
                   onChangesAction={
                     status === "open" ? (action) => submitOrQueue({ kind: "prompt", text: ACTION_PROMPTS[action], display: ACTION_LABELS[action] }) : null
                   }

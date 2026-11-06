@@ -108,6 +108,30 @@ export interface GitChanges {
   pr?: PullRequest | null; // The pull request of the branch.
 }
 
+/** One file of the full change of a folder (git.diff): its unified diff text with the header lines. */
+export interface GitDiffFile {
+  path: string;
+  old_path: string | null; // The old name of a renamed file.
+  status: "A" | "D" | "R" | "M"; // Added, deleted, renamed, modified.
+  binary: boolean;
+  untracked?: boolean; // A new file that git does not know yet.
+  too_large?: boolean; // The text is too large to show: patch is "".
+  patch: string;
+}
+
+/** The full change of a folder for the Changes pane (git.diff). */
+export interface GitDiff {
+  repo: boolean;
+  branch: string | null;
+  base: string | null; // For example "origin/main". null: against HEAD.
+  scope: GitDiffScope;
+  files: GitDiffFile[];
+  truncated: boolean; // More files than the daemon sends, or too much text.
+}
+
+/** "branch": the folder against the base of the branch. "uncommitted": the folder against HEAD. */
+export type GitDiffScope = "branch" | "uncommitted";
+
 /** A small picture of the headless agent browser page (SPEC.md section 8.7): live, or after an action. */
 export interface AgentFrame {
   url: string;
@@ -750,6 +774,7 @@ export type ClientMessage =
   // The branch and the pull request of project folders, for the sidebar. The reply is "pr_status".
   | { type: "git.pr_status"; paths: string[] }
   | { type: "git.changes"; cwd: string } // The changes of the folder against its base branch (the rail).
+  | { type: "git.diff"; cwd: string; scope?: GitDiffScope } // The full change of the folder (the Changes pane).
   | { type: "git.pr_info"; url: string; fresh?: boolean } // A pull request from its URL (a chat link card, the PR list of the rail). fresh: a short daemon cache.
   | { type: "git.status" } // The git state of the changed files in the session folder (the file tree).
   | { type: "session.delete"; session_id: string }
@@ -966,6 +991,7 @@ export type DaemonMessage =
   | { type: "session.deleted"; id: string }
   | ({ type: "git.branches"; cwd: string } & GitBranches)
   | ({ type: "git.changes"; cwd: string } & GitChanges)
+  | ({ type: "git.diff"; cwd: string } & GitDiff)
   | { type: "git.pr_info"; url: string; pr: PullRequest | null }
   | { type: "git.status"; files: Record<string, GitFileState> } // Path in the session folder -> state.
   // The worktree of the session has uncommitted changes. Ask, then send session.update with force.

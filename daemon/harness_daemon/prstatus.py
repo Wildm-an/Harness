@@ -203,6 +203,29 @@ async def _count(git: str, path: str, revs: str) -> int:
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # The base of a repository with no commit yet.
 
 
+async def _find_base(git: str, path: str, remote: bool) -> tuple[str, str, str | None, bool]:
+    """(head, base, base_ref, merged) of a folder. ``head`` is "HEAD", or the empty tree with no commit.
+    ``base_ref`` is the default branch of ``origin`` (for example ``origin/main``), else None. ``base``
+    is the merge base of HEAD with it, else ``head``. ``merged``: ``base`` is that merge base."""
+    base_ref = None
+    if remote:
+        code, out = await _run([git, "rev-parse", "--abbrev-ref", "origin/HEAD"], path, GIT_TIMEOUT)
+        base_ref = out.strip() if code == 0 and out.strip() else None
+        if base_ref is None:
+            for name in ("origin/main", "origin/master"):
+                code, _ = await _run([git, "rev-parse", "--verify", "--quiet", name], path, GIT_TIMEOUT)
+                if code == 0:
+                    base_ref = name
+                    break
+    code, _ = await _run([git, "rev-parse", "--verify", "--quiet", "HEAD"], path, GIT_TIMEOUT)
+    head = "HEAD" if code == 0 else EMPTY_TREE
+    if base_ref and head == "HEAD":
+        code, out = await _run([git, "merge-base", "HEAD", base_ref], path, GIT_TIMEOUT)
+        if code == 0 and out.strip():
+            return head, out.strip(), base_ref, True
+    return head, head, base_ref, False
+
+
 async def folder_changes(path: str, with_pr: bool = True) -> dict[str, Any]:
     """The changes of a folder against its base, as Claude Code shows them in the session rail.
 
@@ -242,24 +265,9 @@ async def folder_changes(path: str, with_pr: bool = True) -> dict[str, Any]:
     gh = shutil.which("gh")
     result["github"] = "github.com" in remote.lower() and gh is not None
     result["github_repo"] = github_repo(remote)
-    base_ref = None
-    if remote:
-        code, out = await _run([git, "rev-parse", "--abbrev-ref", "origin/HEAD"], path, GIT_TIMEOUT)
-        base_ref = out.strip() if code == 0 and out.strip() else None
-        if base_ref is None:
-            for name in ("origin/main", "origin/master"):
-                code, _ = await _run([git, "rev-parse", "--verify", "--quiet", name], path, GIT_TIMEOUT)
-                if code == 0:
-                    base_ref = name
-                    break
-    code, _ = await _run([git, "rev-parse", "--verify", "--quiet", "HEAD"], path, GIT_TIMEOUT)
-    head = "HEAD" if code == 0 else EMPTY_TREE
-    base = head
-    if base_ref and head == "HEAD":
-        code, out = await _run([git, "merge-base", "HEAD", base_ref], path, GIT_TIMEOUT)
-        if code == 0 and out.strip():
-            base = out.strip()
-            result["base"] = base_ref
+    head, base, base_ref, merged = await _find_base(git, path, bool(remote))
+    if merged:
+        result["base"] = base_ref
 
     # The remote branch: the upstream of the branch, else a branch of origin with the same name
     # (a push with no -u). Only a branch of a remote counts.
@@ -301,6 +309,124 @@ async def folder_changes(path: str, with_pr: bool = True) -> dict[str, Any]:
         result["pr"] = await branch_pr(gh, path)
         # The sidebar gets the new state at its next request.
         _cache[path_key(path)] = (time.monotonic(), {"path": path, "branch": result["branch"], "pr": result["pr"]})
+    return result
+
+
+DIFF_TIMEOUT = 20
+MAX_FILE_PATCH = 300_000  # Characters. A larger change of one file shows as "too large".
+MAX_DIFF_CHARS = 4_000_000  # Characters of all the files. More: the other files have no text, and "truncated" is true.
+_DIFF_HEAD = re.compile(r"^diff --git a/(.*) b/(.*)$")
+
+
+def split_diff(text: str) -> list[dict[str, Any]]:
+    """The files of a ``git diff`` text: {"path", "old_path", "status", "binary", "patch"}. Status: "A"
+    (added), "D" (deleted), "R" (renamed), or "M" (modified). ``patch`` is the text of the file, with its
+    header lines."""
+    files: list[dict[str, Any]] = []
+    current: list[str] = []
+
+    def close() -> None:
+        if not current:
+            return
+        head = _DIFF_HEAD.match(current[0])
+        old = head.group(1) if head else ""
+        new = head.group(2) if head else ""
+        status = "M"
+        binary = False
+        for line in current[1:]:
+            if line.startswith("@@"):
+                break
+            if line.startswith("new file mode"):
+                status = "A"
+            elif line.startswith("deleted file mode"):
+                status = "D"
+            elif line.startswith("rename from "):
+                status, old = "R", line[len("rename from "):]
+            elif line.startswith("rename to "):
+                new = line[len("rename to "):]
+            elif line.startswith("--- a/"):
+                old = line[6:]
+            elif line.startswith("+++ b/"):
+                new = line[6:]
+            elif line.startswith("Binary files "):
+                binary = True
+        files.append({"path": old if status == "D" else new, "old_path": old if status == "R" else None,
+                      "status": status, "binary": binary, "patch": "\n".join(current) + "\n"})
+
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            close()
+            current = [line]
+        elif current:
+            current.append(line)
+    close()
+    return files
+
+
+def _new_file_patch(path: str, name: str) -> dict[str, Any]:
+    """An untracked file as a change that adds all its lines."""
+    entry: dict[str, Any] = {"path": name, "old_path": None, "status": "A", "binary": False, "untracked": True, "patch": ""}
+    try:
+        with open(f"{path}/{name}", "rb") as f:
+            data = f.read(MAX_UNTRACKED_BYTES + 1)
+    except OSError:
+        return entry
+    if b"\0" in data[:8000]:
+        entry["binary"] = True
+        return entry
+    if len(data) > MAX_UNTRACKED_BYTES:
+        entry["too_large"] = True
+        return entry
+    lines = data.decode("utf-8", "replace").splitlines()
+    body = "".join(f"+{line}\n" for line in lines)
+    hunk = f"@@ -0,0 +1,{len(lines)} @@\n{body}" if lines else ""
+    entry["patch"] = f"diff --git a/{name} b/{name}\nnew file mode 100644\n--- /dev/null\n+++ b/{name}\n{hunk}"
+    return entry
+
+
+async def folder_diff(path: str, scope: str = "branch") -> dict[str, Any]:
+    """The full change of a folder, for the Changes pane: each file with its unified diff.
+
+    ``scope`` "branch": the folder against the base of the branch (the same total as the Changes section
+    of the rail: the commits that the base does not have, the uncommitted changes, and the new files).
+    "uncommitted": the folder against HEAD, and the new files.
+    """
+    scope = "uncommitted" if scope == "uncommitted" else "branch"
+    result: dict[str, Any] = {"repo": False, "branch": None, "base": None, "scope": scope, "files": [], "truncated": False}
+    git = shutil.which("git")
+    if not git:
+        return result
+    code, out = await _run([git, "rev-parse", "--abbrev-ref", "HEAD"], path, GIT_TIMEOUT)
+    if code != 0:
+        return result
+    result["repo"] = True
+    branch = out.strip()
+    result["branch"] = branch if branch and branch != "HEAD" else None
+    code, remote = await _run([git, "remote", "get-url", "origin"], path, GIT_TIMEOUT)
+    head, base, base_ref, merged = await _find_base(git, path, code == 0 and bool(remote.strip()))
+    if scope == "branch" and merged:
+        result["base"] = base_ref
+    rev = base if scope == "branch" else head
+    code, out = await _run([git, "-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff", "-M", "--unified=3", rev],
+                           path, DIFF_TIMEOUT)
+    files = split_diff(out) if code == 0 else []
+    code, out = await _run([git, "-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"], path, GIT_TIMEOUT)
+    untracked = [line for line in out.splitlines() if line.strip()] if code == 0 else []
+    files += await asyncio.to_thread(lambda: [_new_file_patch(path, name) for name in untracked[:MAX_UNTRACKED]])
+    files.sort(key=lambda f: f["path"].lower())
+    total = 0
+    for f in files:
+        if len(f["patch"]) > MAX_FILE_PATCH:
+            f["patch"] = ""
+            f["too_large"] = True
+        total += len(f["patch"])
+        if total > MAX_DIFF_CHARS:
+            f["patch"] = ""
+            f["too_large"] = True
+            result["truncated"] = True
+    result["files"] = files
+    if len(untracked) > MAX_UNTRACKED:
+        result["truncated"] = True
     return result
 
 

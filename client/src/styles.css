@@ -7454,6 +7454,302 @@ mark.word-del {
   background: var(--diff-del-word);
 }
 
+/* The Changes pane with all the changes of the branch (ChangesView.tsx), as in the Claude app: a section
+   for each file, with the old and the new line numbers, and the list of the files at the right. */
+.changes-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
+
+.cv-scope {
+  position: relative;
+  min-width: 0;
+}
+
+.cv-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 500 13px var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cv-scope-btn:hover,
+.cv-scope-btn[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+.cv-scope-btn .mono {
+  font-size: 12.5px;
+}
+
+.cv-scope-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-scope-arrow {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.cv-scope-menu {
+  left: 0;
+  right: auto;
+}
+
+.cv-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.cv-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.cv-search input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  outline: none;
+}
+
+.cv-search-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cv-body.with-list {
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 300px);
+}
+
+/* A narrow pane has no room for the file list. */
+@container (max-width: 640px) {
+  .cv-body.with-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cv-list {
+    display: none;
+  }
+}
+
+.cv-files {
+  min-height: 0;
+  overflow: auto;
+}
+
+.cv-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.cv-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cv-list-item:hover {
+  background: var(--hover);
+}
+
+.cv-list-item.viewed {
+  color: var(--text-muted);
+}
+
+.cv-list-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-file-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.cv-file-dir {
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cv-counts {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+  font: 12.5px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-file + .cv-file {
+  border-top: 1px solid var(--border);
+}
+
+/* The head of a file stays at the top while its lines scroll. */
+.cv-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 6px 0 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.cv-file-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: 13px var(--font-sans);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.cv-file-toggle:hover {
+  background: var(--hover);
+}
+
+.cv-file-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cv-file-toggle .cv-file-dir {
+  margin-left: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-file-head .cv-counts {
+  margin: 0 6px;
+}
+
+.cv-viewed.on {
+  color: var(--success);
+}
+
+.cv-file.viewed .cv-file-name {
+  color: var(--text-muted);
+}
+
+.cv-lines {
+  font: 12.5px/1.6 var(--font-mono);
+  font-variant-ligatures: none;
+}
+
+.cv-row {
+  display: grid;
+  grid-template-columns: 44px 44px minmax(0, 1fr);
+}
+
+.cv-num {
+  padding: 0 8px 0 0;
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+  opacity: 0.8;
+}
+
+.cv-code {
+  padding: 0 12px 0 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A removed line: a red tint, and a striped bar at the left. An added line: a green tint and a solid bar. */
+.cv-del {
+  background: var(--diff-del-bg);
+  background-image: repeating-linear-gradient(135deg, var(--danger) 0 2px, transparent 2px 5px);
+  background-size: 4px 100%;
+  background-repeat: no-repeat;
+}
+
+.cv-add {
+  background: var(--diff-add-bg);
+  box-shadow: inset 4px 0 0 var(--success);
+}
+
+.cv-gap {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-block: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: 12.5px var(--font-sans);
+}
+
+.cv-gap:first-child {
+  border-top: 0;
+}
+
+.cv-note {
+  margin: 0;
+  padding: 12px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* permission rules */
 
 .rules-section {
