@@ -61,3 +61,10 @@ describe("the working line", () => {
     expect(s.turn).toEqual({ startedAt: 1_000_000, tokens: 40 });
   });
 });
+
+describe("the working line while the model thinks", () => {
+  it("says Thinking, not Waiting", () => {
+    expect(workingStatus([], "fake/glm-5.3-flash", true).text).toBe("Thinking…");
+    expect(workingStatus([], "fake/glm-5.3-flash").text).toBe("Waiting for glm-5.3-flash…");
+  });
+});

@@ -69,7 +69,8 @@ PREVIEW_PROMPT = """\
 The preview tools start the servers of .harness/launch.json and operate the browser. In the desktop \
 app, you and the user share the tabs of the Browser pane of this session. Use the tools to check \
 changes to a web app, and for web tasks:
-1. preview_start starts the server. Do not start servers with bash.
+1. preview_servers lists the servers. Use a running server when it serves what you need. Else \
+preview_start starts one. Do not start servers with bash.
 2. preview_tabs lists the tabs. If the user opened a tab for the task, continue in it. Else \
 preview_navigate with tab "new" opens the page in a new tab.
 3. preview_snapshot reads the page. preview_click and preview_fill use its element references.

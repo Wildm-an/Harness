@@ -40,7 +40,7 @@ export function turnTokens(turn: TurnInfo | null, items: ChatItem[]): number {
 }
 
 /** The running tool calls, and the text for what the agent does now. */
-export function workingStatus(items: ChatItem[], model: string): { tasks: number; text: string } {
+export function workingStatus(items: ChatItem[], model: string, thinking = false): { tasks: number; text: string } {
   const running = items.filter((i): i is Extract<ChatItem, { kind: "tool" }> => i.kind === "tool" && i.status === "running");
   const waiting = items.some((i) => i.kind === "permission" && !i.decision && !i.expired);
   const asking = items.some((i) => (i.kind === "question" && i.answers === undefined && !i.expired) || (i.kind === "plan" && !i.decision && !i.expired));
@@ -50,6 +50,7 @@ export function workingStatus(items: ChatItem[], model: string): { tasks: number
   else if (waiting) text = "Waiting for your approval…";
   else if (running.length > 0) text = `Running ${toolLabel(running[running.length - 1].name)}…`;
   else if (last?.kind === "assistant" && last.streaming) text = "Writing…";
+  else if (thinking) text = "Thinking…"; // The reasoning of the model streams (the user asked for this word).
   else text = `Waiting for ${modelName(model)}…`;
   return { tasks: running.length, text };
 }
@@ -79,7 +80,7 @@ export function WorkingLine({
   const mounted = useRef(Date.now()); // A turn with no start time (for example a skill) counts from here.
   const [open, setOpen] = useState(false);
 
-  const { tasks, text } = workingStatus(items, model);
+  const { tasks, text } = workingStatus(items, model, !!turn?.thinking);
   const step = currentStep(items);
   // A question or a permission is more important than the step: the user must act.
   const label = step && !text.startsWith("Waiting for your") ? step : text;

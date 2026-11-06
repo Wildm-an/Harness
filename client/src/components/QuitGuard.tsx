@@ -101,16 +101,72 @@ function QuitDialog({ count, onQuit, onWait, onCancel }: { count: number; onQuit
   );
 }
 
+/** The text of the question about the servers that the agent started, before the window hides. */
+export function serversText(names: string[]): string {
+  const list = names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")}, and ${names.length - 3} more`;
+  return `The agent started ${names.length === 1 ? "a server" : `${names.length} servers`} (${list}). They keep running while Harness is in the tray.`;
+}
+
+function ServersDialog({ names, onStop, onKeep, onCancel }: { names: string[]; onStop: () => void; onKeep: () => void; onCancel: () => void }) {
+  const id = useId();
+  const stop = useRef<HTMLButtonElement>(null);
+  useOverlay(true);
+  useEffect(() => stop.current?.focus(), []);
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+      <div
+        className="modal confirm-dialog quit-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-text`}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            onCancel();
+          }
+        }}
+      >
+        <h2 id={`${id}-title`} className="confirm-title">
+          Stop the servers that the agent started?
+        </h2>
+        <p id={`${id}-text`} className="confirm-text">
+          {serversText(names)}
+        </p>
+        <div className="confirm-actions">
+          <button type="button" className="btn btn-small" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-small" onClick={onKeep}>
+            Keep running
+          </button>
+          <button ref={stop} type="button" className="btn btn-small btn-primary" onClick={onStop}>
+            Stop servers
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Catches the close of the window (the close button, Alt+F4, the taskbar) and "Quit Harness" in
  * the tray menu while ``working`` sessions run on this computer. ``working`` is the count of
- * sessions with a running turn.
+ * sessions with a running turn. ``agentServers``: the running servers that an agent started. When
+ * the window only hides (the app keeps running in the tray), the app asks to stop them first.
  */
-export function QuitGuard({ working }: { working: number }) {
+export function QuitGuard({ working, agentServers = [], onStopAgentServers }: {
+  working: number;
+  agentServers?: string[];
+  onStopAgentServers?: () => void;
+}) {
   const [asking, setAsking] = useState(false);
   const [waiting, setWaiting] = useState(false);
+  const [askServers, setAskServers] = useState(false);
   const workingRef = useRef(working);
   workingRef.current = working;
+  const serversRef = useRef(agentServers);
+  serversRef.current = agentServers;
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -123,7 +179,8 @@ export function QuitGuard({ working }: { working: number }) {
           const action = closeAction(workingRef.current, loadKeepInBackground());
           if (action === "close") return; // Nothing runs: the window closes.
           event.preventDefault();
-          if (action === "hide") void w.hide();
+          if (action === "hide" && serversRef.current.length > 0) setAskServers(true);
+          else if (action === "hide") void w.hide();
           else setAsking(true);
         })
         .then(keep);
@@ -146,8 +203,24 @@ export function QuitGuard({ working }: { working: number }) {
     if (waiting && working === 0) quitNow();
   }, [waiting, working]);
 
+  const hide = () => {
+    setAskServers(false);
+    void appWindow().then((w) => w.hide());
+  };
+
   return (
     <>
+      {askServers && agentServers.length > 0 && (
+        <ServersDialog
+          names={agentServers}
+          onStop={() => {
+            onStopAgentServers?.();
+            hide();
+          }}
+          onKeep={hide}
+          onCancel={() => setAskServers(false)}
+        />
+      )}
       {asking && working > 0 && (
         <QuitDialog
           count={working}

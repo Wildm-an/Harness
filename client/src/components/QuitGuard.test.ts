@@ -7,3 +7,11 @@ describe("the warning before the app closes", () => {
     expect(quitText(3)).toBe("The agent is working in 3 sessions. Quitting now will interrupt that work.");
   });
 });
+
+describe("the question before an update", () => {
+  it("names the sessions where the agent works", async () => {
+    const { updateText } = await import("./UpdateGuard");
+    expect(updateText(1)).toBe("The agent is working in 1 session. The update restarts Harness and stops that work.");
+    expect(updateText(3)).toContain("3 sessions");
+  });
+});

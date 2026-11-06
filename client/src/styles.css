@@ -1869,19 +1869,19 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
-/* The model button: the model name, then the effort level in muted text. No icon. */
-.model-chip {
+/* The model button: the model name, a bar, then the effort level. No icon. It has the color of the
+   other chips under the prompt box (the user asked for this). */
+.model-button {
   gap: 6px;
 }
 
-.model-chip-effort {
+.model-button-sep {
   flex: none;
-  color: var(--text-muted);
+  opacity: 0.6;
 }
 
-.prompt-below .model-chip {
-  color: var(--text);
-  font-size: 13px;
+.model-button-effort {
+  flex: none;
 }
 
 .menu-note {
@@ -4008,13 +4008,128 @@ select {
 }
 
 /* Tabs in a window header: the panes of the narrow view, and the tabs of the browser and the terminal. */
+/* The tabs never scroll sideways (the user asked for this): they share the room and get smaller.
+   A narrow tab shows only its icon. WindowTabs.tsx puts the tabs that do not fit in the list of the ⌄ button. */
 .win-tabs {
   display: flex;
   align-items: center;
   gap: 2px;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: hidden;
+}
+
+.win-tabs > .win-tab {
+  flex: 0 1 160px;
+  min-width: 36px;
+  container-type: inline-size;
+}
+
+/* A narrow tab: only the icon. The open tab keeps its close button. */
+@container (max-width: 70px) {
+  .win-tab-label {
+    display: none;
+  }
+
+  .win-tab-main {
+    justify-content: center;
+    flex: 1;
+  }
+
+  .win-tab:not(.active) .win-tab-close {
+    display: none;
+  }
+}
+
+@container (max-width: 44px) {
+  .win-tab-close {
+    display: none;
+  }
+}
+
+.win-tab-more-wrap {
+  position: relative;
+  flex: none;
+}
+
+.icon-btn.win-tab-more {
+  width: 26px;
+  height: 26px;
+}
+
+.icon-btn.win-tab-more.active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* The list of all tabs, as in the Claude app: the icon, the title, the URL, and a close button. */
+.menu.win-tab-list {
+  top: calc(100% + 6px);
+  right: auto;
+  left: 50%;
+  width: min(300px, calc(100vw - 24px));
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+  transform: translateX(-50%);
+}
+
+.win-tab-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.win-tab-row:hover,
+.win-tab-row.active {
+  background: var(--surface-2);
+}
+
+.menu .win-tab-row-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  gap: 12px;
+  background: transparent;
+}
+
+.menu .win-tab-row-main:hover {
+  background: transparent;
+}
+
+.win-tab-row-main > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.win-tab-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.win-tab-row-label,
+.win-tab-row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.win-tab-row-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.menu .win-tab-row-close {
+  flex: none;
+  justify-content: center;
+  width: 30px;
+  min-height: 30px;
+  margin-right: 4px;
+  padding: 0;
+  color: var(--text-muted);
+}
+
+.menu .win-tab-row-close:hover {
+  color: var(--text);
 }
 
 .win-pane,
@@ -4026,6 +4141,7 @@ select {
   height: 28px;
   max-width: 210px;
   padding: 0 10px;
+  box-sizing: border-box;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -10008,7 +10124,8 @@ body.sorting * {
    (PromptBox.tsx): a chip with an icon shows only the icon. The model chip has no icon: it shows
    the model name with no effort level. The hover hint of each chip still names it. */
 .prompt-below.compact .prompt-chip:has(> svg) .prompt-chip-text,
-.prompt-below.compact .model-chip-effort {
+.prompt-below.compact .model-button-sep,
+.prompt-below.compact .model-button-effort {
   display: none;
 }
 

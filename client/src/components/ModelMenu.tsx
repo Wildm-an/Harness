@@ -203,7 +203,7 @@ export function ModelMenu({
     <div className="model-menu" ref={ref} onKeyDown={onKeyDown}>
       <button
         type="button"
-        className={`prompt-chip model-chip${open ? " active" : ""}`}
+        className={`prompt-chip model-button${open ? " active" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => (open ? close() : setOpen(true))}
@@ -217,7 +217,15 @@ export function ModelMenu({
       >
         {/* Only the model name: the menu shows the provider of each model. */}
         <span className="prompt-chip-text">{shownName}</span>
-        {shownEffort && <span className="model-chip-effort">{shownEffort}</span>}
+        {shownEffort && (
+          <>
+            {/* A bar separates the model and the effort level (the user asked for this). */}
+            <span className="model-button-sep" aria-hidden>
+              |
+            </span>
+            <span className="model-button-effort">{shownEffort}</span>
+          </>
+        )}
       </button>
       {open && (
         <div className={`menu model-dropdown${up ? " up" : ""}${alignRight ? " right" : ""}`} role="menu" aria-label="Models">

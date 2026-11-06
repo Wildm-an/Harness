@@ -51,6 +51,7 @@ export interface ContextUse {
 export interface TurnInfo {
   startedAt: number;
   tokens: number;
+  thinking?: boolean; // The model thinks now: no text and no tool call since its reasoning started.
 }
 
 export interface ChatState {
@@ -194,7 +195,10 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
 
 function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
   switch (msg.type) {
+    case "thinking":
+      return state.turn ? { ...state, turn: { ...state.turn, thinking: true } } : state;
     case "token": {
+      if (state.turn?.thinking) state = { ...state, turn: { ...state.turn, thinking: false } };
       const last = state.items[state.items.length - 1];
       if (last?.kind === "assistant" && last.streaming) {
         return { ...state, items: [...state.items.slice(0, -1), { ...last, text: last.text + msg.text }] };
@@ -203,6 +207,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       return { ...state, items: [...state.items, item] };
     }
     case "tool.start":
+      if (state.turn?.thinking) state = { ...state, turn: { ...state.turn, thinking: false } };
       // After a return to a running turn, the history already shows the tool call as running.
       if (lastRunningTool(state.items, msg.id) >= 0) return state;
       return {

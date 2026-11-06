@@ -67,6 +67,7 @@ class Server:
     tasks: list[asyncio.Task] = field(default_factory=list)
     pending: list[tuple[str, str]] = field(default_factory=list)  # Log lines to send.
     has_pending: asyncio.Event = field(default_factory=asyncio.Event)  # Set when "pending" gets a line.
+    started_by: str = "user"  # "agent": the agent started it (preview_start). A close of the window asks to stop it.
 
     def status(self) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -75,6 +76,7 @@ class Server:
             "state": self.state,
             "port": self.port or self.config.port,
             "url": self.url,
+            "by": self.started_by,
         }
         if self.error:
             body["error"] = self.error
@@ -148,10 +150,12 @@ class ServerManager:
         server.error = error
         await self.emit(server.status())
 
-    async def start(self, name: str) -> Server:
+    async def start(self, name: str, by: str = "user") -> Server:
+        """Start a server. ``by``: "agent" (preview_start) or "user" (the Browser pane)."""
         server = self.get(name)
         if server.state in ("starting", "running"):
             return server
+        server.started_by = by
         config = server.config
         if config.port and await asyncio.to_thread(port_in_use, config.port):
             await self._set(server, "stopped", f"Port {config.port} is in use. Stop the other program, "

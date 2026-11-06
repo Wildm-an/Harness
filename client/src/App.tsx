@@ -127,9 +127,10 @@ import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
+import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath, openFolderBlocked } from "./editor/paths";
@@ -506,6 +507,8 @@ export default function App() {
   const [routineToken, setRoutineToken] = useState<{ id: string; token: string } | null>(null);
   // The HTTP address of the daemon (http://host:port): the fire URL of a routine API trigger.
   const [daemonHttp, setDaemonHttp] = useState<string | null>(null);
+  // The running servers that an agent started: a close of the window asks to stop them.
+  const [agentServers, setAgentServers] = useState<AgentServer[]>([]);
   const shownIdRef = useRef<string | null>(null); // The session that the user sees now, for the message handler.
 
   /** Opens the Providers screen. Uses only refs and state setters: the message handler calls it too. */
@@ -860,6 +863,9 @@ export default function App() {
           return;
         case "routine.runs":
           setRoutineRuns({ routine_id: msg.routine_id, items: msg.items });
+          return;
+        case "servers.agent":
+          setAgentServers(msg.items);
           return;
         case "sessions.archived":
           listRecent(); // The sidebar shows them only with the "Archived" or "All" status filter.
@@ -3176,7 +3182,13 @@ export default function App() {
         </header>
         {/* A warning before the app closes while the agent works on this computer (as in the Claude app).
             A session that waits for an answer does not count: the agent is not working. */}
-        <QuitGuard working={current?.kind === "local" && status === "open" ? runningSessions.filter((r) => !r.waiting).length : 0} />
+        {/* An app update restarts the daemon of this computer: it asks first while the agent works. */}
+        <UpdateGuard working={current?.kind === "local" && status === "open" ? allRunning.length : 0} />
+        <QuitGuard
+          working={current?.kind === "local" && status === "open" ? runningSessions.filter((r) => !r.waiting).length : 0}
+          agentServers={status === "open" ? agentServers.map((s) => s.name) : []}
+          onStopAgentServers={() => void sendSafely({ type: "server.stop_agent" })}
+        />
 
       <main className="main">
         {screen === "starting" && (
