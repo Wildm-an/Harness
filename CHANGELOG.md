@@ -3,6 +3,40 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.55 (2026-11-06)
+
+### Chat
+
+- The task list shows the time of each completed step at the right. A finished plan shows its
+  total time on the folded line and on "Plan finished". The times stay after a reload.
+- The agent updates the task list as soon as a step finishes. After 8 tool calls with no update,
+  the daemon reminds it. Before, some models marked all steps completed at the end.
+- A question card can show a preview of each option (a mockup or code) next to the options. You
+  can add notes to an answer: the agent gets them with the answer.
+- A visual shows short loading lines until it loads, and has a download button (.svg or .html).
+- The agent can send files to you with `send_file`. Each file gets a card with "Open" and
+  "Show in folder". A file can open in a pane at once, or in its default app. When the agent
+  sends a file on its own, a notification shows if you do not look at the session.
+- The agent can publish an HTML page as an artifact with `artifact`. The card opens the page in
+  the Browser pane. A new publish of the same file makes a new version. The artifacts are local,
+  in `~/.harness/artifacts`. A delete asks you first.
+
+### Window
+
+- The update popups move to the left of the Browser pane, so the pane does not cover them. Each
+  popup has an X at the top right ("Close", Esc).
+
+### Settings
+
+- Each provider row has a quick test button. It tests the saved values and key, and shows the
+  result under the key.
+
+### Daemon
+
+- In auto mode, an MCP tool that its server marks as read-only runs with no model check, as a
+  read-only bash command does. Each check took about 3 s.
+- The daemon log gives the cause when a model endpoint cannot be reached.
+
 ## 0.1.54 (2026-11-06)
 
 ### Browser
