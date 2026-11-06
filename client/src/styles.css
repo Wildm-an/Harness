@@ -51,9 +51,11 @@
   --purple: #a98bff;
   --purple-soft: rgba(169, 139, 255, 0.16);
   --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
-  /* The git state of a file in the file tree (gitStatus.ts). */
-  --git-modified: #d4b483;
-  --git-added: #81c995;
+  /* The git state of a file in the file tree (gitStatus.ts): Clear Sight hues. A changed file has the
+     orange of uncommitted work in the rail, and a new file has the green. Deleted files and conflicts
+     use --danger. */
+  --git-modified: var(--orange);
+  --git-added: var(--success);
   --violet: #c3a6f0;
   --teal: #6fc8c0;
   --backdrop: rgba(15, 14, 13, 0.6);
@@ -130,8 +132,8 @@
   --purple: #7e57c2;
   --purple-soft: rgba(126, 87, 194, 0.1);
   --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
-  --git-modified: #8a5a00;
-  --git-added: #2e7d32;
+  --git-modified: var(--orange);
+  --git-added: var(--success);
   --violet: #7a4fc0;
   --teal: #1f7f78;
   --backdrop: rgba(31, 30, 29, 0.35);

@@ -3,7 +3,7 @@
 // "Push"). Each part has its own color and icon, so the user can see at once what is not in a
 // commit, what is not pushed, and what is on the remote:
 //
-//   Uncommitted  (orange)
+//   Uncommitted  (orange, the color of a changed file in the file tree)
 //   Not pushed   (blue)
 //   Pushed       (green)
 //
