@@ -27,7 +27,7 @@ export type HistoryMessage =
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   // created: the new PDF and Word files of the call. The chat shows a card with "Open" for each one.
-  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string; created?: string[] };
+  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string; created?: string[]; ts?: number; card?: ToolCardData };
 
 export interface PermissionRequest {
   request_id: string;
@@ -44,11 +44,25 @@ export interface PermissionRequest {
   plan?: string; // Markdown.
 }
 
+/** A file that the agent sent with send_file (daemon tools/share.py). */
+export interface SentFile {
+  path: string; // Relative to the project, or absolute for a file out of the project.
+  name: string;
+  size: number;
+  project: boolean; // The file is in the project folder.
+  abs: string; // The absolute path on the computer of the daemon.
+}
+
+/** The card of a tool result: files that the agent sent, or an artifact that it published. */
+export type ToolCardData =
+  | { type: "files"; files: SentFile[]; caption: string; display: "render" | "attach" | "auto"; status: "normal" | "proactive" }
+  | { type: "artifact"; id: string; title: string; description: string; version: number; updated: number };
+
 /** A question of ask_user_question: 2 to 4 options. */
 export interface AskQuestion {
   question: string;
   header: string;
-  options: { label: string; description: string }[];
+  options: { label: string; description: string; preview?: string }[]; // preview: a mockup or code, monospace.
   multiSelect: boolean;
 }
 
@@ -790,7 +804,7 @@ export type ClientMessage =
   | { type: "command"; name: string; args: string }
   | { type: "permission.reply"; request_id: string; decision: Decision }
   // The answers of a question card, by question text. null: the user skipped the questions.
-  | { type: "question.reply"; request_id: string; answers: Record<string, string> | null }
+  | { type: "question.reply"; request_id: string; answers: Record<string, string> | null; notes?: Record<string, string> }
   | { type: "plan.reply"; request_id: string; decision: PlanDecision; mode?: PermissionMode; feedback?: string }
   | { type: "interrupt" }
   | { type: "ping" } // The reply is "pong". The client checks that the connection is alive.
@@ -1050,7 +1064,7 @@ export type DaemonMessage =
   | { type: "thinking" } // The model thinks (its reasoning streams). The working line shows "Thinking…".
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
-  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[] }
+  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[]; card?: ToolCardData }
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason }

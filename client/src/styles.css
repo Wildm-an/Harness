@@ -5746,6 +5746,32 @@ input.tree-rename-input[aria-invalid="true"] {
   padding: 4px 0 0;
 }
 
+.visual-head-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* "Download" shows on the pointer over the visual, or on the focus. */
+.visual-download {
+  padding: 2px 6px;
+  opacity: 0;
+}
+
+.visual-block:hover .visual-download,
+.visual-download:focus-visible {
+  opacity: 1;
+}
+
+.visual-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  color: var(--text-muted);
+  font-size: var(--chat-font-size, 14px);
+}
+
 .visual-frame {
   display: block;
   width: 100%;
@@ -6146,6 +6172,58 @@ input.tree-rename-input[aria-invalid="true"] {
   overflow-wrap: anywhere;
 }
 
+.question-note {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.92em;
+}
+
+/* Options with previews: the options at the left, the preview of the option under the pointer at the right. */
+.question-split {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@container (max-width: 560px) {
+  .question-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.question-preview-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.question-preview {
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: 0.92em;
+}
+
+.question-preview pre {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: pre;
+}
+
+.question-preview-empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.question-notes {
+  resize: vertical;
+}
+
 /* The plan card of exit_plan_mode (docs/UI_RULES.md M11-M13). */
 .plan-body {
   max-height: 420px;
@@ -6343,6 +6421,55 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .file-card-open {
   flex: none;
+}
+
+.file-card > .btn-ghost {
+  flex: none;
+  padding: 4px 6px;
+}
+
+.file-card-icon.image,
+.file-card-icon.html {
+  color: var(--accent);
+}
+
+.file-card-icon.sheet {
+  color: var(--success);
+}
+
+.file-card-icon.slides {
+  color: var(--warning);
+}
+
+/* The files that the agent sent (send_file): an optional caption, then a card for each file. */
+.share-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-caption {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--chat-font-size, 14px);
+}
+
+/* An artifact of the agent: it opens in the Browser pane. */
+.artifact-card {
+  max-width: 520px;
+}
+
+.file-card-icon.artifact {
+  color: var(--accent);
+}
+
+.artifact-card-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 /* / menu */
@@ -9905,14 +10032,25 @@ body.sorting * {
   color: var(--text);
 }
 
-.plan-folded .plan-text {
+.plan-folded .plan-text,
+.plan-step .plan-text {
   flex: 1;
+}
+
+/* The time of a completed step, and the total time of a finished plan. */
+.plan-time {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.86em;
+  font-variant-numeric: tabular-nums;
 }
 
 .plan-fold {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   padding: 0;
   border: 0;
   background: transparent;

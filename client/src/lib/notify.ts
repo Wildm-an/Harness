@@ -94,6 +94,12 @@ export function turnNotice(ev: TurnDoneEvent, ctx: SeenContext): { title: string
   return { title: ev.title?.trim() || "Harness", body: ev.summary.trim() || "The agent finished the turn." };
 }
 
+/** send_file with status "proactive": "The agent sent a file" with the caption or the names, when the user does not see the session. */
+export async function notifyFilesSent(text: string, sessionId: string | null, ctx: SeenContext): Promise<void> {
+  if (ctx.windowVisible && ctx.windowFocused && ctx.shownSessionId === sessionId) return;
+  await show("The agent sent a file", text, sessionId ?? undefined);
+}
+
 /** Shows the "task complete" notification of a turn when the user does not see the session. */
 export async function notifyTurnDone(ev: TurnDoneEvent, ctx: SeenContext): Promise<void> {
   const notice = turnNotice(ev, ctx);

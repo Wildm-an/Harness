@@ -58,3 +58,37 @@ describe("latestPlan", () => {
     expect(latestPlan([user("u1"), plan("p1", ["completed", "in_progress"]), wrap])?.finished).toBe(true);
   });
 });
+
+describe("step times", () => {
+  const at = (item: ChatItem, ts: number): ChatItem => ({ ...(item as Extract<ChatItem, { kind: "tool" }>), ts });
+
+  it("times each step from its start to its completion, and the total of a finished plan", () => {
+    const shown = latestPlan([
+      user("u1"),
+      at(plan("p1", ["in_progress", "pending", "pending"]), 1_000),
+      at(plan("p2", ["completed", "in_progress", "pending"]), 6_000),
+      // Step 3 goes from pending to completed: it starts at the call before.
+      at(plan("p3", ["completed", "completed", "completed"]), 71_000),
+    ]);
+    expect(shown?.finished).toBe(true);
+    expect(shown?.times).toEqual([5_000, 65_000, 65_000]);
+    expect(shown?.total).toBe(70_000);
+  });
+
+  it("shows no total before the end, and ends the step in progress at wrap_up", () => {
+    const items = [user("u1"), at(plan("p1", ["in_progress", "pending"]), 0), at(plan("p2", ["completed", "in_progress"]), 2_000)];
+    const running = latestPlan(items);
+    expect(running?.times).toEqual([2_000, null]);
+    expect(running?.total).toBeNull();
+    const wrap: ChatItem = { kind: "tool", id: "w1", name: "wrap_up", input: { recap: "Done." }, output: "Shown.", status: "done", ts: 9_000 };
+    const done = latestPlan([...items, wrap]);
+    expect(done?.times).toEqual([2_000, 7_000]);
+    expect(done?.total).toBe(9_000);
+  });
+
+  it("shows no times for calls with no time (an old session)", () => {
+    const shown = latestPlan([user("u1"), plan("p1", ["in_progress"]), plan("p2", ["completed"])]);
+    expect(shown?.times).toEqual([null]);
+    expect(shown?.total).toBeNull();
+  });
+});

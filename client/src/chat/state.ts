@@ -1,6 +1,6 @@
 // Chat state. The reducer turns daemon events into items for the message list.
 
-import type { AskQuestion, Decision, DaemonMessage, HistoryMessage, PermissionMode, PermissionRequest, PlanDecision, StopReason, Usage } from "../daemon/protocol";
+import type { AskQuestion, Decision, DaemonMessage, HistoryMessage, PermissionMode, PermissionRequest, PlanDecision, StopReason, ToolCardData, Usage } from "../daemon/protocol";
 
 export type ToolStatus = "running" | "done" | "error";
 
@@ -18,6 +18,7 @@ export type ChatItem =
       diff?: string; // The change that the tool made to a file.
       image?: string; // A data URL, for example a screenshot of preview_screenshot.
       agent?: string; // The forked skill that runs this tool in a subagent.
+      ts?: number; // The end time of the call (epoch ms), for the step times of the task list.
     }
   | {
       kind: "permission";
@@ -33,12 +34,14 @@ export type ChatItem =
       agent?: string;
     }
   // ask_user_question (daemon tools/interact.py). answers: null when the user skipped.
-  | { kind: "question"; id: string; questions: AskQuestion[]; answers?: Record<string, string> | null; expired?: boolean }
+  | { kind: "question"; id: string; questions: AskQuestion[]; answers?: Record<string, string> | null; notes?: Record<string, string>; expired?: boolean }
   // exit_plan_mode: the plan of the agent in plan mode.
   | { kind: "plan"; id: string; plan: string; decision?: PlanDecision; mode?: PermissionMode; expired?: boolean }
   | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string }
   // A new PDF or Word file of a tool call (daemon created.py): a card with "Open" for the Preview pane.
   | { kind: "file"; id: string; path: string; toolId: string }
+  // send_file and artifact (daemon tools/share.py): the files that the agent sent, or an artifact card.
+  | { kind: "card"; id: string; toolId: string; card: ToolCardData }
   | { kind: "summary"; id: string; text: string | null; removed: number; trimmed: number; reason: string };
 
 export interface ContextUse {
@@ -69,7 +72,7 @@ export type ChatAction =
   | { type: "user"; text: string; startsTurn: boolean; messageId?: string; images?: string[] }
   | { type: "disconnected" }
   | { type: "decide"; requestId: string; decision: Decision }
-  | { type: "answer"; requestId: string; answers: Record<string, string> | null }
+  | { type: "answer"; requestId: string; answers: Record<string, string> | null; notes?: Record<string, string> }
   | { type: "plan"; requestId: string; decision: PlanDecision; mode?: PermissionMode }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string }
   | {
@@ -159,8 +162,9 @@ function parseArgs(raw: string): unknown {
 }
 
 /** The cards of the new files of a tool call. They go right after the tool call. */
-function fileCards(toolId: string, created: string[] | undefined): ChatItem[] {
-  return (created ?? []).map((path) => ({ kind: "file", id: `file-${toolId}-${path}`, path, toolId }));
+function fileCards(toolId: string, created: string[] | undefined, card?: ToolCardData): ChatItem[] {
+  const files: ChatItem[] = (created ?? []).map((path) => ({ kind: "file", id: `file-${toolId}-${path}`, path, toolId }));
+  return card ? [...files, { kind: "card", id: `card-${toolId}`, toolId, card }] : files;
 }
 
 /** Converts stored OpenAI-format messages to chat items. */
@@ -185,8 +189,8 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
       const index = lastRunningTool(items, msg.tool_call_id);
       if (index >= 0) {
         const status: ToolStatus = msg.is_error ? "error" : "done";
-        items[index] = { ...(items[index] as ToolItem), output: msg.content, status, diff: msg.diff, image: msg.image };
-        items.splice(index + 1, 0, ...fileCards(msg.tool_call_id, msg.created));
+        items[index] = { ...(items[index] as ToolItem), output: msg.content, status, diff: msg.diff, image: msg.image, ts: msg.ts ? msg.ts * 1000 : undefined };
+        items.splice(index + 1, 0, ...fileCards(msg.tool_call_id, msg.created, msg.card));
       }
     }
   }
@@ -227,8 +231,9 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         status: msg.is_error ? "error" : "done",
         diff: msg.diff,
         image: msg.image,
+        ts: Date.now(),
       };
-      items.splice(index + 1, 0, ...fileCards(msg.id, msg.created));
+      items.splice(index + 1, 0, ...fileCards(msg.id, msg.created, msg.card));
       return { ...state, items };
     }
     case "permission.request": {
@@ -331,7 +336,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "decide":
       return { ...state, items: updateItem(state.items, action.requestId, "permission", { decision: action.decision }) };
     case "answer":
-      return { ...state, items: updateItem(state.items, action.requestId, "question", { answers: action.answers }) };
+      return { ...state, items: updateItem(state.items, action.requestId, "question", { answers: action.answers, notes: action.notes }) };
     case "plan":
       return { ...state, items: updateItem(state.items, action.requestId, "plan", { decision: action.decision, mode: action.mode }) };
     case "notice":

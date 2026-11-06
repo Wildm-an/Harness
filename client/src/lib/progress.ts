@@ -68,6 +68,54 @@ export interface ShownPlan {
   // All steps are completed, or the agent called wrap_up after the plan (wrap_up checks off the
   // task list, as in Claude Code). The chat folds the list into one line.
   finished: boolean;
+  times: (number | null)[]; // The time of each completed step (ms). null: not completed, or no time.
+  total: number | null; // A finished plan: the time from the first plan of the turn to the end (ms).
+}
+
+/** The end time of a tool call (epoch ms), or null for a call with no time (an old session). */
+const endTime = (item: ChatItem): number | null => (item.kind === "tool" && typeof item.ts === "number" ? item.ts : null);
+
+/**
+ * The time of each step of the plan at items[at], and the total time of a finished plan.
+ * The calls of update_plan in the turn give the times. A step starts at the first call that shows it
+ * in progress, or else at the call before the one that completes it. It ends at the first call that
+ * completes it. A step in progress at a wrap_up ends at the wrap_up. Steps are matched by their text.
+ */
+export function stepTimes(items: ChatItem[], at: number, turnStart: number, finished: boolean): { times: (number | null)[]; total: number | null } {
+  const steps = planSteps((items[at] as Extract<ChatItem, { kind: "tool" }>).input) ?? [];
+  const start = new Map<string, number>();
+  const end = new Map<string, number>();
+  let first: number | null = null;
+  let previous: number | null = null;
+  for (let i = turnStart + 1; i <= at; i++) {
+    const item = items[i];
+    if (item.kind !== "tool" || item.name !== "update_plan" || item.status === "error") continue;
+    const t = endTime(item);
+    const calls = planSteps(item.input);
+    if (t === null || !calls) continue;
+    first ??= t;
+    for (const s of calls) {
+      if (s.status === "in_progress" && !start.has(s.content)) start.set(s.content, t);
+      if (s.status === "completed" && !end.has(s.content)) {
+        end.set(s.content, t);
+        if (!start.has(s.content) && previous !== null) start.set(s.content, previous);
+      }
+    }
+    previous = t;
+  }
+  let finish: number | null = null;
+  if (finished) {
+    const wrap = items.slice(at + 1).find((t) => t.kind === "tool" && t.name === "wrap_up" && t.status !== "error");
+    finish = wrap ? endTime(wrap) : endTime(items[at]);
+    if (wrap && finish !== null) for (const s of steps) if (s.status === "in_progress" && !end.has(s.content)) end.set(s.content, finish);
+  }
+  const times = steps.map((s) => {
+    const a = start.get(s.content);
+    const b = end.get(s.content);
+    return a !== undefined && b !== undefined && (s.status === "completed" || finished) ? Math.max(0, b - a) : null;
+  });
+  const total = finish !== null && first !== null ? Math.max(0, finish - first) : null;
+  return { times, total };
 }
 
 /**
@@ -85,11 +133,14 @@ export function latestPlan(items: ChatItem[]): ShownPlan | null {
     if (!steps) continue;
     if (i > turnStart) {
       const wrapped = items.slice(i + 1).some((t) => t.kind === "tool" && t.name === "wrap_up" && t.status !== "error");
-      return { steps, current: true, finished: wrapped || steps.every((s) => s.status === "completed") };
+      const finished = wrapped || steps.every((s) => s.status === "completed");
+      return { steps, current: true, finished, ...stepTimes(items, i, turnStart, finished) };
     }
     if (steps.every((s) => s.status === "completed")) return null;
     if (items.slice(i + 1, turnStart).some(isInterrupt)) return null;
-    return { steps, current: false, finished: false };
+    let planTurn = i - 1;
+    while (planTurn >= 0 && items[planTurn].kind !== "user") planTurn--;
+    return { steps, current: false, finished: false, ...stepTimes(items, i, planTurn, false) };
   }
   return null;
 }

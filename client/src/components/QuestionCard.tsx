@@ -1,11 +1,13 @@
 // The question card of ask_user_question (daemon tools/interact.py, docs/UI_RULES.md M14): one question at a
 // time, the options with number badges, "Something else" for an answer of the user's own, "Skip", and
-// "Next" / "Submit" with "{current} of {total}".
+// "Next" / "Submit" with "{current} of {total}". An option can have a preview (a mockup or code): the card then
+// shows the preview of the option under the pointer or the focus next to the options, and a notes field.
 
 import { memo, useEffect, useRef, useState } from "react";
 import { Check, Clock, MessageCircleQuestion, SkipForward } from "lucide-react";
 import type { AskQuestion } from "../daemon/protocol";
 import type { QuestionItem } from "../chat/state";
+import { Markdown } from "./Markdown";
 import { usePromptInputId } from "../lib/split";
 
 /** The answer text of one question: the picked labels, then the text of "Something else". */
@@ -23,18 +25,38 @@ export function collectAnswers(questions: AskQuestion[], picks: Record<string, s
   return out;
 }
 
+/** The notes of the questions that have an answer. A note of a skipped question does not go to the agent. */
+export function collectNotes(answers: Record<string, string>, notes: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [q, note] of Object.entries(notes)) if (answers[q] && note.trim()) out[q] = note.trim();
+  return out;
+}
+
+/** The option whose preview shows: the option under the pointer or the focus, else the first picked option, else the first option. */
+export function previewOption(options: AskQuestion["options"], looking: string | null, picked: string[]): AskQuestion["options"][number] | undefined {
+  return options.find((o) => o.label === looking) ?? options.find((o) => picked.includes(o.label)) ?? options[0];
+}
+
+/** A preview with a Markdown code fence shows as Markdown. Other text shows as it is, in monospace. */
+function Preview({ text }: { text: string }) {
+  if (text.includes("```")) return <Markdown text={text} />;
+  return <pre>{text}</pre>;
+}
+
 export const QuestionCard = memo(function QuestionCard({
   item,
   onAnswer,
 }: {
   item: QuestionItem;
-  onAnswer: (requestId: string, answers: Record<string, string> | null) => void;
+  onAnswer: (requestId: string, answers: Record<string, string> | null, notes?: Record<string, string>) => void;
 }) {
   const done = item.answers !== undefined || item.expired === true;
   const [at, setAt] = useState(0);
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [others, setOthers] = useState<Record<string, string>>({});
   const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [looking, setLooking] = useState<string | null>(null); // The option under the pointer or the focus.
   const box = useRef<HTMLDivElement>(null);
   const otherInput = useRef<HTMLInputElement>(null);
   const total = item.questions.length;
@@ -54,7 +76,8 @@ export const QuestionCard = memo(function QuestionCard({
 
   const promptId = usePromptInputId();
   const finish = (answers: Record<string, string> | null) => {
-    onAnswer(item.id, answers);
+    const kept = answers ? collectNotes(answers, notes) : {};
+    onAnswer(item.id, answers, Object.keys(kept).length ? kept : undefined);
     document.getElementById(promptId)?.focus({ preventScroll: true });
   };
 
@@ -63,6 +86,7 @@ export const QuestionCard = memo(function QuestionCard({
   const next = (nextPicks = picks) => {
     if (at < total - 1) {
       setAt(at + 1);
+      setLooking(null);
       box.current?.focus({ preventScroll: true });
     } else {
       submit(nextPicks);
@@ -81,7 +105,8 @@ export const QuestionCard = memo(function QuestionCard({
     setPicks(nextPicks);
     setOtherOpen({ ...otherOpen, [q.question]: false });
     setOthers({ ...others, [q.question]: "" });
-    next(nextPicks); // One choice: go on at once.
+    // One choice: go on at once. With previews the user can compare and add a note first, so Next goes on.
+    if (!q.options.some((o) => o.preview)) next(nextPicks);
   };
 
   const openOther = () => {
@@ -115,7 +140,10 @@ export const QuestionCard = memo(function QuestionCard({
             {item.questions.map((x) => (
               <div key={x.question}>
                 <dt>{x.header}</dt>
-                <dd>{item.answers?.[x.question] ?? "Skipped"}</dd>
+                <dd>
+                  {item.answers?.[x.question] ?? "Skipped"}
+                  {item.notes?.[x.question] && <span className="question-note">Note: {item.notes[x.question]}</span>}
+                </dd>
               </div>
             ))}
           </dl>
@@ -128,9 +156,12 @@ export const QuestionCard = memo(function QuestionCard({
   const chosen = picks[q.question] ?? [];
   const other = others[q.question] ?? "";
   const hasAnswer = chosen.length > 0 || other.trim().length > 0;
+  const hasPreview = q.options.some((o) => o.preview);
+  const shown = hasPreview ? previewOption(q.options, looking, chosen) : undefined;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).tagName === "INPUT") return;
+    const tag = (e.target as HTMLElement).tagName;
+    if (e.ctrlKey || e.metaKey || e.altKey || tag === "INPUT" || tag === "TEXTAREA") return;
     const n = Number(e.key);
     if (Number.isInteger(n) && n >= 1 && n <= q.options.length) {
       e.preventDefault();
@@ -154,7 +185,8 @@ export const QuestionCard = memo(function QuestionCard({
         </span>
       </header>
       <div className="question-body" ref={box} tabIndex={-1} onKeyDown={onKeyDown} role="group" aria-labelledby={`question-${item.id}`}>
-        <ul className="question-options" role={q.multiSelect ? "group" : "radiogroup"}>
+        <div className={hasPreview ? "question-split" : undefined}>
+        <ul className="question-options" role={q.multiSelect ? "group" : "radiogroup"} onMouseLeave={() => setLooking(null)}>
           {q.options.map((o, i) => {
             const on = chosen.includes(o.label);
             return (
@@ -165,6 +197,8 @@ export const QuestionCard = memo(function QuestionCard({
                   role={q.multiSelect ? "checkbox" : "radio"}
                   aria-checked={on}
                   onClick={() => pick(o.label)}
+                  onMouseEnter={() => setLooking(o.label)}
+                  onFocus={() => setLooking(o.label)}
                 >
                   <span className="question-number" aria-hidden>
                     {on && q.multiSelect ? <Check size={12} /> : i + 1}
@@ -215,6 +249,28 @@ export const QuestionCard = memo(function QuestionCard({
             )}
           </li>
         </ul>
+        {hasPreview && (
+          <div className="question-preview-side">
+            <div className="question-preview" aria-live="polite" aria-label={shown ? `Preview: ${shown.label}` : "Preview"}>
+              {shown?.preview ? <Preview text={shown.preview} /> : <p className="question-preview-empty">No preview for this option.</p>}
+            </div>
+            <textarea
+              className="setting-textarea question-notes"
+              rows={2}
+              value={notes[q.question] ?? ""}
+              placeholder="Add notes (optional)"
+              aria-label="Notes for this answer"
+              onChange={(e) => setNotes({ ...notes, [q.question]: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && hasAnswer) {
+                  e.preventDefault();
+                  next();
+                }
+              }}
+            />
+          </div>
+        )}
+        </div>
         <div className="permission-foot">
           {total > 1 && (
             <span className="permission-scope">

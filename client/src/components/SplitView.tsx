@@ -249,8 +249,8 @@ export function SplitPane({ sessionId, target, main, focusKey, onClose, onState,
   const decide = (requestId: string, decision: Decision) => {
     if (send({ type: "permission.reply", request_id: requestId, decision })) dispatch({ type: "decide", requestId, decision });
   };
-  const answer = (requestId: string, answers: Record<string, string> | null) => {
-    if (send({ type: "question.reply", request_id: requestId, answers })) dispatch({ type: "answer", requestId, answers });
+  const answer = (requestId: string, answers: Record<string, string> | null, notes?: Record<string, string>) => {
+    if (send({ type: "question.reply", request_id: requestId, answers, notes })) dispatch({ type: "answer", requestId, answers, notes });
   };
   const decidePlan = (requestId: string, decision: PlanDecision, planMode?: PermissionMode, feedback?: string) => {
     if (send({ type: "plan.reply", request_id: requestId, decision, mode: planMode, feedback })) dispatch({ type: "plan", requestId, decision, mode: planMode });

@@ -63,6 +63,7 @@ from .tools.base import ToolError
 from .tools.document import check_preview_file
 from .tools.grep import search_project
 from .tools.search import find_paths
+from .tools.share import artifact_page
 from .tools.visual import FRAME_CSP, FRAME_HTML
 from .tunnels import TUNNELS, TunnelError
 from . import trash, worktrees
@@ -314,6 +315,18 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
         """The frame page of the show_visual tool. It has no data: the client sends the visual."""
         headers = {"Content-Security-Policy": FRAME_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
         return HTMLResponse(FRAME_HTML, headers=headers)
+
+    @app.get("/artifacts/{artifact_id}/")
+    @app.get("/artifacts/{artifact_id}/index.html")
+    async def artifact(artifact_id: str):
+        """An artifact page of the artifact tool (tools/share.py), for the Browser pane. The id is the secret."""
+        page = artifact_page(artifact_id)
+        if page is None:
+            raise HTTPException(status_code=404)
+        headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+                   # The page runs in a sandbox with its own origin: it cannot read other daemon URLs.
+                   "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"}
+        return FileResponse(page, media_type="text/html", headers=headers)
 
     @app.get("/files/{file_token}/{rel_path:path}")
     async def project_file(file_token: str, rel_path: str):
@@ -3084,14 +3097,20 @@ def _open_request(conn: Connection, request_id: str, kind: str) -> asyncio.Futur
 
 @handler("question.reply")
 async def on_question_reply(conn: Connection, msg: dict[str, Any]) -> None:
-    """The answers to a question card: {"request_id", "answers": {question: answer}}. Null answers: skipped."""
+    """The answers to a question card: {"request_id", "answers": {question: answer}, "notes"?: {question: note}}.
+    Null answers: skipped. A note is a free text that the user added to an answer."""
     request_id = _text_arg(msg, "request_id")
     answers = msg.get("answers")
     if answers is not None and (not isinstance(answers, dict)
                                 or not all(isinstance(k, str) and isinstance(v, str) for k, v in answers.items())):
         raise ProtocolError("'answers' must be an object of question texts and answer texts, or null.")
+    notes = msg.get("notes")
+    if notes is not None and (not isinstance(notes, dict)
+                              or not all(isinstance(k, str) and isinstance(v, str) for k, v in notes.items())):
+        raise ProtocolError("'notes' must be an object of question texts and note texts.")
     fut = _open_request(conn, request_id, "question")
-    fut.set_result({"answers": {k: v.strip()[:2000] for k, v in (answers or {}).items() if v.strip()}})
+    fut.set_result({"answers": {k: v.strip()[:2000] for k, v in (answers or {}).items() if v.strip()},
+                    "notes": {k: v.strip()[:2000] for k, v in (notes or {}).items() if v.strip()}})
 
 
 @handler("plan.reply")

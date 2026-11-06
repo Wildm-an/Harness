@@ -10,6 +10,7 @@ import { QuestionCard } from "./QuestionCard";
 import { PlanCard } from "./PlanCard";
 import { ToolGroup } from "./ToolGroup";
 import { PlanBlock, WrapUpBox } from "./ProgressBlocks";
+import { ShareCard } from "./ShareCards";
 import { isProgressTool, latestPlan, latestWrapUp } from "../lib/progress";
 import { WorkingLine } from "./WorkingLine";
 import { VisualBlock } from "./VisualBlock";
@@ -358,7 +359,7 @@ export function MessageList({
   reviewId: string | null; // The item that the diff review pane shows.
   onDecide: (requestId: string, decision: Decision) => void;
   onReview: (itemId: string) => void;
-  onAnswer?: (requestId: string, answers: Record<string, string> | null) => void; // A question card.
+  onAnswer?: (requestId: string, answers: Record<string, string> | null, notes?: Record<string, string>) => void; // A question card.
   onPlan?: (requestId: string, decision: PlanDecision, mode?: PermissionMode, feedback?: string) => void; // A plan card.
   onSendNow?: (id: string) => void;
   onRemoveQueued?: (id: string) => void;
@@ -503,6 +504,8 @@ export function MessageList({
               return <SummaryCard key={item.id} item={item} />;
             case "file":
               return <FileCard key={item.id} path={item.path} />;
+            case "card":
+              return <ShareCard key={item.id} card={item.card} />;
           }
         })}
         {/* A sent message that waits shows above the task list, as in the Claude app (the user asked for this). */}
@@ -514,6 +517,8 @@ export function MessageList({
             steps={plan.steps}
             running={running && plan.current}
             finished={plan.finished}
+            times={plan.times}
+            total={plan.total}
             // A plan of an older turn, or a message that the user wrote during the turn: the plan can change.
             stale={!plan.current || (running && queued.length > 0)}
           />

@@ -76,7 +76,7 @@ SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 
 # Fields of stored messages that only the client uses. The model does not get them.
 # The model gets the "image" of a tool result in a separate message. See Agent.messages.
-CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin", "images", "created")
+CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin", "images", "created", "card")
 # A user message with images, for a model with no image input.
 NO_IMAGE_NOTE = ("[The user attached {count} image(s). This model cannot read images, so you cannot see them. "
                  "Tell the user, if the images are important for the task.]")
@@ -201,6 +201,7 @@ class Agent:
         self._harness_notes: list[str] = []  # Notes for the next step of a turn.
         self._turn_start = 0  # The history index of the user message of the turn.
         self._plan_nudged = False  # The turn got the reminder to show a task list.
+        self._stale_nudges = (-1, 0)  # (history index of the last plan, reminders sent for it): PLAN_STALE_NOTE.
         self._rebuild_prompt()
 
     def _plugin_sections(self) -> list[str]:
@@ -764,7 +765,7 @@ class Agent:
                     result = await self._run_tool_call(call)
                     in_flight = None
                     self._add_tool_result(call["id"], result.output, result.is_error, result.diff, result.image,
-                                          result.created)
+                                          result.created, result.card)
                     open_calls.pop(0)
                     if result is _DENIED_RESULT or result.stop_turn:
                         stop = "denied"
@@ -949,7 +950,9 @@ class Agent:
 
         - a new prompt of the user while the last plan has steps that are not completed,
         - a message of the user during the turn (a steer), when a plan exists,
-        - three tool calls in a turn with no plan (one time in the turn).
+        - three tool calls in a turn with no plan (one time in the turn),
+        - each PLAN_STALE_CALLS tool calls in a turn with no plan update while the plan has open steps.
+          Some models finish many steps and then mark them all completed at the end.
         """
         if not self.user_facing or "update_plan" not in self.tools or origin == "task":
             return None
@@ -964,7 +967,29 @@ class Agent:
         if not in_turn and calls >= PLAN_NUDGE_CALLS and not self._plan_nudged:
             self._plan_nudged = True
             return PLAN_START_NOTE
+        if open_steps:
+            stale = self._stale_plan_note()
+            if stale:
+                return stale
         return None
+
+    def _stale_plan_note(self) -> str | None:
+        """PLAN_STALE_NOTE after each PLAN_STALE_CALLS tool calls in the turn since the last update_plan."""
+        last = self._turn_start
+        for i in range(len(self.history) - 1, self._turn_start, -1):
+            m = self.history[i]
+            if m.get("role") == "assistant" and any(
+                    (c.get("function") or {}).get("name") == "update_plan" for c in m.get("tool_calls") or []):
+                last = i
+                break
+        since = sum(1 for m in self.history[last + 1:] if m.get("role") == "assistant"
+                    for c in m.get("tool_calls") or []
+                    if (c.get("function") or {}).get("name") not in ("update_plan", "wrap_up"))
+        index, sent = self._stale_nudges if self._stale_nudges[0] == last else (last, 0)
+        if since < PLAN_STALE_CALLS * (sent + 1):
+            return None
+        self._stale_nudges = (index, sent + 1)
+        return PLAN_STALE_NOTE.format(calls=since)
 
     def _add_harness_note(self, text: str) -> dict[str, Any]:
         """Add a user message from the loop guards. The client does not show it in the chat."""
@@ -1237,14 +1262,18 @@ class Agent:
         await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
 
     def _add_tool_result(self, call_id: str, output: str, is_error: bool, diff: str | None = None,
-                         image: str | None = None, created: list[str] | None = None) -> None:
-        message = {"role": "tool", "tool_call_id": call_id, "content": output, "is_error": is_error}
+                         image: str | None = None, created: list[str] | None = None,
+                         card: dict[str, Any] | None = None) -> None:
+        # ts: the end time of the call, for the step times of the task list in the client.
+        message = {"role": "tool", "tool_call_id": call_id, "content": output, "is_error": is_error, "ts": time.time()}
         if diff:
             message["diff"] = diff
         if image:
             message["image"] = image
         if created:
             message["created"] = list(created)
+        if card:
+            message["card"] = card
         self.history.append(message)
 
     def _close_open_calls(self, open_calls: list[dict[str, str]], output: str) -> None:
@@ -1282,6 +1311,8 @@ class Agent:
             event["image"] = result.image
         if result.created:
             event["created"] = result.created
+        if result.card:
+            event["card"] = result.card
         await self.emit(event)
         for path in result.changed_paths:
             await self.emit({"type": "fs.changed", "path": relpath(self.cwd, path), "hash": file_hash(path), "by": "agent"})
@@ -1382,6 +1413,10 @@ PLAN_STEER_NOTE = ("[Harness: The user sent a message during your work. If it ch
 PLAN_OPEN_NOTE = ("[Harness: The task list under your last message has steps that are not completed: {steps}. If "
                   "the new message continues or changes this work, call update_plan with the new whole list first. "
                   "If it is a short question, answer it.]")
+PLAN_STALE_CALLS = 8
+PLAN_STALE_NOTE = ("[Harness: You made {calls} tool calls since your last update_plan. When a step finishes, call "
+                   "update_plan at once with that step completed and the next step in_progress. Do not wait to "
+                   "mark many steps completed at the end. If the current step is still in progress, continue.]")
 PLAN_OFF_NOTE = "[Harness: Plan mode is off. You can change files again. Stay in the scope of the request.]"
 MEMORY_NOTE = ("[Harness: The user changed the memory in Settings. This memory replaces the memory in the "
                "system prompt.]\n\n{memory}")

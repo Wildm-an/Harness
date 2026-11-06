@@ -122,6 +122,18 @@ export function toolAction(item: ToolItem): ToolAction {
     case "show_visual":
       // A visual in the chat (daemon tools/visual.py). It shows as a row only when it failed.
       return { verb: pick("Made", "Making"), object: "a visual", mono: false };
+    case "send_file": {
+      // Files for the user (daemon tools/share.py). The card shows them, so the row shows only on an error.
+      const files = Array.isArray(a.files) ? a.files : [a.files];
+      return { verb: pick("Sent", "Sending"), object: files.length === 1 ? baseName(text(files[0]) || "a file") : `${files.length} files`, mono: false };
+    }
+    case "artifact": {
+      const action = text(a.action) || "publish";
+      if (action === "list") return { verb: pick("Listed", "Listing"), object: "the artifacts", mono: false };
+      if (action === "read") return { verb: pick("Read", "Reading"), object: "an artifact", mono: false };
+      if (action === "delete") return { verb: pick("Deleted", "Deleting"), object: "an artifact", mono: false };
+      return { verb: pick("Published", "Publishing"), object: text(a.title) || baseName(text(a.file_path) || "an artifact"), mono: false };
+    }
     case "show_document":
       // The agent opened a PDF or Word file in the Preview pane (daemon tools/document.py).
       return { verb: pick("Opened preview of", "Opening preview of"), object: baseName(text(a.path) || "a document"), mono: false };

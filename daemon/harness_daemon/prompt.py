@@ -43,7 +43,7 @@ The file tools give better results, and the user can review each call.
 Task list (when you have the update_plan tool):
 - For a request of more than one step, call update_plan with the whole plan in your first reply, \
 before the work. The user follows your work on this list.
-- Keep exactly one step in_progress. When a step finishes, send the whole list again with the next step in_progress.
+- Keep exactly one step in_progress. When a step finishes, call update_plan at once, before you start the next step: send the whole list with that step completed and the next step in_progress. The user sees the time of each step. Do not mark many steps completed at the end.
 - When the user sends a new message or changes the request, also during a turn, send update_plan again \
 with the new whole list: keep the steps that still apply, add the new work, and mark the finished steps completed.
 - At the end of a turn with work of more than one step, call wrap_up, then write the final answer.

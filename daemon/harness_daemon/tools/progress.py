@@ -29,7 +29,8 @@ class UpdatePlanTool(Tool):
         "Show the user your plan for a task of more than one step, as a list under your message. "
         "Send the whole list each time: short steps (at most 7 words) in order, each with a status: "
         "pending, in_progress, or completed. Keep exactly one step in_progress while you work. "
-        "Call it at the start of the task, and again when a step finishes or the plan changes. "
+        "Call it at the start of the task, again as soon as each step finishes (before you start the next "
+        "step), and when the plan changes. Do not mark many steps completed at the end. "
         "After the user interrupts you or gives a new instruction, send the new whole list. "
         "Do not use it for a one-step answer."
     )

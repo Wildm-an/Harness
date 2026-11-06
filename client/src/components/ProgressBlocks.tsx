@@ -3,12 +3,28 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, CircleCheck, CircleEllipsis, LoaderCircle } from "lucide-react";
 import type { PlanStep, WrapUp } from "../lib/progress";
+import { formatElapsed } from "./WorkingLine";
 
 /**
  * The plan of the agent: a check mark for a completed step, a spinner for the step in progress, a
- * dashed circle for the rest. A finished plan folds into one line. A click on the line opens it.
+ * dashed circle for the rest. A completed step shows its time at the right. A finished plan folds
+ * into one line with the total time. A click on the line opens it.
  */
-export function PlanBlock({ steps, running, finished, stale = false }: { steps: PlanStep[]; running: boolean; finished: boolean; stale?: boolean }) {
+export function PlanBlock({
+  steps,
+  running,
+  finished,
+  stale = false,
+  times = [],
+  total = null,
+}: {
+  steps: PlanStep[];
+  running: boolean;
+  finished: boolean;
+  stale?: boolean;
+  times?: (number | null)[];
+  total?: number | null;
+}) {
   const done = steps.filter((s) => s.status === "completed").length;
   const [open, setOpen] = useState(!finished);
   useEffect(() => setOpen(!finished), [finished]);
@@ -19,6 +35,7 @@ export function PlanBlock({ steps, running, finished, stale = false }: { steps: 
         <span className="plan-text">
           Plan finished · {steps.length} {steps.length === 1 ? "step" : "steps"}
         </span>
+        {total !== null && <span className="plan-time">{formatElapsed(total)}</span>}
         <ChevronRight size={14} aria-hidden className="plan-chevron" />
       </button>
     );
@@ -31,6 +48,7 @@ export function PlanBlock({ steps, running, finished, stale = false }: { steps: 
         <button type="button" className="plan-fold" aria-expanded onClick={() => setOpen(false)} title="Hide the steps">
           <span>Plan finished</span>
           <ChevronRight size={14} aria-hidden className="plan-chevron open" />
+          {total !== null && <span className="plan-time">{formatElapsed(total)}</span>}
         </button>
       )}
       {steps.map((step, i) => (
@@ -45,6 +63,7 @@ export function PlanBlock({ steps, running, finished, stale = false }: { steps: 
             <span className={`plan-icon plan-circle${step.status === "pending" ? " dashed" : ""}`} aria-hidden />
           )}
           <span className="plan-text">{step.content}</span>
+          {times[i] != null && <span className="plan-time">{formatElapsed(times[i] as number)}</span>}
           <span className="sr-only">
             {step.status === "completed" ? " (completed)" : step.status === "in_progress" ? " (in progress)" : " (pending)"}
           </span>

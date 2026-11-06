@@ -24,6 +24,7 @@ ALLOWED_CDNS = ("cdnjs.cloudflare.com", "cdn.jsdelivr.net", "unpkg.com")
 _CDN_SOURCES = " ".join(f"https://{host}" for host in ALLOWED_CDNS)
 MAX_VISUAL_CODE = 200_000  # Characters. The visual goes to the client in the tool call.
 TITLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+MAX_LOADING = 4  # Loading messages: at most 4, each 80 characters or less.
 
 # The CSP of the frame page. "sandbox" also applies if the iframe loses its sandbox attribute.
 FRAME_CSP = (
@@ -83,7 +84,10 @@ class ShowVisualTool(Tool):
         "- Scripts and styles can load only from cdnjs.cloudflare.com, cdn.jsdelivr.net, and "
         "unpkg.com. fetch and other network calls do not work.\n"
         "- Call sendPrompt(text) in a button click to send text as the next prompt of the user.\n"
-        "- Keep the code short. Do not repeat the visual in your text reply."
+        "- Keep the code short. Do not repeat the visual in your text reply.\n"
+        "- Optional: 'loading_messages', 1 to 4 short lines (about 5 words) that show while the "
+        "visual loads. For a serious topic, keep them plain. The title is also the file name when "
+        "the user downloads the visual."
     )
     parameters = {
         "type": "object",
@@ -95,6 +99,12 @@ class ShowVisualTool(Tool):
             "code": {
                 "type": "string",
                 "description": "The HTML fragment or the <svg> element.",
+            },
+            "loading_messages": {
+                "type": "array",
+                "maxItems": MAX_LOADING,
+                "items": {"type": "string"},
+                "description": "Optional. 1 to 4 short lines that show while the visual loads.",
             },
         },
         "required": ["title", "code"],
@@ -109,6 +119,10 @@ class ShowVisualTool(Tool):
             raise ToolError("code is empty. Give an HTML fragment or an <svg> element.")
         if len(code) > MAX_VISUAL_CODE:
             raise ToolError(f"code has {len(code)} characters. The limit is {MAX_VISUAL_CODE}. Make the visual smaller.")
+        loading = args.get("loading_messages")
+        if loading is not None and (not isinstance(loading, list) or len(loading) > MAX_LOADING
+                                    or not all(isinstance(m, str) and 0 < len(m.strip()) <= 80 for m in loading)):
+            raise ToolError(f"loading_messages must be a list of 1 to {MAX_LOADING} short texts (80 characters or less).")
         blocked = blocked_sources(code)
         if blocked:
             raise ToolError(
