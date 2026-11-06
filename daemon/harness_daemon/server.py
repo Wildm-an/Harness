@@ -71,7 +71,7 @@ from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
-from .prstatus import file_statuses, folder_changes, pr_info, pr_status
+from .prstatus import file_statuses, folder_changes, folder_diff, pr_info, pr_status
 from . import update
 from . import session as session_mod
 from .tools.sessions import NEW_TASK_CHOICES
@@ -2233,6 +2233,26 @@ async def on_git_changes(conn: Connection, msg: dict[str, Any]) -> None:
             await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.changes")
             return
         await conn.send({"type": "git.changes", "cwd": msg.get("cwd"), **{k: v for k, v in result.items() if k != "path"}})
+
+    asyncio.create_task(work())
+
+
+@handler("git.diff")
+async def on_git_diff(conn: Connection, msg: dict[str, Any]) -> None:
+    """The full change of a folder, for the Changes pane: {"cwd", "scope"}. ``scope`` is "branch" (against
+    the base of the branch, the default) or "uncommitted". The reply is "git.diff", with each file and its
+    unified diff. It runs as a task: git can be slow on a large folder."""
+    cwd = str(_project_dir(msg.get("cwd")))
+    scope = "uncommitted" if msg.get("scope") == "uncommitted" else "branch"
+
+    async def work() -> None:
+        try:
+            result = await folder_diff(cwd, scope)
+        except Exception as e:  # noqa: BLE001 - the pane shows the error.
+            log.exception("The diff failed")
+            await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.diff")
+            return
+        await conn.send({"type": "git.diff", "cwd": msg.get("cwd"), **result})
 
     asyncio.create_task(work())
 
