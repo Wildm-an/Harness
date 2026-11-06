@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { nativeRects, type ScreenRect } from "../lib/overlay";
 
 // All hover tips of the app use this one style, as in Claude: a small dark box, with the key
 // of the action in muted text. The components keep the `title` attribute. While the pointer
@@ -40,6 +41,45 @@ export function limitTip(tip: string): string {
 export function splitTip(tip: string): { text: string; keys: string | null } {
   const m = /^([\s\S]*\S)\s+\(((?:Ctrl|Alt|Shift|Cmd|Win|Esc|F\d{1,2})\b[^()]*)\)$/.exec(tip.trim());
   return m ? { text: m[1], keys: m[2] } : { text: tip.trim(), keys: null };
+}
+
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+const hits = (a: Box, r: ScreenRect) => a.left < r.right && a.left + a.width > r.left && a.top < r.bottom && a.top + a.height > r.top;
+
+/**
+ * The place of a tip: below the element, or above it if there is no space below. The Browser pane page
+ * is a native window over the app, so a tip on it does not show: then the tip goes to the other side,
+ * or next to the element (for example the annotation bar under the page). The tip stays in the window.
+ */
+export function placeTip(
+  a: { left: number; top: number; right: number; bottom: number },
+  size: { width: number; height: number },
+  view: { width: number; height: number },
+  natives: ScreenRect[] = [],
+): { left: number; top: number } {
+  const { width, height } = size;
+  const clampX = (x: number) => Math.min(Math.max(EDGE, x), view.width - width - EDGE);
+  const clampY = (y: number) => Math.min(Math.max(EDGE, y), view.height - height - EDGE);
+  const left = clampX((a.left + a.right) / 2 - width / 2);
+  const below = a.bottom + GAP;
+  const above = a.top - GAP - height;
+  const free = (b: Box) => !natives.some((r) => hits(b, r));
+  // The places that do not cover the element: below, then above.
+  const vertical = [below, above].filter((top) => top >= EDGE && top + height + EDGE <= view.height).map((top) => ({ left, top }));
+  for (const place of vertical) if (free({ ...place, width, height })) return place;
+  const middle = clampY((a.top + a.bottom) / 2 - height / 2);
+  const sides = [
+    { left: a.right + GAP, top: middle },
+    { left: a.left - GAP - width, top: middle },
+  ].filter((p) => p.left >= EDGE && p.left + width + EDGE <= view.width);
+  for (const place of sides) if (free({ ...place, width, height })) return place;
+  return vertical[0] ?? { left, top: clampY(below + height + EDGE <= view.height ? below : above) };
 }
 
 interface Shown {
@@ -150,18 +190,14 @@ export function Tooltips() {
     };
   }, []);
 
-  // Put the tip below the element, or above it if there is no space below. Keep it in the window.
+  // Put the tip below the element, or above it, and not on the Browser pane page (placeTip).
   useLayoutEffect(() => {
     if (!shown || !box.current) {
       setPos(null);
       return;
     }
     const { width, height } = box.current.getBoundingClientRect();
-    const a = shown.anchor;
-    const below = a.bottom + GAP;
-    const top = below + height + EDGE <= window.innerHeight ? below : Math.max(EDGE, a.top - GAP - height);
-    const left = Math.min(Math.max(EDGE, a.left + a.width / 2 - width / 2), window.innerWidth - width - EDGE);
-    setPos({ left, top });
+    setPos(placeTip(shown.anchor, { width, height }, { width: window.innerWidth, height: window.innerHeight }, nativeRects()));
   }, [shown]);
 
   if (!shown) return null;

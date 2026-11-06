@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { limitTip, shortTip, splitTip } from "./Tooltips";
+import { placeTip, limitTip, shortTip, splitTip } from "./Tooltips";
 
 describe("splitTip", () => {
   it("takes the key out of the text", () => {
@@ -27,5 +27,26 @@ describe("the length of a hover tip", () => {
   it("gives the first line of a long text", () => {
     expect(shortTip("import os\nimport sys\n")).toBe("import os …");
     expect(shortTip("one line")).toBe("one line");
+  });
+});
+
+describe("placeTip", () => {
+  const view = { width: 1000, height: 800 };
+  const size = { width: 100, height: 24 };
+
+  it("puts the tip below the element", () => {
+    expect(placeTip({ left: 100, top: 100, right: 130, bottom: 130 }, size, view)).toEqual({ left: 65, top: 136 });
+  });
+
+  it("puts the tip above the element when the page of the Browser pane is below it", () => {
+    const page = { left: 0, top: 140, right: 1000, bottom: 760 };
+    expect(placeTip({ left: 100, top: 100, right: 130, bottom: 130 }, size, view, [page]).top).toBe(70);
+  });
+
+  it("puts the tip next to a button of the annotation bar under the page", () => {
+    const page = { left: 0, top: 40, right: 1000, bottom: 756 };
+    const place = placeTip({ left: 400, top: 762, right: 430, bottom: 792 }, size, view, [page]);
+    expect(place.left).toBe(436);
+    expect(place.top + size.height).toBeGreaterThan(756);
   });
 });
