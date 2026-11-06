@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -44,8 +46,36 @@ async def _run(args: list[str], cwd: str, timeout: float) -> tuple[int, str]:
     return proc.returncode or 0, out.decode("utf-8", "replace")
 
 
+# The fields of a pull request that the app shows: the hover card, the sidebar, and the rail.
+PR_FIELDS = "number,state,url,isDraft,title,additions,deletions,changedFiles,author,updatedAt,mergedAt,closedAt,headRefName,baseRefName"
+
+_REPO_RE = re.compile(r"github\.com/([^/\s]+/[^/\s]+)/pull/\d+", re.IGNORECASE)
+
+
+def repo_of(url: str | None) -> str | None:
+    """"owner/name" of a GitHub pull request URL, else None."""
+    m = _REPO_RE.search(url or "")
+    return m.group(1) if m else None
+
+
+_REMOTE_RE = re.compile(r"github\.com[:/]+([^/\s:]+/[^/\s]+?)(?:\.git)?/?$", re.IGNORECASE)
+
+
+def github_repo(remote: str) -> str | None:
+    """"owner/name" of a GitHub remote URL (https or ssh), else None."""
+    m = _REMOTE_RE.search(remote.strip())
+    return m.group(1) if m else None
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def parse_pr(text: str) -> dict[str, Any] | None:
-    """The output of ``gh pr view --json number,state,url,isDraft,title``. state: open, draft, merged, or closed."""
+    """The output of ``gh pr view --json PR_FIELDS``. state: open, draft, merged, or closed.
+
+    ``updated_at`` is the time of the last state change: the merge, the close, or the last update.
+    """
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -55,7 +85,23 @@ def parse_pr(text: str) -> dict[str, Any] | None:
     state = str(data.get("state") or "").lower()
     if state == "open" and data.get("isDraft"):
         state = "draft"
-    return {"number": data["number"], "state": state, "url": data.get("url"), "title": data.get("title")}
+    author = data.get("author")
+    login = author.get("login") if isinstance(author, dict) else None
+    url = data.get("url")
+    return {
+        "number": data["number"],
+        "state": state,
+        "url": url,
+        "title": data.get("title"),
+        "repo": repo_of(url if isinstance(url, str) else None),
+        "additions": _int(data.get("additions")),
+        "deletions": _int(data.get("deletions")),
+        "changed_files": _int(data.get("changedFiles")),
+        "author": login if isinstance(login, str) else None,
+        "updated_at": data.get("mergedAt") or data.get("closedAt") or data.get("updatedAt"),
+        "head": data.get("headRefName"),
+        "base": data.get("baseRefName"),
+    }
 
 
 async def folder_status(path: str) -> dict[str, Any]:
@@ -73,11 +119,33 @@ async def folder_status(path: str) -> dict[str, Any]:
             result["branch"] = branch
             gh = shutil.which("gh")
             if gh:
-                code, out = await _run([gh, "pr", "view", "--json", "number,state,url,isDraft,title"], path, GH_TIMEOUT)
-                if code == 0:
-                    result["pr"] = parse_pr(out)
+                result["pr"] = await branch_pr(gh, path)
     _cache[key] = (time.monotonic(), result)
     return result
+
+
+async def branch_pr(gh: str, path: str) -> dict[str, Any] | None:
+    """The pull request of the current branch of a folder (``gh pr view``), else None."""
+    code, out = await _run([gh, "pr", "view", "--json", PR_FIELDS], path, GH_TIMEOUT)
+    return parse_pr(out) if code == 0 else None
+
+
+_info_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
+
+async def pr_info(url: str) -> dict[str, Any] | None:
+    """A pull request from its URL, for the hover card of a link in the chat. None: no ``gh``, or
+    gh cannot read it (no access, a bad URL, no network). The result stays in a cache for a short time."""
+    cached = _info_cache.get(url)
+    if cached and time.monotonic() - cached[0] < CACHE_SECONDS:
+        return cached[1]
+    gh = shutil.which("gh")
+    if not gh or not repo_of(url):
+        return None
+    code, out = await _run([gh, "pr", "view", url, "--json", PR_FIELDS], os.path.expanduser("~"), GH_TIMEOUT)
+    pr = parse_pr(out) if code == 0 else None
+    _info_cache[url] = (time.monotonic(), pr)
+    return pr
 
 
 async def pr_status(paths: list[str]) -> list[dict[str, Any]]:
@@ -114,18 +182,46 @@ def _count_lines(path: str) -> int:
     return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
-async def folder_changes(path: str) -> dict[str, Any]:
+async def _numstat(git: str, path: str, *revs: str) -> dict[str, int]:
+    """{"files", "added", "removed"} of ``git diff --numstat <revs>``. All zero when git fails."""
+    code, out = await _run([git, "diff", "--numstat", *revs], path, GIT_TIMEOUT)
+    added, removed, files = parse_numstat(out) if code == 0 else (0, 0, 0)
+    return {"files": files, "added": added, "removed": removed}
+
+
+async def _count(git: str, path: str, revs: str) -> int:
+    """The number of commits of ``git rev-list --count <revs>``. 0 when git fails."""
+    code, out = await _run([git, "rev-list", "--count", revs], path, GIT_TIMEOUT)
+    return int(out.strip()) if code == 0 and out.strip().isdigit() else 0
+
+
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # The base of a repository with no commit yet.
+
+
+async def folder_changes(path: str, with_pr: bool = True) -> dict[str, Any]:
     """The changes of a folder against its base, as Claude Code shows them in the session rail.
 
     The base is the merge base of HEAD with the default branch of ``origin`` (for example
-    ``origin/main``), else HEAD. The count has the commits that the base does not have, the
+    ``origin/main``), else HEAD. The totals have the commits that the base does not have, the
     uncommitted changes, and the new files that git does not ignore.
 
-    Return {"path", "repo", "branch", "base", "added", "removed", "files", "github"}. ``github``:
-    the ``origin`` remote is on GitHub and ``gh`` is installed, so a pull request is possible.
+    The work is also in three parts, so the rail can show each part in its own color:
+
+    - ``uncommitted``: the changes and the new files that are not in a commit.
+    - ``unpushed``: the commits that the remote branch does not have. None with no remote.
+    - ``pushed``: the commits on the remote branch that the base does not have. None when the
+      branch is not on the remote.
+
+    Each part is {"files", "added", "removed"}, and ``unpushed`` and ``pushed`` also have "commits".
+    ``upstream`` is the remote branch (for example ``origin/feature``), and ``behind`` is the number
+    of its commits that HEAD does not have. ``pr`` is the pull request of the branch (with_pr).
+
+    ``github``: the ``origin`` remote is on GitHub and ``gh`` is installed, so a pull request is possible.
     """
     result: dict[str, Any] = {"path": path, "repo": False, "branch": None, "base": None,
-                              "added": 0, "removed": 0, "files": 0, "github": False}
+                              "added": 0, "removed": 0, "files": 0, "github": False, "github_repo": None, "remote": False,
+                              "upstream": None, "behind": 0, "uncommitted": None, "unpushed": None,
+                              "pushed": None, "pr": None}
     git = shutil.which("git")
     if not git:
         return result
@@ -137,7 +233,10 @@ async def folder_changes(path: str) -> dict[str, Any]:
     result["branch"] = branch if branch and branch != "HEAD" else None
     code, remote = await _run([git, "remote", "get-url", "origin"], path, GIT_TIMEOUT)
     remote = remote.strip() if code == 0 else ""
-    result["github"] = "github.com" in remote.lower() and shutil.which("gh") is not None
+    result["remote"] = bool(remote)
+    gh = shutil.which("gh")
+    result["github"] = "github.com" in remote.lower() and gh is not None
+    result["github_repo"] = github_repo(remote)
     base_ref = None
     if remote:
         code, out = await _run([git, "rev-parse", "--abbrev-ref", "origin/HEAD"], path, GIT_TIMEOUT)
@@ -148,22 +247,55 @@ async def folder_changes(path: str) -> dict[str, Any]:
                 if code == 0:
                     base_ref = name
                     break
-    base = "HEAD"
-    if base_ref:
+    code, _ = await _run([git, "rev-parse", "--verify", "--quiet", "HEAD"], path, GIT_TIMEOUT)
+    head = "HEAD" if code == 0 else EMPTY_TREE
+    base = head
+    if base_ref and head == "HEAD":
         code, out = await _run([git, "merge-base", "HEAD", base_ref], path, GIT_TIMEOUT)
         if code == 0 and out.strip():
             base = out.strip()
             result["base"] = base_ref
-    code, out = await _run([git, "diff", "--numstat", base], path, GIT_TIMEOUT)
-    if code == 0:
-        result["added"], result["removed"], result["files"] = parse_numstat(out)
+
+    # The remote branch: the upstream of the branch, else a branch of origin with the same name
+    # (a push with no -u). Only a branch of a remote counts.
+    upstream = None
+    if remote and result["branch"]:
+        code, out = await _run([git, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], path, GIT_TIMEOUT)
+        upstream = out.strip() if code == 0 and out.strip() else None
+        if upstream is None:
+            name = f"origin/{result['branch']}"
+            code, _ = await _run([git, "rev-parse", "--verify", "--quiet", f"refs/remotes/{name}"], path, GIT_TIMEOUT)
+            upstream = name if code == 0 else None
+    result["upstream"] = upstream
+
     code, out = await _run([git, "ls-files", "--others", "--exclude-standard"], path, GIT_TIMEOUT)
-    if code == 0:
-        untracked = [line for line in out.splitlines() if line.strip()]
-        result["files"] += len(untracked)
-        counts = await asyncio.to_thread(
-            lambda: sum(_count_lines(f"{path}/{name}") for name in untracked[:MAX_UNTRACKED]))
-        result["added"] += counts
+    untracked = [line for line in out.splitlines() if line.strip()] if code == 0 else []
+    new_lines = await asyncio.to_thread(lambda: sum(_count_lines(f"{path}/{name}") for name in untracked[:MAX_UNTRACKED]))
+
+    total = await _numstat(git, path, base)
+    result["files"] = total["files"] + len(untracked)
+    result["added"] = total["added"] + new_lines
+    result["removed"] = total["removed"]
+
+    uncommitted = await _numstat(git, path, head)
+    uncommitted["files"] += len(untracked)
+    uncommitted["added"] += new_lines
+    result["uncommitted"] = uncommitted
+
+    if head == "HEAD" and upstream:
+        result["unpushed"] = {"commits": await _count(git, path, f"{upstream}..HEAD"), **await _numstat(git, path, f"{upstream}...HEAD")}
+        result["behind"] = await _count(git, path, f"HEAD..{upstream}")
+        if base_ref:
+            result["pushed"] = {"commits": await _count(git, path, f"{base_ref}..{upstream}"), **await _numstat(git, path, f"{base_ref}...{upstream}")}
+    elif head == "HEAD" and remote:
+        # The branch is not on the remote: all its commits since the base are not pushed.
+        commits = await _count(git, path, f"{base_ref}..HEAD") if base_ref else await _count(git, path, "HEAD")
+        result["unpushed"] = {"commits": commits, **(await _numstat(git, path, base, "HEAD") if base != "HEAD" else {"files": 0, "added": 0, "removed": 0})}
+
+    if with_pr and result["github"] and result["branch"] and gh:
+        result["pr"] = await branch_pr(gh, path)
+        # The sidebar gets the new state at its next request.
+        _cache[path_key(path)] = (time.monotonic(), {"path": path, "branch": result["branch"], "pr": result["pr"]})
     return result
 
 

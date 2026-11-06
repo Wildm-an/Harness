@@ -113,6 +113,12 @@ export function Tooltips() {
       if (!target) return;
       // Put back the muted titles first, so a parent with a title can show its own tip.
       if (current && !current.contains(target)) release();
+      // An element with its own hover card (a pull request mark): no tip, and its parents show no tip.
+      const card = target.closest<HTMLElement>("[data-hover-card]");
+      if (card) {
+        if (current !== card) take(card);
+        return;
+      }
       const found = target.closest<HTMLElement>("[title]");
       const next = found?.closest("[data-native-tip]") ? null : found;
       if (current && current.contains(target) && (!next || !current.contains(next))) return;

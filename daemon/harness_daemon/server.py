@@ -70,7 +70,7 @@ from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
-from .prstatus import file_statuses, folder_changes, pr_status
+from .prstatus import file_statuses, folder_changes, pr_info, pr_status
 from . import update
 from . import session as session_mod
 from .tools.sessions import NEW_TASK_CHOICES
@@ -2238,6 +2238,26 @@ async def on_git_changes(conn: Connection, msg: dict[str, Any]) -> None:
             await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.changes")
             return
         await conn.send({"type": "git.changes", "cwd": msg.get("cwd"), **{k: v for k, v in result.items() if k != "path"}})
+
+    asyncio.create_task(work())
+
+
+@handler("git.pr_info")
+async def on_git_pr_info(conn: Connection, msg: dict[str, Any]) -> None:
+    """A pull request from its GitHub URL, for the hover card of a link in the chat: {"url"}.
+    The reply is "git.pr_info": {"url", "pr"}. ``pr`` is None when gh cannot read it."""
+    url = msg.get("url")
+    if not isinstance(url, str) or not url.strip() or len(url) > 500:
+        await conn.error("git.pr_info needs a pull request URL.", ref="git.pr_info")
+        return
+
+    async def work() -> None:
+        try:
+            pr = await pr_info(url.strip())
+        except Exception:  # noqa: BLE001 - the card shows only the link.
+            log.exception("The pull request info failed")
+            pr = None
+        await conn.send({"type": "git.pr_info", "url": url, "pr": pr})
 
     asyncio.create_task(work())
 

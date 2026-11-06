@@ -1,8 +1,10 @@
-import { memo, type ReactNode } from "react";
+import { memo, useEffect, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openLink } from "../lib/openLink";
 import { parsePathRef, useOpenPath } from "../lib/openPath";
+import { prInfoStore, prUrlRef, usePrInfo } from "../lib/pr";
+import { PrCard, PrIcon, useHoverCard } from "./PrCard";
 
 /** The URL of an inline code span that holds only one http or https URL, else null. */
 export function codeSpanUrl(text: string): string | null {
@@ -12,6 +14,7 @@ export function codeSpanUrl(text: string): string | null {
 
 /** A chat link. It opens in the Browser pane or the system browser. It does not replace the app page. */
 function Link({ href, children }: { href?: string; children?: ReactNode }) {
+  if (href && prUrlRef(href)) return <PrLink href={href}>{children}</PrLink>;
   return (
     <a
       href={href}
@@ -22,6 +25,34 @@ function Link({ href, children }: { href?: string; children?: ReactNode }) {
     >
       {children}
     </a>
+  );
+}
+
+/**
+ * A link to a GitHub pull request, as in the Claude app: the PR icon in the color of its state, and a
+ * hover card with the state, the title, the author, and the line counts (git.pr_info).
+ */
+function PrLink({ href, children }: { href: string; children?: ReactNode }) {
+  const pr = usePrInfo(href);
+  useEffect(() => prInfoStore.request(href), [href]);
+  const hover = useHoverCard(() => <PrCard pr={pr} url={href} loading={pr === undefined} />);
+  return (
+    <>
+      <a
+        href={href}
+        className="pr-link"
+        data-hover-card
+        {...hover.anchor}
+        onClick={(e) => {
+          e.preventDefault();
+          openLink(href);
+        }}
+      >
+        <PrIcon state={pr?.state ?? null} size={14} />
+        {children}
+      </a>
+      {hover.card}
+    </>
   );
 }
 

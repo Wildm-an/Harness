@@ -68,6 +68,13 @@ export interface RunningSession {
 /** The git state of a changed file (daemon prstatus.parse_status). */
 export type GitFileState = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflict";
 
+/** The line counts of a part of the work. */
+export interface WorkPart {
+  files: number;
+  added: number;
+  removed: number;
+}
+
 export interface GitChanges {
   repo: boolean;
   branch: string | null;
@@ -76,6 +83,15 @@ export interface GitChanges {
   removed: number;
   files: number;
   github: boolean;
+  // The parts of the work (older daemons do not send them).
+  remote?: boolean; // The repository has an "origin" remote.
+  github_repo?: string | null; // "owner/name" of the GitHub "origin" remote.
+  upstream?: string | null; // The remote branch, for example "origin/feature". null: the branch is not on the remote.
+  behind?: number; // The commits of the remote branch that HEAD does not have.
+  uncommitted?: WorkPart | null; // Not in a commit.
+  unpushed?: (WorkPart & { commits: number }) | null; // Commits that the remote branch does not have. null: no remote.
+  pushed?: (WorkPart & { commits: number }) | null; // On the remote branch, not in the base. null: not on the remote.
+  pr?: PullRequest | null; // The pull request of the branch.
 }
 
 /** A small picture of the headless agent browser page (SPEC.md section 8.7): live, or after an action. */
@@ -305,10 +321,28 @@ export interface SessionWorktree {
 }
 
 /** The pull request of the branch of a project folder. branch is null outside a git repository. */
+export type PrState = "open" | "draft" | "merged" | "closed";
+
+/** A pull request, as gh gives it (daemon prstatus.parse_pr). The details are null from an older daemon. */
+export interface PullRequest {
+  number: number;
+  state: PrState;
+  url: string | null;
+  title: string | null;
+  repo?: string | null; // "owner/name".
+  additions?: number | null;
+  deletions?: number | null;
+  changed_files?: number | null;
+  author?: string | null; // The GitHub login.
+  updated_at?: string | null; // ISO time of the merge, the close, or the last update.
+  head?: string | null;
+  base?: string | null;
+}
+
 export interface PrStatus {
   path: string;
   branch: string | null;
-  pr: { number: number; state: "open" | "draft" | "merged" | "closed"; url: string | null; title: string | null } | null;
+  pr: PullRequest | null;
 }
 
 // -- Routines: prompts that the daemon runs in a new session at the times of a cron schedule --
@@ -702,6 +736,7 @@ export type ClientMessage =
   // The branch and the pull request of project folders, for the sidebar. The reply is "pr_status".
   | { type: "git.pr_status"; paths: string[] }
   | { type: "git.changes"; cwd: string } // The changes of the folder against its base branch (the rail).
+  | { type: "git.pr_info"; url: string } // A pull request from its URL (the hover card of a chat link).
   | { type: "git.status" } // The git state of the changed files in the session folder (the file tree).
   | { type: "session.delete"; session_id: string }
   | { type: "session.move"; session_id: string; cwd: string } // Change the folder. The history stays.
@@ -917,6 +952,7 @@ export type DaemonMessage =
   | { type: "session.deleted"; id: string }
   | ({ type: "git.branches"; cwd: string } & GitBranches)
   | ({ type: "git.changes"; cwd: string } & GitChanges)
+  | { type: "git.pr_info"; url: string; pr: PullRequest | null }
   | { type: "git.status"; files: Record<string, GitFileState> } // Path in the session folder -> state.
   // The worktree of the session has uncommitted changes. Ask, then send session.update with force.
   | { type: "session.archive_confirm"; id: string; branch: string }

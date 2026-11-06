@@ -3,10 +3,12 @@
 // window the rail covers the workspace, and Esc or a click outside closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, ChevronRight, Coffee, Diff, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, GripVertical, KeyRound, Monitor } from "lucide-react";
+import { Archive, ChevronRight, Coffee, ExternalLink, Folder, GitBranch, Globe, GripVertical, KeyRound, Monitor } from "lucide-react";
 import { useSortable } from "../lib/useSortable";
 import type { GitChanges } from "../daemon/protocol";
-import { DiffCounts } from "./DiffStats";
+import { RailChanges } from "./RailChanges";
+import { PrIcon } from "./PrCard";
+import type { GitAction } from "../lib/pr";
 import { captureAgentTab } from "../browser/BrowserPane";
 import type { PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
 import type { ConnectionKind } from "../lib/connections";
@@ -57,6 +59,7 @@ export interface RailBrowser {
 const LIVE_EVERY = 1000;
 
 export function SessionRail({
+  sessionId,
   changes,
   onChangesAction,
   onOpenChanges,
@@ -80,9 +83,10 @@ export function SessionRail({
   keepAwakeDisabled,
   onClose,
 }: {
+  sessionId: string;
   changes: GitChanges | null; // The changes of the session folder against its base branch.
-  // Asks the agent to open a pull request (a GitHub remote) or to commit (a local repository). null: not possible now.
-  onChangesAction: ((kind: "pr" | "commit") => void) | null;
+  // Asks the agent to open a pull request, commit, or push. null: not possible now.
+  onChangesAction: ((action: GitAction) => void) | null;
   onOpenChanges?: () => void; // Open the Changes pane (the diff of the session), as a click on the counts in the Claude app.
   browser: RailBrowser | null;
   onShowBrowser: () => void; // Open the Browser pane on the page of the agent.
@@ -155,6 +159,8 @@ export function SessionRail({
     return () => window.clearInterval(timer);
   }, [waiting]);
   const branch = environment.worktree?.branch ?? environment.branch;
+  // The pull request of the branch: from git.changes (a newer daemon), else from the sidebar status.
+  const branchPr = changes && changes.pr !== undefined ? changes.pr : pr;
 
   // Under the environment: the computer of the agent does not sleep while the agent works in this session.
   const awake = (
@@ -179,52 +185,11 @@ export function SessionRail({
 
   const body: Record<RailSection, ReactNode | null> = {
     browser: browser ? <RailBrowserView browser={browser} onShow={onShowBrowser} /> : null,
-    // The changes of the session against its base branch, and "Create PR", as in the Claude app. Any
-    // git repository shows the count. A pull request needs a GitHub remote, else the button is "Commit".
-    changes:
-      changes?.repo ? (
-        <div className="rail-changes">
-          <Diff size={15} aria-hidden className="rail-changes-icon" />
-          <button
-            type="button"
-            className="rail-changes-count"
-            onClick={onOpenChanges}
-            disabled={!onOpenChanges}
-            title={
-              changes.files === 0
-                ? "No changes. Click to open the Changes pane."
-                : `${changes.files} ${changes.files === 1 ? "file" : "files"} changed${changes.base ? ` since ${changes.base}` : " (not committed)"}. Click to see the changes.`
-            }
-          >
-            <DiffCounts added={changes.added} removed={changes.removed} />
-          </button>
-          {changes.github ? (
-            // A branch with an open pull request: the Pull requests section shows it.
-            !(pr && (pr.state === "open" || pr.state === "draft")) && (
-              <button
-                type="button"
-                className="btn btn-small rail-changes-pr"
-                disabled={!onChangesAction || changes.files === 0}
-                title={changes.files === 0 ? "There are no changes for a pull request." : "Ask the agent to commit, push, and open a pull request"}
-                onClick={() => onChangesAction?.("pr")}
-              >
-                Create PR
-              </button>
-            )
-          ) : (
-            // No GitHub remote: no pull request is possible (the user asked for "Commit" here).
-            <button
-              type="button"
-              className="btn btn-small rail-changes-pr"
-              disabled={!onChangesAction || changes.files === 0}
-              title={changes.files === 0 ? "There are no changes to commit." : "Ask the agent to commit the changes"}
-              onClick={() => onChangesAction?.("commit")}
-            >
-              Commit
-            </button>
-          )}
-        </div>
-      ) : null,
+    // The pull request of the branch, the work in three parts (uncommitted, not pushed, pushed),
+    // and the git button ("Create PR", "Commit", "Push"), as in the Claude app.
+    changes: changes?.repo ? (
+      <RailChanges sessionId={sessionId} changes={changes} pr={branchPr} onAction={onChangesAction} onOpenChanges={onOpenChanges} onOpenPr={onOpenPr} />
+    ) : null,
     environment: (
       <>
       <dl className="rail-rows">
@@ -285,16 +250,18 @@ export function SessionRail({
     ) : (
       <p className="rail-empty">No context data yet. It shows after the first turn.</p>
     ),
-    pullRequests: pr ? (
-      <button type="button" className="rail-item" onClick={() => pr.url && onOpenPr(pr.url)} disabled={!pr.url} title={pr.url ? "Open the pull request" : undefined}>
-        <GitPullRequest size={13} aria-hidden className={`rail-pr-icon ${pr.state}`} />
+    // The Changes section shows the pull request of a git folder. This section shows it only when
+    // the Changes section does not show.
+    pullRequests: branchPr && !changes?.repo ? (
+      <button type="button" className="rail-item" onClick={() => branchPr.url && onOpenPr(branchPr.url)} disabled={!branchPr.url} title={branchPr.url ? "Open the pull request" : undefined}>
+        <PrIcon state={branchPr.state} size={13} className="rail-pr-icon" />
         <span className="rail-item-text">
           <span className="rail-item-title">
-            #{pr.number} {pr.title ?? ""}
+            #{branchPr.number} {branchPr.title ?? ""}
           </span>
-          <span className="rail-item-detail">{prStateText(pr.state)}</span>
+          <span className="rail-item-detail">{prStateText(branchPr.state)}</span>
         </span>
-        {pr.url && <ExternalLink size={12} aria-hidden className="rail-item-end" />}
+        {branchPr.url && <ExternalLink size={12} aria-hidden className="rail-item-end" />}
       </button>
     ) : null,
     servers:

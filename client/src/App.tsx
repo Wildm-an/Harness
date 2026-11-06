@@ -173,6 +173,7 @@ import {
 } from "./lib/connections";
 import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openExternal, openLocalPath, pickFiles, pickFolder, revealInExplorer } from "./lib/tauri";
 import { filesPromptText } from "./lib/fileRefs";
+import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore } from "./lib/pr";
 import { FolderMenu } from "./components/FolderMenu";
 import type { SessionActions } from "./components/SessionRow";
 
@@ -296,23 +297,6 @@ function errorText(e: unknown): string {
 function canHostAgentBrowser(kind: string | undefined): boolean {
   return isTauri() && kind === "local" && /Windows/i.test(navigator.userAgent);
 }
-
-// The prompts of the buttons of the Changes section in the session rail, as "Create PR" of the Claude app.
-const CREATE_PR_PROMPT = `Create a pull request for the changes in this session, ready for review (not a draft).
-
-1. Check for uncommitted changes. If any exist, stage and commit them with a message that says what changed and why. Do not commit files that another session or the user changed for other work: ask first.
-2. If the current branch is the default branch of the repository, make a new branch for the changes first.
-3. Push the branch to the remote.
-4. Open the pull request with \`gh pr create\`. Write a title that summarizes the change, and a body that says what changed, why, and what a reviewer must know. Follow the pull request template of the repository if it has one.
-5. If a pull request already exists for this branch, push the new commits and give its URL. Do not make a second pull request.
-6. Give the URL of the pull request at the end.`;
-
-const COMMIT_PROMPT = `Commit the changes in this session.
-
-1. Look at the uncommitted changes with git status and git diff.
-2. Stage the files of this session. Do not commit files that another session or the user changed for other work: ask first.
-3. Commit with a message that says what changed and why.
-4. Give the commit hash and a one-line summary at the end.`;
 
 export default function App() {
   // A ref, not useMemo: React Fast Refresh runs useMemo again, and a second connection object would be closed.
@@ -783,8 +767,16 @@ export default function App() {
         case "git.changes": {
           const { type: _type, ...changes } = msg;
           if (sessionRef.current && samePath(changes.cwd, sessionRef.current.cwd)) setGitChanges(changes);
+          // The pull request of the folder: the session row and the project show it at once.
+          if (changes.pr !== undefined) {
+            const item = { path: changes.cwd, branch: changes.branch, pr: changes.pr ?? null };
+            setPrStatus((m) => new Map(m).set(pathKey(changes.cwd), item));
+          }
           return;
         }
+        case "git.pr_info":
+          prInfoStore.put(msg.url, msg.pr);
+          return;
         case "pr_status":
           setPrStatus((m) => {
             const next = new Map(m);
@@ -2082,6 +2074,11 @@ export default function App() {
     [conn, dispatch],
   );
 
+  // The pull request links of the chat ask the daemon for their pull request (the hover card).
+  useEffect(() => {
+    prInfoStore.setSender(status === "open" ? (url) => sendSafely({ type: "git.pr_info", url }) : null);
+  }, [status, sendSafely]);
+
   // Stable callbacks: each user message in the chat is memoized, and a new function renders all of them again.
   const rewind = useCallback(
     (messageId: string, options: RewindOptions) => void sendSafely({ type: "session.rewind", id: messageId, ...options }),
@@ -2765,6 +2762,7 @@ export default function App() {
     // The session of the split pane stays there: a click puts the focus in its prompt box.
     onResume: (id) => (id === split ? setSplitFocus((k) => k + 1) : fromSidebar(() => resumeSession(id))()),
     onOpenSplit: (id) => openSplit(id),
+    onOpenPr: (url) => openLink(url),
     onPin: (id, pinned) => void sendSafely({ type: "session.update", session_id: id, pinned }),
     onArchive: (id, archived) => void sendSafely({ type: "session.update", session_id: id, archived }),
     onMarkUnread: (id, on) =>
@@ -3520,6 +3518,7 @@ export default function App() {
               {rail && view === "code" && !splitShown && (
                 <SessionRail
                   key={session.id} // Each session starts with its Context section folded.
+                  sessionId={session.id}
                   environment={{
                     placeKind: current?.kind ?? "local",
                     place: current?.kind === "local" || !current ? "This computer" : current.name,
@@ -3550,14 +3549,7 @@ export default function App() {
                   changes={gitChanges && samePath(gitChanges.cwd, session.cwd) ? gitChanges : null}
                   onOpenChanges={() => setLayout((l) => openPane(l, "diff"))}
                   onChangesAction={
-                    status === "open"
-                      ? (kind) =>
-                          submitOrQueue(
-                            kind === "pr"
-                              ? { kind: "prompt", text: CREATE_PR_PROMPT, display: "Create PR" }
-                              : { kind: "prompt", text: COMMIT_PROMPT, display: "Commit" },
-                          )
-                      : null
+                    status === "open" ? (action) => submitOrQueue({ kind: "prompt", text: ACTION_PROMPTS[action], display: ACTION_LABELS[action] }) : null
                   }
                   tasks={tasks ?? []}
                   onShowTasks={() => showPane("tasks")}
