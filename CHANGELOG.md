@@ -3,6 +3,32 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.56 (2026-11-06)
+
+### Chat
+
+- The end-of-turn box keeps the recap short: 300 characters or less, and the question 100 or less,
+  as in the Claude app. The details go in the final answer.
+- A finished plan shows at the top of the end-of-turn box, so the plan and the recap are one card.
+- The toolbar of a user message shows "Read" or "Sent", then the time. "Sent": the turn runs and
+  nothing came after the message yet.
+
+### Window
+
+- The context ring is at the right of the percentage in the Context heading of the session rail.
+  Its panel opens under the heading. The prompt box of the main session no longer shows the ring.
+  The split pane keeps its ring.
+- The interface font is the system font by default (Segoe UI on Windows). IBM Plex Sans is an
+  option in Settings > Appearance > Interface font.
+
+### Daemon
+
+- When the check of the model endpoint finds no context length (for example, a timeout while the
+  server is busy), the daemon does not keep the default of 8192 tokens for 10 minutes. A session
+  with the default checks again before its next turn, at most one time each minute. The check
+  waits up to 10 s, not 3 s. Before, a busy server could give a 1M-token model 8192 tokens, and
+  the session compacted early.
+
 ## 0.1.55 (2026-11-06)
 
 ### Chat
