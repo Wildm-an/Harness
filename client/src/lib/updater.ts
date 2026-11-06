@@ -146,8 +146,17 @@ export function checkWhenShown(): void {
 }
 
 /** Download and install the update, then start the new version. Windows closes the app for the installer. */
+// The question before an install while the agent works (UpdateGuard.tsx). False: the install does not start.
+let installGuard: (() => Promise<boolean>) | null = null;
+
+export function setInstallGuard(guard: (() => Promise<boolean>) | null): void {
+  installGuard = guard;
+}
+
 export async function installUpdate(): Promise<void> {
   if (state.kind !== "available") return;
+  if (installGuard && !(await installGuard())) return;
+  if (state.kind !== "available") return; // The state can change while the dialog is open.
   const { update } = state;
   const version = update.version;
   setState({ kind: "installing", version, step: "download", percent: null });

@@ -130,6 +130,7 @@ import { useServers } from "./servers/useServers";
 import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
+import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath, openFolderBlocked } from "./editor/paths";
@@ -3143,6 +3144,8 @@ export default function App() {
         </header>
         {/* A warning before the app closes while the agent works on this computer (as in the Claude app).
             A session that waits for an answer does not count: the agent is not working. */}
+        {/* An app update restarts the daemon of this computer: it asks first while the agent works. */}
+        <UpdateGuard working={current?.kind === "local" && status === "open" ? allRunning.length : 0} />
         <QuitGuard
           working={current?.kind === "local" && status === "open" ? runningSessions.filter((r) => !r.waiting).length : 0}
           agentServers={status === "open" ? agentServers.map((s) => s.name) : []}

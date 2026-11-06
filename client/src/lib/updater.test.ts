@@ -25,7 +25,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 
-const { availableVersion, checkAtStart, checkForUpdate, checkWhenShown, getUpdateState, installUpdate, setCheckAtStart } =
+const { availableVersion, checkAtStart, checkForUpdate, checkWhenShown, getUpdateState, installUpdate, setCheckAtStart, setInstallGuard } =
   await import("./updater");
 const { updateToastView } = await import("../components/UpdateToast");
 
@@ -132,6 +132,17 @@ describe("the check at start", () => {
 });
 
 describe("the install", () => {
+  it("does not start when the user cancels the question about the working agent", async () => {
+    let downloads = 0;
+    check = async () => ({ version: "0.3.2", download: async () => void (downloads += 1), install: async () => undefined });
+    await checkForUpdate(true);
+    setInstallGuard(async () => false); // "Cancel" in UpdateGuard.
+    await installUpdate();
+    setInstallGuard(null);
+    expect(downloads).toBe(0);
+    expect(getUpdateState().kind).toBe("available");
+  });
+
   type Event = { event: "Started"; data: { contentLength?: number } } | { event: "Progress"; data: { chunkLength: number } } | { event: "Finished" };
 
   // The failure goes first: after the mocked relaunch, the state stays "installing".
