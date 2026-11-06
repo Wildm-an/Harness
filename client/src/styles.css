@@ -5269,16 +5269,66 @@ input.tree-rename-input[aria-invalid="true"] {
   position: relative;
 }
 
-/* The annotation bar at the bottom of the Browser pane, as in the Claude app (AnnotateBar.tsx). */
-.annotate-bar {
+/* The annotation bar under the page of the Browser pane: a small floating bar, as in the Claude app
+   (AnnotateBar.tsx). The page is a native window over the app, so the bar cannot be over the page. */
+.annotate-dock {
   display: flex;
   flex: none;
+  justify-content: center;
+  padding: 8px 12px;
+  container-type: inline-size;
+}
+
+.annotate-bar {
+  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  min-height: 44px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
+  justify-content: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 4px 16px #00000040;
+}
+
+.annotate-add {
+  margin: 0 2px;
+}
+
+.annotate-add-icon {
+  display: none;
+}
+
+/* A narrow pane: "Add to prompt" shows only its icon, so that the bar stays one row. */
+@container (max-width: 520px) {
+  .annotate-add-text {
+    display: none;
+  }
+
+  .annotate-add-icon {
+    display: inline-block;
+  }
+}
+
+/* A line that shows a line width: in the width button and in its menu. */
+.annotate-width-line {
+  display: inline-block;
+  width: 18px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.annotate-width-item .annotate-width-line {
+  width: 28px;
+}
+
+.annotate-width-check {
+  display: inline-flex;
+  width: 14px;
+  margin-left: auto;
+  color: var(--accent);
 }
 
 .annotate-tool {

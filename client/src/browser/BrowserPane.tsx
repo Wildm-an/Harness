@@ -27,7 +27,7 @@ import { ServerMenu } from "../servers/ServerMenu";
 import type { ServersApi } from "../servers/useServers";
 import { ServerBlock, type ServerApproval } from "./ServerBlock";
 import { annotateCall, annotateScript, parseAnnotation, type Annotation } from "./annotate";
-import { AnnotateBar, COLORS, SHAPES, type AnnotateTool, type ShapeTool } from "./AnnotateBar";
+import { AnnotateBar, COLORS, SHAPES, WIDTHS, type AnnotateTool, type ShapeTool } from "./AnnotateBar";
 import { imageToDataUrl } from "../lib/images";
 
 type Device = "desktop" | "tablet" | "phone";
@@ -542,10 +542,11 @@ export function BrowserPane({
   const onScreenshotRef = useRef(onScreenshot);
   onScreenshotRef.current = onScreenshot;
 
-  // The tool of the annotation bar, the last shape, and the color.
-  const [tool, setTool] = useState<AnnotateTool>("select");
+  // The tool of the annotation bar ("none" at the start), the last shape, the color, and the line width.
+  const [tool, setTool] = useState<AnnotateTool>("none");
   const [shape, setShape] = useState<ShapeTool>("rect");
   const [color, setColor] = useState(COLORS[0][0]);
+  const [lineWidth, setLineWidth] = useState(WIDTHS[1][0]);
   const [capturing, setCapturing] = useState(false);
 
   /** Run a script in the page of a tab. A page of another origin in an iframe refuses it. */
@@ -569,10 +570,10 @@ export function BrowserPane({
     (id: string, on: boolean) => runInPage(id, (send) => annotateScript(on, send)),
     [runInPage],
   );
-  const chooseTool = (next: AnnotateTool, nextColor = color) => {
+  const chooseTool = (next: AnnotateTool, nextColor = color, nextWidth = lineWidth) => {
     setTool(next);
     if (SHAPES.some((s) => s.id === next)) setShape(next as ShapeTool);
-    if (annotating) void runInPage(annotating, () => annotateCall("setTool", next, nextColor)).catch(() => undefined);
+    if (annotating) void runInPage(annotating, () => annotateCall("setTool", next, nextColor, nextWidth)).catch(() => undefined);
   };
 
   /** "Add to prompt": a screenshot of the page with the marks goes into the prompt box. */
@@ -1089,8 +1090,9 @@ export function BrowserPane({
               .then((ok) => {
                 if (!ok) return onError("This page is on another origin. Annotations of it work in the desktop app.");
                 setAnnotating(id);
-                setTool("select");
-                void runInPage(id, () => annotateCall("setTool", "select", color));
+                // No tool at the start: the user picks one in the bar.
+                setTool("none");
+                void runInPage(id, () => annotateCall("setTool", "none", color, lineWidth));
               })
               .catch((e) => onError(e instanceof Error ? e.message : String(e)));
           }}
@@ -1172,12 +1174,17 @@ export function BrowserPane({
           tool={tool}
           shape={shape}
           color={color}
+          width={lineWidth}
           busy={capturing}
           canCapture={tauri}
           onTool={(t) => chooseTool(t)}
           onColor={(c) => {
             setColor(c);
             chooseTool(tool, c);
+          }}
+          onWidth={(w) => {
+            setLineWidth(w);
+            chooseTool(tool, color, w);
           }}
           onUndo={() => void runInPage(annotating, () => annotateCall("undo")).catch(() => undefined)}
           onClear={() => void runInPage(annotating, () => annotateCall("clear")).catch(() => undefined)}

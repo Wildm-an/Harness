@@ -94,13 +94,13 @@ export function annotateScript(on: boolean, send: "nav" | "post"): string {
   return `(${pageScript.toString()})(${JSON.stringify(on)}, ${JSON.stringify(send)}, ${JSON.stringify(ANNOTATE_URL)});`;
 }
 
-/** A call of the page script while the mode runs: the tool and the color, undo, clear, or capture. */
-export function annotateCall(method: "setTool" | "undo" | "clear" | "prepare", ...args: (string | boolean)[]): string {
+/** A call of the page script while the mode runs: the tool, the color, and the line width, undo, clear, or capture. */
+export function annotateCall(method: "setTool" | "undo" | "clear" | "prepare", ...args: (string | boolean | number)[]): string {
   return `window.__harnessAnnotate && window.__harnessAnnotate.${method}(${args.map((a) => JSON.stringify(a)).join(",")});`;
 }
 
 // The page script. It runs in the page, not in the app: it can use only the page globals.
-// Tools: "select" (an element and a note), "pen", "line", "arrow", "rect", "ellipse", "step", "text".
+// Tools: "none" (the page works as usual), "select" (an element and a note), "pen", "line", "arrow", "rect", "ellipse", "step", "text".
 /* eslint-disable */
 function pageScript(on: boolean, send: string, sendUrl: string) {
   const KEY = "__harnessAnnotate";
@@ -144,13 +144,15 @@ function pageScript(on: boolean, send: string, sendUrl: string) {
   const svg = root.querySelector("svg.draw") as SVGSVGElement;
   const defs = svg.querySelector("defs") as SVGDefsElement;
   const shapes = svg.querySelector("g.shapes") as SVGGElement;
-  let tool = "select";
+  let tool = "none"; // No tool at the start: the user picks one in the bar.
   let color = "#e5484d";
+  let width = 4; // The line width of the pen and the shapes.
   let picked: Element | null = null;
   let count = 0;
   let steps = 0;
   const marks: { el: Element; badge: HTMLElement }[] = [];
   const HINTS: Record<string, string> = {
+    none: "Pick a tool in the bar. Esc stops.",
     select: "Click an element to add a note for the agent. Esc stops.",
     pen: "Draw on the page. Esc stops.",
     text: "Click to add text. Esc stops.",
@@ -176,7 +178,7 @@ function pageScript(on: boolean, send: string, sendUrl: string) {
     }
     return `url(#${id})`;
   };
-  const stroke = () => ({ stroke: color, "stroke-width": 3, fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round" });
+  const stroke = () => ({ stroke: color, "stroke-width": width, fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round" });
 
   const describe = (node: Element) => {
     const cls = Array.from(node.classList).slice(0, 3).join(" ");
@@ -261,7 +263,7 @@ function pageScript(on: boolean, send: string, sendUrl: string) {
     closePop();
   };
 
-  // Drawing: the SVG layer takes the pointer for every tool except "select".
+  // Drawing: the SVG layer takes the pointer for every tool except "none" and "select".
   let drawing: SVGElement | null = null;
   let from = { x: 0, y: 0 };
   let points: string[] = [];
@@ -333,7 +335,7 @@ function pageScript(on: boolean, send: string, sendUrl: string) {
     shapes.appendChild(g);
   };
   svg.addEventListener("pointerdown", (e) => {
-    if (tool === "select") return;
+    if (tool === "select" || tool === "none") return;
     e.preventDefault();
     e.stopPropagation();
     if (tool === "text") return addText(e.clientX, e.clientY);
@@ -412,10 +414,11 @@ function pageScript(on: boolean, send: string, sendUrl: string) {
   };
   w[KEY] = {
     stop,
-    setTool(next: string, nextColor: string) {
+    setTool(next: string, nextColor: string, nextWidth?: number) {
       tool = next;
       if (nextColor) color = nextColor;
-      svg.classList.toggle("active", tool !== "select");
+      if (typeof nextWidth === "number" && nextWidth > 0) width = nextWidth;
+      svg.classList.toggle("active", tool !== "select" && tool !== "none");
       if (tool !== "select") {
         closePop();
         hideBox();
