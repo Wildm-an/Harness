@@ -10,6 +10,7 @@ import {
   Globe,
   LoaderCircle,
   Monitor,
+  PictureInPicture2,
   Power,
   RotateCw,
   Smartphone,
@@ -148,6 +149,9 @@ const AGENT_IDLE = 60_000; // ms with no agent call before a parked tab hides.
 const agentTabs = new Map<string, string>(); // Session id -> tab id.
 const agentInfo = new Map<string, { session: string; last: number; url: string; title: string }>(); // By tab id.
 const parked = new Set<string>();
+// Tabs that the user minimized to the session rail: they stay parked and live (the rail shows them)
+// until the pane shows them again or the user closes them.
+const minimized = new Set<string>();
 const creating = new Map<string, Promise<string>>(); // Session id -> the tab that opens now.
 const agentListeners = new Set<() => void>();
 let shown: string | null = null; // The tab that the pane shows now.
@@ -173,6 +177,7 @@ function agentChanged() {
 }
 
 function agentLive(id: string): boolean {
+  if (minimized.has(id)) return true;
   const info = agentInfo.get(id);
   return !!info && Date.now() - info.last < AGENT_IDLE;
 }
@@ -241,7 +246,7 @@ function watchAgentTabs() {
   agentTimer = window.setInterval(() => {
     let changed = false;
     for (const [id, info] of agentInfo) {
-      if (info.last === 0 || Date.now() - info.last < AGENT_IDLE) continue;
+      if (minimized.has(id) || info.last === 0 || Date.now() - info.last < AGENT_IDLE) continue;
       info.last = 0; // Not live now. The change shows one time.
       changed = true;
       if (parked.has(id) && shown !== id) {
@@ -352,8 +357,24 @@ export async function runAgentCall(session: string, method: string, params: unkn
   return { tab, result: await browserView.cdp(tab, method, params, timeoutMs) };
 }
 
+/**
+ * "Minimize": the session rail shows a small live view of the tab, as the agent tab. The tab must
+ * have a webview (desktop app). The pane shows it again after a click on the view in the rail.
+ */
+export function minimizeTab(session: string, id: string): boolean {
+  if (!opened.has(id)) return false;
+  const tab = allTabs().tabs.find((t) => t.id === id);
+  watchAgentTabs();
+  minimized.add(id);
+  agentTabs.set(session, id);
+  agentInfo.set(id, { session, last: Date.now(), url: tab?.url ?? "about:blank", title: tab?.title ?? "" });
+  agentChanged();
+  return true;
+}
+
 /** Forget the agent tab when the user closes it. The next agent call opens a new one. */
 function dropAgentTab(id: string) {
+  minimized.delete(id);
   const info = agentInfo.get(id);
   if (!info) return;
   agentInfo.delete(id);
@@ -452,6 +473,7 @@ export function BrowserPane({
   onDecide,
   onAnnotate,
   onScreenshot,
+  onMinimize,
 }: {
   session?: string | null; // The open session. The pane shows only its tabs. null: the start screen.
   request: { url: string; key: number } | null; // A navigation request from the app.
@@ -470,6 +492,7 @@ export function BrowserPane({
   onDecide: (requestId: string, decision: Decision) => void;
   onAnnotate: (note: Annotation) => void; // A note on an element of the page: it goes into the prompt box.
   onScreenshot: (image: string, url: string) => void; // The page with the marks: it goes into the prompt box.
+  onMinimize?: () => void; // "Minimize": close the pane and show the page in the session rail (the Code view).
 }) {
   const tauri = isTauri();
   const area = useRef<HTMLDivElement>(null);
@@ -810,8 +833,9 @@ export function BrowserPane({
         if (show) {
           shown = tab.id;
           parked.delete(tab.id);
+          if (minimized.delete(tab.id)) agentChanged(); // The pane shows the minimized tab again.
         }
-        const live = !!tab.agent && agentLive(tab.id);
+        const live = (!!tab.agent || minimized.has(tab.id)) && agentLive(tab.id);
         const key = JSON.stringify([show ? bounds : null, show, opened.has(tab.id), live]);
         if (lastSync.current.get(tab.id) === key) continue;
         lastSync.current.set(tab.id, key);
@@ -1028,6 +1052,22 @@ export function BrowserPane({
             );
           }}
         </Menu>
+        {/* "Minimize", as in the Claude app: the pane closes and the session rail shows the page. */}
+        {onMinimize && (
+          <button
+            type="button"
+            className="icon-btn ghost"
+            onClick={() => {
+              if (session) minimizeTab(session, active.id);
+              onMinimize();
+            }}
+            disabled={!active.url}
+            aria-label="Minimize"
+            title="Minimize to the session rail"
+          >
+            <PictureInPicture2 size={15} aria-hidden />
+          </button>
+        )}
       </PaneActions>
       <form
         className="browser-bar"

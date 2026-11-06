@@ -2739,6 +2739,15 @@ export default function App() {
           // A note on an element goes into the prompt box as a chip. The Browser pane stays open for more notes.
           onAnnotate={(note) => setPromptAttach((p) => ({ item: annotationAttachment(note), key: (p?.key ?? 0) + 1 }))}
           onScreenshot={(image, url) => setPromptAttach((p) => ({ item: screenshotAttachment(image, url), key: (p?.key ?? 0) + 1 }))}
+          // "Minimize": the pane closes, and the session rail shows the page (only the Code view has the rail).
+          onMinimize={
+            view === "code" && session
+              ? () => {
+                  hidePane("browser");
+                  showRail(true);
+                }
+              : undefined
+          }
         />
       ),
     },
