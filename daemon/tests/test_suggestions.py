@@ -41,10 +41,8 @@ def test_a_turn_sends_a_prompt_suggestion(daemon, project, fake_model):
     c.until("turn.end")
     suggestion = c.until("prompt.suggestion")[0]
     assert suggestion["text"] == "Run the tests"
-    # The fake model is local: the request is the conversation of the agent, with the note at the end.
-    messages = fake_model.suggestion_requests[0]["messages"]
-    assert messages[-1]["content"].startswith("You predict the next message")
-    assert [m.get("content") for m in messages[-3:-1]] == ["Add a function", "I added the function."]
+    conversation = fake_model.suggestion_requests[0]["messages"][0]["content"]
+    assert "User: Add a function" in conversation and "Agent: I added the function." in conversation
     c.close()
 
 

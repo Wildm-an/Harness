@@ -3,6 +3,17 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.53 (2026-11-05)
+
+### Speed
+
+- A model on this computer, the private network, or Tailscale answers at its 0.1.51 speed again.
+  In 0.1.52, the title and the next-prompt suggestion sent the full conversation and all the
+  tools to the model after each turn. On a server that does not keep the start of the prompt in
+  its cache, the next prompt waited for these large requests. They now send a short prompt again.
+- For such a model, the title still comes after the first turn, so it does not delay the first
+  reply.
+
 ## 0.1.52 (2026-11-05)
 
 ### Speed

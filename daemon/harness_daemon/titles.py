@@ -53,9 +53,6 @@ Examples:
 # The message frame tells the model that the text is a thing to name, not a task to do.
 TITLE_USER = "The first message of the session:\n\n<message>\n{text}\n</message>\n\nReply with the title only."
 
-# For a local model: the note at the end of the conversation of the agent (see suggestions.SUGGESTION_NOTE).
-TITLE_NOTE = TITLE_SYSTEM + "\n\nDo not call a tool. " + TITLE_USER
-
 # Small model families, best first. A model id matches when it contains the text.
 SMALL_FAMILIES = ("haiku", "flash-lite", "flash", "gpt-luna", "-mini", "-nano")
 # Models of a small family that do not write text well, or that reason for a long time (o3-mini, o4-mini).
@@ -140,36 +137,27 @@ async def small_model(client: ModelClient) -> str | None:
     return _small[name]
 
 
-async def _ask(client: ModelClient, prompt: str,
-               context: tuple[list[dict], list[dict]] | None = None) -> str | None:
+async def _ask(client: ModelClient, prompt: str) -> str | None:
     async def ignore(_: str) -> None:
         return None
 
-    if context is not None:
-        messages, tools = context
-        note = TITLE_NOTE.format(text=prompt.strip()[:MAX_PROMPT_CHARS])
-        request = [*messages, {"role": "user", "content": note}]
-    else:
-        request, tools = title_messages(prompt), []
     try:
-        response = await asyncio.wait_for(client.stream(request, tools, ignore), TITLE_TIMEOUT)
+        response = await asyncio.wait_for(client.stream(title_messages(prompt), [], ignore), TITLE_TIMEOUT)
     except Exception as e:  # noqa: BLE001 - a title is optional. The first line stays.
         log.info("The session title was not made with %s: %s", client.label, e)
         return None
     return clean_title(response.text)
 
 
-async def summarize_title(client: ModelClient, prompt: str,
-                          context: tuple[list[dict], list[dict]] | None = None) -> str | None:
+async def summarize_title(client: ModelClient, prompt: str) -> str | None:
     """Ask the model for a title. Return None if the model fails or gives no text.
 
     A small model of the provider makes the title when there is one. If it fails, the model of the
-    session tries one time. ``context`` (a local model): the messages and the tools of the agent
-    request. The title request then starts with the same text, and the model server uses its cache.
+    session tries one time.
     """
     small = await small_model(client)
     if small and small != client.model:
         title = await _ask(ModelClient(client.provider, small), prompt)
         if title:
             return title
-    return await _ask(client, prompt, context)
+    return await _ask(client, prompt)

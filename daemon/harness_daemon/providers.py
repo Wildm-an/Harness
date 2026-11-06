@@ -544,6 +544,58 @@ OnText = Callable[[str], Awaitable[None]]
 
 
 log = logging.getLogger(__name__)
+# One line for each model request in the daemon log: the kind, the size, and the time to the first
+# reasoning, the first answer, and the end. The daemon log has warnings only, so this logger has INFO.
+timing = logging.getLogger("harness.timing")
+timing.setLevel(logging.INFO)
+
+
+# The last request of each model: its tools and messages, to log what changed at its start.
+_last_request: dict[tuple[str, str], tuple[str, list[str]]] = {}
+
+
+def _prefix_note(key: tuple[str, str], messages: list[dict], tools: list[dict]) -> str:
+    """"tools same, messages same up to 12/14", or where the new request starts to differ."""
+    import json as _json
+
+    tools_text = _json.dumps(tools, sort_keys=True)
+    texts = [_json.dumps(m, sort_keys=True, default=str) for m in messages]
+    previous = _last_request.get(key)
+    _last_request[key] = (tools_text, texts)
+    if previous is None:
+        return "first request"
+    old_tools, old_texts = previous
+    same = 0
+    for a, b in zip(old_texts, texts):
+        if a != b:
+            break
+        same += 1
+    note = f"tools {'same' if old_tools == tools_text else 'CHANGED'}, messages same up to {same}/{len(old_texts)}"
+    if same < len(old_texts) and same < len(texts):
+        a, b = old_texts[same], texts[same]
+        at = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        note += f" (message {same} differs at char {at}: {a[max(0, at - 60):at + 60]!r} -> {b[max(0, at - 60):at + 60]!r})"
+    if old_tools != tools_text:
+        old = {t.get("function", {}).get("name"): t for t in _json.loads(old_tools) or []}
+        new = {t.get("function", {}).get("name"): t for t in tools or []}
+        changed = [n for n in set(old) | set(new) if old.get(n) != new.get(n)]
+        order = "same order" if [n for n in old if n in new] == [n for n in new if n in old] else "NEW ORDER"
+        note += f" (tools changed: {sorted(changed)[:10]}, {order})"
+    return note
+
+
+def _request_kind(messages: list[dict]) -> str:
+    """"agent", "title", "suggestion", or "auto-mode": from the start of the first or last message."""
+    for message in (messages[:1] + messages[-1:]) if messages else []:
+        content = message.get("content")
+        if isinstance(content, str):
+            if content.startswith("You name coding sessions"):
+                return "title"
+            if content.startswith("You predict the next message"):
+                return "suggestion"
+            if content.startswith("You check one tool call"):
+                return "auto-mode"
+    return "agent"
 
 # The effort levels of the model menu (setting "effort"), and the reasoning_effort value of the API.
 # The OpenAI API has no level above "xhigh": "max" sends "xhigh" too.
@@ -622,6 +674,9 @@ class ModelClient:
         ``reasoning_effort`` (the effort setting, or a plugin)."""
         import openai  # Loaded by _openai() already: this import only gives the name.
 
+        started = time.monotonic()
+        if _request_kind(messages) == "agent":
+            timing.info("prefix %s: %s", self.label, _prefix_note((self.provider.base_url or "", self.model), messages, tools))
         client = await self._openai()
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
         for key in ("temperature", "max_tokens", "stop"):
@@ -658,6 +713,9 @@ class ModelClient:
         except openai.APIStatusError as e:
             raise ModelError(f"The model endpoint returned HTTP {e.status_code}: {e.message}") from e
 
+        opened = time.monotonic()
+        first_reasoning: float | None = None
+        first_answer: float | None = None
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
         slots: dict[int, dict[str, str]] = {}
@@ -678,9 +736,13 @@ class ModelClient:
                     # "reasoning" (Ollama, OpenRouter). The client shows "Thinking…" (on_reasoning).
                     reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
                     if isinstance(reasoning, str) and reasoning:
+                        if first_reasoning is None:
+                            first_reasoning = time.monotonic()
                         if not reasoning_parts and on_reasoning is not None:
                             await on_reasoning()
                         reasoning_parts.append(reasoning)
+                    if first_answer is None and (delta.content or delta.tool_calls):
+                        first_answer = time.monotonic()
                     if delta.content:
                         text_parts.append(delta.content)
                         await on_text(delta.content)
@@ -690,6 +752,15 @@ class ModelClient:
             raise ModelError(f"The model stream failed: {e}") from e
         finally:
             await stream.close()
+            ended = time.monotonic()
+            since = lambda t: f"{t - started:.2f}s" if t is not None else "-"  # noqa: E731
+            timing.info(
+                "model %s %s: %d messages, %d chars, %d tools, effort=%s | open %s, first reasoning %s, "
+                "first answer %s, end %s | prompt %s, completion %s, reasoning %d chars",
+                _request_kind(messages), self.label, len(messages), sum(len(str(m.get("content") or "")) for m in messages),
+                len(tools), kwargs.get("reasoning_effort", "-"), since(opened), since(first_reasoning),
+                since(first_answer), since(ended), (usage or {}).get("prompt_tokens", "?"),
+                (usage or {}).get("completion_tokens", "?"), sum(len(r) for r in reasoning_parts))
 
         calls = []
         for key in sorted(slots):

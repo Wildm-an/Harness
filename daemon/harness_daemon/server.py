@@ -93,6 +93,7 @@ from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS,
 from .web import set_key as set_web_key
 
 log = logging.getLogger("harness.daemon")
+timing = logging.getLogger("harness.timing")  # INFO lines in the daemon log (providers.py sets the level).
 
 AUTH_TIMEOUT = 10
 WATCH_INTERVAL = 1.5
@@ -1214,6 +1215,7 @@ class Connection:
             live.title_prompt, live.title_tries = display or text, 0
         # A local model server works on one request at a time: a title request next to the turn makes the
         # first token come later. For a local model, the title request comes after the turn.
+        turn_started = time.monotonic()
         local = is_local(session.agent.client)
         if not local:
             self.start_title(live)
@@ -1225,7 +1227,9 @@ class Connection:
             if row is not None and sid != session.id:
                 stored[sid] = (row, self.storage.load_messages(sid))
         expanded = await asyncio.to_thread(expand_references, text, session.cwd, stored.get)
+        mcp_started = time.monotonic()
         await live.wait_for_mcp()
+        timing.info("turn: references %.2fs, MCP wait %.2fs", mcp_started - turn_started, time.monotonic() - mcp_started)
         # "/name" skills in the typed text (not in the referenced files): add their instructions.
         notes = live.take_notes()  # Task notes that did not go to the agent yet go with the prompt.
         if notes:
@@ -1297,12 +1301,8 @@ class Connection:
         live.title_tries += 1
         placeholder = session.title
 
-        agent = session.agent
-        # A local model: the request starts with the conversation of the agent, which the model server has in its cache.
-        context = (agent.messages(), agent.tool_schemas()) if is_local(agent.client) else None
-
         async def work() -> None:
-            title = await summarize_title(agent.client, prompt, context)
+            title = await summarize_title(session.agent.client, prompt)
             if session.title != placeholder:  # The user renamed the session.
                 live.title_prompt = None
                 return
@@ -1327,11 +1327,8 @@ class Connection:
             return
         history = list(session.agent.history)
 
-        agent = session.agent
-        context = (agent.messages(), agent.tool_schemas()) if is_local(agent.client) else None
-
         async def work() -> None:
-            text = await suggest_prompt(agent.client, history, context)
+            text = await suggest_prompt(session.agent.client, history)
             if text and not live.running:
                 await live.send({"type": "prompt.suggestion", "text": text})
 
@@ -3441,6 +3438,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "offline_model": (str, type(None)),
     "effort": (str, type(None)),  # The effort level of the model menu. None: the default level, High.
     "new_task_prompt": (str,),
+    "tool_search": (str,),  # MCP tools by name only until the model loads them: auto, on, or off (agent.py).
     "auto_archive_days": (int,),  # "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
     "auto_memory": (bool,),
@@ -3493,6 +3491,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"'new_task_prompt' must be one of: {', '.join(NEW_TASK_CHOICES)}.")
         if key == "effort" and value is not None and value not in EFFORT_API:
             raise ProtocolError(f"'effort' must be null or one of: {', '.join(EFFORT_API)}.")
+        if key == "tool_search" and value not in ("auto", "on", "off"):
+            raise ProtocolError("'tool_search' must be one of: auto, on, off.")
         if key == "web_search" and value not in WEB_PROVIDERS:
             raise ProtocolError(f"'web_search' must be one of: {', '.join(WEB_PROVIDERS)}.")
         if key == "web_search_url" and isinstance(value, str) and value.strip():
