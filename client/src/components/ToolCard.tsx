@@ -18,6 +18,7 @@ const LABELS: Record<string, string> = {
   grep: "Search",
   bash: "Bash",
   skill: "Skill",
+  tool_search: "Tool search",
 };
 
 /** The display name of a tool: "Read", "Preview click", or "github: create_issue" for an MCP tool. */

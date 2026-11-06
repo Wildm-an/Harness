@@ -113,35 +113,11 @@ def _hook_list(data: Any, source: str) -> list[HookCommand]:
     return out
 
 
-# The hooks of each pair of settings files, with the size and time of each file when the daemon read it.
-# The agent checks for hooks several times in each step. A file is read again only when it changed.
-_hook_cache: dict[tuple[Path, ...], tuple[tuple, list[HookCommand]]] = {}
-
-
-def _stamp(path: Path) -> tuple[int, int] | None:
-    try:
-        st = path.stat()
-    except OSError:
-        return None
-    return st.st_mtime_ns, st.st_size
-
-
 def load_hooks(cwd: Path | None) -> list[HookCommand]:
     """The hooks of the user settings, then of the project settings."""
     files = [harness_home() / "settings.json"]
     if cwd is not None:
         files.append(project_settings_path(cwd))
-    key = tuple(files)
-    stamps = tuple(_stamp(f) for f in files)
-    cached = _hook_cache.get(key)
-    if cached is not None and cached[0] == stamps:
-        return list(cached[1])
-    hooks = _read_hooks(files)
-    _hook_cache[key] = (stamps, hooks)
-    return list(hooks)
-
-
-def _read_hooks(files: list[Path]) -> list[HookCommand]:
     datas = [(read_json(f, {}), str(f)) for f in files if f.is_file()]
     if any(isinstance(d, dict) and d.get("disableAllHooks") is True for d, _ in datas):
         return []

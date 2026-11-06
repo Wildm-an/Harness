@@ -544,15 +544,15 @@ OnText = Callable[[str], Awaitable[None]]
 
 
 log = logging.getLogger(__name__)
+# One INFO line for each model request in the daemon log: the size, and the time to the first byte, the first
+# reasoning, the first answer, and the end. A slow model server then shows in the log.
+timing = logging.getLogger("harness.timing")
+timing.setLevel(logging.INFO)
 
 # The effort levels of the model menu (setting "effort"), and the reasoning_effort value of the API.
 # The OpenAI API has no level above "xhigh": "max" sends "xhigh" too.
 EFFORT_API = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
 DEFAULT_EFFORT = "high"  # The level with no "effort" setting, as in the Claude app.
-
-# The request fields that an endpoint rejected, by (base URL, model, field). All clients of the model share
-# this, so a new session or a title request does not send a rejected field again (one more round trip each).
-_REJECTED: set[tuple[str, str, str]] = set()
 
 
 class ModelClient:
@@ -564,6 +564,9 @@ class ModelClient:
         self._base_url: str | None = None
         self._client: AsyncOpenAI | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._send_stream_options = True
+        # False after the endpoint rejected a request with reasoning_effort: the model has no effort levels.
+        self._send_effort = True
 
     async def _openai(self) -> AsyncOpenAI:
         """The API client for the current address and event loop.
@@ -609,12 +612,6 @@ class ModelClient:
         """
         return "deepseek" in (self.provider.base_url or "").lower() or "deepseek" in self.model.lower()
 
-    def _sends(self, field: str) -> bool:
-        return (self.provider.base_url or "", self.model, field) not in _REJECTED
-
-    def _reject(self, field: str) -> None:
-        _REJECTED.add((self.provider.base_url or "", self.model, field))
-
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
                      _retry_tunnel: bool = True, options: dict[str, Any] | None = None,
                      on_reasoning: Callable[[], Awaitable[None]] | None = None) -> ModelResponse:
@@ -622,29 +619,30 @@ class ModelClient:
         ``reasoning_effort`` (the effort setting, or a plugin)."""
         import openai  # Loaded by _openai() already: this import only gives the name.
 
+        started = time.monotonic()
         client = await self._openai()
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
         for key in ("temperature", "max_tokens", "stop"):
             if options and options.get(key) is not None:
                 kwargs[key] = options[key]
         effort = options.get("reasoning_effort") if options else None
-        if effort and self._sends("reasoning_effort"):
+        if effort and self._send_effort:
             kwargs["reasoning_effort"] = effort
         if tools:
             kwargs["tools"] = tools
-        if self._sends("stream_options"):
+        if self._send_stream_options:
             kwargs["stream_options"] = {"include_usage": True}
         try:
             stream = await client.chat.completions.create(**kwargs)
         except openai.BadRequestError as e:
             # Some servers reject stream_options. Try once more without it.
-            if "stream_options" in kwargs and "stream_options" in str(e):
-                self._reject("stream_options")
+            if self._send_stream_options and "stream_options" in str(e):
+                self._send_stream_options = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             # A model with no effort levels can reject reasoning_effort. Try once more without it.
             if "reasoning_effort" in kwargs:
                 log.info("%s rejected reasoning_effort=%s: %s", self.label, effort, e)
-                self._reject("reasoning_effort")
+                self._send_effort = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             raise ModelError(f"The model endpoint rejected the request: {e}") from e
         except openai.APIConnectionError as e:
@@ -658,6 +656,9 @@ class ModelClient:
         except openai.APIStatusError as e:
             raise ModelError(f"The model endpoint returned HTTP {e.status_code}: {e.message}") from e
 
+        opened = time.monotonic()
+        first_reasoning: float | None = None
+        first_answer: float | None = None
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
         slots: dict[int, dict[str, str]] = {}
@@ -678,9 +679,13 @@ class ModelClient:
                     # "reasoning" (Ollama, OpenRouter). The client shows "Thinking…" (on_reasoning).
                     reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
                     if isinstance(reasoning, str) and reasoning:
+                        if first_reasoning is None:
+                            first_reasoning = time.monotonic()
                         if not reasoning_parts and on_reasoning is not None:
                             await on_reasoning()
                         reasoning_parts.append(reasoning)
+                    if first_answer is None and (delta.content or delta.tool_calls):
+                        first_answer = time.monotonic()
                     if delta.content:
                         text_parts.append(delta.content)
                         await on_text(delta.content)
@@ -690,6 +695,11 @@ class ModelClient:
             raise ModelError(f"The model stream failed: {e}") from e
         finally:
             await stream.close()
+            since = lambda t: f"{t - started:.2f}s" if t is not None else "-"  # noqa: E731
+            timing.info("model %s: %d messages, %d tools | first byte %s, first reasoning %s, first answer %s, end %s | "
+                        "prompt %s, completion %s tokens", self.label, len(messages), len(tools), since(opened),
+                        since(first_reasoning), since(first_answer), since(time.monotonic()),
+                        (usage or {}).get("prompt_tokens", "?"), (usage or {}).get("completion_tokens", "?"))
 
         calls = []
         for key in sorted(slots):

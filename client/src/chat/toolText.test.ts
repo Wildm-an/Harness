@@ -19,6 +19,11 @@ describe("the text of tool calls", () => {
   it("has a verb and an object for each call", () => {
     expect(toolAction(tool("read", { path: "docs/test.png" }))).toEqual({ verb: "Read", object: "test.png", mono: false });
     expect(toolAction(tool("bash", { command: "ls -la" }))).toEqual({ verb: "Ran", object: "ls -la", mono: true });
+    expect(toolAction(tool("tool_search", { query: "select:mcp__github__create_issue,mcp__github__get_issue" }))).toEqual({
+      verb: "Loaded tools",
+      object: "create_issue,get_issue",
+      mono: false,
+    });
     expect(toolAction(tool("bash", { command: "ls", description: "Listed the skill files." })))
       .toEqual({ verb: "Listed the skill files", object: "", mono: false });
     expect(toolAction(tool("skill", { name: "excalidraw-diagram" })).object).toBe("/excalidraw-diagram");

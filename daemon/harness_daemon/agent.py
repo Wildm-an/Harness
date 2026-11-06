@@ -55,6 +55,7 @@ from .hooks import CommandHooks, HookOutcome
 from .memory import MemoryStore
 from .tools.chats import ConversationSearchTool
 from .tools.memory import MemoryTool
+from .tools.tool_search import ToolSearchTool
 
 log = logging.getLogger("harness.agent")
 
@@ -64,6 +65,11 @@ OnCompact = Callable[[int, "str | None"], None]
 
 INTERRUPTED = "The user interrupted the turn. The tool did not complete."
 MAX_REQUEST_RETRIES = 3  # The retries that request.error handlers can ask for, for each model call.
+# Tool search ("tool_search": "auto"): the MCP tools are sent by name only when their definitions are
+# larger than this number of tokens, or this part of the context. A model server reads the definitions
+# for each request: many MCP tools make each step slower.
+TOOL_SEARCH_TOKENS = 4000
+TOOL_SEARCH_SHARE = 0.10
 MAX_STEER_CONTINUATIONS = 5  # The extra steps that turn.stopping handlers can add to one turn.
 DENIED = "The user denied this tool call."
 SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
@@ -142,9 +148,9 @@ class Agent:
         if any(s.model_invocable for s in self.skills.values()):
             tool_list.append(SkillTool(self.skills, self._activate_skill, self.run_fork))
         self.tools = {t.name: t for t in tool_list}
-        # The place of each tool in the request. A tool that a setting removes and adds again keeps its place,
-        # so the tool list stays the same. A change in the list makes the model server process the prompt again.
-        self._tool_rank: dict[str, int] = {}
+        # Tool search: MCP tools that the request sends by name only, until the model loads them.
+        self._loaded_tools: list[str] = []  # In the order of the loads.
+        self._tool_search = ToolSearchTool(lambda: {n: self.tools[n] for n in self._deferrable()}, self._load_tools)
         # The web_search tool, also while the "web_search" setting is "off" and the agent does not have it.
         self._web_search = self.tools.get("web_search")
         self._sync_web_search()
@@ -221,6 +227,7 @@ class Agent:
             self.image_input = image_input
             self.ctx.image_input = image_input
             self._sync_preview_tools()
+        self._sync_tool_search()  # The context length decides it ("auto").
         self._rebuild_prompt()
 
     def enable_tasks(self, host: Any) -> None:
@@ -377,7 +384,42 @@ class Agent:
         for name in [n for n in self.tools if n.startswith("mcp__")]:
             del self.tools[name]
         self.tools.update({t.name: t for t in tools})
+        self._sync_tool_search()
         self._known_tokens = None  # The tool schemas are part of the request size.
+
+    def _deferrable(self) -> list[str]:
+        """The MCP tools that the request sends by name only (tool_search), loaded or not.
+
+        The setting "tool_search": "auto" (the default) defers them when their definitions are larger than
+        TOOL_SEARCH_TOKENS or TOOL_SEARCH_SHARE of the context, "on" always, "off" never.
+        """
+        mode = str(self.settings.get("tool_search") or "auto").lower()
+        mcp = [n for n in self.tools if n.startswith("mcp__")]
+        if not mcp or mode == "off":
+            return []
+        if mode != "on":
+            size = estimate_tokens([self.tools[n].schema(self.ctx) for n in mcp])
+            if size <= min(TOOL_SEARCH_TOKENS, self.context_length * TOOL_SEARCH_SHARE):
+                return []
+        return mcp
+
+    def _sync_tool_search(self) -> None:
+        if self._deferrable():
+            self.tools.setdefault(self._tool_search.name, self._tool_search)
+        else:
+            self.tools.pop(self._tool_search.name, None)
+
+    def _load_tools(self, names: list[str]) -> None:
+        self._loaded_tools.extend(n for n in names if n not in self._loaded_tools)
+        self._known_tokens = None  # The loaded tools make the next request larger.
+
+    def _sent_tool_names(self) -> list[str]:
+        """The tools of the request. With tool search, the MCP tools that the model loaded come at the end,
+        in the order of the loads: the start of the request stays the same."""
+        deferrable = set(self._deferrable())
+        if not deferrable:
+            return list(self.tools)
+        return [n for n in self.tools if n not in deferrable] + [n for n in self._loaded_tools if n in deferrable]
 
     def mcp_tools(self) -> list[Tool]:
         return [t for n, t in self.tools.items() if n.startswith("mcp__")]
@@ -419,6 +461,7 @@ class Agent:
         self._sync_plan_tool()
         self._sync_memory_tool()
         self._sync_chat_tool()
+        self._sync_tool_search()
         self._rebuild_prompt()
 
     def clear(self) -> None:
@@ -454,11 +497,12 @@ class Agent:
         memory = self._memory_snapshot()
         if memory:
             sizes["instructions"] += text_tokens(memory)
-        schemas = self.tool_schemas()
-        mcp = [s for name, s in zip(self.tools, schemas) if name.startswith("mcp__")]
-        plugin = [s for name, s in zip(self.tools, schemas) if name in self._plugin_tools]
-        builtin = [s for name, s in zip(self.tools, schemas)
-                   if not name.startswith("mcp__") and name not in self._plugin_tools]
+        names = self._sent_tool_names()
+        schemas = [self.tools[n].schema(self.ctx) for n in names]
+        mcp = [s for name, s in zip(names, schemas) if name.startswith("mcp__") or name == self._tool_search.name]
+        plugin = [s for name, s in zip(names, schemas) if name in self._plugin_tools]
+        builtin = [s for name, s in zip(names, schemas)
+                   if not name.startswith("mcp__") and name != self._tool_search.name and name not in self._plugin_tools]
         sizes["tools"] = estimate_tokens(builtin) if builtin else 0
         sizes["mcp_tools"] = estimate_tokens(mcp) if mcp else 0
         sizes["plugins"] += estimate_tokens(plugin) if plugin else 0
@@ -571,10 +615,7 @@ class Agent:
         return result
 
     def tool_schemas(self) -> list[dict[str, Any]]:
-        for name in self.tools:
-            self._tool_rank.setdefault(name, len(self._tool_rank))
-        names = sorted(self.tools, key=self._tool_rank.__getitem__)
-        return [self.tools[n].schema(self.ctx) for n in names]
+        return [self.tools[n].schema(self.ctx) for n in self._sent_tool_names()]
 
     async def run_turn(self, text: str, *, display: str | None = None, allow: tuple[str, ...] = (),
                        message_id: str | None = None, origin: str | None = None,

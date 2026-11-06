@@ -86,7 +86,7 @@ from .cron import CronError, parse_cron
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
-from .titles import MAX_TITLE_TRIES, is_local, summarize_title
+from .titles import MAX_TITLE_TRIES, summarize_title
 from .agents import agent_folders, discover_agents
 from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
@@ -810,7 +810,6 @@ class Connection:
         self._open = True
         # The files that the editor has open: relative path -> the last known hash.
         self.watched: dict[str, str | None] = {}
-        self._watch_stamps: dict[str, tuple[int, int] | None] = {}  # rel -> (mtime_ns, size) at the last hash.
         self._watcher: asyncio.Task | None = None
         self._running_sent: list[dict[str, Any]] | None = None
         # The plugins of the project on the start screen, for its / menu. A session loads its own plugins.
@@ -853,35 +852,17 @@ class Connection:
             session = self.session
             if session is None or not self.watched:
                 continue
-            names = list(self.watched)[:MAX_WATCHED]
-            changed = await asyncio.to_thread(self._changed_files, session.cwd, names)
-            for rel, current in changed:
+            for rel, known in list(self.watched.items())[:MAX_WATCHED]:
+                try:
+                    path = resolve_in_cwd(session.cwd, rel)
+                    current = await asyncio.to_thread(file_hash, path)
+                except (PathError, OSError):
+                    continue
                 if rel in self.watched and current != self.watched[rel]:
                     self.watched[rel] = current
                     running = self.turn is not None and not self.turn.done()
                     await self.send({"type": "fs.changed", "path": rel, "hash": current,
                                      "by": "agent" if running else "external"})
-
-    def _changed_files(self, cwd: Path, names: list[str]) -> list[tuple[str, str | None]]:
-        """Hash only the watched files whose size or modification time changed since the last check."""
-        result: list[tuple[str, str | None]] = []
-        for rel in names:
-            try:
-                path = resolve_in_cwd(cwd, rel)
-                try:
-                    st = path.stat()
-                    stamp: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
-                except FileNotFoundError:
-                    stamp = None
-                if rel in self._watch_stamps and self._watch_stamps[rel] == stamp:
-                    continue
-                self._watch_stamps[rel] = stamp
-                result.append((rel, file_hash(path) if stamp is not None else None))
-            except (PathError, OSError):
-                continue
-        for rel in [r for r in self._watch_stamps if r not in self.watched]:
-            del self._watch_stamps[rel]
-        return result
 
     async def run(self) -> None:
         self._watcher = asyncio.create_task(self.watch_files())
@@ -1212,11 +1193,7 @@ class Connection:
         assert session is not None
         if session.set_title_from(display or text):
             live.title_prompt, live.title_tries = display or text, 0
-        # A local model server works on one request at a time: a title request next to the turn makes the
-        # first token come later. For a local model, the title request comes after the turn.
-        local = is_local(session.agent.client)
-        if not local:
-            self.start_title(live)
+        self.start_title(live)
         # "@" references: add the files, lines, and sessions to the prompt. Load the referenced
         # sessions here: the file reads run in a thread, and the database stays in this loop.
         stored = {}
@@ -1247,8 +1224,6 @@ class Connection:
                                                 message_id=message_id, images=images)
         finally:
             session.persist()
-            if local:
-                self.start_title(live)
         if stop == "end":
             self.start_suggestion(live)
         return stop
@@ -1297,12 +1272,8 @@ class Connection:
         live.title_tries += 1
         placeholder = session.title
 
-        agent = session.agent
-        # A local model: the request starts with the conversation of the agent, which the model server has in its cache.
-        context = (agent.messages(), agent.tool_schemas()) if is_local(agent.client) else None
-
         async def work() -> None:
-            title = await summarize_title(agent.client, prompt, context)
+            title = await summarize_title(session.agent.client, prompt)
             if session.title != placeholder:  # The user renamed the session.
                 live.title_prompt = None
                 return
@@ -1327,11 +1298,8 @@ class Connection:
             return
         history = list(session.agent.history)
 
-        agent = session.agent
-        context = (agent.messages(), agent.tool_schemas()) if is_local(agent.client) else None
-
         async def work() -> None:
-            text = await suggest_prompt(agent.client, history, context)
+            text = await suggest_prompt(session.agent.client, history)
             if text and not live.running:
                 await live.send({"type": "prompt.suggestion", "text": text})
 
@@ -3479,6 +3447,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "offline_model": (str, type(None)),
     "effort": (str, type(None)),  # The effort level of the model menu. None: the default level, High.
     "new_task_prompt": (str,),
+    "tool_search": (str,),  # MCP tools by name only until the model loads them: auto, on, or off (agent.py).
     "auto_archive_days": (int,),  # "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
     "auto_memory": (bool,),
@@ -3531,6 +3500,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"'new_task_prompt' must be one of: {', '.join(NEW_TASK_CHOICES)}.")
         if key == "effort" and value is not None and value not in EFFORT_API:
             raise ProtocolError(f"'effort' must be null or one of: {', '.join(EFFORT_API)}.")
+        if key == "tool_search" and value not in ("auto", "on", "off"):
+            raise ProtocolError("'tool_search' must be one of: auto, on, off.")
         if key == "web_search" and value not in WEB_PROVIDERS:
             raise ProtocolError(f"'web_search' must be one of: {', '.join(WEB_PROVIDERS)}.")
         if key == "web_search_url" and isinstance(value, str) and value.strip():

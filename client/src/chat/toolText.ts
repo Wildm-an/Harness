@@ -104,6 +104,11 @@ export function toolAction(item: ToolItem): ToolAction {
       return { verb: pick("Found files", "Finding files"), object: short(text(a.pattern)), mono: true };
     case "web_search":
       return { verb: pick("Searched the web for", "Searching the web for"), object: short(text(a.query)), mono: false };
+    case "tool_search": {
+      // The agent loads MCP tools that the request had by name only (daemon tools/tool_search.py).
+      const query = text(a.query).replace(/^select:/i, "").replace(/mcp__[^_]+(?:_[^_]+)*?__/g, "");
+      return { verb: pick("Loaded tools", "Loading tools"), object: short(query), mono: false };
+    }
     case "web_fetch":
       return { verb: pick("Fetched", "Fetching"), object: short(urlLabel(text(a.url))), mono: false };
     case "skill":
