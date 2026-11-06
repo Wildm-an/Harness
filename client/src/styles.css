@@ -9129,36 +9129,6 @@ textarea.setting-textarea:disabled {
   padding-right: 26px;
 }
 
-/* The Context heading: the percentage, then the context ring, then the room of the grip. The panel
-   of the ring opens under the heading, as wide as the rail. */
-.rail-section-head:has(.rail-head-ring) {
-  display: flex;
-  align-items: center;
-}
-
-.rail-section-head:has(.rail-head-ring) button {
-  flex: 1;
-  min-width: 0;
-  padding-right: 4px;
-}
-
-.rail-head-ring {
-  flex: none;
-  margin-right: 26px;
-}
-
-.rail-head-ring .context-ring-wrap {
-  position: static;
-}
-
-.rail-head-ring .menu.context-panel {
-  top: calc(100% + 4px);
-  bottom: auto;
-  left: 0;
-  right: 0;
-  width: auto;
-}
-
 /* While the user drags an item of a list (useSortable.ts). */
 body.sorting,
 body.sorting * {
