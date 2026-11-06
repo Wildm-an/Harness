@@ -293,7 +293,7 @@ Harness has no "+" button now. Add it.
 
 - **V2.** Buttons that do not fit go into the ⋮ overflow menu. The overflow menu also holds "Side chat" (Ctrl+;), "Background tasks" (with a count), "Plan", and "Artifacts".
 - **V3.** Ctrl+\ closes the focused pane.
-- **V4.** The diff pane is "Changes", as in Claude (the user asked for this): its title, its pane button, its shortcut row, and its texts. Harness puts Files in the ⋮ menu. Move it to the pane buttons.
+- **V4.** The diff pane is "Changes", as in Claude (the user asked for this): its title, its pane button, its shortcut row, and its texts. Files is a pane button with a folder icon, to the right of Browser (the user asked for this). The ⋮ menu has "Side chat" with its key Ctrl+; at the top, then "Background tasks" and "Preview".
 
 ### 7.2 Session title bar
 
@@ -605,7 +605,7 @@ Do these in separate changes, in this order:
 3. Add the "+" menu to the prompt box, with Ctrl+U (section 5.2).
 4. Add effort to the model menu, and Ctrl+Shift+. (C15, C17).
 5. Remove "Send while the agent works". Use Enter and Ctrl+Enter (C7).
-6. Rename the "Diff" pane "Changes", and move Files to the pane buttons (V4).
+6. Rename the "Diff" pane "Changes", and move Files to the pane buttons (V4). Done.
 7. Move the session row keys to the Ctrl+Alt chords (S7).
 8. Move the update toast to a sidebar strip (V8).
 9. Reorganize the sidebar: search field, account menu (section 3.1). The "Capabilities" nav item is done (section 3.4).

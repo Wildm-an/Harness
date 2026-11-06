@@ -3,8 +3,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Code2,
-  Files,
   FileText,
+  Folder,
   Globe as GlobeIcon,
   FileDiff,
   GitBranch,
@@ -86,6 +86,7 @@ import {
   BACK_SHORTCUT,
   FORWARD_SHORTCUT,
   SIDEBAR_SHORTCUT,
+  SIDE_CHAT_SHORTCUT,
   isSidebarShortcut,
   isViewShortcut,
   isSideChatShortcut,
@@ -2641,7 +2642,7 @@ export default function App() {
     editor: {
       // With the Files pane open (the IDE view), this window is only the editor.
       title: filesPaneOpen ? "Editor" : "Files",
-      icon: filesPaneOpen ? Code2 : Files,
+      icon: filesPaneOpen ? Code2 : Folder,
       // The IDE view always shows the editor. The open files keep their close buttons.
       closable: view !== "ide",
       badge: dirtyCount ? <span className="tab-badge" title={`${dirtyCount} unsaved`}>{dirtyCount}</span> : undefined,
@@ -2663,7 +2664,7 @@ export default function App() {
     // The file list and search in their own window, as VS Code's Explorer (the IDE view).
     files: {
       title: "Files",
-      icon: Files,
+      icon: Folder,
       closable: true,
       render: () => (
         <EditorPane
@@ -3162,10 +3163,16 @@ export default function App() {
                 active={paneVisible("browser")}
                 onClick={() => toggleShortcutPane("browser")}
               />
+              <PaneToggle
+                icon={Folder}
+                label={`Files (${shortcutLabel("editor")})`}
+                active={paneVisible("editor")}
+                onClick={() => toggleShortcutPane("editor")}
+              />
               <MoreMenu
-                filesKey={shortcutLabel("editor")}
-                filesOpen={paneVisible("editor")}
-                onFiles={() => toggleShortcutPane("editor")}
+                sideChatKey={SIDE_CHAT_SHORTCUT}
+                sideChatOpen={sideDocked || sideFloating}
+                onSideChat={toggleSideChat}
                 runningTasks={runningTasks}
                 onTasks={() => showPane("tasks")}
                 previewOpen={paneVisible("preview")}

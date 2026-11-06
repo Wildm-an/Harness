@@ -1,14 +1,15 @@
-// The ⋮ menu at the right of the title bar, as in Claude: the Files pane, the Background tasks pane,
+// The ⋮ menu at the right of the title bar, as in Claude: the side chat, the Background tasks pane,
 // the Preview pane (PDF and Word files), and the "Keep computer awake" switch of the session.
+// Files is a pane button in the title bar (docs/UI_RULES.md V1).
 
 import { useEffect, useRef, useState } from "react";
-import { EllipsisVertical, FileText, Files, ListChecks } from "lucide-react";
+import { EllipsisVertical, FileText, ListChecks, MessagesSquare } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 
 export function MoreMenu({
-  filesKey,
-  filesOpen,
-  onFiles,
+  sideChatKey,
+  sideChatOpen,
+  onSideChat,
   runningTasks,
   onTasks,
   previewOpen,
@@ -17,9 +18,9 @@ export function MoreMenu({
   onKeepAwake,
   disabled,
 }: {
-  filesKey: string; // "Ctrl+Shift+F".
-  filesOpen: boolean;
-  onFiles: () => void;
+  sideChatKey: string; // "Ctrl+;".
+  sideChatOpen: boolean;
+  onSideChat: () => void;
   runningTasks: number;
   onTasks: () => void;
   previewOpen: boolean;
@@ -76,10 +77,10 @@ export function MoreMenu({
       </button>
       {open && (
         <div className="menu more-dropdown" role="menu" aria-label="More" data-tauri-drag-region="false">
-          <button type="button" role="menuitemcheckbox" aria-checked={filesOpen} onClick={() => run(onFiles)}>
-            <Files size={15} aria-hidden />
-            <span className="more-label">Files</span>
-            <span className="more-key">{filesKey}</span>
+          <button type="button" role="menuitemcheckbox" aria-checked={sideChatOpen} onClick={() => run(onSideChat)}>
+            <MessagesSquare size={15} aria-hidden />
+            <span className="more-label">Side chat</span>
+            <span className="more-key">{sideChatKey}</span>
           </button>
           <button type="button" role="menuitem" onClick={() => run(onTasks)}>
             <ListChecks size={15} aria-hidden />
