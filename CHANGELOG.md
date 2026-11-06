@@ -3,6 +3,46 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.57 (2026-11-06)
+
+### Window
+
+- The corner radii are tighter: buttons 4px, menus and cards 6px, panels and the prompt box 8px,
+  and the sidebar rows 4px (6px in the comfortable density).
+- The context ring is under the prompt box again. The Context heading of the session rail shows
+  only the percentage.
+- The hover fill of a section heading in the session rail stays inside the lines between the
+  sections.
+- A hover tip that would go on the page of the Browser pane goes to the other side of its button,
+  or next to it.
+
+### Changes
+
+- A click on the Changes section of the session rail opens the Changes pane with all the changes
+  of the branch, as in the Claude app: "{base} → {branch}" with a menu (all changes of the branch,
+  or only the uncommitted changes), search, a list of the files, and a section for each file with
+  the line numbers, the changed words, and the syntax colors. Before, the pane was empty.
+- The Changes section of the rail lists the pull requests of the session, the newest first: the
+  ones that the agent made, and the one of the branch. Each row shows the state icon, the title,
+  and "{repository} #{number}".
+- The state icon of a pull request follows GitHub: the rail checks again every 30 seconds while
+  the window shows, and when the window gets the focus.
+- The git button ("Create PR", "Commit", "Push") goes away after a click and while the agent works,
+  so a second click cannot ask for the same pull request again.
+
+### Browser
+
+- The annotation bar is a row under the page, as in the Claude app. The page gets smaller, so the
+  bar covers no part of it. The drawer is gone.
+
+### Chat
+
+- The caret of an open finished plan is at the far right, after the total time.
+
+### Daemon
+
+- The new message `git.diff` gives the full change of a folder for the Changes pane.
+
 ## 0.1.56 (2026-11-06)
 
 ### Chat
