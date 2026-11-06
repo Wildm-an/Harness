@@ -358,6 +358,28 @@ def test_session_switch_uses_the_saved_model_checks(daemon, project, fake_model,
     c.close()
 
 
+def test_a_failed_context_check_runs_again_before_the_next_turn(daemon, project, fake_model, monkeypatch):
+    from harness_daemon import server
+    from harness_daemon.providers import DEFAULT_CONTEXT_LENGTH, ContextInfo
+    answers = [ContextInfo(DEFAULT_CONTEXT_LENGTH, "default", "The context length of test-model is unknown."),
+               ContextInfo(1048576, "model list")]
+
+    async def flaky(*args, **kwargs):
+        return answers.pop(0)
+    monkeypatch.setattr(server, "resolve_context_length", flaky)
+    fake_model.script({"text": "Hi."})
+    c = Client(daemon)
+    c.new_session(project)
+    assert "is unknown" in c.until("session.model_info")[0]["warnings"][0]
+    # The default is not saved: the turn checks again, and the session gets the real context length.
+    c.send({"type": "prompt", "text": "hi"})
+    info, _ = c.until("session.model_info")
+    assert (info["context_length"], info["context_source"]) == (1048576, "model list")
+    c.until("turn.end")
+    assert answers == []
+    c.close()
+
+
 def test_editor_files_and_conflict(daemon, project, fake_model):
     (project / "src").mkdir()
     (project / "src" / "app.py").write_bytes(b"x = 1\n")

@@ -76,17 +76,18 @@ export function setDensity(value: Density): void {
   document.documentElement.dataset.density = value;
 }
 
-// The font of the whole interface: the bundled IBM Plex Sans, or the font of the system.
-export type InterfaceFont = "default" | "system";
+// The font of the whole interface: the font of the system (the default), or the bundled IBM Plex Sans.
+export type InterfaceFont = "system" | "plex";
 const INTERFACE_FONT_PREF = "interfaceFont";
 const SANS_FALLBACK = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const SANS_STACKS: Record<InterfaceFont, string> = {
-  default: `"IBM Plex Sans", ${SANS_FALLBACK}`,
   system: SANS_FALLBACK,
+  plex: `"IBM Plex Sans", ${SANS_FALLBACK}`,
 };
 
 export function interfaceFont(): InterfaceFont {
-  return loadPref(INTERFACE_FONT_PREF, "default") === "system" ? "system" : "default";
+  // Earlier versions saved "default" for IBM Plex Sans. That value now gives the system font too.
+  return loadPref(INTERFACE_FONT_PREF, "system") === "plex" ? "plex" : "system";
 }
 
 export function setInterfaceFont(value: InterfaceFont): void {
@@ -292,7 +293,7 @@ export function setAccentColor(value: string): void {
 /** Put each appearance setting back to its default value. The theme stays as it is. */
 export function resetAppearance(): void {
   setAccentColor(ACCENT_DEFAULT);
-  setInterfaceFont("default");
+  setInterfaceFont("system");
   setChatFontSize(CHAT_FONT_DEFAULT);
   setTranscriptWidth("default");
   setDensity("compact");

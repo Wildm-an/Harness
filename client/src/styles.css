@@ -69,7 +69,7 @@
   --diff-del-word: rgba(255, 94, 26, 0.38);
   --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(168, 165, 156, 0.06) 6px 12px);
 
-  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
   --radius-sm: 6px;
   --radius: 8px;

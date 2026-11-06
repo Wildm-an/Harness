@@ -150,6 +150,6 @@ The layout follows the Claude Code desktop app (the Code tab):
 - A permission request asks "Allow the agent to {action} {object}?". It has three buttons, from left to right: Deny (Esc), Always allow (Ctrl+Shift+Enter), and Allow once (Ctrl+Enter). A note tells where Always allow saves the rule. The keys 1, 2, and 3 also select the buttons, from left to right.
 - A rounded prompt box with the model and the context use below the text.
 - Colors: warm neutral surfaces, a clay action color, green for the states that are good, and 4.5:1 minimum text contrast in dark and light themes.
-- Fonts: IBM Plex Sans for the UI and JetBrains Mono for code. The fonts are bundled, so the app operates offline.
+- Fonts: the system font for the UI (IBM Plex Sans is an option in Settings) and JetBrains Mono for code. The fonts are bundled, so the app operates offline.
 - Icons: Lucide SVG icons.
 - Visible focus rings, 150–200 ms transitions, and `prefers-reduced-motion` support.
