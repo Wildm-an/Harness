@@ -133,11 +133,23 @@ def hub_version():
         return None
 
 
+def os_name():
+    """For example "Windows 11". Python 3.11 gives the release "10" on Windows 11: the build tells
+    them apart (Windows 11 builds start at 22000). The same as harness_daemon/osname.py: this
+    script runs alone on the host, so it cannot import that module."""
+    system, release = platform.system(), platform.release()
+    if system == "Windows" and release == "10":
+        parts = platform.version().split(".")
+        if len(parts) >= 3 and parts[2].isdigit() and int(parts[2]) >= 22000:
+            release = "11"
+    return f"{system} {release}"
+
+
 def cmd_hardware():
     gpus = nvidia_gpus() or amd_gpus()
     return {
         "hostname": socket.gethostname(),
-        "platform": f"{platform.system()} {platform.release()}",
+        "platform": os_name(),
         "gpus": gpus,
         "ram_total": ram_total(),
         "cpu_cores": os.cpu_count() or 0,

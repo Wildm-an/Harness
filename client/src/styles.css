@@ -44,6 +44,9 @@
   --ctx-messages: #ff5e1a;
   --ctx-tool-results: #a98bff;
   --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
+  /* The git state of a file in the file tree (gitStatus.ts). */
+  --git-modified: #d4b483;
+  --git-added: #81c995;
   --violet: #c3a6f0;
   --teal: #6fc8c0;
   --backdrop: rgba(15, 14, 13, 0.6);
@@ -116,6 +119,8 @@
   --ctx-messages: #d55e00;
   --ctx-tool-results: #7e57c2;
   --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
+  --git-modified: #8a5a00;
+  --git-added: #2e7d32;
   --violet: #7a4fc0;
   --teal: #1f7f78;
   --backdrop: rgba(31, 30, 29, 0.35);
@@ -4040,8 +4045,11 @@ select {
   overflow: hidden;
 }
 
+/* The width is set, because a size container has no content width: with no width, each tab
+   gets only its 36px minimum and loses its title. The tabs shrink from 160px when room is short. */
 .win-tabs > .win-tab {
   flex: 0 1 160px;
+  width: 160px;
   min-width: 36px;
   container-type: inline-size;
 }
@@ -5288,16 +5296,66 @@ input.tree-rename-input[aria-invalid="true"] {
   position: relative;
 }
 
-/* The annotation bar at the bottom of the Browser pane, as in the Claude app (AnnotateBar.tsx). */
-.annotate-bar {
+/* The annotation bar under the page of the Browser pane: a small floating bar, as in the Claude app
+   (AnnotateBar.tsx). The page is a native window over the app, so the bar cannot be over the page. */
+.annotate-dock {
   display: flex;
   flex: none;
+  justify-content: center;
+  padding: 8px 12px;
+  container-type: inline-size;
+}
+
+.annotate-bar {
+  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  min-height: 44px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
+  justify-content: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 4px 16px #00000040;
+}
+
+.annotate-add {
+  margin: 0 2px;
+}
+
+.annotate-add-icon {
+  display: none;
+}
+
+/* A narrow pane: "Add to prompt" shows only its icon, so that the bar stays one row. */
+@container (max-width: 520px) {
+  .annotate-add-text {
+    display: none;
+  }
+
+  .annotate-add-icon {
+    display: inline-block;
+  }
+}
+
+/* A line that shows a line width: in the width button and in its menu. */
+.annotate-width-line {
+  display: inline-block;
+  width: 18px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.annotate-width-item .annotate-width-line {
+  width: 28px;
+}
+
+.annotate-width-check {
+  display: inline-flex;
+  width: 14px;
+  margin-left: auto;
+  color: var(--accent);
 }
 
 .annotate-tool {
@@ -9480,61 +9538,10 @@ body.sorting * {
   cursor: pointer;
 }
 
-/* The view switch in the title bar (ViewSwitch.tsx): "</>" is the Code view, "IDE" the IDE view. */
-.view-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 6px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--hover);
-}
-
-/* In the sidebar head, the switch is at the right edge, as in the Claude app. */
+/* The sidebar head: the title nav fills the row. */
 .side-head > .title-nav {
   flex: 1;
   min-width: 0;
-}
-
-.side-head .view-switch {
-  margin-left: auto;
-}
-
-.view-switch-option {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 30px;
-  height: 24px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
-}
-
-.view-switch-option:hover {
-  color: var(--text);
-}
-
-.view-switch-option.active {
-  background: var(--surface-2);
-  color: var(--text);
-  box-shadow: 0 1px 2px #0000001f;
-}
-
-.view-switch-option:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
-}
-
-.view-switch-text {
-  font: 600 11.5px var(--font-sans);
-  letter-spacing: 0.04em;
 }
 
 /* The inline edit box of the editor (Ctrl+K), as in Cursor. */
@@ -10122,6 +10129,126 @@ body.sorting * {
   left: 0;
   right: auto;
   min-width: 180px;
+}
+
+/* The "⋯" menu of the Files pane of the Code view is in the window header: it always shows, and
+   its menu opens to the left. */
+.side-actions-more.code-more {
+  display: block;
+}
+
+.code-more .menu.side-more-menu {
+  left: auto;
+  right: 0;
+}
+
+/* A button that cannot act now, but still shows its hover tip (aria-disabled, not disabled). */
+.icon-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.icon-btn[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+/* The Files pane of the Code view (EditorPane part="all"), as in the Claude app: the editor at the
+   left, the tree at the right with a filter at its top. */
+.editor-pane.code-files {
+  grid-template-columns: minmax(0, 1fr) clamp(180px, 35%, 300px);
+}
+
+.editor-pane.code-files.no-sidebar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.editor-side.code-side {
+  order: 2;
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.file-sidebar-resizer.left {
+  right: auto;
+  left: -4px;
+}
+
+.files-filter {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.files-filter:focus-within {
+  border-color: var(--focus);
+}
+
+.files-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+}
+
+.files-found-dir {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  opacity: 0.8;
+  text-overflow: ellipsis;
+}
+
+.editor-empty-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* The git state of a file in the tree (gitStatus.ts): a color, and a letter for a file or a dot for
+   a folder that holds changed files. */
+.tree-item.git-modified,
+.tree-item.git-modified:hover {
+  color: var(--git-modified);
+}
+
+.tree-item.git-added,
+.tree-item.git-added:hover {
+  color: var(--git-added);
+}
+
+.tree-item.git-deleted,
+.tree-item.git-deleted:hover,
+.tree-item.git-conflict,
+.tree-item.git-conflict:hover {
+  color: var(--danger);
+}
+
+.tree-git {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font: 600 11px var(--font-mono);
+}
+
+.tree-git-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.8;
 }
 
 @container fileside (max-width: 236px) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatItem } from "../chat/state";
-import { groupTools, nextFollow, reconcileQueue, type QueuedItem } from "./MessageList";
+import { endHidden, groupTools, nextFollow, reconcileQueue, type QueuedItem } from "./MessageList";
 
 describe("groupTools", () => {
   const tool = (id: string): ChatItem => ({ kind: "tool", id, name: "bash", input: {}, status: "done" });
@@ -48,5 +48,26 @@ describe("the queue after a return to a session", () => {
     const list = [item("held", true)];
     expect(reconcileQueue(list, new Set(), ["held"])).toBe(list);
     expect(reconcileQueue(list, new Set(), undefined)).toBe(list);
+  });
+});
+
+describe("endHidden", () => {
+  const view = { top: 100, bottom: 600 };
+
+  it("hides the button while the working line is in view, also after a scroll up", () => {
+    expect(endHidden(view, { top: 300, bottom: 324 }, 0)).toBe(false);
+    expect(endHidden(view, { top: 300, bottom: 324 }, 200)).toBe(false);
+  });
+
+  it("shows the button when the middle of the working line is out of view", () => {
+    expect(endHidden(view, { top: 590, bottom: 614 }, 14)).toBe(true);
+    expect(endHidden(view, { top: 70, bottom: 94 }, 600)).toBe(true);
+    expect(endHidden(view, { top: 580, bottom: 604 }, 4)).toBe(false);
+  });
+
+  it("uses the bottom of the list when no working line shows", () => {
+    expect(endHidden(view, null, 0)).toBe(false);
+    expect(endHidden(view, null, 2)).toBe(false);
+    expect(endHidden(view, null, 40)).toBe(true);
   });
 });

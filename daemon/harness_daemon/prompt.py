@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import datetime
-import platform
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Collection
 
+from .osname import os_name
 from .model_prompts import PARALLEL_TOOL_CALLS, SMALL_MODEL_TOOL_CALLS, is_small_model, model_guidance
 from .tools import ToolContext
 
@@ -164,7 +164,7 @@ def system_prompt_parts(
     parts: list[tuple[str, str]] = [("system", base_prompt(model)), ("system", "\n".join([
         "Environment:",
         f"- Project folder: {ctx.cwd}",
-        f"- Operating system: {platform.system()} {platform.release()}",
+        f"- Operating system: {os_name()}",
         f"- Shell for the bash tool: {ctx.shell.name}",
         f"- Date: {datetime.date.today().isoformat()}",
         f"- Model: {model}",

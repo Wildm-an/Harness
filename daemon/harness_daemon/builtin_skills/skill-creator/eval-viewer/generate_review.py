@@ -44,7 +44,7 @@ MAX_NESTED_BYTES_PER_WORKSPACE = 50 * 1024 * 1024
 NO_PROMPT = "(No prompt found)"
 NO_PROMPT_HINT = (
     'Each test case\'s folder needs a valid eval_metadata.json with a "prompt" field '
-    "(for example eval-0/eval_metadata.json). Add or fix it, or ask Claude to, then generate this page again."
+    "(for example eval-0/eval_metadata.json). Add or fix it, or ask the agent to fix it. Then generate this page again."
 )
 
 # Extensions we render as inline text

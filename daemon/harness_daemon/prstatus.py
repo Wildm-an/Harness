@@ -165,3 +165,65 @@ async def folder_changes(path: str) -> dict[str, Any]:
             lambda: sum(_count_lines(f"{path}/{name}") for name in untracked[:MAX_UNTRACKED]))
         result["added"] += counts
     return result
+
+
+MAX_STATUS_FILES = 5000  # More changed files than this: the tree colors only the first ones.
+
+
+def parse_status(text: str, prefix: str = "") -> dict[str, str]:
+    """The output of ``git status --porcelain=v1 -z --untracked-files=all``: {path: state}.
+
+    The state is "modified", "added", "deleted", "renamed", "untracked", or "conflict". The paths are
+    relative to the folder with the repository path ``prefix`` (``git rev-parse --show-prefix``).
+    The files outside the folder are not in the result.
+    """
+    result: dict[str, str] = {}
+    parts = text.split("\0")
+    i = 0
+    while i < len(parts) and len(result) < MAX_STATUS_FILES:
+        entry = parts[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        x, y, path = entry[0], entry[1], entry[3:]
+        if x in "RC":
+            i += 1  # The next part is the old path of the rename or the copy.
+        if x == "!":
+            continue
+        if x == "?":
+            state = "untracked"
+        elif "U" in (x, y) or (x, y) in (("A", "A"), ("D", "D")):
+            state = "conflict"
+        elif x == "A":
+            state = "added"
+        elif "D" in (x, y):
+            state = "deleted"
+        elif x == "R":
+            state = "renamed"
+        else:
+            state = "modified"
+        if prefix:
+            if not path.startswith(prefix):
+                continue
+            path = path[len(prefix):]
+        path = path.rstrip("/")
+        if path:
+            result[path] = state
+    return result
+
+
+async def file_statuses(path: str) -> dict[str, str]:
+    """The git state of the changed files in a folder, for the colors of the file tree.
+
+    Return {} for a folder that is not in a git repository, or when git is not installed.
+    """
+    git = shutil.which("git")
+    if not git:
+        return {}
+    code, prefix = await _run([git, "rev-parse", "--show-prefix"], path, GIT_TIMEOUT)
+    if code != 0:
+        return {}
+    code, out = await _run([git, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."], path, GIT_TIMEOUT)
+    if code != 0:
+        return {}
+    return parse_status(out, prefix.strip())

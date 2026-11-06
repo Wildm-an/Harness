@@ -1,4 +1,5 @@
-// The edge on the right of the file sidebar of the editor. Drag it to change the width of the
+// The edge of the file sidebar of the editor: on its right, or on its left when the tree is at the right.
+// Drag it to change the width of the
 // sidebar. A double-click goes back to the automatic width. The arrow keys also change the width.
 // The width is a per-device preference.
 
@@ -30,7 +31,9 @@ export function FileSidebarResizer({
   side,
   onChange,
   onDone,
+  edge = "right",
 }: {
+  edge?: "right" | "left"; // "left": the sidebar is at the right of the pane (the Files pane of the Code view).
   side: React.RefObject<HTMLElement | null>; // The sidebar: its width now, and the width of its pane.
   onChange: (width: number) => void; // While the user drags.
   onDone: (width: number | null) => void; // After the drag, to save the width. null: the automatic width.
@@ -52,7 +55,7 @@ export function FileSidebarResizer({
 
   return (
     <div
-      className="file-sidebar-resizer"
+      className={`file-sidebar-resizer${edge === "left" ? " left" : ""}`}
       role="separator"
       aria-orientation="vertical"
       aria-label="File sidebar width"
@@ -68,14 +71,16 @@ export function FileSidebarResizer({
       onPointerMove={(e) => {
         const d = drag.current;
         if (!d) return;
-        d.last = clampFileSidebar(d.width + e.clientX - d.x, d.pane);
+        const moved = e.clientX - d.x;
+        d.last = clampFileSidebar(d.width + (edge === "left" ? -moved : moved), d.pane);
         onChange(d.last);
       }}
       onPointerUp={end}
       onPointerCancel={end}
       onDoubleClick={() => onDone(null)}
       onKeyDown={(e) => {
-        const delta = e.key === "ArrowLeft" ? -KEY_STEP : e.key === "ArrowRight" ? KEY_STEP : 0;
+        const step = edge === "left" ? -KEY_STEP : KEY_STEP;
+        const delta = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
         if (!delta) return;
         e.preventDefault();
         const { width, pane } = measure();

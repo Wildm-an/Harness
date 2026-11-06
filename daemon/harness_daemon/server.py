@@ -12,7 +12,6 @@ import json
 import logging
 import mimetypes
 import os
-import platform
 import re
 import secrets
 import socket
@@ -31,6 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from . import __version__
 from .agent import Agent
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
+from .osname import os_name
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, MODES, PermissionRules
 from . import nethttp
@@ -70,7 +70,7 @@ from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
-from .prstatus import folder_changes, pr_status
+from .prstatus import file_statuses, folder_changes, pr_status
 from . import update
 from . import session as session_mod
 from .tools.sessions import NEW_TASK_CHOICES
@@ -415,7 +415,7 @@ def host_info() -> dict[str, str]:
         user = ""
     return {
         "hostname": socket.gethostname(),
-        "platform": f"{platform.system()} {platform.release()}",
+        "platform": os_name(),
         "user": user,
         "home": str(Path.home()),
         "sep": os.sep,
@@ -2202,6 +2202,24 @@ async def on_git_pr_status(conn: Connection, msg: dict[str, Any]) -> None:
             await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.pr_status")
             return
         await conn.send({"type": "pr_status", "items": items})
+
+    asyncio.create_task(work())
+
+
+@handler("git.status")
+async def on_git_status(conn: Connection, msg: dict[str, Any]) -> None:
+    """The git state of the changed files in the session folder, for the colors of the file tree.
+    The reply is "git.status": {"files": {path: state}}. It runs as a task: git can be slow."""
+    session = conn.require_session()
+    cwd = str(session.cwd)
+
+    async def work() -> None:
+        try:
+            files = await file_statuses(cwd)
+        except Exception:  # noqa: BLE001 - the tree shows no colors.
+            log.exception("The git status failed")
+            files = {}
+        await conn.send({"type": "git.status", "files": files})
 
     asyncio.create_task(work())
 

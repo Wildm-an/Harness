@@ -29,7 +29,7 @@ export function choiceForKey(choices: Decision[], key: string): Decision | null 
 
 const TITLE_MAX = 80;
 
-/** The verb and the object of the title "Allow Claude to {action} {object}?", and the full text when the title is short of it. */
+/** The verb and the object of the title "Allow the agent to {action} {object}?", and the full text when the title is short of it. */
 function describe(item: PermissionItem): { action: string; prefix?: string; object: string; detail: string | null } {
   const summary = toolSummary(item.tool, item.input);
   if (item.tool === "bash") {
@@ -55,12 +55,12 @@ function describe(item: PermissionItem): { action: string; prefix?: string; obje
   return { action: "use", object: item.tool, detail: summary || null };
 }
 
-/** "Allow Claude to **{action}** {object}?" (docs/UI_RULES.md M7). */
+/** "Allow the agent to **{action}** {object}?" (docs/UI_RULES.md M7). */
 export function PermissionTitle({ item }: { item: PermissionItem }) {
   const { action, prefix, object } = describe(item);
   return (
     <span className="permission-title">
-      Allow Claude to <b>{action}</b> {prefix && `${prefix} `}
+      Allow the agent to <b>{action}</b> {prefix && `${prefix} `}
       <code>{object}</code>?
     </span>
   );

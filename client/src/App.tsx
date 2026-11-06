@@ -3,8 +3,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Code2,
-  Files,
   FileText,
+  Folder,
   Globe as GlobeIcon,
   FileDiff,
   GitBranch,
@@ -86,6 +86,8 @@ import {
   BACK_SHORTCUT,
   FORWARD_SHORTCUT,
   SIDEBAR_SHORTCUT,
+  SIDE_CHAT_SHORTCUT,
+  VIEW_SHORTCUT,
   isSidebarShortcut,
   isViewShortcut,
   isSideChatShortcut,
@@ -123,7 +125,6 @@ import { openLink, setPaneOpener } from "./lib/openLink";
 import { ROOM_PANES, railAfterPanes, railShown, setRailShown } from "./lib/sessionRail";
 import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } from "./lib/viewMode";
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
-import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
@@ -2641,7 +2642,7 @@ export default function App() {
     editor: {
       // With the Files pane open (the IDE view), this window is only the editor.
       title: filesPaneOpen ? "Editor" : "Files",
-      icon: filesPaneOpen ? Code2 : Files,
+      icon: filesPaneOpen ? Code2 : Folder,
       // The IDE view always shows the editor. The open files keep their close buttons.
       closable: view !== "ide",
       badge: dirtyCount ? <span className="tab-badge" title={`${dirtyCount} unsaved`}>{dirtyCount}</span> : undefined,
@@ -2663,7 +2664,7 @@ export default function App() {
     // The file list and search in their own window, as VS Code's Explorer (the IDE view).
     files: {
       title: "Files",
-      icon: Files,
+      icon: Folder,
       closable: true,
       render: () => (
         <EditorPane
@@ -2738,6 +2739,15 @@ export default function App() {
           // A note on an element goes into the prompt box as a chip. The Browser pane stays open for more notes.
           onAnnotate={(note) => setPromptAttach((p) => ({ item: annotationAttachment(note), key: (p?.key ?? 0) + 1 }))}
           onScreenshot={(image, url) => setPromptAttach((p) => ({ item: screenshotAttachment(image, url), key: (p?.key ?? 0) + 1 }))}
+          // "Minimize": the pane closes, and the session rail shows the page (only the Code view has the rail).
+          onMinimize={
+            view === "code" && session
+              ? () => {
+                  hidePane("browser");
+                  showRail(true);
+                }
+              : undefined
+          }
         />
       ),
     },
@@ -2939,8 +2949,8 @@ export default function App() {
 
   // The sidebar button and the back and forward buttons. They are at the far left of the title
   // bar: in the sidebar when it is open, and in the top bar when it is closed.
-  // The logo, the sidebar toggle, and Back and Forward. withSwitch: the Code / IDE switch too (only in the sidebar).
-  const titleNav = (withSwitch: boolean) => (
+  // The logo, the sidebar toggle, and Back and Forward. The Code / IDE view is in the ⋮ menu and on Ctrl+E.
+  const titleNav = () => (
     <div className="title-nav">
       <img className="title-logo" src="/app-logo.png" alt="Harness" width={20} height={20} draggable={false} />
       <button
@@ -2975,8 +2985,6 @@ export default function App() {
       >
         <ArrowRight size={16} aria-hidden />
       </button>
-      {/* At the right end of the sidebar head. With the sidebar hidden, in the title bar of the IDE view only. */}
-      {withSwitch && <ViewSwitch value={view} onChange={switchView} />}
     </div>
   );
 
@@ -3033,7 +3041,7 @@ export default function App() {
       onRemoveProject={deleteProject}
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
-      head={titleNav(true)}
+      head={titleNav()}
       nav={[routinesNav, capabilitiesNav]}
       tools={sessionTools}
       prStatus={prStatus}
@@ -3047,7 +3055,7 @@ export default function App() {
           type="button"
           className={`conn conn-${status}${screen === "connections" ? " active" : ""}`}
           onClick={fromSidebar(openConnections)}
-          title={`${statusText}${hello ? ` to ${hello.hostname} (${hello.platform})` : ""}. Open the computers.`}
+          title={`${statusText}${hello ? ` ${status === "closed" ? "from" : "to"} ${hello.hostname} (${hello.platform})` : ""}. Open the computers.`}
         >
           <span className="conn-dot" aria-hidden />
           <ConnectionIcon connection={current} />
@@ -3097,7 +3105,7 @@ export default function App() {
       <div className="shell">
         <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">
           {/* With the sidebar hidden, the title bar has the switch only in the IDE view (the user asked for this). */}
-          {!sidebarOpen && titleNav(view === "ide")}
+          {!sidebarOpen && titleNav()}
           <div className="topbar-title">
             {screen === "chat" && session && (
               <>
@@ -3162,10 +3170,19 @@ export default function App() {
                 active={paneVisible("browser")}
                 onClick={() => toggleShortcutPane("browser")}
               />
+              <PaneToggle
+                icon={Folder}
+                label={`Files (${shortcutLabel("editor")})`}
+                active={paneVisible("editor")}
+                onClick={() => toggleShortcutPane("editor")}
+              />
               <MoreMenu
-                filesKey={shortcutLabel("editor")}
-                filesOpen={paneVisible("editor")}
-                onFiles={() => toggleShortcutPane("editor")}
+                sideChatKey={SIDE_CHAT_SHORTCUT}
+                sideChatOpen={sideDocked || sideFloating}
+                onSideChat={toggleSideChat}
+                ideKey={VIEW_SHORTCUT}
+                ideOpen={view === "ide"}
+                onIde={() => switchView(view === "ide" ? "code" : "ide")}
                 runningTasks={runningTasks}
                 onTasks={() => showPane("tasks")}
                 previewOpen={paneVisible("preview")}
