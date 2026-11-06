@@ -1862,19 +1862,19 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
-/* The model button: the model name, then the effort level in muted text. No icon. */
-.model-chip {
+/* The model button: the model name, a bar, then the effort level. No icon. It has the color of the
+   other chips under the prompt box (the user asked for this). */
+.model-button {
   gap: 6px;
 }
 
-.model-chip-effort {
+.model-button-sep {
   flex: none;
-  color: var(--text-muted);
+  opacity: 0.6;
 }
 
-.prompt-below .model-chip {
-  color: var(--text);
-  font-size: 13px;
+.model-button-effort {
+  flex: none;
 }
 
 .menu-note {
@@ -10109,7 +10109,8 @@ body.sorting * {
    (PromptBox.tsx): a chip with an icon shows only the icon. The model chip has no icon: it shows
    the model name with no effort level. The hover hint of each chip still names it. */
 .prompt-below.compact .prompt-chip:has(> svg) .prompt-chip-text,
-.prompt-below.compact .model-chip-effort {
+.prompt-below.compact .model-button-sep,
+.prompt-below.compact .model-button-effort {
   display: none;
 }
 

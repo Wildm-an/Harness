@@ -150,7 +150,7 @@ Claude shows skills and connectors on separate tabs of its "Customize" page. The
 - **C1.** The prompt box is one card with a large radius (`--cds-radius-composer`, 14px in comfortable density). The text area grows to `min(24rem, 40svh)`.
 - **C2.** The action row inside the card, left to right: the "+" button, the text area, then Send / Stop at the right.
 - **C3.** The "chin" bar under the card, left to right: the permission mode picker; then, at the right, the model picker (with effort), then the context ring.
-- **C3a.** The chips under the prompt box (mode, project, model) are text with no border and no arrow. On hover and while the menu is open, the full chip gets the hover background (the user asked for this). The model chip has no icon: it shows the model name, then the effort level in muted text, for example "qwen3 High", as in the Claude app. With no effort level, it shows only the model name.
+- **C3a.** The chips under the prompt box (mode, project, model) are text with no border and no arrow. On hover and while the menu is open, the full chip gets the hover background (the user asked for this). The model chip has no icon: it shows the model name, a bar, then the effort level, for example "qwen3 | High" (the user asked for the bar). It has the same text color as the other chips under the prompt box (the user asked for this). Its class is `model-button`: the `model-chip` class of the Providers page has other colors.
 - **C4.** The same prompt box shows on the start screen and in a session (see the memory rule "Prompt boxes have the same features").
 
 ### 5.2 The "+" menu
