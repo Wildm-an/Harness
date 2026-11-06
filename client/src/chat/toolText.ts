@@ -1,7 +1,19 @@
 // The text of tool calls in the chat, as in Claude: "Ran skill /review", "Read test.png", and for a
 // group of calls "Ran 3 commands, read test.png, used a tool".
 
-import { parseUnifiedDiff } from "../lib/diff";
+import { parseUnifiedDiff as parseDiffNow } from "../lib/diff";
+
+// The chat renders the tool lines again for each new text of the model. A diff is parsed one time.
+const parsedDiffs = new Map<string, ReturnType<typeof parseDiffNow>>();
+function parseUnifiedDiff(diff: string): ReturnType<typeof parseDiffNow> {
+  let parsed = parsedDiffs.get(diff);
+  if (!parsed) {
+    if (parsedDiffs.size >= 300) parsedDiffs.delete(parsedDiffs.keys().next().value as string);
+    parsed = parseDiffNow(diff);
+    parsedDiffs.set(diff, parsed);
+  }
+  return parsed;
+}
 import type { ToolItem } from "./state";
 
 /** One call: a muted verb and a bright object, for example "Read" and "test.png". */

@@ -66,6 +66,7 @@ class Server:
     stopping: bool = False
     tasks: list[asyncio.Task] = field(default_factory=list)
     pending: list[tuple[str, str]] = field(default_factory=list)  # Log lines to send.
+    has_pending: asyncio.Event = field(default_factory=asyncio.Event)  # Set when "pending" gets a line.
 
     def status(self) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -190,6 +191,7 @@ class ServerManager:
         def on_line(stream: str, text: str) -> None:  # Runs in the event loop.
             server.logs.append((stream, text))
             server.pending.append((stream, text))
+            server.has_pending.set()
             if server.state == "starting" and pattern and pattern.search(text):
                 match = URL_RE.search(text)
                 if match:  # The server printed its address. It can differ from the configured port.
@@ -235,10 +237,15 @@ class ServerManager:
             await self._set(server, "running")
 
     async def _flush_logs(self, server: Server) -> None:
-        """Send the new log lines about 10 times a second, one message for each stream."""
+        """Send the new log lines at most 10 times a second, one message for each stream.
+
+        The task waits for a line, so a quiet server does not wake the event loop.
+        """
         try:
             while True:
-                await asyncio.sleep(FLUSH_INTERVAL)
+                await server.has_pending.wait()
+                await asyncio.sleep(FLUSH_INTERVAL)  # Collect the lines that come in this interval.
+                server.has_pending.clear()
                 await self._send_pending(server)
         except asyncio.CancelledError:
             await self._send_pending(server)

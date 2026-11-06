@@ -31,6 +31,19 @@ SUGGESTION_PROMPT = (
     "\n\nThe conversation:\n{conversation}"
 )
 
+# A local model server keeps the processed prompt (the KV cache) of the last request. A request with
+# another start makes it process the whole conversation again for the next turn. For a local model, the
+# suggestion request is the conversation of the agent (the same start) with this note at the end.
+SUGGESTION_NOTE = (
+    "You predict the next message that the user will send to you, the coding agent. "
+    "Read the conversation above. Write the one short message (at most 15 words) "
+    "that the user is most likely to send next, in the words and the language of the user. "
+    "The message must ask the agent to do a useful next step of the work, for example to test, "
+    "fix, extend, explain, or commit something. Do not write thanks, a greeting, or a message that "
+    "only ends the conversation. Write it as the user, not as the agent. If there is no clear next "
+    "step, reply with NONE. Do not call a tool. Reply with the message only: no quotes, no explanation."
+)
+
 _THINK = re.compile(r"<think>.*?(</think>|$)", re.S | re.I)
 _LABEL = re.compile(r"^(user|next message|message|suggestion)\s*:\s*", re.I)
 
@@ -77,8 +90,13 @@ def clean_suggestion(raw: str) -> str | None:
     return line
 
 
-async def suggest_prompt(client: ModelClient, history: list[dict[str, Any]]) -> str | None:
-    """Ask the model for the next message of the user. Return None if there is no good suggestion."""
+async def suggest_prompt(client: ModelClient, history: list[dict[str, Any]],
+                         context: tuple[list[dict[str, Any]], list[dict[str, Any]]] | None = None) -> str | None:
+    """Ask the model for the next message of the user. Return None if there is no good suggestion.
+
+    ``context``: the messages and the tools of the agent request. With it, the request is the conversation
+    of the agent with a note at the end, so a local model server can use its cache of the conversation.
+    """
     conversation = conversation_text(history)
     if not conversation:
         return None
@@ -86,9 +104,14 @@ async def suggest_prompt(client: ModelClient, history: list[dict[str, Any]]) -> 
     async def ignore(_: str) -> None:
         return None
 
-    request = [{"role": "user", "content": SUGGESTION_PROMPT.format(conversation=conversation)}]
+    if context is not None:
+        messages, tools = context
+        request = [*messages, {"role": "user", "content": SUGGESTION_NOTE}]
+    else:
+        tools = []
+        request = [{"role": "user", "content": SUGGESTION_PROMPT.format(conversation=conversation)}]
     try:
-        response = await asyncio.wait_for(client.stream(request, [], ignore), SUGGESTION_TIMEOUT)
+        response = await asyncio.wait_for(client.stream(request, tools, ignore), SUGGESTION_TIMEOUT)
     except asyncio.CancelledError:
         raise  # A new turn started.
     except Exception as e:  # noqa: BLE001 - a suggestion is optional.

@@ -26,6 +26,11 @@ SKIP_DIRS = {"node_modules", "__pycache__", "venv", "env", "target", "dist-elect
 MAX_ENTRIES = 20_000  # The scan stops after this number of folder entries.
 SCAN_SECONDS = 0.5  # The scan stops after this time.
 MAX_CREATED = 10  # At most this number of cards for one tool call.
+# A folder that is too large to scan is not scanned again for this time. Each scan of it takes SCAN_SECONDS
+# before and after each bash call, and the next model request waits for that.
+TOO_BIG_SECONDS = 300.0
+
+_too_big: dict[Path, float] = {}  # The folders that were too large, and the time of the scan.
 
 
 def _is_preview(name: str) -> bool:
@@ -93,7 +98,13 @@ def before_call(cwd: Path, name: str, args: dict[str, Any] | None) -> Snapshot:
         snap.named = named
         snap.named_existed = named.exists()
     if name == "bash" and isinstance(args, dict) and args.get("run_in_background") is not True:
-        snap.scan = scan_preview_files(Path(cwd).resolve())
+        root = Path(cwd).resolve()
+        if time.monotonic() - _too_big.get(root, -TOO_BIG_SECONDS) >= TOO_BIG_SECONDS:
+            snap.scan = scan_preview_files(root)
+            if snap.scan is None:
+                _too_big[root] = time.monotonic()
+            else:
+                _too_big.pop(root, None)
     return snap
 
 

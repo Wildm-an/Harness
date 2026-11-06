@@ -53,7 +53,8 @@ export interface RailBrowser {
   live: boolean; // The agent works in it now.
 }
 
-const LIVE_EVERY = 500; // ms between two pictures of the agent tab.
+// ms between two pictures of the agent tab. Each picture is a full-size PNG: a small view needs no more.
+const LIVE_EVERY = 1000;
 
 export function SessionRail({
   changes,
@@ -416,6 +417,11 @@ function RailBrowserView({ browser, onShow }: { browser: RailBrowser; onShow: ()
     let stop = false;
     let timer = 0;
     const take = async () => {
+      if (document.hidden) {
+        // No one sees the window: no picture now.
+        if (!stop && live) timer = window.setTimeout(take, LIVE_EVERY);
+        return;
+      }
       try {
         const image = await captureAgentTab(tab);
         if (!stop) setPicture(image);

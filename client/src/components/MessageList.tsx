@@ -4,7 +4,7 @@ import type { ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import type { Submission } from "./PromptBox";
-import { Markdown } from "./Markdown";
+import { Markdown, StreamingMarkdown } from "./Markdown";
 import { PermissionCard } from "./PermissionCard";
 import { QuestionCard } from "./QuestionCard";
 import { PlanCard } from "./PlanCard";
@@ -20,17 +20,33 @@ import type { TurnInfo } from "../chat/state";
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 
-/** The items to show: the tool calls in a row become one group, as in Claude. A visual is its own item. */
-export function groupTools(items: ChatItem[]): (ChatItem | { kind: "tools"; id: string; items: ToolItem[] })[] {
-  const out: (ChatItem | { kind: "tools"; id: string; items: ToolItem[] })[] = [];
+type Shown = ChatItem | { kind: "tools"; id: string; items: ToolItem[] };
+
+/**
+ * The items to show: the tool calls in a row become one group, as in Claude. A visual is its own item.
+ * `previous`: the groups of the last render. A group with the same calls is the same object, so its
+ * memoized row does not render again for each new text of the model.
+ */
+export function groupTools(items: ChatItem[], previous?: Map<string, ToolItem[]>): Shown[] {
+  const out: Shown[] = [];
   for (const item of items) {
     const last = out[out.length - 1];
     if (item.kind !== "tool" || isVisualItem(item)) out.push(item);
     else if (last?.kind === "tools") last.items.push(item);
     else out.push({ kind: "tools", id: `tools-${item.id}`, items: [item] });
   }
+  if (previous) {
+    for (const group of out) {
+      if (group.kind !== "tools") continue;
+      const old = previous.get(group.id);
+      if (old && old.length === group.items.length && old.every((x, i) => x === group.items[i])) group.items = old;
+    }
+  }
   return out;
 }
+
+// One formatter for the hover time of all user messages: a new Intl formatter for each render is slow.
+const fullTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 const NOTICE_ICONS = { error: CircleAlert, warning: TriangleAlert, info: Info };
 
@@ -220,7 +236,7 @@ const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork 
       {item.text && <div className="msg-user">{item.text}</div>}
       <div className="msg-actions">
         {item.ts !== undefined && (
-          <span className="msg-time" title={new Date(item.ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}>
+          <span className="msg-time" title={fullTime.format(new Date(item.ts))}>
             {relativeTime(item.ts)}
           </span>
         )}
@@ -277,9 +293,12 @@ export function nextFollow(follow: boolean, gap: number, top: number, lastTop: n
   return follow;
 }
 
+/** The empty queue: one array, so the scroll effect does not run for each render. */
+export const NO_QUEUE: QueuedItem[] = [];
+
 export function MessageList({
   items,
-  queued = [],
+  queued = NO_QUEUE,
   running = false,
   reviewId,
   onDecide,
@@ -317,6 +336,7 @@ export function MessageList({
   const scroller = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const lastTop = useRef(0);
+  const groups = useRef<Map<string, ToolItem[]>>(new Map()); // The tool groups of the last render.
   // The "scroll to bottom" button shows when the list does not follow the agent.
   const [away, setAway] = useState(false);
   const setFollow = (on: boolean) => {
@@ -355,7 +375,8 @@ export function MessageList({
   // During a turn, the tool calls at the end of the chat go into the working line, as in Claude Code:
   // its caret shows them. When the turn ends, they are a group line again.
   // An answered permission card after the tools stays in the chat.
-  const shown = groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name))));
+  const shown = groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name))), groups.current);
+  groups.current = new Map(shown.flatMap((s) => (s.kind === "tools" ? [[s.id, s.items] as const] : [])));
   let at = shown.length - 1;
   while (at >= 0 && shown[at].kind === "permission") {
     const card = shown[at] as Extract<ChatItem, { kind: "permission" }>;
@@ -395,7 +416,7 @@ export function MessageList({
             case "assistant":
               return (
                 <div key={item.id} className={`msg-assistant${item.streaming ? " streaming" : ""}`}>
-                  <Markdown text={item.text} />
+                  {item.streaming ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
                 </div>
               );
             case "tools":

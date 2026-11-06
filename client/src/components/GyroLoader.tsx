@@ -1,6 +1,7 @@
 // The loader of the working line: a gyroscope of 3 rings that turn on 3 axes. Each ring is a comet arc:
 // a bright head and a tail that fades. The color is the CSS color of the canvas (the accent color).
-// With "reduce motion" on, it draws one still frame.
+// With "reduce motion" on, or with "paused" (the turn waits for the user), it draws one still frame.
+// It draws at most 30 frames a second: a 16-pixel loader looks the same, and it uses half the power.
 
 import { useEffect, useRef } from "react";
 
@@ -68,7 +69,9 @@ export function drawGyro(ctx: CanvasRenderingContext2D, size: number, t: number,
   ctx.globalAlpha = 1;
 }
 
-export function GyroLoader({ size = 16, className }: { size?: number; className?: string }) {
+const FRAME_MS = 1000 / 30;
+
+export function GyroLoader({ size = 16, className, paused = false }: { size?: number; className?: string; paused?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -80,19 +83,22 @@ export function GyroLoader({ size = 16, className }: { size?: number; className?
     canvas.height = Math.round(size * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const still = paused || (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
     let color = getComputedStyle(canvas).color;
     let frame = 0;
     let raf = 0;
+    let last = -Infinity;
     const draw = (ms: number) => {
+      if (!still) raf = requestAnimationFrame(draw);
+      if (ms - last < FRAME_MS - 1) return;
+      last = ms;
       // Read the color again from time to time: the theme can change while the turn runs.
       if (++frame % 30 === 0) color = getComputedStyle(canvas).color;
       drawGyro(ctx, size, still ? 1 : ms / 1000, color);
-      if (!still) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [size]);
+  }, [size, paused]);
 
   return <canvas ref={ref} className={className} style={{ width: size, height: size }} aria-hidden />;
 }

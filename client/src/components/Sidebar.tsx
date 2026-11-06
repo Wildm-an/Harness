@@ -496,7 +496,8 @@ export function Sidebar({
   useEffect(() => {
     if (prPaths.length === 0) return;
     onRequestPr(prPaths);
-    const timer = window.setInterval(() => onRequestPr(prPaths), 60_000);
+    // Each check starts git and gh (a network request) for each project: none while the window is hidden.
+    const timer = window.setInterval(() => document.hidden || onRequestPr(prPaths), 60_000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prJoined holds the paths.
   }, [prJoined]);

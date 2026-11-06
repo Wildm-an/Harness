@@ -78,6 +78,10 @@ class FakeModel:
             body = await request.json()
             # A session title request (titles.py) gets its own reply. It does not use a scripted reply.
             first = (body.get("messages") or [{}])[0].get("content")
+            # For a local model, the title and suggestion requests are the agent conversation with a note at the end.
+            last = (body.get("messages") or [{}])[-1].get("content")
+            if isinstance(last, str) and last.startswith(("You name coding sessions", "You predict the next message")):
+                first = last
             if isinstance(first, str) and first.startswith("You name coding sessions"):
                 self.title_requests.append(body)
                 await asyncio.sleep(self.title_delay)
