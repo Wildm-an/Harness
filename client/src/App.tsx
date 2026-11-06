@@ -87,6 +87,7 @@ import {
   FORWARD_SHORTCUT,
   SIDEBAR_SHORTCUT,
   SIDE_CHAT_SHORTCUT,
+  VIEW_SHORTCUT,
   isSidebarShortcut,
   isViewShortcut,
   isSideChatShortcut,
@@ -124,7 +125,6 @@ import { openLink, setPaneOpener } from "./lib/openLink";
 import { ROOM_PANES, railAfterPanes, railShown, setRailShown } from "./lib/sessionRail";
 import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } from "./lib/viewMode";
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
-import { ViewSwitch } from "./components/ViewSwitch";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
@@ -2940,8 +2940,8 @@ export default function App() {
 
   // The sidebar button and the back and forward buttons. They are at the far left of the title
   // bar: in the sidebar when it is open, and in the top bar when it is closed.
-  // The logo, the sidebar toggle, and Back and Forward. withSwitch: the Code / IDE switch too (only in the sidebar).
-  const titleNav = (withSwitch: boolean) => (
+  // The logo, the sidebar toggle, and Back and Forward. The Code / IDE view is in the ⋮ menu and on Ctrl+E.
+  const titleNav = () => (
     <div className="title-nav">
       <img className="title-logo" src="/app-logo.png" alt="Harness" width={20} height={20} draggable={false} />
       <button
@@ -2976,8 +2976,6 @@ export default function App() {
       >
         <ArrowRight size={16} aria-hidden />
       </button>
-      {/* At the right end of the sidebar head. With the sidebar hidden, in the title bar of the IDE view only. */}
-      {withSwitch && <ViewSwitch value={view} onChange={switchView} />}
     </div>
   );
 
@@ -3034,7 +3032,7 @@ export default function App() {
       onRemoveProject={deleteProject}
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
-      head={titleNav(true)}
+      head={titleNav()}
       nav={[routinesNav, capabilitiesNav]}
       tools={sessionTools}
       prStatus={prStatus}
@@ -3098,7 +3096,7 @@ export default function App() {
       <div className="shell">
         <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">
           {/* With the sidebar hidden, the title bar has the switch only in the IDE view (the user asked for this). */}
-          {!sidebarOpen && titleNav(view === "ide")}
+          {!sidebarOpen && titleNav()}
           <div className="topbar-title">
             {screen === "chat" && session && (
               <>
@@ -3173,6 +3171,9 @@ export default function App() {
                 sideChatKey={SIDE_CHAT_SHORTCUT}
                 sideChatOpen={sideDocked || sideFloating}
                 onSideChat={toggleSideChat}
+                ideKey={VIEW_SHORTCUT}
+                ideOpen={view === "ide"}
+                onIde={() => switchView(view === "ide" ? "code" : "ide")}
                 runningTasks={runningTasks}
                 onTasks={() => showPane("tasks")}
                 previewOpen={paneVisible("preview")}

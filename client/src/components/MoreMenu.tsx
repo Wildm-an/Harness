@@ -1,15 +1,18 @@
-// The ⋮ menu at the right of the title bar, as in Claude: the side chat, the Background tasks pane,
+// The ⋮ menu at the right of the title bar, as in Claude: the side chat, the IDE view, the Background tasks pane,
 // the Preview pane (PDF and Word files), and the "Keep computer awake" switch of the session.
 // Files is a pane button in the title bar (docs/UI_RULES.md V1).
 
 import { useEffect, useRef, useState } from "react";
-import { EllipsisVertical, FileText, ListChecks, MessagesSquare } from "lucide-react";
+import { Check, Code2, EllipsisVertical, FileText, ListChecks, MessagesSquare } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 
 export function MoreMenu({
   sideChatKey,
   sideChatOpen,
   onSideChat,
+  ideKey,
+  ideOpen,
+  onIde,
   runningTasks,
   onTasks,
   previewOpen,
@@ -21,6 +24,9 @@ export function MoreMenu({
   sideChatKey: string; // "Ctrl+;".
   sideChatOpen: boolean;
   onSideChat: () => void;
+  ideKey: string; // "Ctrl+E".
+  ideOpen: boolean; // The IDE view shows. Off: the Code view.
+  onIde: () => void;
   runningTasks: number;
   onTasks: () => void;
   previewOpen: boolean;
@@ -81,6 +87,12 @@ export function MoreMenu({
             <MessagesSquare size={15} aria-hidden />
             <span className="more-label">Side chat</span>
             <span className="more-key">{sideChatKey}</span>
+          </button>
+          <button type="button" role="menuitemcheckbox" aria-checked={ideOpen} onClick={() => run(onIde)}>
+            <Code2 size={15} aria-hidden />
+            <span className="more-label">IDE view</span>
+            {ideOpen && <Check size={14} aria-hidden />}
+            <span className="more-key">{ideKey}</span>
           </button>
           <button type="button" role="menuitem" onClick={() => run(onTasks)}>
             <ListChecks size={15} aria-hidden />

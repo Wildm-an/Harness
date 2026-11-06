@@ -9461,61 +9461,10 @@ body.sorting * {
   cursor: pointer;
 }
 
-/* The view switch in the title bar (ViewSwitch.tsx): "</>" is the Code view, "IDE" the IDE view. */
-.view-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 6px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--hover);
-}
-
-/* In the sidebar head, the switch is at the right edge, as in the Claude app. */
+/* The sidebar head: the title nav fills the row. */
 .side-head > .title-nav {
   flex: 1;
   min-width: 0;
-}
-
-.side-head .view-switch {
-  margin-left: auto;
-}
-
-.view-switch-option {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 30px;
-  height: 24px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
-}
-
-.view-switch-option:hover {
-  color: var(--text);
-}
-
-.view-switch-option.active {
-  background: var(--surface-2);
-  color: var(--text);
-  box-shadow: 0 1px 2px #0000001f;
-}
-
-.view-switch-option:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
-}
-
-.view-switch-text {
-  font: 600 11.5px var(--font-sans);
-  letter-spacing: 0.04em;
 }
 
 /* The inline edit box of the editor (Ctrl+K), as in Cursor. */
