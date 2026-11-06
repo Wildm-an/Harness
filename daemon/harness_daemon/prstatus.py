@@ -132,12 +132,17 @@ async def branch_pr(gh: str, path: str) -> dict[str, Any] | None:
 
 _info_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 
+# The cache time of a "fresh" request: the PR list of the rail asks often, so a change of the state on
+# GitHub (merged, closed) shows soon. Two windows that ask at the same time still run gh one time.
+FRESH_SECONDS = 10
 
-async def pr_info(url: str) -> dict[str, Any] | None:
-    """A pull request from its URL, for the hover card of a link in the chat. None: no ``gh``, or
-    gh cannot read it (no access, a bad URL, no network). The result stays in a cache for a short time."""
+
+async def pr_info(url: str, fresh: bool = False) -> dict[str, Any] | None:
+    """A pull request from its URL, for the hover card of a link in the chat and the PR list of the
+    rail. None: no ``gh``, or gh cannot read it (no access, a bad URL, no network). The result stays
+    in a cache for a short time: CACHE_SECONDS, or FRESH_SECONDS for a ``fresh`` request."""
     cached = _info_cache.get(url)
-    if cached and time.monotonic() - cached[0] < CACHE_SECONDS:
+    if cached and time.monotonic() - cached[0] < (FRESH_SECONDS if fresh else CACHE_SECONDS):
         return cached[1]
     gh = shutil.which("gh")
     if not gh or not repo_of(url):

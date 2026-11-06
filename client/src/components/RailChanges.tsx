@@ -1,5 +1,5 @@
-// The Changes section of the session rail, as in the Claude Code desktop app: the pull request of
-// the branch, the work of the session in three parts, and the git button ("Create PR", "Commit",
+// The Changes section of the session rail, as in the Claude Code desktop app: the pull requests of
+// the session (the ones that the agent made, and the one of the branch), the work of the session in three parts, and the git button ("Create PR", "Commit",
 // "Push"). Each part has its own color and icon, so the user can see at once what is not in a
 // commit, what is not pushed, and what is on the remote:
 //
@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, Check, ChevronDown, CloudCheck, Copy, Diff, Ellipsis, ExternalLink, FilePen, GitCommitHorizontal } from "lucide-react";
 import type { GitChanges, PullRequest } from "../daemon/protocol";
-import { ACTION_LABELS, ACTION_TIPS, PR_STATE_TEXT, chosenAction, compareUrl, dismiss, gitActions, hasWorkParts, isDismissed, setChosenAction, workRows, workSignature, type GitAction, type GitButton, type WorkKind } from "../lib/pr";
+import { ACTION_LABELS, ACTION_TIPS, PR_STATE_TEXT, prShortRef, chosenAction, compareUrl, dismiss, gitActions, hasWorkParts, isDismissed, setChosenAction, workRows, workSignature, type GitAction, type GitButton, type ListedPr, type WorkKind } from "../lib/pr";
 import { DiffCounts } from "./DiffStats";
 import { PrCard, PrIcon, useHoverCard } from "./PrCard";
 
@@ -22,13 +22,15 @@ export function RailChanges({
   sessionId,
   changes,
   pr,
+  prs,
   onAction,
   onOpenChanges,
   onOpenPr,
 }: {
   sessionId: string;
   changes: GitChanges;
-  pr: PullRequest | null;
+  pr: PullRequest | null; // The pull request of the branch: the git button and "All work is in the pull request" use it.
+  prs: ListedPr[]; // The rows of the PR list.
   onAction: ((action: GitAction) => void) | null; // null: not connected.
   onOpenChanges?: () => void;
   onOpenPr: (url: string) => void;
@@ -44,7 +46,7 @@ export function RailChanges({
   const behind = changes.behind ?? 0;
   return (
     <div className="rail-changes-box">
-      {pr && <RailPr pr={pr} onOpen={onOpenPr} />}
+      <RailPrList prs={prs} onOpen={onOpenPr} />
       {parts && rows.length > 0 && (
         <ul className="rail-work" aria-label="The work of the session">
           {rows.map((r) => {
@@ -202,12 +204,31 @@ function ActionButton({ button, manualUrl, onAction, onChoose, onViewChanges, on
   );
 }
 
-/** The pull request of the branch, as in the Claude app: the icon, the title, "#5 · Merged", and ⋯. */
-function RailPr({ pr, onOpen }: { pr: PullRequest; onOpen: (url: string) => void }) {
+/**
+ * The pull requests of the session, as in the Claude app: the newest first. Each row has the icon in
+ * the color of the state, the title, "Harness #18", and ⋯.
+ */
+export function RailPrList({ prs, onOpen }: { prs: ListedPr[]; onOpen: (url: string) => void }) {
+  if (prs.length === 0) return null;
+  return (
+    <ul className="rail-prs" aria-label="Pull requests">
+      {prs.map((p) => (
+        <li key={p.url ?? `#${p.number}`}>
+          <RailPr item={p} onOpen={onOpen} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** One pull request: the icon, the title, "Harness #18", and ⋯ ("Open pull request", "Copy link"). */
+function RailPr({ item, onOpen }: { item: ListedPr; onOpen: (url: string) => void }) {
+  const pr = item.info;
+  const url = pr?.url ?? item.url;
   const [menu, setMenu] = useState(false);
   const [copied, setCopied] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const hover = useHoverCard(() => <PrCard pr={pr} url={pr.url ?? ""} />, !menu);
+  const hover = useHoverCard(() => (pr ? <PrCard pr={pr} url={url ?? ""} /> : null), !menu && !!pr);
   useEffect(() => {
     if (!menu) return;
     ref.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
@@ -218,9 +239,9 @@ function RailPr({ pr, onOpen }: { pr: PullRequest; onOpen: (url: string) => void
     return () => window.removeEventListener("mousedown", onDown);
   }, [menu]);
   const copy = async () => {
-    if (!pr.url) return;
+    if (!url) return;
     try {
-      await navigator.clipboard.writeText(pr.url);
+      await navigator.clipboard.writeText(url);
       setCopied(true);
       window.setTimeout(() => {
         setCopied(false);
@@ -230,6 +251,8 @@ function RailPr({ pr, onOpen }: { pr: PullRequest; onOpen: (url: string) => void
       setMenu(false);
     }
   };
+  const title = pr?.title ?? `Pull request #${item.number}`;
+  const state = pr ? `, ${PR_STATE_TEXT[pr.state]}` : "";
   return (
     <div
       className="rail-pr"
@@ -241,13 +264,11 @@ function RailPr({ pr, onOpen }: { pr: PullRequest; onOpen: (url: string) => void
         }
       }}
     >
-      <button type="button" className="rail-pr-main" onClick={() => pr.url && onOpen(pr.url)} disabled={!pr.url} aria-label={`Open pull request #${pr.number}: ${pr.title ?? ""}`} {...hover.anchor}>
-        <PrIcon state={pr.state} size={15} className="rail-pr-state" />
+      <button type="button" className="rail-pr-main" onClick={() => url && onOpen(url)} disabled={!url} aria-label={`Open pull request #${item.number}: ${title}${state}`} {...hover.anchor}>
+        <PrIcon state={pr?.state ?? null} size={15} className="rail-pr-state" />
         <span className="rail-item-text">
-          <span className="rail-item-title">{pr.title ?? `Pull request #${pr.number}`}</span>
-          <span className="rail-item-detail">
-            #{pr.number} · {PR_STATE_TEXT[pr.state]}
-          </span>
+          <span className="rail-item-title">{title}</span>
+          <span className="rail-item-detail">{prShortRef({ number: item.number, repo: pr?.repo ?? item.repo, url })}</span>
         </span>
       </button>
       <button type="button" className="rail-pr-more" aria-haspopup="menu" aria-expanded={menu} aria-label="Pull request actions" title="More actions" onClick={() => setMenu((v) => !v)}>
@@ -255,10 +276,10 @@ function RailPr({ pr, onOpen }: { pr: PullRequest; onOpen: (url: string) => void
       </button>
       {menu && (
         <div className="menu rail-git-menu" role="menu" aria-label="Pull request">
-          <button type="button" role="menuitem" disabled={!pr.url} onClick={() => (setMenu(false), pr.url && onOpen(pr.url))}>
+          <button type="button" role="menuitem" disabled={!url} onClick={() => (setMenu(false), url && onOpen(url))}>
             <ExternalLink size={14} aria-hidden /> Open pull request
           </button>
-          <button type="button" role="menuitem" disabled={!pr.url} onClick={() => void copy()}>
+          <button type="button" role="menuitem" disabled={!url} onClick={() => void copy()}>
             {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
             {copied ? "Copied" : "Copy link"}
           </button>

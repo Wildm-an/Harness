@@ -2,7 +2,8 @@
 // "Create PR" button, the PR row of the Changes section, the PR mark of a session row, and the
 // hover card of a pull request link in the chat.
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import type { ChatItem } from "../chat/state";
 import type { GitChanges, PrState, PullRequest, WorkPart } from "../daemon/protocol";
 import { loadPref, savePref } from "./prefs";
 
@@ -18,6 +19,76 @@ export function prUrlRef(url: string | null | undefined): { repo: string; number
 export function prRefText(pr: Pick<PullRequest, "number" | "repo" | "url">): string {
   const repo = pr.repo ?? prUrlRef(pr.url)?.repo;
   return repo ? `${repo} #${pr.number}` : `#${pr.number}`;
+}
+
+/** "Harness #18": the repository name (no owner) and the number, as the PR rows of the Claude app. */
+export function prShortRef(pr: Pick<PullRequest, "number" | "repo" | "url">): string {
+  const repo = pr.repo ?? prUrlRef(pr.url)?.repo;
+  const name = repo?.split("/").pop();
+  return name ? `${name} #${pr.number}` : `#${pr.number}`;
+}
+
+// -- the pull requests that a session made ------------------------------------------------------
+
+const PR_URL = /https?:\/\/(?:www\.)?github\.com\/[^/\s?#"'<>]+\/[^/\s?#"'<>]+\/pull\/\d+/gi;
+
+/** True for a tool call that makes a pull request: `gh pr create` in a shell, or a "create pull request" tool (GitHub MCP). */
+function makesPr(name: string, input: unknown): boolean {
+  if (name === "bash" || name === "shell" || name === "powershell") {
+    const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
+    return typeof command === "string" && /\bgh\s+pr\s+create\b/.test(command);
+  }
+  const tool = name.toLowerCase();
+  return /(pull_?request|(^|_)pr($|_))/.test(tool) && /(create|open|new)/.test(tool);
+}
+
+/**
+ * The URLs of the pull requests that the agent made in a session, as the PR list of the Changes
+ * section of the Claude app: from the output of `gh pr create` and of the tools that make a pull
+ * request. The newest first, each one time. A link that the agent only reads or names does not count.
+ */
+export function sessionPrUrls(items: readonly ChatItem[]): string[] {
+  const urls: string[] = [];
+  for (const item of items) {
+    if (item.kind !== "tool" || item.status !== "done" || !item.output || !makesPr(item.name, item.input)) continue;
+    for (const match of item.output.match(PR_URL) ?? []) {
+      const ref = prUrlRef(match);
+      if (!ref) continue;
+      const url = `https://github.com/${ref.repo}/pull/${ref.number}`;
+      const at = urls.indexOf(url);
+      if (at >= 0) urls.splice(at, 1);
+      urls.push(url);
+    }
+  }
+  return urls.reverse();
+}
+
+/** A row of the PR list: the URL, and the details when the daemon sent them. */
+export interface ListedPr {
+  url: string | null;
+  number: number;
+  repo: string | null;
+  info: PullRequest | null | undefined; // undefined: no reply yet. null: gh cannot read it.
+}
+
+/** The PR list of the Changes section: the pull requests of the session, then the pull request of the branch when the list does not have it. */
+export function listedPrs(urls: readonly string[], branchPr: PullRequest | null | undefined, info: (url: string) => PullRequest | null | undefined): ListedPr[] {
+  const rows: ListedPr[] = urls.map((url) => {
+    const ref = prUrlRef(url);
+    return { url, number: ref?.number ?? 0, repo: ref?.repo ?? null, info: info(url) };
+  });
+  if (branchPr) {
+    const ref = prUrlRef(branchPr.url);
+    const key = ref ? `https://github.com/${ref.repo}/pull/${ref.number}` : null;
+    const at = key ? rows.findIndex((r) => r.url === key) : -1;
+    // The store asks every 30 seconds (usePrRefresh): its reply is newer than the branch status, which
+    // the daemon sends only at the start and the end of a turn.
+    const fresh = key ? info(key) : undefined;
+    const details = fresh ?? branchPr;
+    if (at >= 0) rows[at] = { ...rows[at], info: rows[at].info ?? branchPr };
+    else rows.push({ url: branchPr.url, number: branchPr.number, repo: branchPr.repo ?? ref?.repo ?? null, info: details });
+  }
+  return rows;
 }
 
 /** A short time from now: "just now", "2m ago", "3h ago", "5d ago", else the date. */
@@ -242,23 +313,29 @@ type Listener = () => void;
 const infos = new Map<string, PullRequest | null>();
 const asked = new Set<string>();
 const listeners = new Set<Listener>();
-let sender: ((url: string) => boolean) | null = null;
+let sender: ((url: string, fresh: boolean) => boolean) | null = null;
+let version = 0; // Changes with each reply: the snapshot of usePrInfos.
 
 export const prInfoStore = {
   /** The app gives the function that sends git.pr_info. null: no connection. */
-  setSender(send: ((url: string) => boolean) | null) {
+  setSender(send: ((url: string, fresh: boolean) => boolean) | null) {
     sender = send;
     if (!send) asked.clear();
   },
   /** A reply of the daemon. */
   put(url: string, pr: PullRequest | null) {
     infos.set(url, pr);
+    version++;
     listeners.forEach((l) => l());
   },
   /** Ask for a pull request, one time for each URL. */
   request(url: string) {
     if (asked.has(url) || infos.has(url) || !sender) return;
-    if (sender(url)) asked.add(url);
+    if (sender(url, false)) asked.add(url);
+  },
+  /** Ask again with a short daemon cache (the state can change: merged, closed). The old details show until the reply. */
+  refresh(url: string) {
+    if (sender?.(url, true)) asked.add(url);
   },
   get: (url: string) => infos.get(url),
   subscribe(l: Listener) {
@@ -266,6 +343,54 @@ export const prInfoStore = {
     return () => listeners.delete(l);
   },
 };
+
+/** The URL of a pull request in the form of the PR list ("https://github.com/{owner}/{name}/pull/{n}"), else null. */
+export function prKeyUrl(url: string | null | undefined): string | null {
+  const ref = prUrlRef(url);
+  return ref ? `https://github.com/${ref.repo}/pull/${ref.number}` : null;
+}
+
+/** The time between two requests of the PR list, while the window shows. */
+export const PR_REFRESH_MS = 30_000;
+/** A focus of the window asks again only when the last request is older than this. */
+const PR_FOCUS_GAP_MS = 5_000;
+
+/**
+ * Keep the details of some pull requests current, as the Claude app does: a new state on GitHub
+ * (merged, closed, draft) shows soon. Asks at once, every PR_REFRESH_MS while the window shows,
+ * and when the window comes back (focus, or the page shows again). ``again`` asks at once when it changes.
+ */
+export function usePrRefresh(urls: readonly string[], again: unknown = null): void {
+  const key = urls.join(" ");
+  useEffect(() => {
+    if (!key) return;
+    const list = key.split(" ");
+    let last = 0;
+    const ask = () => {
+      last = Date.now();
+      list.forEach((url) => prInfoStore.refresh(url));
+    };
+    const shown = () => typeof document === "undefined" || document.visibilityState === "visible";
+    const back = () => {
+      if (shown() && Date.now() - last > PR_FOCUS_GAP_MS) ask();
+    };
+    ask();
+    const timer = window.setInterval(() => shown() && ask(), PR_REFRESH_MS);
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [key, again]);
+}
+
+/** Reads the pull requests of the store, and renders again with each reply of the daemon. */
+export function usePrInfos(): (url: string) => PullRequest | null | undefined {
+  useSyncExternalStore(prInfoStore.subscribe, () => version);
+  return (url) => prInfoStore.get(url);
+}
 
 /** The pull request of a URL, from the store. */
 export function usePrInfo(url: string | null): PullRequest | null | undefined {

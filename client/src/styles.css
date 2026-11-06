@@ -10489,6 +10489,7 @@ body.sorting * {
 }
 
 .plan-folded .plan-text,
+.plan-fold .plan-text,
 .plan-step .plan-text {
   flex: 1;
 }
@@ -10505,7 +10506,8 @@ body.sorting * {
 .plan-fold {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  text-align: left;
   width: 100%;
   padding: 0;
   border: 0;
@@ -11639,6 +11641,15 @@ body.sorting * {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* The pull requests of the session, the newest first, as in the Claude app. */
+.rail-prs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .rail-pr {
   position: relative;

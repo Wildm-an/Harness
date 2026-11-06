@@ -46,9 +46,10 @@ export function PlanBlock({
       {stale && !finished && <p className="plan-stale">Plan from before your last message</p>}
       {finished && (
         <button type="button" className="plan-fold" aria-expanded onClick={() => setOpen(false)} title="Hide the steps">
-          <span>Plan finished</span>
-          <ChevronRight size={14} aria-hidden className="plan-chevron open" />
+          <span className="plan-text">Plan finished</span>
           {total !== null && <span className="plan-time">{formatElapsed(total)}</span>}
+          {/* The caret is at the far right, at the same place as on the folded line (the user asked for this). */}
+          <ChevronRight size={14} aria-hidden className="plan-chevron open" />
         </button>
       )}
       {steps.map((step, i) => (

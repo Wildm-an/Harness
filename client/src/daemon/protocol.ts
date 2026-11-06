@@ -775,7 +775,7 @@ export type ClientMessage =
   | { type: "git.pr_status"; paths: string[] }
   | { type: "git.changes"; cwd: string } // The changes of the folder against its base branch (the rail).
   | { type: "git.diff"; cwd: string; scope?: GitDiffScope } // The full change of the folder (the Changes pane).
-  | { type: "git.pr_info"; url: string } // A pull request from its URL (the hover card of a chat link).
+  | { type: "git.pr_info"; url: string; fresh?: boolean } // A pull request from its URL (a chat link card, the PR list of the rail). fresh: a short daemon cache.
   | { type: "git.status" } // The git state of the changed files in the session folder (the file tree).
   | { type: "session.delete"; session_id: string }
   | { type: "session.move"; session_id: string; cwd: string } // Change the folder. The history stays.

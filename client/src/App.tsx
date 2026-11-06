@@ -176,7 +176,7 @@ import {
 } from "./lib/connections";
 import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openExternal, openLocalPath, pickFiles, pickFolder, revealInExplorer } from "./lib/tauri";
 import { filesPromptText } from "./lib/fileRefs";
-import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore } from "./lib/pr";
+import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore, sessionPrUrls } from "./lib/pr";
 import { FolderMenu } from "./components/FolderMenu";
 import type { SessionActions } from "./components/SessionRow";
 
@@ -1808,6 +1808,8 @@ export default function App() {
 
   // The questions before the first start of a server command. The empty browser tab shows them too.
   const serverApprovals = useMemo(() => pendingServerApprovals(chat.items), [chat.items]);
+  // The pull requests that the agent made in this session: the PR list of the Changes section.
+  const sessionPrs = useMemo(() => sessionPrUrls(chat.items), [chat.items]);
 
   const decide = useCallback(
     (requestId: string, decision: Decision) => {
@@ -2093,7 +2095,7 @@ export default function App() {
 
   // The pull request links of the chat ask the daemon for their pull request (the hover card).
   useEffect(() => {
-    prInfoStore.setSender(status === "open" ? (url) => sendSafely({ type: "git.pr_info", url }) : null);
+    prInfoStore.setSender(status === "open" ? (url, fresh) => sendSafely(fresh ? { type: "git.pr_info", url, fresh } : { type: "git.pr_info", url }) : null);
   }, [status, sendSafely]);
 
   // Stable callbacks: each user message in the chat is memoized, and a new function renders all of them again.
@@ -3621,6 +3623,7 @@ export default function App() {
                   running={chat.running}
                   onCompact={() => submit({ kind: "command", name: "compact", args: "" })}
                   pr={prStatus.get(pathKey(session.cwd))?.pr ?? null}
+                  sessionPrs={sessionPrs}
                   onOpenPr={openLink}
                   servers={servers.items}
                   onOpenServer={(s) => void openServer(s)}
