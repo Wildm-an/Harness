@@ -19,6 +19,51 @@ this file on its Changelog page.
   reasoning, the first answer, and the end. A slow model server then shows in the log.
 - The context view puts the size of each tool in the correct part again.
 
+### Pull requests
+
+- The Changes section of the session rail shows the pull request of the branch, and the work in
+  three parts with their own color and icon: Uncommitted, Not pushed, and Pushed.
+- The git button has the menu of the Claude app: "View changes", "Create PR", "Create draft PR",
+  "Manually create PR", and "Dismiss".
+- A pull request link in the chat, the PR row of the rail, and the PR mark of a worktree session
+  row show a hover card with the state, the repository, the time, the title, the author, and the
+  line counts. The row menu has "Open PR".
+
+### Files
+
+- The Files pane of the Code view has the editor at the left and the tree at the right, with
+  "Filter, or ? to search in files" at the top of the tree. The header has search, "Collapse all
+  folders", the file tree switch, and a more menu.
+- The tree shows the git state of each file in both views: a color and a letter for a changed
+  file, and a dot for a folder that holds one.
+- Files is a button with a folder icon in the title bar, to the right of Browser.
+
+### Window and panes
+
+- The more menu starts with "Side chat" (Ctrl+;), then "Background tasks", "Preview", and "IDE
+  view" (Ctrl+E). The Code / IDE switch is removed for now. Ctrl+E still switches the view.
+- The Browser pane has "Minimize": the page moves to a small live view in the session rail. A
+  click on the view opens the pane again.
+- The annotation bar of the Browser pane is a small floating bar. A new line width menu shows for
+  the pen and the line shapes.
+- Browser and terminal tabs show their titles again.
+
+### Colors
+
+- The status, context, pull request, and git colors use the brighter Clear Sight palette. Each
+  part of the context breakdown has its own color. The light theme uses darker shades, for a text
+  contrast of 4.5:1 or more.
+
+### Chat
+
+- The scroll-to-agent button shows only when the working line is out of view.
+- The permission and plan cards say "the agent", not a product name.
+
+### Fixes
+
+- Windows 11 has its correct name in the system prompt, the hello message, and the Cookbook.
+- The connection tooltip says "Disconnected from".
+
 ## 0.1.52 (2026-11-05)
 
 ### Speed
