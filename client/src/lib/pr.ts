@@ -36,7 +36,7 @@ const PR_URL = /https?:\/\/(?:www\.)?github\.com\/[^/\s?#"'<>]+\/[^/\s?#"'<>]+\/
 function makesPr(name: string, input: unknown): boolean {
   if (name === "bash" || name === "shell" || name === "powershell") {
     const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
-    return typeof command === "string" && /gh\s+pr\s+create/.test(command);
+    return typeof command === "string" && /\bgh\s+pr\s+create\b/.test(command);
   }
   const tool = name.toLowerCase();
   return /(pull_?request|(^|_)pr($|_))/.test(tool) && /(create|open|new)/.test(tool);
