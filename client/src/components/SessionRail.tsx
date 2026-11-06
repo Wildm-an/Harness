@@ -29,7 +29,7 @@ import {
   type RailSection,
 } from "../lib/sessionRail";
 import { formatTokens, type ContextUsage } from "../lib/context";
-import { ContextBreakdown, ContextRing } from "./ContextRing";
+import { ContextBreakdown } from "./ContextRing";
 
 export const SESSION_RAIL_ID = "session-rail";
 const NARROW = "(max-width: 900px)";
@@ -91,7 +91,7 @@ export function SessionRail({
   browser: RailBrowser | null;
   onShowBrowser: () => void; // Open the Browser pane on the page of the agent.
   environment: RailEnvironment;
-  context: { tokens: number; length: number; source?: string } | null;
+  context: { tokens: number; length: number } | null;
   usage: ContextUsage | null; // The last context breakdown (context.usage).
   onReadUsage: () => void; // Asks the daemon for the breakdown (context.get).
   running: boolean; // A turn runs: the compaction waits.
@@ -352,20 +352,6 @@ export function SessionRail({
                   </span>
                 )}
               </button>
-              {/* The context ring is at the right of the percentage (the user asked for this). A press on it does not drag the section. */}
-              {s.id === "context" && context && (
-                <span className="rail-head-ring" onPointerDown={(e) => e.stopPropagation()}>
-                  <ContextRing
-                    tokens={context.tokens}
-                    length={context.length}
-                    source={context.source}
-                    usage={usage}
-                    running={running}
-                    onOpen={onReadUsage}
-                    onCompact={onCompact}
-                  />
-                </span>
-              )}
               {/* The grip at the far right shows on hover, as in the Claude app. */}
               <span className="rail-grip" aria-hidden>
                 <GripVertical size={14} />
