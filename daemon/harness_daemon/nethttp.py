@@ -29,19 +29,8 @@ def ssl_context() -> ssl.SSLContext:
 
 
 def warm_up() -> None:
-    """Make the SSL context and import the model client in a thread, so that the first request does not wait.
-
-    The import of openai takes about 1 second. In the event loop, it stops the daemon for that time.
-    """
+    """Make the SSL context in a thread, so that the first request does not wait for it."""
     threading.Thread(target=ssl_context, name="ssl-context", daemon=True).start()
-    threading.Thread(target=_import_model_client, name="import-openai", daemon=True).start()
-
-
-def _import_model_client() -> None:
-    try:
-        import openai  # noqa: F401
-    except Exception:  # The first model request reports the error.
-        pass
 
 
 def async_client(**kwargs: Any) -> httpx.AsyncClient:

@@ -5,14 +5,19 @@ this file on its Changelog page.
 
 ## 0.1.53 (2026-11-05)
 
-### Speed
+### Daemon
 
-- A model on this computer, the private network, or Tailscale answers at its 0.1.51 speed again.
-  In 0.1.52, the title and the next-prompt suggestion sent the full conversation and all the
-  tools to the model after each turn. On a server that does not keep the start of the prompt in
-  its cache, the next prompt waited for these large requests. They now send a short prompt again.
-- For such a model, the title still comes after the first turn, so it does not delay the first
-  reply.
+- The daemon makes its model requests as in 0.1.51 again. The request changes of 0.1.52 are
+  removed: the title and the next-prompt suggestion send a short prompt again and run as before,
+  the tool order, the retry of rejected request fields, and the background checks (open files,
+  server logs, hook settings, the file scan of commands) work as in 0.1.51.
+- Tool search: when the MCP tools are large (more than 4,000 tokens or 10% of the context), the
+  request has only their names. The agent loads the tools that it needs with `tool_search`, and
+  then uses them. With the GitHub MCP server, each request is about half the size. The setting
+  `"tool_search"` in settings.json is `"auto"` (the default), `"on"`, or `"off"`.
+- The daemon log has one line for each model request: the time to the first byte, the first
+  reasoning, the first answer, and the end. A slow model server then shows in the log.
+- The context view puts the size of each tool in the correct part again.
 
 ## 0.1.52 (2026-11-05)
 

@@ -544,67 +544,15 @@ OnText = Callable[[str], Awaitable[None]]
 
 
 log = logging.getLogger(__name__)
-# One line for each model request in the daemon log: the kind, the size, and the time to the first
-# reasoning, the first answer, and the end. The daemon log has warnings only, so this logger has INFO.
+# One INFO line for each model request in the daemon log: the size, and the time to the first byte, the first
+# reasoning, the first answer, and the end. A slow model server then shows in the log.
 timing = logging.getLogger("harness.timing")
 timing.setLevel(logging.INFO)
-
-
-# The last request of each model: its tools and messages, to log what changed at its start.
-_last_request: dict[tuple[str, str], tuple[str, list[str]]] = {}
-
-
-def _prefix_note(key: tuple[str, str], messages: list[dict], tools: list[dict]) -> str:
-    """"tools same, messages same up to 12/14", or where the new request starts to differ."""
-    import json as _json
-
-    tools_text = _json.dumps(tools, sort_keys=True)
-    texts = [_json.dumps(m, sort_keys=True, default=str) for m in messages]
-    previous = _last_request.get(key)
-    _last_request[key] = (tools_text, texts)
-    if previous is None:
-        return "first request"
-    old_tools, old_texts = previous
-    same = 0
-    for a, b in zip(old_texts, texts):
-        if a != b:
-            break
-        same += 1
-    note = f"tools {'same' if old_tools == tools_text else 'CHANGED'}, messages same up to {same}/{len(old_texts)}"
-    if same < len(old_texts) and same < len(texts):
-        a, b = old_texts[same], texts[same]
-        at = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
-        note += f" (message {same} differs at char {at}: {a[max(0, at - 60):at + 60]!r} -> {b[max(0, at - 60):at + 60]!r})"
-    if old_tools != tools_text:
-        old = {t.get("function", {}).get("name"): t for t in _json.loads(old_tools) or []}
-        new = {t.get("function", {}).get("name"): t for t in tools or []}
-        changed = [n for n in set(old) | set(new) if old.get(n) != new.get(n)]
-        order = "same order" if [n for n in old if n in new] == [n for n in new if n in old] else "NEW ORDER"
-        note += f" (tools changed: {sorted(changed)[:10]}, {order})"
-    return note
-
-
-def _request_kind(messages: list[dict]) -> str:
-    """"agent", "title", "suggestion", or "auto-mode": from the start of the first or last message."""
-    for message in (messages[:1] + messages[-1:]) if messages else []:
-        content = message.get("content")
-        if isinstance(content, str):
-            if content.startswith("You name coding sessions"):
-                return "title"
-            if content.startswith("You predict the next message"):
-                return "suggestion"
-            if content.startswith("You check one tool call"):
-                return "auto-mode"
-    return "agent"
 
 # The effort levels of the model menu (setting "effort"), and the reasoning_effort value of the API.
 # The OpenAI API has no level above "xhigh": "max" sends "xhigh" too.
 EFFORT_API = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
 DEFAULT_EFFORT = "high"  # The level with no "effort" setting, as in the Claude app.
-
-# The request fields that an endpoint rejected, by (base URL, model, field). All clients of the model share
-# this, so a new session or a title request does not send a rejected field again (one more round trip each).
-_REJECTED: set[tuple[str, str, str]] = set()
 
 
 class ModelClient:
@@ -616,6 +564,9 @@ class ModelClient:
         self._base_url: str | None = None
         self._client: AsyncOpenAI | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._send_stream_options = True
+        # False after the endpoint rejected a request with reasoning_effort: the model has no effort levels.
+        self._send_effort = True
 
     async def _openai(self) -> AsyncOpenAI:
         """The API client for the current address and event loop.
@@ -661,12 +612,6 @@ class ModelClient:
         """
         return "deepseek" in (self.provider.base_url or "").lower() or "deepseek" in self.model.lower()
 
-    def _sends(self, field: str) -> bool:
-        return (self.provider.base_url or "", self.model, field) not in _REJECTED
-
-    def _reject(self, field: str) -> None:
-        _REJECTED.add((self.provider.base_url or "", self.model, field))
-
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
                      _retry_tunnel: bool = True, options: dict[str, Any] | None = None,
                      on_reasoning: Callable[[], Awaitable[None]] | None = None) -> ModelResponse:
@@ -675,31 +620,29 @@ class ModelClient:
         import openai  # Loaded by _openai() already: this import only gives the name.
 
         started = time.monotonic()
-        if _request_kind(messages) == "agent":
-            timing.info("prefix %s: %s", self.label, _prefix_note((self.provider.base_url or "", self.model), messages, tools))
         client = await self._openai()
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
         for key in ("temperature", "max_tokens", "stop"):
             if options and options.get(key) is not None:
                 kwargs[key] = options[key]
         effort = options.get("reasoning_effort") if options else None
-        if effort and self._sends("reasoning_effort"):
+        if effort and self._send_effort:
             kwargs["reasoning_effort"] = effort
         if tools:
             kwargs["tools"] = tools
-        if self._sends("stream_options"):
+        if self._send_stream_options:
             kwargs["stream_options"] = {"include_usage": True}
         try:
             stream = await client.chat.completions.create(**kwargs)
         except openai.BadRequestError as e:
             # Some servers reject stream_options. Try once more without it.
-            if "stream_options" in kwargs and "stream_options" in str(e):
-                self._reject("stream_options")
+            if self._send_stream_options and "stream_options" in str(e):
+                self._send_stream_options = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             # A model with no effort levels can reject reasoning_effort. Try once more without it.
             if "reasoning_effort" in kwargs:
                 log.info("%s rejected reasoning_effort=%s: %s", self.label, effort, e)
-                self._reject("reasoning_effort")
+                self._send_effort = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             raise ModelError(f"The model endpoint rejected the request: {e}") from e
         except openai.APIConnectionError as e:
@@ -752,15 +695,11 @@ class ModelClient:
             raise ModelError(f"The model stream failed: {e}") from e
         finally:
             await stream.close()
-            ended = time.monotonic()
             since = lambda t: f"{t - started:.2f}s" if t is not None else "-"  # noqa: E731
-            timing.info(
-                "model %s %s: %d messages, %d chars, %d tools, effort=%s | open %s, first reasoning %s, "
-                "first answer %s, end %s | prompt %s, completion %s, reasoning %d chars",
-                _request_kind(messages), self.label, len(messages), sum(len(str(m.get("content") or "")) for m in messages),
-                len(tools), kwargs.get("reasoning_effort", "-"), since(opened), since(first_reasoning),
-                since(first_answer), since(ended), (usage or {}).get("prompt_tokens", "?"),
-                (usage or {}).get("completion_tokens", "?"), sum(len(r) for r in reasoning_parts))
+            timing.info("model %s: %d messages, %d tools | first byte %s, first reasoning %s, first answer %s, end %s | "
+                        "prompt %s, completion %s tokens", self.label, len(messages), len(tools), since(opened),
+                        since(first_reasoning), since(first_answer), since(time.monotonic()),
+                        (usage or {}).get("prompt_tokens", "?"), (usage or {}).get("completion_tokens", "?"))
 
         calls = []
         for key in sorted(slots):
