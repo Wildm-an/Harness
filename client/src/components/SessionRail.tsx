@@ -7,7 +7,7 @@ import { Archive, ChevronRight, Coffee, Folder, GitBranch, Globe, GripVertical, 
 import { useSortable } from "../lib/useSortable";
 import type { GitChanges } from "../daemon/protocol";
 import { RailChanges, RailPrList } from "./RailChanges";
-import { listedPrs, prInfoStore, usePrInfos, type GitAction } from "../lib/pr";
+import { listedPrs, prKeyUrl, usePrInfos, usePrRefresh, type GitAction } from "../lib/pr";
 import { captureAgentTab } from "../browser/BrowserPane";
 import type { PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
 import type { ConnectionKind } from "../lib/connections";
@@ -161,13 +161,11 @@ export function SessionRail({
   const branch = environment.worktree?.branch ?? environment.branch;
   // The pull request of the branch: from git.changes (a newer daemon), else from the sidebar status.
   const branchPr = changes && changes.pr !== undefined ? changes.pr : pr;
-  // The pull requests of the session, as in the Claude app. Ask for their details when the rail opens
-  // and after each turn: the state can change (merged, closed).
+  // The pull requests of the session, as in the Claude app. The rail keeps their state current: it asks
+  // when it opens, every 30 seconds while the window shows, when the window comes back, and after each turn.
   const prInfo = usePrInfos();
-  const prKey = sessionPrs.join(" ");
-  useEffect(() => {
-    if (!running) sessionPrs.forEach((url) => prInfoStore.refresh(url));
-  }, [prKey, running]);
+  const branchKey = prKeyUrl(branchPr?.url);
+  usePrRefresh(branchKey && !sessionPrs.includes(branchKey) ? [...sessionPrs, branchKey] : sessionPrs, running);
   const prs = listedPrs(sessionPrs, branchPr, prInfo);
 
   // Under the environment: the computer of the agent does not sleep while the agent works in this session.

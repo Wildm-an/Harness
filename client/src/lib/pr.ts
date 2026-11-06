@@ -2,7 +2,7 @@
 // "Create PR" button, the PR row of the Changes section, the PR mark of a session row, and the
 // hover card of a pull request link in the chat.
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { ChatItem } from "../chat/state";
 import type { GitChanges, PrState, PullRequest, WorkPart } from "../daemon/protocol";
 import { loadPref, savePref } from "./prefs";
@@ -81,9 +81,12 @@ export function listedPrs(urls: readonly string[], branchPr: PullRequest | null 
     const ref = prUrlRef(branchPr.url);
     const key = ref ? `https://github.com/${ref.repo}/pull/${ref.number}` : null;
     const at = key ? rows.findIndex((r) => r.url === key) : -1;
-    // The branch status is newer than a cached reply: it replaces the details of the same pull request.
-    if (at >= 0) rows[at] = { ...rows[at], info: branchPr };
-    else rows.push({ url: branchPr.url, number: branchPr.number, repo: branchPr.repo ?? ref?.repo ?? null, info: branchPr });
+    // The store asks every 30 seconds (usePrRefresh): its reply is newer than the branch status, which
+    // the daemon sends only at the start and the end of a turn.
+    const fresh = key ? info(key) : undefined;
+    const details = fresh ?? branchPr;
+    if (at >= 0) rows[at] = { ...rows[at], info: rows[at].info ?? branchPr };
+    else rows.push({ url: branchPr.url, number: branchPr.number, repo: branchPr.repo ?? ref?.repo ?? null, info: details });
   }
   return rows;
 }
@@ -310,12 +313,12 @@ type Listener = () => void;
 const infos = new Map<string, PullRequest | null>();
 const asked = new Set<string>();
 const listeners = new Set<Listener>();
-let sender: ((url: string) => boolean) | null = null;
+let sender: ((url: string, fresh: boolean) => boolean) | null = null;
 let version = 0; // Changes with each reply: the snapshot of usePrInfos.
 
 export const prInfoStore = {
   /** The app gives the function that sends git.pr_info. null: no connection. */
-  setSender(send: ((url: string) => boolean) | null) {
+  setSender(send: ((url: string, fresh: boolean) => boolean) | null) {
     sender = send;
     if (!send) asked.clear();
   },
@@ -328,11 +331,11 @@ export const prInfoStore = {
   /** Ask for a pull request, one time for each URL. */
   request(url: string) {
     if (asked.has(url) || infos.has(url) || !sender) return;
-    if (sender(url)) asked.add(url);
+    if (sender(url, false)) asked.add(url);
   },
-  /** Ask again (the state can change: merged, closed). The old details show until the reply. */
+  /** Ask again with a short daemon cache (the state can change: merged, closed). The old details show until the reply. */
   refresh(url: string) {
-    if (sender?.(url)) asked.add(url);
+    if (sender?.(url, true)) asked.add(url);
   },
   get: (url: string) => infos.get(url),
   subscribe(l: Listener) {
@@ -340,6 +343,48 @@ export const prInfoStore = {
     return () => listeners.delete(l);
   },
 };
+
+/** The URL of a pull request in the form of the PR list ("https://github.com/{owner}/{name}/pull/{n}"), else null. */
+export function prKeyUrl(url: string | null | undefined): string | null {
+  const ref = prUrlRef(url);
+  return ref ? `https://github.com/${ref.repo}/pull/${ref.number}` : null;
+}
+
+/** The time between two requests of the PR list, while the window shows. */
+export const PR_REFRESH_MS = 30_000;
+/** A focus of the window asks again only when the last request is older than this. */
+const PR_FOCUS_GAP_MS = 5_000;
+
+/**
+ * Keep the details of some pull requests current, as the Claude app does: a new state on GitHub
+ * (merged, closed, draft) shows soon. Asks at once, every PR_REFRESH_MS while the window shows,
+ * and when the window comes back (focus, or the page shows again). ``again`` asks at once when it changes.
+ */
+export function usePrRefresh(urls: readonly string[], again: unknown = null): void {
+  const key = urls.join(" ");
+  useEffect(() => {
+    if (!key) return;
+    const list = key.split(" ");
+    let last = 0;
+    const ask = () => {
+      last = Date.now();
+      list.forEach((url) => prInfoStore.refresh(url));
+    };
+    const shown = () => typeof document === "undefined" || document.visibilityState === "visible";
+    const back = () => {
+      if (shown() && Date.now() - last > PR_FOCUS_GAP_MS) ask();
+    };
+    ask();
+    const timer = window.setInterval(() => shown() && ask(), PR_REFRESH_MS);
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [key, again]);
+}
 
 /** Reads the pull requests of the store, and renders again with each reply of the daemon. */
 export function usePrInfos(): (url: string) => PullRequest | null | undefined {

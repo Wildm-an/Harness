@@ -2086,7 +2086,7 @@ export default function App() {
 
   // The pull request links of the chat ask the daemon for their pull request (the hover card).
   useEffect(() => {
-    prInfoStore.setSender(status === "open" ? (url) => sendSafely({ type: "git.pr_info", url }) : null);
+    prInfoStore.setSender(status === "open" ? (url, fresh) => sendSafely(fresh ? { type: "git.pr_info", url, fresh } : { type: "git.pr_info", url }) : null);
   }, [status, sendSafely]);
 
   // Stable callbacks: each user message in the chat is memoized, and a new function renders all of them again.

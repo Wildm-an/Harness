@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatItem } from "../chat/state";
 import type { PullRequest } from "../daemon/protocol";
-import { listedPrs, prShortRef, sessionPrUrls } from "./pr";
+import { listedPrs, prKeyUrl, prShortRef, sessionPrUrls } from "./pr";
 
 const tool = (id: string, name: string, input: unknown, output: string, status: "done" | "error" = "done"): ChatItem => ({ kind: "tool", id, name, input, output, status });
 const pr = (n: number, extra: Partial<PullRequest> = {}): PullRequest => ({
@@ -46,11 +46,21 @@ describe("listedPrs", () => {
     expect(rows[2].info?.title).toBe("PR 12");
   });
 
-  it("uses the branch status for a pull request that the list has", () => {
-    const rows = listedPrs(urls, pr(17, { state: "merged" }), (url) => (url.endsWith("/17") ? pr(17) : undefined));
+  it("uses the newer reply of the store, else the branch status", () => {
+    const store = (url: string) => (url.endsWith("/17") ? pr(17, { state: "merged" }) : undefined);
+    const rows = listedPrs(urls, pr(17), store);
     expect(rows).toHaveLength(2);
     expect(rows[1].info?.state).toBe("merged");
     expect(rows[0].info).toBeUndefined();
+    expect(listedPrs([], pr(12), () => undefined)[0].info?.state).toBe("open");
+    expect(listedPrs([], pr(12), () => pr(12, { state: "closed" }))[0].info?.state).toBe("closed");
+  });
+});
+
+describe("prKeyUrl", () => {
+  it("gives the form of the PR list", () => {
+    expect(prKeyUrl("https://github.com/Wildm-an/Harness/pull/18/files")).toBe("https://github.com/Wildm-an/Harness/pull/18");
+    expect(prKeyUrl(null)).toBeNull();
   });
 });
 
