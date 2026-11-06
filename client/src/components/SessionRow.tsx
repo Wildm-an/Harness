@@ -8,8 +8,10 @@
 // hides the nested sessions under the row.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, CalendarClock, ChevronRight, Columns2, EllipsisVertical, GitBranch, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Mail, MailOpen } from "lucide-react";
-import type { RunningSession, SessionSummary } from "../daemon/protocol";
+import { Archive, ArchiveRestore, CalendarClock, ChevronRight, Columns2, EllipsisVertical, GitBranch, GitPullRequest, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Mail, MailOpen } from "lucide-react";
+import type { PullRequest, RunningSession, SessionSummary } from "../daemon/protocol";
+import { PR_STATE_TEXT, prRefText } from "../lib/pr";
+import { PrIcon, PrMiniCard, useHoverCard } from "./PrCard";
 import { useOverlay } from "../lib/overlay";
 import { modelName } from "../lib/modelName";
 import { setDraggedSession, startSessionDrag } from "../lib/split";
@@ -22,6 +24,7 @@ export interface SessionActions {
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onOpenSplit?: (id: string) => void; // "Open in" > "Split view", and a drop of the row on the main view.
+  onOpenPr?: (url: string) => void; // "Open PR": the pull request of the branch of the session.
 }
 
 export interface SessionState {
@@ -84,12 +87,13 @@ export function splitItem(actions: Pick<SessionActions, "onOpenSplit">, active: 
 const MENU_WIDTH = 210;
 const SUB_WIDTH = 160;
 
-type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split";
-const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete" };
+type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split" | "pr";
+const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete", g: "pr" };
 
-function SessionMenu({ session, unread, split, anchor, at, onAction, onClose }: {
+function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onClose }: {
   session: SessionSummary;
   unread: boolean;
+  prItem: boolean; // "Open PR": the branch of the session has a pull request.
   split: "on" | "off" | null; // "Open in" > "Split view": "off" when the main view shows the session. null: no item.
   anchor: HTMLElement;
   at: { x: number; y: number } | null; // A right click: the menu opens at the mouse, not under the ⋮ button.
@@ -178,7 +182,7 @@ function SessionMenu({ session, unread, split, anchor, at, onAction, onClose }: 
       return;
     }
     const action = !confirm && !e.ctrlKey && !e.metaKey && !e.altKey ? KEYS[e.key.toLowerCase()] : undefined;
-    if (action) {
+    if (action && (action !== "pr" || prItem)) {
       e.preventDefault();
       if (action === "delete") setConfirm(true);
       else onAction(action);
@@ -225,6 +229,12 @@ function SessionMenu({ session, unread, split, anchor, at, onAction, onClose }: 
         </div>
       ) : (
         <>
+          {prItem && (
+            <>
+              {item("pr", "Open PR", "G", GitPullRequest)}
+              {!split && <div className="menu-sep" role="separator" />}
+            </>
+          )}
           {split && (
             <>
               <button
@@ -277,8 +287,9 @@ function SessionMenu({ session, unread, split, anchor, at, onAction, onClose }: 
   );
 }
 
-export function SessionRow({ session, active, state, unread, disabled, actions, nested, children }: {
+export function SessionRow({ session, active, state, unread, disabled, actions, nested, pr, children }: {
   session: SessionSummary;
+  pr?: PullRequest | null; // The pull request of the branch of the session (a worktree session).
   active: boolean;
   state: SessionState;
   unread: boolean;
@@ -306,6 +317,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
     else if (action === "rename") setRenaming(true);
     else if (action === "archive") actions.onArchive(session.id, !session.archived);
     else if (action === "split") actions.onOpenSplit?.(session.id);
+    else if (action === "pr") pr?.url && actions.onOpenPr?.(pr.url);
     else actions.onDelete(session.id);
   };
 
@@ -357,6 +369,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
             {working && <span className="sr-only">Running</span>}
             {session.branch && <GitBranch size={12} className="side-session-branch" aria-label="Worktree" />}
             {session.routine_id && <CalendarClock size={12} className="side-session-branch" aria-label="Routine" />}
+            {pr && <PrMark pr={pr} />}
             {shown && <span className={`side-session-status ${state.kind}`} role="img" aria-label={state.label} title={state.label} />}
           </button>
         )}
@@ -393,6 +406,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
           <SessionMenu
             session={session}
             unread={unread}
+            prItem={!!pr?.url && !!actions.onOpenPr}
             split={splitItem(actions, active)}
             anchor={moreRef.current}
             at={typeof menu === "object" ? menu : null}
@@ -410,5 +424,19 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
         </button>
       )}
     </li>
+  );
+}
+
+/** The pull request mark of a session row, as in the Claude app: the PR icon in the color of its
+ * state, with a small card on hover (the title, "Merged · owner/name #5", the line counts). */
+function PrMark({ pr }: { pr: PullRequest }) {
+  const hover = useHoverCard(() => <PrMiniCard pr={pr} />);
+  return (
+    <>
+      <span className="side-session-pr" data-hover-card role="img" aria-label={`${PR_STATE_TEXT[pr.state]} pull request ${prRefText(pr)}`} {...hover.anchor}>
+        <PrIcon state={pr.state} size={13} />
+      </span>
+      {hover.card}
+    </>
   );
 }

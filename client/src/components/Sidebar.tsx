@@ -127,6 +127,21 @@ function PrBadge({ status }: { status: PrStatus }) {
   );
 }
 
+const MAX_PR_SESSIONS = 40; // The worktree sessions that ask for their pull request, at most.
+
+/** The folders of the worktree sessions that are not archived, newest first, with no repeat. */
+export function worktreeCwds(sessions: SessionSummary[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of sessions) {
+    if (!s.branch || s.archived || seen.has(pathKey(s.cwd))) continue;
+    seen.add(pathKey(s.cwd));
+    out.push(s.cwd);
+    if (out.length >= MAX_PR_SESSIONS) break;
+  }
+  return out;
+}
+
 /**
  * Groups the sessions by project folder. The saved projects are groups also with no session.
  * The group with the newest session is first. Groups with no session are last, by name.
@@ -491,7 +506,8 @@ export function Sidebar({
   };
 
   // "Show PR status": the daemon reads the pull request of each project folder, again each minute.
-  const prPaths = view.showPr && open ? allGroups.map((g) => g.path) : [];
+  // The worktree sessions have their own branch: their rows show its pull request.
+  const prPaths = view.showPr && open ? [...allGroups.map((g) => g.path), ...worktreeCwds(sessions)] : [];
   const prJoined = prPaths.join("\n");
   useEffect(() => {
     if (prPaths.length === 0) return;
@@ -524,6 +540,7 @@ export function Sidebar({
         unread={unread.has(s.id)}
         disabled={!open}
         actions={actions}
+        pr={s.branch ? (prStatus.get(pathKey(s.cwd))?.pr ?? null) : null}
         nested={nested && { count: nested.length, open: opened, onToggle: () => toggleNested(s.id), hidden: hiddenActivity(s.id, children, (id) => stateOf(id).kind), listId }}
       >
         {nested && opened && (

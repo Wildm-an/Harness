@@ -8776,7 +8776,7 @@ textarea.setting-textarea:disabled {
 }
 
 .side-pr-merged {
-  color: var(--accent);
+  color: var(--violet);
 }
 
 .side-pr-closed {
@@ -9491,7 +9491,7 @@ body.sorting * {
 }
 
 .rail-pr-icon.merged {
-  color: var(--accent);
+  color: var(--violet);
 }
 
 .rail-pr-icon.closed {
@@ -10954,4 +10954,343 @@ body.sorting * {
 
 .menu button.sub-open {
   background: var(--hover);
+}
+
+/* -- Pull requests and the parts of the work (lib/pr.ts, PrCard.tsx, RailChanges.tsx) ---------- */
+
+/* The colors of a pull request state, as on GitHub and in the Claude app. */
+.pr-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+.pr-icon.pr-open,
+.pr-state-text.pr-open {
+  color: var(--success);
+}
+.pr-icon.pr-merged,
+.pr-state-text.pr-merged {
+  color: var(--violet);
+}
+.pr-icon.pr-closed,
+.pr-state-text.pr-closed {
+  color: var(--danger);
+}
+.pr-icon.pr-draft,
+.pr-state-text.pr-draft {
+  color: var(--text-muted);
+}
+
+/* A pull request link in the chat: the icon before the text. */
+.markdown a.pr-link {
+  display: inline;
+}
+.markdown a.pr-link .pr-icon {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+/* The hover card. */
+.pr-card-float {
+  position: fixed;
+  z-index: 50;
+  max-width: min(420px, calc(100vw - 16px));
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+.pr-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 280px;
+  padding: 12px 14px;
+  color: var(--text);
+  font: 13px/1.4 var(--font-sans);
+}
+.pr-card-mini {
+  min-width: 0;
+  max-width: 360px;
+  gap: 4px;
+  padding: 8px 10px;
+}
+.pr-card-head,
+.pr-card-line,
+.pr-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pr-card-line {
+  gap: 5px;
+  font-size: 12px;
+}
+.pr-card-ref {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary, var(--text-muted));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-card-time {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.pr-card-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.pr-card-mini .pr-card-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-card-muted {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.pr-card-counts {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.pr-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  font-size: 12px;
+  font-weight: 500;
+}
+.pr-pill-open {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.pr-pill-merged {
+  background: color-mix(in srgb, var(--violet) 18%, transparent);
+  color: var(--violet);
+}
+.pr-pill-closed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.pr-pill .pr-icon {
+  color: inherit;
+}
+.pr-card-foot {
+  justify-content: space-between;
+}
+.pr-card-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary, var(--text-muted));
+}
+.pr-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--violet) 30%, var(--surface));
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+.pr-card-stats {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.pr-chip {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary, var(--text-muted));
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The pull request mark of a session row, before the status mark. */
+.side-session-pr {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-left: 6px;
+}
+
+/* The Changes section of the rail. */
+.rail-changes-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rail-pr {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.rail-pr-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.rail-pr-main:hover:not(:disabled),
+.rail-pr-more:hover {
+  background: var(--hover);
+}
+.rail-pr-main:focus-visible,
+.rail-pr-more:focus-visible,
+.rail-work-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.rail-pr-more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* The parts of the work: each part has its own color and icon. */
+.rail-work {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rail-work-row {
+  --work-color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 2px 6px 2px 4px;
+  border: 0;
+  border-left: 2px solid var(--work-color);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.rail-work-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+.rail-work-row:disabled {
+  cursor: default;
+}
+.rail-work-row.work-uncommitted {
+  --work-color: var(--git-modified);
+}
+.rail-work-row.work-unpushed {
+  --work-color: var(--info);
+}
+.rail-work-row.work-pushed {
+  --work-color: var(--success);
+}
+.rail-work-icon {
+  flex: none;
+  color: var(--work-color);
+}
+.rail-work-label {
+  flex: none;
+  color: var(--work-color);
+  font-weight: 500;
+}
+.rail-work-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rail-work-behind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  padding: 0 6px;
+  color: var(--warning);
+  font-size: 12px;
+}
+.rail-work-clean {
+  margin-left: 8px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The git button, with its menu button at the right. */
+.rail-git-action {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.rail-git-action.split .rail-changes-pr {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.rail-git-more {
+  padding: 0 4px;
+  border-left-width: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.menu.rail-git-menu {
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 200px;
+}
+.rail-git-menu .rail-git-label {
+  flex: 1;
+  text-align: left;
+}
+.rail-git-menu .rail-git-check {
+  flex: none;
+  margin-left: 12px;
+  color: var(--info);
 }
