@@ -5757,6 +5757,15 @@ input.tree-rename-input[aria-invalid="true"] {
   overflow-wrap: anywhere;
 }
 
+/* A code block in the code theme (CodeBlock.tsx): the theme gives the background and the colors. */
+.code-block {
+  font-family: var(--font-mono);
+}
+
+.code-block br:last-child {
+  display: none; /* Monaco ends its colored text with a line break. */
+}
+
 .tool-image {
   display: block;
   max-width: 100%;

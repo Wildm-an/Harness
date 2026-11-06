@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { toolLabel, toolSummary, toolTip } from "./ToolCard";
+import { inputBlock, toolLabel, toolSummary, toolTip } from "./ToolCard";
+import { codeColors } from "./CodeBlock";
 import { chatReducer, emptyChat, historyToItems } from "../chat/state";
 
 describe("the tool names in the chat", () => {
@@ -56,5 +57,19 @@ describe("the hover tip of a tool row", () => {
     const long = "x".repeat(400);
     expect(toolTip("Bash", long)).toBe(`Bash: ${"x".repeat(160)}…`);
     expect(toolTip("Browser", "")).toBe("Browser");
+  });
+});
+
+describe("the code blocks of a tool row", () => {
+  it("show the command, the written file, or the input as JSON", () => {
+    expect(inputBlock("bash", { command: "npm test" })).toEqual([{ label: "Command", text: "npm test", language: "shell" }]);
+    expect(inputBlock("write", { path: "app.py", content: "print(1)\n" })).toEqual([{ label: "app.py", text: "print(1)\n", path: "app.py" }]);
+    expect(inputBlock("read", { path: "a.ts" })[0]).toMatchObject({ label: "Input", language: "json" });
+  });
+
+  it("use the colors of the code theme", () => {
+    expect(codeColors("vs-dark")).toEqual({ bg: "#1e1e1e", fg: "#d4d4d4" });
+    expect(codeColors("vs")).toEqual({ bg: "#fffffe", fg: "#000000" });
+    expect(codeColors("unknown")).toEqual(codeColors("vs-dark"));
   });
 });

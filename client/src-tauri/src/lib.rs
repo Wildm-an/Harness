@@ -364,6 +364,26 @@ pub fn run() {
                 app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.handle().plugin(tauri_plugin_process::init())?;
                 make_tray(app)?;
+                // A click on a Windows notification shows the window, and the UI opens the session of
+                // the notification ("notification-open" with its session id). Windows does not do it
+                // by itself, and the plugin reports a click only when a handler exists.
+                use tauri::Emitter;
+                use tauri_plugin_notification::NotificationExt;
+                let handle = app.handle().clone();
+                let _ = app.notification().on_action(move |performed| {
+                    let session = performed
+                        .notification()
+                        .and_then(|n| n.extra().get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned);
+                    let h = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        show_main(&h);
+                        if let Some(id) = session {
+                            let _ = h.emit("notification-open", id);
+                        }
+                    });
+                });
             }
             // A start at sign-in keeps the window hidden. The tray icon shows it.
             if !std::env::args().any(|a| a == BACKGROUND_ARG) {

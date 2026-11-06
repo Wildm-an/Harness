@@ -129,7 +129,7 @@ import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
-import { notifyRoutineRun, notifyTurnDone } from "./lib/notify";
+import { notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
 import { normalizePath, openFolderBlocked } from "./editor/paths";
@@ -1471,6 +1471,23 @@ export default function App() {
     codeStartNext.current = false; // An old session opens with its saved layout.
     conn.send({ type: "session.resume", session_id: id });
   };
+
+  // A click on a Windows notification: the desktop app shows the window, and the app opens the session.
+  const openFromNotice = useRef<(id: string) => void>(() => undefined);
+  openFromNotice.current = (id: string) => {
+    if (status !== "open") return;
+    if (session?.id === id) setScreen("chat");
+    else resumeSession(id);
+  };
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let live = true;
+    void onNotificationOpen((id) => openFromNotice.current(id)).then((s) => (live ? (stop = s) : s()));
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
 
   // The session that the user sees now. Other sessions get a blue dot when their turn ends.
   const shownId = screen === "chat" ? (session?.id ?? null) : null;

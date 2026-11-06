@@ -41,12 +41,24 @@ function allowed(): Promise<boolean> {
   return permission;
 }
 
-/** Shows a Windows notification. Nothing happens outside the desktop app or with no permission. */
-async function show(title: string, body?: string): Promise<void> {
+/** The event of a click on a notification: the desktop app shows the window and gives the session id. */
+export const NOTIFICATION_OPEN_EVENT = "notification-open";
+
+/** Calls ``fn`` with the session id when the user clicks a notification. Returns a function that stops it. */
+export async function onNotificationOpen(fn: (sessionId: string) => void): Promise<() => void> {
+  if (!isTauri()) return () => undefined;
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<string>(NOTIFICATION_OPEN_EVENT, (e) => fn(e.payload));
+}
+
+/** Shows a Windows notification. A click shows the app and opens ``sessionId`` (src-tauri lib.rs).
+ * Nothing happens outside the desktop app or with no permission. */
+async function show(title: string, body?: string, sessionId?: string): Promise<void> {
   if (!isTauri() || !(await allowed())) return;
   try {
     const { sendNotification } = await import("@tauri-apps/plugin-notification");
-    sendNotification(body ? { title, body } : { title });
+    const extra = sessionId ? { extra: { session_id: sessionId } } : {};
+    sendNotification(body ? { title, body, ...extra } : { title, ...extra });
   } catch {
     // Ignore: the sidebar also shows the unread session.
   }
@@ -55,7 +67,7 @@ async function show(title: string, body?: string): Promise<void> {
 /** Shows a Windows notification for a routine run when the user does not see its session. */
 export async function notifyRoutineRun(ev: RoutineRunEvent, opts: NotifyContext): Promise<void> {
   const text = routineNotice(ev, opts);
-  if (text !== null) await show(text);
+  if (text !== null) await show(text, undefined, ev.session_id);
 }
 
 /** The daemon event turn.done: a turn of a session ended. */
@@ -85,5 +97,5 @@ export function turnNotice(ev: TurnDoneEvent, ctx: SeenContext): { title: string
 /** Shows the "task complete" notification of a turn when the user does not see the session. */
 export async function notifyTurnDone(ev: TurnDoneEvent, ctx: SeenContext): Promise<void> {
   const notice = turnNotice(ev, ctx);
-  if (notice) await show(notice.title, notice.body);
+  if (notice) await show(notice.title, notice.body, ev.session_id);
 }

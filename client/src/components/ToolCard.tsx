@@ -6,6 +6,7 @@ import { DiffStats } from "./DiffStats";
 import { InlineDiff } from "./InlineDiff";
 import { useOpenPath } from "../lib/openPath";
 import { shortTip } from "./Tooltips";
+import { CodeBlock } from "./CodeBlock";
 
 // The names that Claude Code shows for its tools.
 const LABELS: Record<string, string> = {
@@ -66,6 +67,32 @@ export function toolSummary(name: string, input: unknown): string {
     if (typeof args.name === "string") return args.name;
   }
   return typeof input === "string" ? input : name;
+}
+
+/** The input of a tool call in the code theme: the command of a shell tool, the content of a written
+ * file, else the arguments as JSON. */
+export function inputBlock(name: string, input: unknown): { label: string; text: string; language?: string; path?: string }[] {
+  const args = input && typeof input === "object" ? (input as Record<string, unknown>) : null;
+  if (args && typeof args.command === "string") {
+    return [{ label: "Command", text: args.command, language: name === "powershell" ? "powershell" : "shell" }];
+  }
+  if (args && name === "write" && typeof args.path === "string" && typeof args.content === "string") {
+    return [{ label: args.path, text: args.content, path: args.path }];
+  }
+  return [{ label: "Input", text: JSON.stringify(input, null, 2), language: "json" }];
+}
+
+function ToolInput({ name, input }: { name: string; input: unknown }) {
+  return (
+    <>
+      {inputBlock(name, input).map((b) => (
+        <div key={b.label}>
+          <div className="tool-section-label">{b.label}</div>
+          <CodeBlock className="tool-pre" text={b.text} language={b.language} path={b.path} />
+        </div>
+      ))}
+    </>
+  );
 }
 
 export const ToolCard = memo(function ToolCard({
@@ -134,12 +161,11 @@ export const ToolCard = memo(function ToolCard({
               <InlineDiff diff={item.diff} />
             </>
           )}
-          <div className="tool-section-label">Input</div>
-          <pre className="tool-pre">{JSON.stringify(item.input, null, 2)}</pre>
+          <ToolInput name={item.name} input={item.input} />
           {item.output !== undefined && (
             <>
               <div className="tool-section-label">Output</div>
-              <pre className="tool-pre">{item.output}</pre>
+              <CodeBlock className="tool-pre" text={item.output} />
             </>
           )}
           {item.image && (
