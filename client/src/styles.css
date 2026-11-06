@@ -4018,8 +4018,11 @@ select {
   overflow: hidden;
 }
 
+/* The width is set, because a size container has no content width: with no width, each tab
+   gets only its 36px minimum and loses its title. The tabs shrink from 160px when room is short. */
 .win-tabs > .win-tab {
   flex: 0 1 160px;
+  width: 160px;
   min-width: 36px;
   container-type: inline-size;
 }
