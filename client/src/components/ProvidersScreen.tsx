@@ -566,7 +566,37 @@ function CopyUrlButton({ url, name }: { url: string; name: string }) {
   );
 }
 
-/** A connection test: running, or its result. ``ref`` names the form that started it. */
+/** The ``ref`` of the quick test of a provider row. */
+export function rowRef(name: string): string {
+  return `row-${name}`;
+}
+
+/** The result of the quick test, under the key of the provider row. */
+function RowTestResult({ test }: { test: ProviderTestResult | "busy" }) {
+  return (
+    <span className="provider-test" role="status">
+      {test === "busy" && (
+        <span>
+          <LoaderCircle size={12} className="spin" aria-hidden /> Testing the connection.
+        </span>
+      )}
+      {test !== "busy" && test.ok && (
+        <span className="ok">
+          <Check size={12} aria-hidden /> Connected in {test.ms} ms. {test.models?.length ?? 0}{" "}
+          {test.models?.length === 1 ? "model" : "models"}
+          {test.truncated ? " (the list is cut)" : ""}.
+        </span>
+      )}
+      {test !== "busy" && !test.ok && (
+        <span className="bad">
+          <TriangleAlert size={12} aria-hidden /> {test.error}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A connection test: running, or its result. ``ref`` names the form or the row that started it. */
 export type ProviderTest = { ref: string; busy: true } | (ProviderTestResult & { busy?: false });
 
 export function ProvidersScreen({
@@ -608,6 +638,17 @@ export function ProvidersScreen({
   const names = useMemo(() => (items ?? []).map((i) => i.name), [items]);
   const formRef = editing ? `form-${editing.key}` : "";
   const formTest = test && test.ref === formRef ? (test.busy ? "busy" : test) : null;
+  // The quick test of a closed provider row: the saved values and the saved key.
+  const rowTest = (item: ProviderItem) => {
+    const ref = rowRef(item.name);
+    return test && test.ref === ref ? (test.busy ? "busy" : test) : null;
+  };
+  const quickTest = (item: ProviderItem) =>
+    onTest(
+      { name: item.name, base_url: item.base_url, kind: item.kind, context_length: item.context_length, ssh: item.ssh, previous_name: item.name },
+      null,
+      rowRef(item.name),
+    );
 
   // Close the form if its provider was deleted, for example from another client.
   useEffect(() => {
@@ -667,6 +708,7 @@ export function ProvidersScreen({
           <ul className="connection-list provider-list">
             {items.map((item) => {
               const key = keyLabel(item.key);
+              const quick = rowTest(item);
               const Icon = item.kind_resolved === "ollama" ? Server : Cpu;
               return (
                 <li key={item.name} className={`connection provider-row${item.enabled ? "" : " off"}`}>
@@ -687,8 +729,19 @@ export function ProvidersScreen({
                       {key.warn ? <TriangleAlert size={12} aria-hidden /> : <KeyRound size={12} aria-hidden />}
                       {key.text}
                     </span>
+                    {quick && <RowTestResult test={quick} />}
                   </div>
                   <div className="connection-actions">
+                    <button
+                      type="button"
+                      className="icon-btn ghost"
+                      onClick={() => quickTest(item)}
+                      disabled={quick === "busy"}
+                      aria-label={`Test the connection of ${item.name}`}
+                      title="Test the connection"
+                    >
+                      {quick === "busy" ? <LoaderCircle size={16} className="spin" aria-hidden /> : <Plug size={16} aria-hidden />}
+                    </button>
                     <button type="button" className="icon-btn ghost" onClick={() => edit(item)} aria-label={`Settings of ${item.name}`} title="Settings">
                       <Settings size={16} aria-hidden />
                     </button>

@@ -3444,6 +3444,32 @@ select {
   color: var(--warning);
 }
 
+/* The result of the quick test of a provider row (the plug button). */
+.provider-test {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.provider-test span {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--text-muted);
+}
+
+.provider-test svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.provider-test .ok {
+  color: var(--success);
+}
+
+.provider-test .bad {
+  color: var(--danger);
+}
+
 /* The URL of an endpoint, with its copy button at the end. A long URL gets "…", not the button. */
 .provider-url {
   display: flex;
