@@ -14,6 +14,7 @@ This skill is Anthropic's `skill-creator` skill, licensed under the Apache Licen
 - `references/schemas.md`: the timing capture note and the `executor_model` example.
 - Removed `scripts/run_eval.py`, `scripts/run_loop.py`, `scripts/improve_description.py`, and `scripts/generate_report.py`, because they need the `claude` command-line program.
 - `scripts/quick_validate.py`: it also accepts the frontmatter fields `argument-hint`, `disable-model-invocation`, `user-invocable`, and `context`.
+- `eval-viewer/viewer.html` and `eval-viewer/generate_review.py`: the text for the user says "the Harness session" and "the agent" in place of "Claude Code" and "Claude".
 - `scripts/quick_validate.py`, `scripts/utils.py`, `scripts/aggregate_benchmark.py`, and `eval-viewer/generate_review.py`: they read and write files as UTF-8, because the default code page of Windows cannot read all UTF-8 text.
 
 All other files are the same as in the original skill.

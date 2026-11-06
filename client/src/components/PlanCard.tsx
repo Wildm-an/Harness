@@ -1,4 +1,4 @@
-// The plan card of exit_plan_mode (daemon tools/interact.py, docs/UI_RULES.md M11-M13): "Claude proposed a
+// The plan card of exit_plan_mode (daemon tools/interact.py, docs/UI_RULES.md M11-M13): "The agent proposed a
 // plan", the plan, then at the left "Reject" and "Revise…" (Esc), and at the right "Accept"
 // (Ctrl+Shift+Enter) and the primary "Accept and allow edits" (Ctrl+Enter) with a menu of the other modes.
 
@@ -72,7 +72,7 @@ export const PlanCard = memo(function PlanCard({
     <section className={`permission-card plan-card${pending ? "" : " decided"}`} aria-label="Plan">
       <header className="permission-head">
         <ListChecks size={16} aria-hidden />
-        <span className="permission-head-title">Claude proposed a plan</span>
+        <span className="permission-head-title">The agent proposed a plan</span>
         {!pending && (
           <span className={`permission-outcome ${item.decision === "accept" ? "allowed" : item.decision === "reject" ? "denied" : "expired"}`}>
             {item.decision === "accept" ? <Check size={14} aria-hidden /> : item.decision === "reject" ? <X size={14} aria-hidden /> : item.decision === "revise" ? <PenLine size={14} aria-hidden /> : <Clock size={14} aria-hidden />}

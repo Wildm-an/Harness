@@ -24,6 +24,7 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 - **P4. Each command has three paths.** A user can find each command in a menu, in the command menu (Ctrl+K), and with a keyboard shortcut when one exists. Menu items show their shortcut on the right.
 - **P5. Every hover tip names the shortcut.** Use the tooltip style in `Tooltips.tsx`: the label, then the key in a muted color. Exception that the user asked for: the scroll-to-bottom button of the chat has no hover tip.
 - **P6. Harness-only features go to the nearest Claude location.** Model providers, local models, and remote daemons do not exist in Claude. Put them where the closest Claude feature lives (see section 9).
+- **P7. Harness does not name Claude in its own UI text.** Where a Claude label says "Claude", Harness says "the agent" (for example "Allow the agent to **run** `npm test`?"). This rule is stronger than P1. Keep real product and model names: a model id such as `claude-sonnet-5-5`, the Anthropic provider, the `CLAUDE.md` file, the `.claude` folder, and Claude Code settings that Harness imports.
 
 ## 2. Window and title bar
 
@@ -245,7 +246,7 @@ Harness has no "+" button now. Add it.
 
 ### 6.3 Permission card
 
-- **M7.** Title: "Allow Claude to **{action}** {object}?" (for example "Allow Claude to **run** `npm test`?").
+- **M7.** Title: "Allow the agent to **{action}** {object}?" (for example "Allow the agent to **run** `npm test`?").
 - **M8.** Buttons, left to right:
   1. "Deny" (Esc)
   2. "Always allow" or "Allow for this session" (Ctrl+Shift+Enter). Tooltip: "Don't ask again for this tool".
@@ -257,7 +258,7 @@ Harness has no "+" button now. Add it.
 
 ### 6.4 Plan card
 
-- **M11.** Header: "Claude proposed a plan", with the link "Open plan".
+- **M11.** Header: "The agent proposed a plan", with the link "Open plan".
 - **M12.** Buttons: at the left "Reject" and "Revise…" (Esc); at the right "Accept" (Ctrl+Shift+Enter) and the primary "Accept and allow edits" (Ctrl+Enter). The primary button has a menu: "Accept and auto mode", "Accept and bypass permissions".
 - **M13.** "Revise…" opens a text area: "What should change? (optional)", with "Back" and "Revise".
 
@@ -362,7 +363,7 @@ Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 
 - **V8.** An update shows as a strip at the bottom of the sidebar, not as a toast: "Relaunch to update · v{version}". Other states: "Update available", "Downloading update...". If sessions run, ask before the relaunch. Harness now uses a toast (`UpdateToast.tsx`) at the bottom right of the app (the user asked for this place), with the version and daemon update toasts above it. Change it to the strip later. Each start of an install (the toast and Settings > Updates) asks first while the agent works in a session of the daemon of this computer (`UpdateGuard.tsx`, the user asked for this): "Update while the agent works?", "The agent is working in {n} sessions. The update restarts Harness and stops that work.", with "Update now", "Wait for the agent" (the default button), and "Cancel". "Wait for the agent" shows "Harness updates when the agent is done." with "Cancel" and "Update now", and the install starts when the last turn ends.
 - **V9.** Help > "Check for Updates…" checks for an update.
-- **V10.** System notifications have three types: permission request, question, task complete. Titles: "Claude needs your input to continue", "Claude is waiting for your input", "Claude finished a task". On Windows, flash the taskbar button when the app is not in focus.
+- **V10.** System notifications have three types: permission request, question, task complete. Titles: "The agent needs your input to continue", "The agent is waiting for your input", "The agent finished a task" (P7). On Windows, flash the taskbar button when the app is not in focus.
 - **V10t.** Harness shows the task complete notification now (the user asked for it). The title is the session title, and the text is a short summary of the turn: the first sentence of the last reply, or the reason of an early stop ("Stopped: a permission request was denied."). It shows when the user does not see the session: the window is hidden in the tray or minimized, Harness is not the active app, or the window shows another session. A turn that the user stopped gives no notification. A click on a notification (a turn or a routine run) shows the window, also from the tray, and opens the session of the notification (the user asked for this): the notification has the session id in `extra`, the desktop app has a click handler (`on_action` in `lib.rs`) that shows the window and sends `notification-open`, and the UI opens the session. The permission request and question notifications, and the settings of section 9.3, are still missing.
 - **V10a.** When the user closes the app while the agent works on this computer, a dialog asks first, as in the Claude app: "Harness is still working", "The agent is working in {n} session(s). Quitting now will interrupt that work.", with "Quit anyway", "Wait for the agent", and "Cancel". Only a running turn counts: an idle session, a session that waits for an answer, and a background command do not. A remote daemon does not ask: its turns go on. "Wait for the agent" shows "Harness quits when the agent is done." and closes the app when the last turn ends. With "Keep running in the background" on, a close hides the window and does not ask: the agent continues. "Quit Harness" in the tray menu shows the window and asks the same question.
 - **V11.** A toast is short and has one action at most, for example "Unpinned {name}" with "Undo".
