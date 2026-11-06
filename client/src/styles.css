@@ -51,6 +51,7 @@
   --radius: 8px;
   --radius-lg: 12px;
   --radius-xl: 20px;
+  --prompt-radius: 10px; /* The prompt box and the chat bubble of the user (the user asked for one radius). */
   --column: 780px;
   --sidebar-width: 264px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -593,9 +594,11 @@ textarea:focus-visible {
   position: relative;
 }
 
-/* Drag a project to move it. A line shows where it goes. */
+/* Drag a project to move it: it follows the pointer, and the other projects slide (useSortable.ts). */
 .side-project.dragging {
-  opacity: 0.5;
+  border-radius: var(--side-radius);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow);
 }
 
 .side-project.drop-before::before,
@@ -5377,14 +5380,32 @@ input.tree-rename-input[aria-invalid="true"] {
   box-shadow: 0 1px 2px #0000001f, 0 2px 8px #00000029;
   cursor: pointer;
   pointer-events: auto;
-  transition: color var(--duration) var(--ease-out), background var(--duration) var(--ease-out);
+  transition: color var(--duration) var(--ease-out), background var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out);
 }
 
-.scroll-bottom:hover {
+/* On hover the button gets a highlight (the user asked for this): a lighter fill and a brighter ring. */
+.scroll-bottom:hover,
+.scroll-bottom:focus-visible {
+  border-color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-2, var(--panel)) 86%, var(--text));
   color: var(--text);
 }
 
 /* While the agent works: three dots that pulse, as in the Claude app. */
+.scroll-bottom-jump {
+  display: none;
+}
+
+.scroll-bottom.active:hover .scroll-bottom-dots,
+.scroll-bottom.active:focus-visible .scroll-bottom-dots {
+  display: none;
+}
+
+.scroll-bottom.active:hover .scroll-bottom-jump,
+.scroll-bottom.active:focus-visible .scroll-bottom-jump {
+  display: block;
+}
+
 .scroll-bottom-dots {
   display: inline-flex;
   gap: 3px;
@@ -5444,7 +5465,7 @@ input.tree-rename-input[aria-invalid="true"] {
   max-width: 80%;
   margin-top: 12px;
   padding: 10px 16px;
-  border-radius: var(--radius-xl);
+  border-radius: var(--prompt-radius);
   background: var(--surface-2);
   line-height: 1.55;
   white-space: pre-wrap;
@@ -6696,7 +6717,7 @@ input.tree-rename-input[aria-invalid="true"] {
   align-items: flex-end;
   gap: 8px;
   padding: 0 4px 0 14px;
-  border-radius: 10px;
+  border-radius: var(--prompt-radius);
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--prompt-ring), 0 2px 8px 0 rgba(0, 0, 0, 0.12);
   transition: box-shadow var(--duration) var(--ease-out);
@@ -8807,8 +8828,44 @@ textarea.setting-textarea:disabled {
   position: relative;
 }
 
+/* The held section: it follows the pointer with an accent ring, as in the Claude app. */
 .rail-section.dragging {
-  opacity: 0.5;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow);
+}
+
+.rail-section-head {
+  position: relative;
+}
+
+/* The grip at the far right of a heading: it shows on hover, and the heading moves the section. */
+.rail-grip {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: inline-flex;
+  color: var(--text-muted);
+  opacity: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+.rail-section-head:hover .rail-grip,
+.rail-section.dragging .rail-grip {
+  opacity: 1;
+}
+
+.rail-section-head button {
+  padding-right: 26px;
+}
+
+/* While the user drags an item of a list (useSortable.ts). */
+body.sorting,
+body.sorting * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 
 .rail-section.drop-before::before,

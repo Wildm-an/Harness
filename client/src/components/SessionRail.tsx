@@ -3,7 +3,8 @@
 // window the rail covers the workspace, and Esc or a click outside closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, ChevronRight, Coffee, Diff, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, KeyRound, Monitor } from "lucide-react";
+import { Archive, ChevronRight, Coffee, Diff, ExternalLink, Folder, GitBranch, GitPullRequest, Globe, GripVertical, KeyRound, Monitor } from "lucide-react";
+import { useSortable } from "../lib/useSortable";
 import type { GitChanges } from "../daemon/protocol";
 import { DiffCounts } from "./DiffStats";
 import { captureAgentTab } from "../browser/BrowserPane";
@@ -108,9 +109,6 @@ export function SessionRail({
     return saved.includes("context") ? saved : [...saved, "context"];
   });
   const [order, setOrder] = useState<RailSection[]>(sectionOrder);
-  // The section that the user drags, and where it goes: before or after another section.
-  const [dragging, setDragging] = useState<RailSection | null>(null);
-  const [drop, setDrop] = useState<{ id: RailSection; after: boolean } | null>(null);
   const ref = useRef<HTMLElement>(null);
 
   // In a narrow window the rail is an overlay: Esc and a click outside close it.
@@ -340,10 +338,16 @@ export function SessionRail({
 
   const titles = Object.fromEntries(RAIL_SECTIONS.map((s) => [s.id, s.title])) as Record<RailSection, string>;
   const shown = order.filter((id) => body[id] !== null);
-  const endDrag = () => {
-    setDragging(null);
-    setDrop(null);
-  };
+  // Drag a heading (or its grip at the right) to move the section. The other sections slide out of
+  // the way while the user drags (useSortable). The order stays for new sessions.
+  const sort = useSortable(shown, (id, target) => {
+    const section = id as RailSection;
+    setOrder((o) => {
+      const rest = shown.filter((x) => x !== section);
+      if (rest.length === 0) return o;
+      return target < rest.length ? moveSection(o, section, rest[target], false) : moveSection(o, section, rest[rest.length - 1], true);
+    });
+  });
 
   return (
     <aside ref={ref} id={SESSION_RAIL_ID} className="session-rail" role="group" aria-label="Session details" tabIndex={-1}>
@@ -351,36 +355,15 @@ export function SessionRail({
         const s = { id, title: titles[id] };
         const open = !folded.includes(s.id);
         const bodyId = `rail-section-${s.id}`;
-        const mark = drop?.id === s.id && dragging !== s.id ? (drop.after ? " drop-after" : " drop-before") : "";
         return (
           <section
             key={s.id}
-            className={`rail-section${open ? " open" : ""}${dragging === s.id ? " dragging" : ""}${mark}`}
-            onDragOver={(e) => {
-              if (!dragging) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-              const box = e.currentTarget.getBoundingClientRect();
-              const after = e.clientY > box.top + box.height / 2;
-              if (drop?.id !== s.id || drop.after !== after) setDrop({ id: s.id, after });
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (dragging && drop) setOrder((o) => moveSection(o, dragging, drop.id, drop.after));
-              endDrag();
-            }}
+            ref={sort.itemRef(s.id)}
+            style={sort.styleOf(s.id)}
+            className={`rail-section${open ? " open" : ""}${sort.dragging === s.id ? " dragging" : ""}`}
+            onClickCapture={sort.swallowClick}
           >
-            <h3
-              className="rail-section-head"
-              // Drag a heading to move its section. The order stays for new sessions.
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", s.title);
-                setDragging(s.id);
-              }}
-              onDragEnd={endDrag}
-            >
+            <h3 className="rail-section-head" onPointerDown={(e) => sort.onPointerDown(s.id, e)}>
               <button
                 type="button"
                 aria-expanded={open}
@@ -401,6 +384,10 @@ export function SessionRail({
                   </span>
                 )}
               </button>
+              {/* The grip at the far right shows on hover, as in the Claude app. */}
+              <span className="rail-grip" aria-hidden>
+                <GripVertical size={14} />
+              </span>
             </h3>
             {open && (
               <div id={bodyId} className="rail-section-body">

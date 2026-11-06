@@ -453,11 +453,15 @@ export function MessageList({
               aria-label={running ? "Scroll to the agent" : "Scroll to bottom"}
             >
               {running ? (
-                <span className="scroll-bottom-dots" aria-hidden>
-                  <span />
-                  <span />
-                  <span />
-                </span>
+                <>
+                  {/* The dots show that the agent works. On hover, an arrow shows the jump to it. */}
+                  <span className="scroll-bottom-dots" aria-hidden>
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  <ArrowDown size={16} aria-hidden className="scroll-bottom-jump" />
+                </>
               ) : (
                 <ArrowDown size={16} aria-hidden />
               )}

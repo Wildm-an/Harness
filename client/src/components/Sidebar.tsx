@@ -4,6 +4,7 @@ import type { ConnectionStatus } from "../daemon/connection";
 import type { PrStatus, ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
 import { parentHints } from "../lib/projectLabels";
+import { reorder, useSortable } from "../lib/useSortable";
 import { PointMenu } from "./PointMenu";
 import { SessionRow, sessionState, type NestedActivity, type SessionActions, type SessionState } from "./SessionRow";
 import { SidebarFilter, loadView, saveView, type SidebarView, type SortBy, type StatusFilter } from "./SidebarFilter";
@@ -28,7 +29,6 @@ const EXPANDED_PREF = "sidebar.expanded";
 const MORE_PREF = "sidebar.more"; // "1": the "More" accordion is open.
 const ORDER_PREF = "sidebar.order"; // The project keys, in the order of the user.
 const NESTED_PREF = "sidebar.nested"; // The sessions with nested sessions that the user opened or closed.
-const PROJECT_DRAG = "application/x-harness-project";
 
 /** A key to compare folder paths: "/" separators, no trailing "/", and no case on Windows paths. */
 export function pathKey(path: string): string {
@@ -244,13 +244,7 @@ function ToolButton({ tool, disabled, page }: { tool: SessionTool; disabled: boo
   );
 }
 
-/** Where a dragged project goes: before or after the project with this key. */
-interface DropSpot {
-  key: string;
-  after: boolean;
-}
-
-function ProjectSection({ group, hint, pr, open, activeId, running, unread, disabled, onToggle, actions, renderRow, onNewSession, onRemove, dragging, drop, onDragStart, onDragOver, onDrop, onDragEnd, onMove, canMove, onSort }: {
+function ProjectSection({ group, hint, pr, open, activeId, running, unread, disabled, onToggle, actions, renderRow, onNewSession, onRemove, sort, onMove, canMove, onSort }: {
   group: ProjectGroup;
   hint: string | null; // The parent folder, if another project has the same name.
   pr: PrStatus | null; // The pull request of the folder branch. null: "Show PR status" is off, or no data.
@@ -264,12 +258,14 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
   renderRow: (s: SessionSummary) => React.ReactNode; // A session row with its nested sessions.
   onNewSession: () => void;
   onRemove: (projectId: string) => void; // Remove the saved project from the list.
-  dragging: boolean; // The user drags this project.
-  drop: "before" | "after" | null; // The line that shows where the dragged project goes.
-  onDragStart: () => void;
-  onDragOver: (after: boolean) => void;
-  onDrop: () => void;
-  onDragEnd: () => void;
+  // Drag the project to move it: the project follows the pointer and the others slide (useSortable).
+  sort: {
+    ref: (el: HTMLElement | null) => void;
+    style: React.CSSProperties | undefined;
+    dragging: boolean;
+    onPointerDown: (e: React.PointerEvent) => void;
+    swallowClick: (e: React.MouseEvent) => void;
+  };
   onMove: (step: -1 | 1) => void; // Alt+Up and Alt+Down move the project with the keyboard.
   canMove: { up: boolean; down: boolean };
   onSort: () => void; // Sort all projects A to Z.
@@ -281,22 +277,12 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
   // A folded project still shows the open session, and the sessions that work, wait for the user, or have an unread reply.
   const pending = open ? [] : sessionsToShowFolded(group.sessions, running, unread, activeId);
   const listId = `side-project-${group.key.replace(/[^a-z0-9]/gi, "-")}`;
-  const isProjectDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(PROJECT_DRAG);
   return (
     <li
-      className={`side-project${open ? " open" : ""}${dragging ? " dragging" : ""}${drop ? ` drop-${drop}` : ""}`}
-      onDragOver={(e) => {
-        if (!isProjectDrag(e)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        const r = e.currentTarget.getBoundingClientRect();
-        onDragOver(e.clientY > r.top + r.height / 2);
-      }}
-      onDrop={(e) => {
-        if (!isProjectDrag(e)) return;
-        e.preventDefault();
-        onDrop();
-      }}
+      ref={sort.ref}
+      style={sort.style}
+      className={`side-project${open ? " open" : ""}${sort.dragging ? " dragging" : ""}`}
+      onClickCapture={sort.swallowClick}
     >
       <div
         className="side-project-head"
@@ -304,13 +290,11 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
           e.preventDefault();
           setMenuAt({ x: e.clientX, y: e.clientY });
         }}
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData(PROJECT_DRAG, group.key);
-          e.dataTransfer.effectAllowed = "move";
-          onDragStart();
+        onPointerDown={(e) => {
+          // The "+" button starts a session: it does not move the project.
+          if ((e.target as Element).closest(".side-project-new")) return;
+          sort.onPointerDown(e);
         }}
-        onDragEnd={onDragEnd}
       >
         <button
           type="button"
@@ -467,8 +451,6 @@ export function Sidebar({
   const pinned = sortSessions(top.filter((s) => s.pinned), view.sortBy);
   const unpinned = top.filter((s) => !s.pinned);
   const [order, setOrder] = useState(loadOrder);
-  const [dragKey, setDragKey] = useState<string | null>(null);
-  const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
   const byRecency = groupByProject(unpinned, projects, view.sortBy);
   const allGroups = orderGroups(byRecency, order);
   const groups = view.showEmpty ? allGroups : allGroups.filter((g) => g.sessions.length > 0);
@@ -495,14 +477,8 @@ export function Sidebar({
     setOrder(next);
     savePref(ORDER_PREF, JSON.stringify(next));
   };
-  const endDrag = () => {
-    setDragKey(null);
-    setDropSpot(null);
-  };
-  const dropOn = (target: string) => {
-    if (dragKey && dropSpot?.key === target) saveOrder(moveKey(mergeOrder(shownKeys, order), dragKey, target, dropSpot.after));
-    endDrag();
-  };
+  // Drag a project to move it. The other projects slide out of the way while the user drags.
+  const projectSort = useSortable(shownKeys, (key, target) => saveOrder(mergeOrder(reorder(shownKeys, key, target), order)));
   /** Sort A to Z: the projects in the order of their names. The order is saved, as after a drag. */
   const sortByName = () => {
     const sorted = [...groups].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || (hints.get(a.key) ?? "").localeCompare(hints.get(b.key) ?? ""));
@@ -658,14 +634,13 @@ export function Sidebar({
                 renderRow={renderRow}
                 onNewSession={() => onNewSessionIn(g)}
                 onRemove={onRemoveProject}
-                dragging={g.key === dragKey}
-                drop={dragKey && dragKey !== g.key && dropSpot?.key === g.key ? (dropSpot.after ? "after" : "before") : null}
-                onDragStart={() => setDragKey(g.key)}
-                onDragOver={(after) => {
-                  if (dropSpot?.key !== g.key || dropSpot.after !== after) setDropSpot({ key: g.key, after });
+                sort={{
+                  ref: projectSort.itemRef(g.key),
+                  style: projectSort.styleOf(g.key),
+                  dragging: projectSort.dragging === g.key,
+                  onPointerDown: (e) => projectSort.onPointerDown(g.key, e),
+                  swallowClick: projectSort.swallowClick,
                 }}
-                onDrop={() => dropOn(g.key)}
-                onDragEnd={endDrag}
                 onMove={(step) => moveBy(g.key, step)}
                 canMove={{ up: shownKeys.indexOf(g.key) > 0, down: shownKeys.indexOf(g.key) < shownKeys.length - 1 }}
                 onSort={sortByName}
