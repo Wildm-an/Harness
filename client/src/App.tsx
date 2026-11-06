@@ -3046,7 +3046,7 @@ export default function App() {
           type="button"
           className={`conn conn-${status}${screen === "connections" ? " active" : ""}`}
           onClick={fromSidebar(openConnections)}
-          title={`${statusText}${hello ? ` to ${hello.hostname} (${hello.platform})` : ""}. Open the computers.`}
+          title={`${statusText}${hello ? ` ${status === "closed" ? "from" : "to"} ${hello.hostname} (${hello.platform})` : ""}. Open the computers.`}
         >
           <span className="conn-dot" aria-hidden />
           <ConnectionIcon connection={current} />

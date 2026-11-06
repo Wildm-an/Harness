@@ -12,7 +12,6 @@ import json
 import logging
 import mimetypes
 import os
-import platform
 import re
 import secrets
 import socket
@@ -31,6 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from . import __version__
 from .agent import Agent
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
+from .osname import os_name
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, MODES, PermissionRules
 from . import nethttp
@@ -415,7 +415,7 @@ def host_info() -> dict[str, str]:
         user = ""
     return {
         "hostname": socket.gethostname(),
-        "platform": f"{platform.system()} {platform.release()}",
+        "platform": os_name(),
         "user": user,
         "home": str(Path.home()),
         "sep": os.sep,
