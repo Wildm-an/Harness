@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DaemonConnection } from "../daemon/connection";
-import type { DaemonMessage } from "../daemon/protocol";
+import type { DaemonMessage, GitFileState } from "../daemon/protocol";
 import { languageFor, monaco } from "../lib/monaco";
 import { absolutePath, normalizePath, renamedPath } from "./paths";
 
@@ -72,6 +72,11 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   const [search, setSearch] = useState<SearchState>({ query: "", busy: false, items: [], truncated: false, error: null });
   const [compare, setCompare] = useState<Compare | null>(null);
   const [reveal, setReveal] = useState<Reveal | null>(null);
+  // The git state of the changed files (the colors of the tree), and the files that match the filter.
+  const [gitStatus, setGitStatus] = useState<Record<string, GitFileState>>({});
+  const [found, setFound] = useState<{ query: string; items: string[] } | null>(null);
+  const findQuery = useRef("");
+  const statusTimer = useRef(0);
 
   const models = useRef(new Map<string, ModelEntry>());
   const reads = useRef<{ path: string; purpose: ReadPurpose }[]>([]); // The daemon replies in order.
@@ -123,6 +128,12 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     [send],
   );
 
+  // Ask for the git state again after a short wait: several changes in a row give one request.
+  const requestGitStatus = useCallback(() => {
+    window.clearTimeout(statusTimer.current);
+    statusTimer.current = window.setTimeout(() => send({ type: "git.status" }), 300);
+  }, [send]);
+
   const disposeAll = useCallback(() => {
     for (const entry of models.current.values()) {
       entry.listener.dispose();
@@ -141,9 +152,24 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     setExpanded(new Set());
     setCompare(null);
     setSearch({ query: "", busy: false, items: [], truncated: false, error: null });
-    if (sessionKey) listDir(".");
+    setGitStatus({});
+    setFound(null);
+    findQuery.current = "";
+    if (sessionKey) {
+      listDir(".");
+      requestGitStatus();
+    }
     return disposeAll;
-  }, [sessionKey, cwd, disposeAll, listDir]);
+  }, [sessionKey, cwd, disposeAll, listDir, requestGitStatus]);
+
+  // Changes by other programs (a commit in a terminal, for example) show after a short time.
+  useEffect(() => {
+    if (!sessionKey) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) send({ type: "git.status" });
+    }, 20_000);
+    return () => window.clearInterval(timer);
+  }, [sessionKey, send]);
 
   const setModelContent = useCallback(
     (path: string, content: string, keepUndo: boolean) => {
@@ -187,6 +213,14 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
         }
         case "fs.tree":
           setTree((t) => ({ ...t, [msg.path]: msg.items as TreeEntry[] }));
+          if (msg.path === ".") requestGitStatus(); // A new listing of the top folder: the colors too.
+          return;
+        case "git.status":
+          setGitStatus(msg.files);
+          return;
+        case "fs.found":
+          // The prompt box asks too ("@" files): only the reply to the filter of the tree counts here.
+          if (msg.query === findQuery.current) setFound({ query: msg.query, items: msg.items });
           return;
         case "fs.content": {
           const index = reads.current.findIndex((r) => r.path === msg.path);
@@ -208,6 +242,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           }
           const dirty = entry ? entry.model.getAlternativeVersionId() !== entry.savedVersion : false;
           patchFile(msg.path, { hash: msg.hash, saving: false, dirty, notice: undefined });
+          requestGitStatus();
           return;
         }
         case "fs.created": {
@@ -219,6 +254,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           for (const dir of [".", ...dirs]) listDir(dir);
           setCreateError(null);
           if (msg.kind === "file") openFileRef.current(msg.path);
+          requestGitStatus();
           return;
         }
         case "fs.deleted": {
@@ -229,6 +265,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           setExpanded((set) => new Set([...set].filter((dir) => !gone(dir))));
           listDir(msg.path.includes("/") ? msg.path.slice(0, msg.path.lastIndexOf("/")) : ".");
           setCreateError(null);
+          requestGitStatus();
           return;
         }
         case "fs.renamed": {
@@ -249,6 +286,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             if (next !== null) listDir(next);
           }
           setCreateError(null);
+          requestGitStatus();
           return;
         }
         case "fs.conflict":
@@ -265,6 +303,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           const dir = msg.path.includes("/") ? msg.path.slice(0, msg.path.lastIndexOf("/")) : ".";
           const listing = treeRef.current[dir];
           if (Array.isArray(listing) && !listing.some((e) => e.path === msg.path) && msg.hash !== null) listDir(dir);
+          requestGitStatus();
           return;
         }
         case "fs.results":
@@ -428,7 +467,32 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   const refreshTree = useCallback(() => {
     listDir(".");
     for (const dir of expanded) listDir(dir);
-  }, [expanded, listDir]);
+    requestGitStatus();
+  }, [expanded, listDir, requestGitStatus]);
+
+  /** "Collapse all": close all the open folders of the tree. */
+  const collapseAll = useCallback(() => setExpanded(new Set()), []);
+
+  /** Open the folders down to ``path`` in the tree. ``open``: also open the folder ``path`` itself. */
+  const showInTree = useCallback(
+    (path: string, open: boolean) => {
+      const parts = path.split("/").filter(Boolean);
+      const dirs = parts.slice(0, open ? parts.length : -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+      for (const dir of dirs) if (!treeRef.current[dir]) listDir(dir);
+      setExpanded((set) => new Set([...set, ...dirs]));
+    },
+    [listDir],
+  );
+
+  /** The files and folders whose names match ``query``, for the filter of the tree. Empty: no filter. */
+  const findFiles = useCallback(
+    (query: string) => {
+      findQuery.current = query;
+      if (!query) setFound(null);
+      else send({ type: "fs.find", query });
+    },
+    [send],
+  );
 
   const runSearch = useCallback(
     (query: string, options: { regex: boolean; case: boolean; glob: string }) => {
@@ -488,6 +552,11 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     toggleDir,
     refreshTree,
     runSearch,
+    gitStatus,
+    found,
+    collapseAll,
+    showInTree,
+    findFiles,
   };
 }
 

@@ -32,6 +32,9 @@
   --info: #8fb4ea;
   --focus: #8fb4ea;
   --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
+  /* The git state of a file in the file tree (gitStatus.ts). */
+  --git-modified: #d4b483;
+  --git-added: #81c995;
   --violet: #c3a6f0;
   --teal: #6fc8c0;
   --backdrop: rgba(15, 14, 13, 0.6);
@@ -94,6 +97,8 @@
   --info: #2463a8;
   --focus: #2463a8;
   --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
+  --git-modified: #8a5a00;
+  --git-added: #2e7d32;
   --violet: #7a4fc0;
   --teal: #1f7f78;
   --backdrop: rgba(31, 30, 29, 0.35);
@@ -10102,6 +10107,126 @@ body.sorting * {
   left: 0;
   right: auto;
   min-width: 180px;
+}
+
+/* The "⋯" menu of the Files pane of the Code view is in the window header: it always shows, and
+   its menu opens to the left. */
+.side-actions-more.code-more {
+  display: block;
+}
+
+.code-more .menu.side-more-menu {
+  left: auto;
+  right: 0;
+}
+
+/* A button that cannot act now, but still shows its hover tip (aria-disabled, not disabled). */
+.icon-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.icon-btn[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+/* The Files pane of the Code view (EditorPane part="all"), as in the Claude app: the editor at the
+   left, the tree at the right with a filter at its top. */
+.editor-pane.code-files {
+  grid-template-columns: minmax(0, 1fr) clamp(180px, 35%, 300px);
+}
+
+.editor-pane.code-files.no-sidebar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.editor-side.code-side {
+  order: 2;
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.file-sidebar-resizer.left {
+  right: auto;
+  left: -4px;
+}
+
+.files-filter {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.files-filter:focus-within {
+  border-color: var(--focus);
+}
+
+.files-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--font-sans);
+}
+
+.files-found-dir {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  opacity: 0.8;
+  text-overflow: ellipsis;
+}
+
+.editor-empty-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* The git state of a file in the tree (gitStatus.ts): a color, and a letter for a file or a dot for
+   a folder that holds changed files. */
+.tree-item.git-modified,
+.tree-item.git-modified:hover {
+  color: var(--git-modified);
+}
+
+.tree-item.git-added,
+.tree-item.git-added:hover {
+  color: var(--git-added);
+}
+
+.tree-item.git-deleted,
+.tree-item.git-deleted:hover,
+.tree-item.git-conflict,
+.tree-item.git-conflict:hover {
+  color: var(--danger);
+}
+
+.tree-git {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font: 600 11px var(--font-mono);
+}
+
+.tree-git-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.8;
 }
 
 @container fileside (max-width: 236px) {

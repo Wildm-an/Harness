@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Copy, File, FileText, Folder, FolderOpen, LoaderCircle, Pencil, Trash2, type LucideIcon } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 import { isEditableFile, renameProblem } from "./paths";
 import { isPreviewFile } from "../preview/document";
 import type { TreeEntry } from "./useEditor";
+import { GIT_LABEL, GIT_LETTER, folderTones, gitTone, type GitFileState } from "./gitStatus";
 
 const MENU_WIDTH = 230;
 
@@ -134,6 +135,7 @@ export const FileTree = memo(function FileTree({
   onDelete,
   onRename,
   onCopyPath,
+  gitStatus,
 }: {
   tree: Record<string, TreeEntry[] | "loading">;
   expanded: Set<string>;
@@ -144,7 +146,9 @@ export const FileTree = memo(function FileTree({
   onDelete: (entry: TreeEntry) => void; // Ask, then delete the file or the folder.
   onRename: (entry: TreeEntry, name: string) => void; // A new name in the same folder.
   onCopyPath: (entry: TreeEntry) => void; // Copy the full path.
+  gitStatus?: Record<string, GitFileState>; // The changed files: their names show in colors.
 }) {
+  const tones = useMemo(() => folderTones(gitStatus ?? {}), [gitStatus]);
   const [menu, setMenu] = useState<{ entry: TreeEntry; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null); // The path of the item with the name field.
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -181,6 +185,9 @@ export const FileTree = memo(function FileTree({
       // aria-disabled, not disabled: a disabled button gets no hover, so it would show no hint.
       const preview = entry.type === "file" && !!onPreview && isPreviewFile(entry.path);
       const blocked = entry.type === "file" && !preview && !isEditableFile(entry.path);
+      // A changed file shows its state letter. A folder with changed files shows a dot.
+      const state = entry.type === "file" ? gitStatus?.[entry.path] : undefined;
+      const tone = entry.type === "dir" ? tones.get(entry.path) : state ? gitTone(state) : undefined;
       const icon =
         entry.type === "dir" ? (
           <>
@@ -209,7 +216,7 @@ export const FileTree = memo(function FileTree({
           ) : (
             <button
               type="button"
-              className={`tree-item${entry.path === active ? " active" : ""}${blocked ? " blocked" : ""}${menu?.entry.path === entry.path ? " menu-open" : ""}`}
+              className={`tree-item${entry.path === active ? " active" : ""}${blocked ? " blocked" : ""}${menu?.entry.path === entry.path ? " menu-open" : ""}${tone ? ` git-${tone}` : ""}`}
               style={{ paddingLeft: 8 + depth * 14 }}
               onClick={() => {
                 if (entry.type === "dir") onToggle(entry.path);
@@ -239,10 +246,16 @@ export const FileTree = memo(function FileTree({
               }}
               aria-expanded={entry.type === "dir" ? open : undefined}
               aria-disabled={blocked || undefined}
-              title={blocked ? "Binary file" : preview ? `Preview ${entry.path}` : entry.path}
+              title={`${blocked ? "Binary file" : preview ? `Preview ${entry.path}` : entry.path}${state ? ` · ${GIT_LABEL[state]}` : ""}`}
             >
               {icon}
               <span className="tree-name">{entry.name}</span>
+              {state && (
+                <span className="tree-git" aria-label={GIT_LABEL[state]}>
+                  {GIT_LETTER[state]}
+                </span>
+              )}
+              {entry.type === "dir" && tone && <span className="tree-git-dot" aria-label="Has changed files" />}
             </button>
           )}
           {entry.type === "dir" && open && <ul role="group">{renderDir(entry.path, depth + 1)}</ul>}

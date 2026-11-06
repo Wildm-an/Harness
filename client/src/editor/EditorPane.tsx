@@ -2,16 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Editor, { DiffEditor, type OnMount } from "@monaco-editor/react";
 import {
   CircleAlert,
+  File,
   FileCode,
   FilePlus,
+  FileText,
+  FoldVertical,
+  Folder,
   FolderPlus,
+  List,
   MoreHorizontal,
   Files,
   FolderOpen,
   LoaderCircle,
   MessageSquarePlus,
-  PanelLeftClose,
-  PanelLeftOpen,
   RefreshCw,
   Save,
   Search,
@@ -24,9 +27,12 @@ import { languageFor, monaco, monacoTheme } from "../lib/monaco";
 import { codeFontFamily } from "../lib/theme";
 import { AUTOCOMPLETE_DELAY, autocompleteOn, cursorContext, setAutocompleteOn, wantsCompletion } from "../lib/autocomplete";
 import { FileTree } from "./FileTree";
-import { newEntryProblem, newEntryStart, selectionReference } from "./paths";
+import { isEditableFile, newEntryProblem, newEntryStart, selectionReference } from "./paths";
 import { LanguageMenu, languageItems } from "./LanguageMenu";
-import { SearchPanel } from "./SearchPanel";
+import { SearchPanel, SearchResults } from "./SearchPanel";
+import { PaneActions } from "../layout/Workspace";
+import { isPreviewFile } from "../preview/document";
+import { GIT_LABEL, GIT_LETTER, gitTone } from "./gitStatus";
 import { FileSidebarResizer, saveFileSidebarWidth, savedFileSidebarWidth } from "./FileSidebarResizer";
 import { modelUri, type EditorApi, type OpenFile, type TreeEntry } from "./useEditor";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -109,7 +115,9 @@ export function EditorPane({
   emptyContent,
 }: {
   // "files": only the file list and search, as the Files pane of the IDE view (VS Code's Explorer).
-  // "editor": only the editor, when the Files pane shows the files. "all": both, in one pane.
+  // "editor": only the editor, when the Files pane shows the files. "all": both, in one pane: the
+  // Files pane of the Code view, as in the Claude app. The editor is at the left, the tree at the
+  // right with a filter, and the buttons are in the window header.
   part?: "all" | "files" | "editor";
   api: EditorApi;
   sessionKey: string;
@@ -124,7 +132,15 @@ export function EditorPane({
   // The inline edit box (Ctrl+K), as in Cursor: it shows at the selection, and sends the instruction to the agent.
   const [inline, setInline] = useState<{ reference: string; top: number } | null>(null);
   const [instruction, setInstruction] = useState("");
-  const [sidebar, setSidebar] = useState<"files" | "search" | null>("files");
+  const [sidebar, setSidebar] = useState<"files" | "search">("files");
+  // The Files pane of the Code view: the tree can hide, and its filter finds files by name. A filter
+  // that starts with "?" searches in the files (Enter).
+  const code = part === "all";
+  const [treeShown, setTreeShown] = useState(true);
+  const [filter, setFilter] = useState("");
+  const filterRef = useRef<HTMLInputElement>(null);
+  const canCollapse = api.expanded.size > 0;
+  const collapseTitle = canCollapse ? "Collapse all folders" : "There are no open folders to collapse.";
   // The width of the file sidebar: dragged by the user, or null for the automatic width (styles.css).
   const [sideWidth, setSideWidth] = useState<number | null>(savedFileSidebarWidth);
   const sideRef = useRef<HTMLElement>(null);
@@ -147,12 +163,12 @@ export function EditorPane({
     return () => document.removeEventListener("pointerdown", onDown, true);
   }, [moreOpen]);
   const sideActions: { label: string; icon: typeof FilePlus; run: () => void; disabled?: boolean; title?: string }[] = [
+    // The Code view has "Collapse all" in the window header.
+    ...(code ? [] : [{ label: "Collapse all folders", icon: FoldVertical, run: api.collapseAll, disabled: !canCollapse, title: collapseTitle }]),
     { label: "New file…", icon: FilePlus, run: () => startCreate("file") },
     { label: "New folder…", icon: FolderPlus, run: () => startCreate("dir") },
     { label: "Open folder…", icon: FolderOpen, run: onOpenFolder, disabled: openFolderBlocked !== null, title: openFolderBlocked ?? undefined },
     { label: "Refresh", icon: RefreshCw, run: api.refreshTree },
-    // The Files pane closes with the X of its window, not with this button.
-    ...(part === "files" ? [] : [{ label: "Hide the sidebar", icon: PanelLeftClose, run: () => setSidebar(null) }]),
   ];
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TreeEntry | null>(null); // Delete of the file tree asks first.
@@ -300,24 +316,261 @@ export function EditorPane({
   };
 
   // The Files pane always shows its list. The editor-only part has no list.
-  const showSide = part === "files" ? true : part === "editor" ? false : sidebar !== null;
+  const showSide = part === "files" ? true : part === "editor" ? false : treeShown;
+
+  // New file or New folder: the name field at the top of the tree.
+  const newEntryForm = creating && (
+    <form
+      className="new-entry"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const problem = newEntryProblem(creating.name);
+        if (problem) return setCreating({ ...creating, problem });
+        if (api.createEntry(creating.name.trim().replace(/\\/g, "/"), creating.kind)) setCreating(null);
+        else setCreating({ ...creating, problem: "The connection to the daemon is closed." });
+      }}
+    >
+      {creating.kind === "file" ? <FilePlus size={13} aria-hidden /> : <FolderPlus size={13} aria-hidden />}
+      <input
+        autoFocus
+        className="new-entry-input mono"
+        value={creating.name}
+        placeholder={creating.kind === "file" ? "src/app.py" : "src/utils"}
+        aria-label={creating.kind === "file" ? "Name of the new file" : "Name of the new folder"}
+        aria-invalid={creating.problem ? true : undefined}
+        onChange={(e) => setCreating({ ...creating, name: e.target.value, problem: null })}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            setCreating(null);
+          }
+        }}
+        onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
+        onBlur={() => !creating.name.trim() && setCreating(null)}
+      />
+    </form>
+  );
+
+  // The "⋯" menu: in the sidebar head (the IDE view), or in the window header (the Code view).
+  const moreMenu = (
+    <div className={`side-actions-more${code ? " code-more" : ""}`} ref={moreRef}>
+      <button
+        type="button"
+        className={`icon-btn ghost${moreOpen ? " active" : ""}`}
+        onClick={() => setMoreOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={moreOpen}
+        aria-label="More file actions"
+        title="More"
+      >
+        <MoreHorizontal size={code ? 15 : 14} aria-hidden />
+      </button>
+      {moreOpen && (
+        <div
+          className="menu side-more-menu"
+          role="menu"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              setMoreOpen(false);
+            }
+          }}
+        >
+          {sideActions.map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              role="menuitem"
+              disabled={a.disabled}
+              title={a.disabled ? a.title : undefined}
+              onClick={() => {
+                setMoreOpen(false);
+                if (code && !treeShown) setTreeShown(true); // New file and New folder show in the tree.
+                a.run();
+              }}
+            >
+              <a.icon size={14} aria-hidden />
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  // The search button: the filter gets "?" and the focus.
+  const startSearch = () => {
+    setTreeShown(true);
+    setFilter((f) => (f.startsWith("?") ? f : `?${f}`));
+    window.setTimeout(() => filterRef.current?.focus(), 0);
+  };
+  const query = filter.trim();
+  const searching = query.startsWith("?");
+  const searchText = query.slice(1).trim();
+
+  /** A file or a folder of the filter list: a file opens, a folder shows in the tree. */
+  const openFound = (item: string) => {
+    if (item.endsWith("/")) {
+      api.showInTree(item.slice(0, -1), true);
+      setFilter("");
+      api.findFiles("");
+      return;
+    }
+    if (onPreview && isPreviewFile(item)) onPreview(item);
+    else if (isEditableFile(item)) api.openFile(item);
+  };
+
+  const codeSide = code && (
+    <>
+      <div className="files-filter">
+        <Search size={14} aria-hidden />
+        <input
+          ref={filterRef}
+          value={filter}
+          placeholder="Filter, or ? to search in files"
+          aria-label="Filter the files. Start with ? to search in the files."
+          spellCheck={false}
+          onChange={(e) => {
+            const value = e.target.value;
+            setFilter(value);
+            api.findFiles(value.trim().startsWith("?") ? "" : value.trim());
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && filter) {
+              e.preventDefault();
+              e.stopPropagation();
+              setFilter("");
+              api.findFiles("");
+            } else if (e.key === "Enter" && searching && searchText) {
+              e.preventDefault();
+              api.runSearch(searchText, { regex: false, case: false, glob: "" });
+            }
+          }}
+        />
+      </div>
+      {!query && creating && newEntryForm}
+      {!query && (creating?.problem || api.createError) && (
+        <p className="new-entry-error" role="alert">
+          {creating?.problem ?? api.createError}
+        </p>
+      )}
+      <div className="editor-side-body">
+        {searching ? (
+          searchText && api.search.query === searchText ? (
+            <SearchResults search={api.search} onOpen={(p, line) => api.openFile(p, line)} />
+          ) : (
+            <p className="search-note">{searchText ? "Press Enter to search in the files." : "Type the text to search for, then press Enter."}</p>
+          )
+        ) : query ? (
+          api.found?.query !== query ? (
+            <p className="search-note">
+              <LoaderCircle size={13} className="spin" aria-hidden /> Finding files
+            </p>
+          ) : api.found.items.length === 0 ? (
+            <p className="search-note">No files match.</p>
+          ) : (
+            <ul className="file-tree files-found" aria-label="Matching files">
+              {api.found.items.map((item) => {
+                const dir = item.endsWith("/");
+                const path = dir ? item.slice(0, -1) : item;
+                const name = path.split("/").pop() ?? path;
+                const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+                const state = dir ? undefined : api.gitStatus[path];
+                const blocked = !dir && !(onPreview && isPreviewFile(item)) && !isEditableFile(item);
+                return (
+                  <li key={item}>
+                    <button
+                      type="button"
+                      className={`tree-item${blocked ? " blocked" : ""}${path === api.active ? " active" : ""}${state ? ` git-${gitTone(state)}` : ""}`}
+                      style={{ paddingLeft: 8 }}
+                      aria-disabled={blocked || undefined}
+                      title={blocked ? "Binary file" : `${path}${state ? ` · ${GIT_LABEL[state]}` : ""}`}
+                      onClick={() => !blocked && openFound(item)}
+                    >
+                      {dir ? <Folder size={14} aria-hidden /> : isPreviewFile(item) ? <FileText size={14} aria-hidden /> : <File size={14} aria-hidden />}
+                      <span className="tree-name">{name}</span>
+                      {parent && <span className="files-found-dir">{parent}</span>}
+                      {state && (
+                        <span className="tree-git" aria-label={GIT_LABEL[state]}>
+                          {GIT_LETTER[state]}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : (
+          <FileTree
+            tree={api.tree}
+            expanded={api.expanded}
+            active={api.active}
+            onToggle={api.toggleDir}
+            onOpen={(p) => api.openFile(p)}
+            onPreview={onPreview}
+            onDelete={setConfirmDelete}
+            onRename={(entry, name) => api.renameEntry(entry.path, name)}
+            onCopyPath={(entry) => void navigator.clipboard.writeText(api.fullPath(entry.path)).catch(() => {})}
+            gitStatus={api.gitStatus}
+          />
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div
-      className={`editor-pane${showSide ? "" : " no-sidebar"}${part === "files" ? " files-only" : ""}`}
-      style={showSide && part === "all" && sideWidth !== null ? { gridTemplateColumns: `${sideWidth}px minmax(0, 1fr)` } : undefined}
+      className={`editor-pane${showSide ? "" : " no-sidebar"}${part === "files" ? " files-only" : ""}${code ? " code-files" : ""}`}
+      style={showSide && code && sideWidth !== null ? { gridTemplateColumns: `minmax(0, 1fr) ${sideWidth}px` } : undefined}
     >
-      {showSide && (
+      {/* The Files pane of the Code view: its buttons are in the window header, as in the Claude app. */}
+      {code && (
+        <PaneActions>
+          <button type="button" className="icon-btn ghost" onClick={startSearch} aria-label="Search in the files" title="Search in the files">
+            <Search size={15} aria-hidden />
+          </button>
+          {/* aria-disabled, not disabled: a disabled button gets no hover, so it would show no tip. */}
+          <button
+            type="button"
+            className="icon-btn ghost"
+            onClick={() => canCollapse && api.collapseAll()}
+            aria-disabled={!canCollapse || undefined}
+            aria-label="Collapse all folders"
+            title={collapseTitle}
+          >
+            <FoldVertical size={15} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className={`icon-btn ghost${treeShown ? " active" : ""}`}
+            onClick={() => setTreeShown((v) => !v)}
+            aria-pressed={treeShown}
+            aria-label="File tree"
+            title={treeShown ? "Hide the file tree" : "Show the file tree"}
+          >
+            <List size={15} aria-hidden />
+          </button>
+          {moreMenu}
+        </PaneActions>
+      )}
+      {showSide && code && (
+        <aside className="editor-side code-side" aria-label="Files" ref={sideRef}>
+          <FileSidebarResizer
+            edge="left"
+            side={sideRef}
+            onChange={setSideWidth}
+            onDone={(w) => {
+              setSideWidth(w);
+              saveFileSidebarWidth(w);
+            }}
+          />
+          {codeSide}
+        </aside>
+      )}
+      {showSide && !code && (
         <aside className="editor-side" aria-label="Files and search" ref={sideRef}>
-          {part === "all" && (
-            <FileSidebarResizer
-              side={sideRef}
-              onChange={setSideWidth}
-              onDone={(w) => {
-                setSideWidth(w);
-                saveFileSidebarWidth(w);
-              }}
-            />
-          )}
           <div className="editor-side-head">
             <div className="segmented" role="group" aria-label="Sidebar">
               <button type="button" aria-pressed={sidebar === "files"} onClick={() => setSidebar("files")} title="Files" aria-label="Files">
@@ -333,12 +586,13 @@ export function EditorPane({
                 {/* All the buttons when they fit. A narrow sidebar shows "⋯" instead (styles.css). */}
                 <div className="side-actions-full">
                   {sideActions.map((a) => (
+                    // aria-disabled, not disabled: a disabled button gets no hover, so it would show no tip.
                     <button
                       key={a.label}
                       type="button"
                       className="icon-btn ghost"
-                      onClick={a.run}
-                      disabled={a.disabled}
+                      onClick={() => !a.disabled && a.run()}
+                      aria-disabled={a.disabled || undefined}
                       title={a.title ?? a.label}
                       aria-label={a.label}
                     >
@@ -346,87 +600,11 @@ export function EditorPane({
                     </button>
                   ))}
                 </div>
-                <div className="side-actions-more" ref={moreRef}>
-                  <button
-                    type="button"
-                    className={`icon-btn ghost${moreOpen ? " active" : ""}`}
-                    onClick={() => setMoreOpen((o) => !o)}
-                    aria-haspopup="menu"
-                    aria-expanded={moreOpen}
-                    aria-label="More file actions"
-                    title="More"
-                  >
-                    <MoreHorizontal size={14} aria-hidden />
-                  </button>
-                  {moreOpen && (
-                    <div
-                      className="menu side-more-menu"
-                      role="menu"
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
-                          e.stopPropagation();
-                          setMoreOpen(false);
-                        }
-                      }}
-                    >
-                      {sideActions.map((a) => (
-                        <button
-                          key={a.label}
-                          type="button"
-                          role="menuitem"
-                          disabled={a.disabled}
-                          title={a.disabled ? a.title : undefined}
-                          onClick={() => {
-                            setMoreOpen(false);
-                            a.run();
-                          }}
-                        >
-                          <a.icon size={14} aria-hidden />
-                          {a.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {moreMenu}
               </>
-            ) : (
-              <button type="button" className="icon-btn ghost" onClick={() => setSidebar(null)} title="Hide the sidebar" aria-label="Hide the sidebar">
-                <PanelLeftClose size={14} aria-hidden />
-              </button>
-            )}
+            ) : null}
           </div>
-          {sidebar === "files" && creating && (
-            <form
-              className="new-entry"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const problem = newEntryProblem(creating.name);
-                if (problem) return setCreating({ ...creating, problem });
-                if (api.createEntry(creating.name.trim().replace(/\\/g, "/"), creating.kind)) setCreating(null);
-                else setCreating({ ...creating, problem: "The connection to the daemon is closed." });
-              }}
-            >
-              {creating.kind === "file" ? <FilePlus size={13} aria-hidden /> : <FolderPlus size={13} aria-hidden />}
-              <input
-                autoFocus
-                className="new-entry-input mono"
-                value={creating.name}
-                placeholder={creating.kind === "file" ? "src/app.py" : "src/utils"}
-                aria-label={creating.kind === "file" ? "Name of the new file" : "Name of the new folder"}
-                aria-invalid={creating.problem ? true : undefined}
-                onChange={(e) => setCreating({ ...creating, name: e.target.value, problem: null })}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setCreating(null);
-                  }
-                }}
-                onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
-                onBlur={() => !creating.name.trim() && setCreating(null)}
-              />
-            </form>
-          )}
+          {sidebar === "files" && creating && newEntryForm}
           {sidebar === "files" && (creating?.problem || api.createError) && (
             <p className="new-entry-error" role="alert">
               {creating?.problem ?? api.createError}
@@ -444,6 +622,7 @@ export function EditorPane({
                 onDelete={setConfirmDelete}
                 onRename={(entry, name) => api.renameEntry(entry.path, name)}
                 onCopyPath={(entry) => void navigator.clipboard.writeText(api.fullPath(entry.path)).catch(() => {})}
+                gitStatus={api.gitStatus}
               />
             ) : (
               <SearchPanel search={api.search} onSearch={api.runSearch} onOpen={(p, line) => api.openFile(p, line)} />
@@ -454,12 +633,9 @@ export function EditorPane({
 
       {part !== "files" && (
       <div className="editor-main">
+        {/* The Code view shows no empty tab row: the editor shows "Open files appear here". */}
+        {!(code && api.files.length === 0) && (
         <div className="file-tabs" role="tablist" aria-label="Open files">
-          {!sidebar && part === "all" && (
-            <button type="button" className="icon-btn ghost" onClick={() => setSidebar("files")} title="Show the sidebar" aria-label="Show the sidebar">
-              <PanelLeftOpen size={14} aria-hidden />
-            </button>
-          )}
           {api.files.map((f) => (
             <div key={f.path} className={`file-tab${f.path === api.active ? " active" : ""}`} role="presentation">
               <button
@@ -481,6 +657,7 @@ export function EditorPane({
             </div>
           ))}
         </div>
+        )}
 
         {confirmClose && (
           <div className="notice-bar warn" role="alert">
@@ -548,6 +725,12 @@ export function EditorPane({
             </p>
           ) : !file && emptyContent ? (
             <div className="editor-empty editor-empty-custom">{emptyContent}</div>
+          ) : !file && code ? (
+            <div className="editor-empty">
+              <Folder size={24} aria-hidden />
+              <p className="editor-empty-title">Open files appear here</p>
+              <p className="help">Pick a file in the tree, or click a file path in the conversation.</p>
+            </div>
           ) : !file ? (
             <div className="editor-empty">
               <FileCode size={28} aria-hidden />

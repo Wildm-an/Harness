@@ -17,16 +17,6 @@ export const SearchPanel = memo(function SearchPanel({
   const [matchCase, setMatchCase] = useState(false);
   const [glob, setGlob] = useState("");
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, SearchState["items"]>();
-    for (const item of search.items) {
-      const list = map.get(item.path) ?? [];
-      list.push(item);
-      map.set(item.path, list);
-    }
-    return [...map.entries()];
-  }, [search.items]);
-
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     onSearch(query, { regex, case: matchCase, glob });
@@ -86,38 +76,60 @@ export const SearchPanel = memo(function SearchPanel({
           </button>
         </div>
       </form>
-      <div className="search-results" aria-live="polite">
-        {search.busy && (
-          <p className="search-note">
-            <LoaderCircle size={13} className="spin" aria-hidden /> Searching
-          </p>
-        )}
-        {search.error && <p className="field-error">{search.error}</p>}
-        {!search.busy && !search.error && search.query && (
-          <p className="search-note">
-            {search.items.length === 0
-              ? "No results."
-              : `${search.items.length}${search.truncated ? "+" : ""} results in ${grouped.length} files`}
-          </p>
-        )}
-        {grouped.map(([path, items]) => (
-          <div key={path} className="search-file">
-            <div className="search-path mono" title={path}>
-              {path}
-            </div>
-            <ul>
-              {items.map((item) => (
-                <li key={`${item.line}`}>
-                  <button type="button" className="search-hit" onClick={() => onOpen(item.path, item.line)}>
-                    <span className="search-line mono">{item.line}</span>
-                    <span className="search-text mono">{item.text.trim()}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+      <SearchResults search={search} onOpen={onOpen} />
+    </div>
+  );
+});
+
+/** The results of a search in the files, grouped by file. A click opens the file at the line. */
+export const SearchResults = memo(function SearchResults({
+  search,
+  onOpen,
+}: {
+  search: SearchState;
+  onOpen: (path: string, line: number) => void;
+}) {
+  const grouped = useMemo(() => {
+    const map = new Map<string, SearchState["items"]>();
+    for (const item of search.items) {
+      const list = map.get(item.path) ?? [];
+      list.push(item);
+      map.set(item.path, list);
+    }
+    return [...map.entries()];
+  }, [search.items]);
+  return (
+    <div className="search-results" aria-live="polite">
+      {search.busy && (
+        <p className="search-note">
+          <LoaderCircle size={13} className="spin" aria-hidden /> Searching
+        </p>
+      )}
+      {search.error && <p className="field-error">{search.error}</p>}
+      {!search.busy && !search.error && search.query && (
+        <p className="search-note">
+          {search.items.length === 0
+            ? "No results."
+            : `${search.items.length}${search.truncated ? "+" : ""} results in ${grouped.length} files`}
+        </p>
+      )}
+      {grouped.map(([path, items]) => (
+        <div key={path} className="search-file">
+          <div className="search-path mono" title={path}>
+            {path}
           </div>
-        ))}
-      </div>
+          <ul>
+            {items.map((item) => (
+              <li key={`${item.line}`}>
+                <button type="button" className="search-hit" onClick={() => onOpen(item.path, item.line)}>
+                  <span className="search-line mono">{item.line}</span>
+                  <span className="search-text mono">{item.text.trim()}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 });

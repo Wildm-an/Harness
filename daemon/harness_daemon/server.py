@@ -70,7 +70,7 @@ from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
 from .servers import ServerManager
-from .prstatus import folder_changes, pr_status
+from .prstatus import file_statuses, folder_changes, pr_status
 from . import update
 from . import session as session_mod
 from .tools.sessions import NEW_TASK_CHOICES
@@ -2202,6 +2202,24 @@ async def on_git_pr_status(conn: Connection, msg: dict[str, Any]) -> None:
             await conn.error(f"Internal error: {type(e).__name__}: {e}", ref="git.pr_status")
             return
         await conn.send({"type": "pr_status", "items": items})
+
+    asyncio.create_task(work())
+
+
+@handler("git.status")
+async def on_git_status(conn: Connection, msg: dict[str, Any]) -> None:
+    """The git state of the changed files in the session folder, for the colors of the file tree.
+    The reply is "git.status": {"files": {path: state}}. It runs as a task: git can be slow."""
+    session = conn.require_session()
+    cwd = str(session.cwd)
+
+    async def work() -> None:
+        try:
+            files = await file_statuses(cwd)
+        except Exception:  # noqa: BLE001 - the tree shows no colors.
+            log.exception("The git status failed")
+            files = {}
+        await conn.send({"type": "git.status", "files": files})
 
     asyncio.create_task(work())
 
