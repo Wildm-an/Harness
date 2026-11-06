@@ -3,6 +3,60 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.52 (2026-11-05)
+
+### Speed
+
+- Local models answer sooner. The title and the next-prompt suggestion come after the turn, and
+  they start with the conversation of the agent, so the model server keeps its cache. Before,
+  each of these requests made the server read the full conversation again on the next turn.
+- The tool list keeps its order when a setting changes, which also keeps the cache of the model
+  server.
+- The daemon loads the model client at start. Before, the first request stopped the daemon for
+  about 1 second.
+- A request field that a model rejects is not sent again in a new session.
+- In a very large project, the file scan around each command stops for 5 minutes. Before, it
+  could add up to 1 second to each step.
+
+### Chat
+
+- The reply streams with less work: the chat renders once a frame, and only the last paragraph
+  of the reply is read again. Tool rows, diffs, and your messages render only when they change.
+- Typing in the prompt box no longer measures the row under it at each key.
+- The working line shows "Thinking…" while the model reasons.
+- Queued messages show above the task list.
+- Tool code uses the code theme of Settings > Appearance.
+- Your chat bubble has the corner radius of the prompt box. The jump-to-agent button shows a down
+  arrow on hover.
+- The model chip has the color of the other chips, with a bar before the effort level.
+
+### Power
+
+- The working loader draws at 30 frames a second, and stops while the turn waits for you.
+- The shimmer of a running session in the sidebar uses fewer frames, and stops when the window is
+  not in front.
+- Open files, server logs, the browser view, and the PR status use less work while nothing
+  changes or the window is hidden.
+
+### Servers and browser
+
+- Auto mode starts a server of the project launch.json with no question. The agent lists the
+  servers first and uses a running one.
+- The Browser pane has "Stop all servers". A close of the window to the tray asks to stop the
+  servers that the agent started.
+- Each session has its own browser tabs. You and the agent share them.
+- Browser and terminal tabs get smaller to fit. A list button shows the tabs that do not fit.
+
+### Sessions and routines
+
+- A click on a Windows notification opens its session.
+- Routines have an API trigger: "API access" on the Routines page shows the URL, the token, and
+  an example request.
+- Settings has "Archive inactive sessions".
+- An app update asks first while the agent works: "Update now", "Wait for the agent", or
+  "Cancel".
+- Drag to reorder the rail sections and the sidebar projects with animation.
+
 ## 0.1.51 (2026-11-05)
 
 ### Browser

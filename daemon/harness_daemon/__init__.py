@@ -1,3 +1,3 @@
 """Agent daemon for the coding harness."""
 
-__version__ = "0.1.51"
+__version__ = "0.1.52"
