@@ -1,6 +1,6 @@
 // The task list and the end-of-turn box of the agent, as in Claude Code (lib/progress.ts).
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, CircleCheck, CircleEllipsis, LoaderCircle } from "lucide-react";
 import type { PlanStep, WrapUp } from "../lib/progress";
 import { formatElapsed } from "./WorkingLine";
@@ -73,10 +73,15 @@ export function PlanBlock({
   );
 }
 
-/** The box at the end of a turn: the recap, and a question with answer buttons. A button sends its message as the next prompt. */
-export function WrapUpBox({ wrap, disabled, onAction }: { wrap: WrapUp; disabled: boolean; onAction: (message: string) => void }) {
+/**
+ * The box at the end of a turn: the recap, and a question with answer buttons. A button sends its
+ * message as the next prompt. A finished plan of the turn shows at the top of the box, so the plan and
+ * the recap are one card.
+ */
+export function WrapUpBox({ wrap, disabled, onAction, plan }: { wrap: WrapUp; disabled: boolean; onAction: (message: string) => void; plan?: ReactNode }) {
   return (
-    <section className="wrapup-box" aria-label="Next step">
+    <section className={`wrapup-box${plan ? " with-plan" : ""}`} aria-label="Next step">
+      {plan && <div className="wrapup-plan">{plan}</div>}
       <p className="wrapup-recap">{wrap.recap}</p>
       {wrap.ask && <p className="wrapup-ask">{wrap.ask}</p>}
       {wrap.actions.length > 0 && (
