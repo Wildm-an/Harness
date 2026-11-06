@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
 import type { ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
@@ -293,6 +293,20 @@ export function nextFollow(follow: boolean, gap: number, top: number, lastTop: n
   return follow;
 }
 
+/**
+ * The scroll-to-bottom button shows only when the end of the chat is out of view. While the agent
+ * works, the end is its working line: the line counts as seen when its middle is in the list
+ * (the user asked for this). With no working line, the end is the bottom of the list.
+ * ``view`` and ``line`` are screen rectangles. ``gap`` is the distance from the bottom of the list.
+ */
+export function endHidden(view: { top: number; bottom: number }, line: { top: number; bottom: number } | null, gap: number): boolean {
+  if (line) {
+    const middle = (line.top + line.bottom) / 2;
+    return middle < view.top || middle > view.bottom;
+  }
+  return gap > BOTTOM_SLACK;
+}
+
 /** The empty queue: one array, so the scroll effect does not run for each render. */
 export const NO_QUEUE: QueuedItem[] = [];
 
@@ -337,12 +351,20 @@ export function MessageList({
   const follow = useRef(true);
   const lastTop = useRef(0);
   const groups = useRef<Map<string, ToolItem[]>>(new Map()); // The tool groups of the last render.
-  // The "scroll to bottom" button shows when the list does not follow the agent.
+  // The "scroll to bottom" button shows when the end of the chat is out of view (endHidden).
+  // A scroll up stops the follow, but it does not show the button while the working line is in view.
   const [away, setAway] = useState(false);
   const setFollow = (on: boolean) => {
     follow.current = on;
-    setAway(!on);
+    if (on) setAway(false);
   };
+  const checkAway = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const line = el.querySelector(".working")?.getBoundingClientRect() ?? null;
+    // While the list follows the agent (also during the smooth scroll of the button), the end is in view.
+    setAway(!follow.current && endHidden(el.getBoundingClientRect(), line, el.scrollHeight - el.scrollTop - el.clientHeight));
+  }, []);
 
   // Another conversation (for example another session): start at the bottom, and follow it.
   const firstId = items[0]?.id;
@@ -358,7 +380,18 @@ export function MessageList({
       el.scrollTop = el.scrollHeight;
       lastTop.current = el.scrollTop;
     }
-  }, [items, queued]);
+    checkAway();
+  }, [items, queued, running, checkAway]);
+
+  // A change of size (the window, a pane, or an open tool list) can move the end in or out of view.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const observer = new ResizeObserver(checkAway);
+    observer.observe(el);
+    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+  }, [checkAway]);
 
   const toBottom = () => {
     const el = scroller.current;
@@ -393,6 +426,7 @@ export function MessageList({
     const next = nextFollow(follow.current, el.scrollHeight - el.scrollTop - el.clientHeight, el.scrollTop, lastTop.current);
     if (next !== follow.current) setFollow(next);
     lastTop.current = el.scrollTop;
+    checkAway();
   };
 
   return (

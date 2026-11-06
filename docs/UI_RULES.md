@@ -216,7 +216,7 @@ Harness has no "+" button now. Add it.
 ### 6.1 Messages
 
 - **M1.** The user message is a bubble with a light tint. On hover it shows a toolbar, in this order: "Copy message", "Rewind to here", "Fork from here", then the time. The bubble has the corner radius of the prompt box (`--prompt-radius`, 10px; the user asked for this).
-- **M1a.** The round button that scrolls to the bottom shows three moving dots while the agent works. On hover it shows a down arrow, the jump to the agent, and the button gets a highlight: a lighter fill and a brighter ring (the user asked for both).
+- **M1a.** The round button that scrolls to the bottom shows three moving dots while the agent works. On hover it shows a down arrow, the jump to the agent, and the button gets a highlight: a lighter fill and a brighter ring (the user asked for both). The button shows only when the end of the chat is out of view: while the agent works, the working line; else the bottom of the chat (the user asked for this). A scroll up stops the follow, but the button stays hidden while the working line is in view.
 - **M2.** Right-click on a message gives "Copy message", "Copy message as Markdown", "Rewind to here", "Fork from here".
 - **M3.** "Rewind to here" asks "Rewind to this message?" with "Code and conversation", "Conversation only", "Code only". After a rewind, show "Undo rewind".
 - **M4.** "Fork from here" tooltip: "Starts a new session from this point. This one stays as it is."
