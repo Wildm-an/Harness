@@ -3,9 +3,11 @@
 // "Push"). Each part has its own color and icon, so the user can see at once what is not in a
 // commit, what is not pushed, and what is on the remote:
 //
-//   Uncommitted  (tan, the color of a changed file in the file tree)
+//   Uncommitted  (orange)
 //   Not pushed   (blue)
 //   Pushed       (green)
+//
+// The colors are hues of the Clear Sight palette (styles.css), as the other status colors.
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, Check, ChevronDown, CloudCheck, Copy, Diff, Ellipsis, ExternalLink, FilePen, GitCommitHorizontal } from "lucide-react";

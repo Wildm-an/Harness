@@ -10,7 +10,7 @@ import { PR_STATE_TEXT, groupNumber, prRefText, timeAgo } from "../lib/pr";
 
 const ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
 
-/** The pull request icon in the color of its state: green open, gray draft, violet merged, red closed. */
+/** The pull request icon in the color of its state (Clear Sight): green open, gray draft, purple merged, vermilion closed. */
 export function PrIcon({ state, size = 14, className = "" }: { state: PrState | null; size?: number; className?: string }) {
   const Icon = state ? ICONS[state] : GitPullRequest;
   return <Icon size={size} aria-hidden className={`pr-icon${state ? ` pr-${state}` : ""}${className ? ` ${className}` : ""}`} />;
