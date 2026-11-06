@@ -264,7 +264,8 @@ def image_input(provider: Provider, model: str, settings: dict[str, Any], caps: 
 DEFAULT_CONTEXT_LENGTH = 8192
 # Ollama uses a small context unless the model or the server sets one. See OLLAMA_CONTEXT_LENGTH.
 OLLAMA_DEFAULT_CONTEXT = 4096
-PROBE_TIMEOUT = 3
+# A remote server can answer GET /models slowly while it generates or loads a model.
+PROBE_TIMEOUT = 10
 # The Providers screen checks the context of each model. An Ollama server needs one request for each model.
 MAX_CONTEXT_PROBES = 40
 PROBE_CONCURRENCY = 6
