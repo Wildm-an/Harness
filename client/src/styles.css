@@ -71,11 +71,12 @@
 
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 20px;
-  --prompt-radius: 10px; /* The prompt box and the chat bubble of the user (the user asked for one radius). */
+  /* The corner radii: the "tighter" set (the user chose it, UI_RULES 11.4). */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 14px;
+  --prompt-radius: 8px; /* The prompt box and the chat bubble of the user (the user asked for one radius). */
   --column: 780px;
   --sidebar-width: 264px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -461,7 +462,7 @@ textarea:focus-visible {
   --side-group-pt: 12px;
   --side-icon: 16px;
   --side-ctl: 20px;
-  --side-radius: 6px;
+  --side-radius: 4px;
   /* The columns, as in Claude: the row is 8px from the sidebar edge. An icon or a status ring is
      centered in a leading slot. The text starts after the slot. A label lines up with the icons. */
   --side-row-px: 2px;
@@ -484,7 +485,7 @@ textarea:focus-visible {
   --side-group-pt: 16px;
   --side-icon: 20px;
   --side-ctl: 24px;
-  --side-radius: 8px;
+  --side-radius: 6px;
   --side-slot: 28px;
   --side-row-gap: 8px;
 }
@@ -7881,7 +7882,7 @@ mark.word-del {
   max-width: 220px;
   max-height: 160px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--prompt-radius);
   object-fit: cover;
 }
 
@@ -9218,8 +9219,11 @@ textarea.setting-textarea:disabled {
   box-shadow: 0 0 0 1px var(--accent), var(--shadow);
 }
 
+/* The heading keeps 4px of space above and below its button, so the hover fill stays inside the
+   lines between the sections. The row stays 32px high (the user asked for this). */
 .rail-section-head {
   position: relative;
+  padding: 4px 0;
 }
 
 /* The grip at the far right of a heading: it shows on hover, and the heading moves the section. */
@@ -9276,7 +9280,7 @@ body.sorting * {
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 32px;
+  min-height: 24px;
   padding: 0 6px;
   border: 0;
   border-radius: var(--radius-sm);

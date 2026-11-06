@@ -149,7 +149,7 @@ Claude shows skills and connectors on separate tabs of its "Customize" page. The
 
 ### 5.1 Layout
 
-- **C1.** The prompt box is one card with a large radius (`--cds-radius-composer`, 14px in comfortable density). The text area grows to `min(24rem, 40svh)`.
+- **C1.** The prompt box is one card with a large radius. Claude uses `--cds-radius-composer` (14px in comfortable density). Harness uses `--prompt-radius` (8px, see section 11.4). The text area grows to `min(24rem, 40svh)`.
 - **C2.** The action row inside the card, left to right: the "+" button, the text area, then Send / Stop at the right.
 - **C3.** The "chin" bar under the card, left to right: the permission mode picker; then, at the right, the model picker (with effort), then the context ring.
 - **C3a.** The chips under the prompt box (mode, project, model) are text with no border and no arrow. On hover and while the menu is open, the full chip gets the hover background (the user asked for this). The model chip has no icon: it shows the model name, a bar, then the effort level, for example "qwen3 | High" (the user asked for the bar). It has the same text color as the other chips under the prompt box (the user asked for this). Its class is `model-button`: the `model-chip` class of the Providers page has other colors.
@@ -216,7 +216,7 @@ Harness has no "+" button now. Add it.
 
 ### 6.1 Messages
 
-- **M1.** The user message is a bubble with a light tint. On hover it shows a toolbar, in this order: "Copy message", "Rewind to here", "Fork from here", then the time. The bubble has the corner radius of the prompt box (`--prompt-radius`, 10px; the user asked for this).
+- **M1.** The user message is a bubble with a light tint. On hover it shows a toolbar, in this order: "Copy message", "Rewind to here", "Fork from here", then the time. The bubble has the corner radius of the prompt box (`--prompt-radius`, 8px; the user asked for this). The images of a message have the same radius.
 - **M1b.** In place of the check icon of the Claude app ("Read by Claude"), the toolbar of a user message shows the text "Read" or "Sent", then "|", then the time (the user asked for this). "Sent": the turn runs and nothing came after the message yet (no reply, no tool call, no card). "Read": all other messages. The tip of "Read" is "Read by the agent".
 - **M1a.** The round button that scrolls to the bottom shows three moving dots while the agent works. On hover it shows a down arrow, the jump to the agent, and the button gets a highlight: a lighter fill and a brighter ring (the user asked for both). The button shows only when the end of the chat is out of view: while the agent works, the working line; else the bottom of the chat (the user asked for this). A scroll up stops the follow, but the button stays hidden while the working line is in view.
 - **M2.** Right-click on a message gives "Copy message", "Copy message as Markdown", "Rewind to here", "Fork from here".
@@ -312,6 +312,7 @@ Harness has no "+" button now. Add it.
 - **V6c.** Claude sections, in this order: Environment, Goal, Settings, Context, Usage, Connectors, Progress, Outputs, Pull requests, Servers, Background tasks. Each section folds. The user can hide and reorder sections. The app keeps the shown state and the folded sections.
 - **V6d.** In a narrow window the rail covers the session. Esc or a click outside closes it.
 - **V6e.** Harness shows Environment, Context, Changes, Pull requests, Servers, Browser, and Background tasks, in this default order (`SessionRail.tsx`). Browser is under Servers (the user asked for this). A section with no data does not show. The user can drag a section heading to move the section, or press Alt+Up or Alt+Down on the heading (the user asked for this). On hover, a grip (six dots) shows at the far right of the heading, as in the Claude app. While the user drags, the held section follows the pointer with an accent ring, and the other sections slide out of the way to show its new place (the user asked for this, `useSortable.ts`). The sidebar projects move the same way. A move of less than 4 px is a click. The order is a preference (`sessionRail.order`): it stays for new sessions and after an update. A new section of an update goes after its neighbor of the default order. Harness does not hide sections yet. Harness has no Settings section: the user asked to keep the mode and model menus only under the prompt box. The Environment section ends with the switch "Keep computer awake", the same switch as in the ⋮ menu: the user asked for it under the environment. It is a small row with an icon and a small switch, as "Remote Control" in the Claude app. Its hover text is "Only for this session".
+- **V6e2.** A section heading of the rail is 32px high: a 24px button with 4px of space above and below it. The hover fill of the button stays inside the lines between the sections (the user asked for this, and for the 32px height).
 - **V6v.** The Background tasks section of the rail shows all the running tasks, then the 3 newest ended tasks (the user asked for this). Each row shows the description and "{kind} · {state}": "Command", "Monitor", "Agent", or "Wakeup". A wakeup that waits shows "Wakeup · in {time}".
 - **V6w.** When a background task ends, a monitor writes a line, a background agent ends, or a wakeup is due, the agent gets a note, as in Claude Code. The note goes into the running turn, or it starts a new turn. The chat shows the note as a muted line with a bell icon, not as a user message.
 - **V6x.** The dev servers are in the Browser pane, as in the Claude app (the user asked for this). The title bar has no Servers menu. The session rail toggle is the first button at the right of the title bar, before the pane buttons. A thin vertical line separates it from the pane buttons (the user asked for this). Harness has no Servers pane (the user asked to remove it). The Browser pane header has the Servers menu: start, stop, open, and "Edit launch.json". An empty browser tab shows a block with the servers of `.harness/launch.json`: the name, the port, and a play button. The play button starts the server, and the tab opens it when it runs. The first start of a command asks in the block, with the buttons of the permission card ("Deny", "Always allow", "Allow once"). The chat card asks too. With no launch.json, the block shows the servers that the harness found ("Save to .harness/launch.json"), or "Create launch.json from a template". Under the block: "Run a server to preview your app, or enter a URL. Edit this list in .harness/launch.json."
@@ -564,6 +565,7 @@ Rules:
 
 - **T1.** Use the accent blue for focus rings, links, selection and the unread dot. Use clay only for the brand.
 - **T2.** Make borders and hover fills from the text color with alpha. Do not use fixed gray borders.
+- **T3a.** The sidebar has an opaque background (`--sidebar`). The user compared a translucent sidebar (Windows Mica and Acrylic) and chose the opaque sidebar.
 - **T3.** Harness dark colors (`#262624`, `#1f1e1d`, `#30302e`) are the older warm claude.ai palette. The move to the CDS palette is a large visual change. Decide it in its own change, and change all the tokens in `styles.css` together.
 
 ### 11.3 Type
@@ -596,6 +598,18 @@ Rules:
 | Gap xs / sm / md / lg / xl | 6 / 8 / 12 / 20 / 32px | 8 / 12 / 16 / 28 / 40px |
 
 - **T7.** Use these steps. Do not use other padding values.
+- **T7a.** Harness uses a tighter set of corner radii than Claude (the user chose it from three sets). Use these tokens. Do not use other radius values for these elements:
+
+  | Token | Value | Elements |
+  |---|---|---|
+  | `--radius-sm` | 4px | buttons, small controls, rail headings |
+  | `--radius` | 6px | menus, code blocks, tool cards, list rows |
+  | `--radius-lg` | 8px | panels, dialogs, the chat cards (permission, plan, end-of-turn box) |
+  | `--radius-xl` | 14px | not in use now |
+  | `--prompt-radius` | 8px | the prompt box and the user message |
+  | `--side-radius` | 4px compact, 6px comfortable | the sidebar rows |
+
+  Round items (pills, dots, avatars) keep `999px` or `50%`.
 - **T8.** The app default density is comfortable.
 
 ### 11.5 Depth and motion
