@@ -116,3 +116,26 @@ def test_github_repo():
 def test_repo_of():
     assert prstatus.repo_of("https://github.com/Wildm-an/Harness/pull/5") == "Wildm-an/Harness"
     assert prstatus.repo_of("https://example.com/x") is None
+
+
+def test_pr_info_fresh_uses_a_short_cache(monkeypatch):
+    """The PR list of the rail asks with "fresh": a new state on GitHub shows after FRESH_SECONDS, not CACHE_SECONDS."""
+    url = "https://github.com/o/r/pull/7"
+    prstatus._info_cache.clear()
+    calls: list[str] = []
+    states = iter(["OPEN", "MERGED"])
+
+    async def fake_run(args, cwd, timeout):
+        calls.append(args[3])
+        return 0, json.dumps({"number": 7, "state": next(states), "url": url, "isDraft": False, "title": "T"})
+
+    now = [1000.0]
+    monkeypatch.setattr(prstatus, "_run", fake_run)
+    monkeypatch.setattr(prstatus.shutil, "which", lambda name: "gh")
+    monkeypatch.setattr(prstatus.time, "monotonic", lambda: now[0])
+    assert asyncio.run(prstatus.pr_info(url))["state"] == "open"
+    now[0] += prstatus.FRESH_SECONDS + 1
+    assert asyncio.run(prstatus.pr_info(url))["state"] == "open"  # A normal request keeps the cache.
+    assert asyncio.run(prstatus.pr_info(url, fresh=True))["state"] == "merged"
+    assert calls == [url, url]
+    prstatus._info_cache.clear()
