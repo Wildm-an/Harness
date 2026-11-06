@@ -3,6 +3,29 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.54 (2026-11-06)
+
+### Browser
+
+- The annotation bar floats over the bottom of the page, with no band under the page. It is in a
+  drawer: the handle slides it down, so you can mark the part of the page behind it. The
+  "Annotate" tab at the bottom edge pulls it back out (a click or a drag up). The screenshot of
+  "Add to prompt" does not show the bar.
+- A page that comes back from the session rail shows at once. Before, it stayed blank until a
+  resize of the window.
+- A new tab does not take the keyboard focus. A page that the agent opens does not stop your
+  typing in the prompt box.
+- "New tab" and Ctrl+T put the cursor in the address bar.
+
+### Chat
+
+- Sent and queued messages show their browser annotations as chips above the text, as the prompt
+  box does. A queued message shows its pasted images too.
+
+### Window
+
+- A line separates the session rail button from the pane buttons in the title bar.
+
 ## 0.1.53 (2026-11-05)
 
 ### Daemon
