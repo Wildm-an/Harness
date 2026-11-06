@@ -139,7 +139,6 @@ import { CardActionsContext, fileKind, opensInPane, type CardActions } from "./l
 import { normalizePath, openFolderBlocked } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
-import { ContextRing } from "./components/ContextRing";
 import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
 import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
@@ -2608,17 +2607,6 @@ export default function App() {
                   onSelect={switchModel}
                   onManage={showProviders}
                 />
-                {chat.context && (
-                  <ContextRing
-                    tokens={chat.context.tokens}
-                    length={chat.context.length}
-                    source={chat.context.source}
-                    usage={contextUsage}
-                    running={chat.running}
-                    onOpen={() => sendSafely({ type: "context.get" })}
-                    onCompact={() => submit({ kind: "command", name: "compact", args: "" })}
-                  />
-                )}
                 </div>
                 </>
               )
@@ -3584,7 +3572,7 @@ export default function App() {
                     branch: prStatus.get(pathKey(session.cwd))?.branch ?? null,
                     worktree: session.worktree,
                   }}
-                  context={chat.context ? { tokens: chat.context.tokens, length: chat.context.length } : null}
+                  context={chat.context ? { tokens: chat.context.tokens, length: chat.context.length, source: chat.context.source } : null}
                   usage={contextUsage}
                   onReadUsage={() => sendSafely({ type: "context.get" })}
                   running={chat.running}
