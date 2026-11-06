@@ -3444,6 +3444,32 @@ select {
   color: var(--warning);
 }
 
+/* The result of the quick test of a provider row (the plug button). */
+.provider-test {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.provider-test span {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--text-muted);
+}
+
+.provider-test svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.provider-test .ok {
+  color: var(--success);
+}
+
+.provider-test .bad {
+  color: var(--danger);
+}
+
 /* The URL of an endpoint, with its copy button at the end. A long URL gets "…", not the button. */
 .provider-url {
   display: flex;
@@ -8837,13 +8863,14 @@ textarea.setting-textarea:disabled {
   gap: 8px;
 }
 
-/* The popups at the bottom left: the app update, the daemon version, and the daemon update. They
-   stack upward, so they do not cover each other. */
-/* The update pop-ups are at the bottom right of the app (the user asked for this). */
+/* The popups at the bottom right of the app (the user asked for this place): the app update, the
+   daemon version, and the daemon update. They stack upward, so they do not cover each other.
+   --native-shift moves the stack to the left of the Browser pane webview (useClearOfNative). */
 .toast-stack {
   position: fixed;
   right: 16px;
   bottom: 16px;
+  transform: translateX(var(--native-shift, 0px));
   z-index: calc(var(--z-overlay) + 5);
   display: flex;
   flex-direction: column-reverse;
@@ -10270,8 +10297,9 @@ body.sorting * {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px 8px 14px;
-  transform: translateX(-50%);
+  padding: 8px 6px 8px 14px;
+  /* --native-shift moves the note to the left of the Browser pane webview (useClearOfNative). */
+  transform: translateX(calc(-50% + var(--native-shift, 0px)));
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface);

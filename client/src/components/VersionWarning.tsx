@@ -1,22 +1,23 @@
 // The warning when the connected daemon has another version than the app, for example a remote
 // daemon that was not updated. The protocol can change between versions, so some features can fail.
-// It has no close button: it stays until the app connects to another daemon, or the user starts
-// the update of the daemon. The popup is at the bottom left, as the update popup of the app.
+// It stays until the user closes it (the X or Esc), the app connects to another daemon, or the user
+// starts the update of the daemon. The popup is at the bottom right, as the update popup of the app.
 
 import { ArrowUpCircle, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { compareVersions } from "../lib/version";
 
-export function VersionWarning({ appVersion, daemonVersion, host, canUpdate, onUpdate, onComputers }: {
+export function VersionWarning({ appVersion, daemonVersion, host, canUpdate, onUpdate, onComputers, onClose }: {
   appVersion: string;
   daemonVersion: string;
   host: string; // The name of the daemon computer.
   canUpdate: boolean; // The daemon is older, and it can install an update from the app.
   onUpdate: () => void;
   onComputers: () => void; // Open the Computers page.
+  onClose: () => void;
 }) {
   const older = compareVersions(daemonVersion, appVersion) < 0;
   return (
-    <div className="update-toast version-warning" role="alert">
+    <div className="update-toast version-warning" role="alert" onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <TriangleAlert size={18} aria-hidden className="update-toast-icon" />
       <div className="update-toast-text">
         <span className="update-toast-title">{older ? "Daemon update needed" : "App update needed"}</span>
@@ -37,7 +38,17 @@ export function VersionWarning({ appVersion, daemonVersion, host, canUpdate, onU
           </button>
         </div>
       </div>
+      <CloseButton onClose={onClose} />
     </div>
+  );
+}
+
+/** The X at the top right of each popup at the bottom right. Esc in the popup also closes it. */
+export function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button type="button" className="icon-btn ghost update-toast-close" onClick={onClose} aria-label="Close" title="Close (Esc)">
+      <X size={14} aria-hidden />
+    </button>
   );
 }
 
@@ -59,12 +70,17 @@ const PHASE_TEXT: Record<DaemonUpdatePhase, (u: DaemonUpdate) => string> = {
   error: (u) => u.message ?? "The update failed.",
 };
 
-/** The progress of "Update daemon". Done and error have a close button. */
+/** The progress of "Update daemon". The X hides it. A running update goes on. */
 export function DaemonUpdateToast({ update, onClose }: { update: DaemonUpdate; onClose: () => void }) {
   const busy = update.phase !== "done" && update.phase !== "error";
   const Icon = busy ? LoaderCircle : update.phase === "error" ? TriangleAlert : ArrowUpCircle;
   return (
-    <div className={`update-toast daemon-update daemon-update-${update.phase}`} role={update.phase === "error" ? "alert" : "status"} aria-live="polite">
+    <div
+      className={`update-toast daemon-update daemon-update-${update.phase}`}
+      role={update.phase === "error" ? "alert" : "status"}
+      aria-live="polite"
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+    >
       <Icon size={18} aria-hidden className={`update-toast-icon${busy ? " spin" : ""}`} />
       <div className="update-toast-text">
         <span className="update-toast-title">
@@ -72,11 +88,7 @@ export function DaemonUpdateToast({ update, onClose }: { update: DaemonUpdate; o
         </span>
         <span className="update-toast-body daemon-update-body">{PHASE_TEXT[update.phase](update)}</span>
       </div>
-      {!busy && (
-        <button type="button" className="icon-btn ghost" onClick={onClose} aria-label="Close" title="Close">
-          <X size={14} aria-hidden />
-        </button>
-      )}
+      <CloseButton onClose={onClose} />
     </div>
   );
 }

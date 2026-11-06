@@ -5,8 +5,9 @@
 // the daemon and its routines continue. "Quit Harness" in the tray menu then quits the app.
 
 import { useEffect, useId, useRef, useState } from "react";
-import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
+import { WaitNote } from "./WaitNote";
 import { loadPref } from "../lib/prefs";
 import { isTauri } from "../lib/tauri";
 
@@ -233,16 +234,7 @@ export function QuitGuard({ working, agentServers = [], onStopAgentServers }: {
         />
       )}
       {waiting && working > 0 && (
-        <div className="quit-wait" role="status">
-          <LoaderCircle size={14} className="spin" aria-hidden />
-          <span>Harness quits when the agent is done.</span>
-          <button type="button" className="btn btn-small" onClick={() => setWaiting(false)}>
-            Cancel
-          </button>
-          <button type="button" className="btn btn-small" onClick={quitNow}>
-            Quit now
-          </button>
-        </div>
+        <WaitNote text="Harness quits when the agent is done." action="Quit now" onAction={quitNow} onCancel={() => setWaiting(false)} />
       )}
     </>
   );
