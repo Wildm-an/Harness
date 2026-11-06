@@ -197,6 +197,7 @@ def note_message(notes: list[tuple[str, str]]) -> tuple[str, str]:
 MODEL_CHECKS: dict[tuple[Any, ...], tuple[float, list[str] | None, ContextInfo]] = {}
 MODEL_CHECKS_TTL = 600
 MODEL_CHECK_WAIT = 20  # Seconds that the first turn waits for the model checks of the open.
+MODEL_RECHECK_EVERY = 60  # Seconds between two checks of a session that has the default context length.
 # The model checks that run now, by the key of MODEL_CHECKS.
 CHECKS_RUNNING: dict[tuple[Any, ...], asyncio.Future] = {}
 # The sessions that close in the background after the client left them (Connection.leave_current).
@@ -490,6 +491,7 @@ class LiveSession:
         # A routine run: called with True when a permission request waits, and False after the answer.
         self.on_waiting: Callable[[bool], None] | None = None
         self.model_task: asyncio.Task | None = None  # The model checks after the open (check_model).
+        self.next_model_check = 0.0  # The time of the next check if the context length is the default.
 
     @property
     def id(self) -> str | None:
@@ -742,8 +744,17 @@ class LiveSession:
             await self.error(f"The MCP servers did not start: {e}", ref="mcp")
 
     async def wait_for_mcp(self) -> None:
-        """Before a turn: the MCP servers and the model checks of the open (check_model) finish first."""
+        """Before a turn: the MCP servers and the model checks of the open (check_model) finish first.
+
+        If the checks found no context length (the session uses the default), check again, at most one
+        time for each MODEL_RECHECK_EVERY: else a short server problem gives the session 8192 tokens.
+        """
         task = self.model_task
+        agent = self.session.agent if self.session is not None else None
+        if ((task is None or task.done()) and agent is not None and agent.context_source == "default"
+                and not agent.client.provider.unavailable and time.monotonic() >= self.next_model_check):
+            self.next_model_check = time.monotonic() + MODEL_RECHECK_EVERY
+            self.model_task = task = asyncio.create_task(self.check_model())
         if task is not None and not task.done():
             await asyncio.wait({task}, timeout=MODEL_CHECK_WAIT)
         if self.mcp is not None:
@@ -1152,8 +1163,11 @@ class Connection:
                 CHECKS_RUNNING[key] = running
                 running.add_done_callback(lambda _: CHECKS_RUNNING.pop(key, None))
             caps, context = await asyncio.shield(running)
-            MODEL_CHECKS[key] = (time.monotonic(), caps, context)
-            MODEL_CHECKS[("last", provider.name, provider.base_url, model, settings.get("context_length"))] = (time.monotonic(), caps, context)
+            # No context length from the endpoint (a timeout, for example): do not keep the default. The next
+            # check asks again, and a good result of an earlier check stays.
+            if context.source != "default":
+                MODEL_CHECKS[key] = (time.monotonic(), caps, context)
+                MODEL_CHECKS[("last", provider.name, provider.base_url, model, settings.get("context_length"))] = (time.monotonic(), caps, context)
         return Connection._model_info(provider, model, settings, caps, context)
 
     async def send_ready(self, warnings: list[str]) -> None:
