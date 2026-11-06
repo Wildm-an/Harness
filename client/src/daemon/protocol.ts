@@ -262,6 +262,14 @@ export interface ServerItem {
   ready_pattern?: string | null;
   health_url?: string | null;
   last_lines?: { stream: "stdout" | "stderr"; text: string }[];
+  by?: "agent" | "user"; // Who started the server. A close of the window asks to stop the servers of the agent.
+}
+
+/** A running server that an agent started (servers.agent). */
+export interface AgentServer {
+  session_id: string;
+  name: string;
+  port: number | null;
 }
 
 export interface SessionSummary {
@@ -770,6 +778,7 @@ export type ClientMessage =
   | { type: "server.save"; servers: ServerConfigJson[] }
   | { type: "server.start"; name: string }
   | { type: "server.stop"; name?: string; all?: boolean }
+  | { type: "server.stop_agent" } // Stop the servers that an agent started, in all sessions of the window.
   | { type: "server.restart"; name: string }
   | { type: "server.logs"; name: string }
   | { type: "permissions.get" }
@@ -978,6 +987,8 @@ export type DaemonMessage =
   | { type: "memory.export"; cwd: string; name: string; data: string; count: number } // data: the .zip as base64.
   | { type: "routines"; items: RoutineItem[]; saved?: string; folder?: string } // To all clients. saved: the id after routines.save. folder: the routine files.
   | { type: "routine.runs"; routine_id: string; items: RoutineRun[] }
+  // The running servers that an agent started, in the sessions of this window.
+  | { type: "servers.agent"; items: AgentServer[] }
   // "Archive inactive sessions" archived these sessions. All windows get it.
   | { type: "sessions.archived"; ids: string[] }
   // The reply to routines.token: the new token, shown one time. null: the token was deleted.
@@ -995,6 +1006,7 @@ export type DaemonMessage =
       error: string | null;
     }
   | { type: "token"; text: string }
+  | { type: "thinking" } // The model thinks (its reasoning streams). The working line shows "Thinking…".
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
   | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[] }

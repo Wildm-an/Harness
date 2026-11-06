@@ -10,6 +10,7 @@ import {
   Globe,
   LoaderCircle,
   Monitor,
+  Power,
   RotateCw,
   Smartphone,
   SquareDashedMousePointer,
@@ -884,7 +885,7 @@ export function BrowserPane({
       <PaneHeader>
         <WindowTabs
           kind="Browser"
-          tabs={mine.map((t) => ({ id: t.id, label: tabLabel(t), icon: t.loading ? LoaderCircle : Globe, busy: t.loading }))}
+          tabs={mine.map((t) => ({ id: t.id, label: tabLabel(t), icon: t.loading ? LoaderCircle : Globe, busy: t.loading, detail: t.url && t.url !== "about:blank" ? t.url : undefined }))}
           active={active.id}
           onSelect={(id) => {
             setActiveId(id);
@@ -896,6 +897,18 @@ export function BrowserPane({
         />
       </PaneHeader>
       <PaneActions>
+        {/* Stop all the servers of the project: only while one runs (the user asked for this). */}
+        {serverApi.items.some((i) => i.state === "running" || i.state === "starting") && (
+          <button
+            type="button"
+            className="icon-btn ghost"
+            onClick={() => serverApi.stopAll()}
+            aria-label="Stop all servers"
+            title={`Stop all servers (${serverApi.items.filter((i) => i.state === "running" || i.state === "starting").length} running)`}
+          >
+            <Power size={15} aria-hidden />
+          </button>
+        )}
         <ServerMenu
           api={serverApi}
           onOpenInBrowser={onOpenServer}

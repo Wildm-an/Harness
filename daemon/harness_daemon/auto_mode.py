@@ -226,6 +226,10 @@ def fast_path(tool: str, key: str) -> bool:
         return not is_protected_path(key)
     if tool == "preview_navigate":
         return (urlparse(key).hostname or "").lower() in LOCAL_HOSTS
+    if tool == "server":
+        # A local dev server of the launch.json of the project (preview_start). A change of launch.json
+        # gets the check of auto mode, so its commands are checked (the user asked for no question here).
+        return True
     if tool == "web_fetch":
         return key.removeprefix("domain:").lower() in LOCAL_HOSTS
     return False

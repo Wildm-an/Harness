@@ -20,6 +20,11 @@ export interface ServersState {
 const MAX_LOG_LINES = 2000;
 const EMPTY: ServersState = { items: [], config: "unknown", proposal: [], path: ".harness/launch.json" };
 
+/** True for the launch.json of the servers of the project: ".harness/launch.json" (either separator). */
+export function isLaunchFile(path: string): boolean {
+  return /(^|[\\/])\.harness[\\/]launch\.json$/i.test(path);
+}
+
 export function useServers(conn: DaemonConnection, sessionKey: string | null) {
   const [state, setState] = useState<ServersState>(EMPTY);
   const [logs, setLogs] = useState<Record<string, LogLine[]>>({});
@@ -56,9 +61,18 @@ export function useServers(conn: DaemonConnection, sessionKey: string | null) {
             path: msg.path,
           });
           return;
+        // A change of launch.json (an edit of the agent, the editor, or another program): the list
+        // shows a new or changed server at once (the user asked for this).
+        case "fs.changed":
+        case "fs.saved":
+          if (isLaunchFile(msg.path)) refresh();
+          return;
         case "server.status":
           setState((s) => {
-            if (!s.items.some((i) => i.name === msg.name)) return s;
+            if (!s.items.some((i) => i.name === msg.name)) {
+              refresh(); // A server that the list does not have yet.
+              return s;
+            }
             return {
               ...s,
               items: s.items.map((i) =>
@@ -80,7 +94,7 @@ export function useServers(conn: DaemonConnection, sessionKey: string | null) {
           return;
       }
     });
-  }, [conn]);
+  }, [conn, refresh]);
 
   return {
     ...state,

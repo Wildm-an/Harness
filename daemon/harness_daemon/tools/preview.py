@@ -78,8 +78,9 @@ class _PreviewTool(Tool):
 class PreviewStartTool(_PreviewTool):
     name = "preview_start"
     description = (
-        "Start a server from .harness/launch.json, and wait until it is ready. "
-        "With no name, start the default server. The result gives the server URL."
+        "Start a server from .harness/launch.json, and wait until it is ready. With no name, start the "
+        "default server. The result gives the server URL. Before you start a server, or add a new server "
+        "to launch.json, call preview_servers: when a running server serves what you need, use it."
     )
     parameters = {
         "type": "object",
@@ -103,7 +104,7 @@ class PreviewStartTool(_PreviewTool):
         server = host.find_server(args.get("name"))
         name = server.config.name
         if server.state not in ("starting", "running"):
-            await host.servers.start(name)
+            await host.servers.start(name, by="agent")
         await host.wait_started(server)
         if server.state == "running":
             return ToolResult(f"The server {name} is running at {host.server_url(server)}. "
@@ -117,6 +118,32 @@ class PreviewStartTool(_PreviewTool):
         if tail:
             lines.append("The last lines of its output:\n" + "\n".join(tail))
         return ToolResult("\n".join(lines), is_error=True)
+
+
+class PreviewServersTool(_PreviewTool):
+    name = "preview_servers"
+    description = (
+        "List the servers of .harness/launch.json of this project: the name, the state, the URL, the "
+        "command, and who started it. Call it before preview_start, and before you add a server to "
+        "launch.json: use a running server when it serves what you need."
+    )
+    parameters = {"type": "object", "properties": {}}
+
+    async def act(self, host: "PreviewHost", args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        exists = host.servers.reload()
+        if not exists:
+            return ToolResult("The project has no .harness/launch.json. Add a server to it, then start it with "
+                              "preview_start.")
+        servers = list(host.servers.servers.values())
+        if not servers:
+            return ToolResult("launch.json has no servers.")
+        lines = ["The servers of .harness/launch.json:"]
+        for s in servers:
+            url = host.server_url(s) if s.state == "running" else None
+            who = " (the agent started it)" if s.state in ("starting", "running") and s.started_by == "agent" else ""
+            lines.append(f"- {s.config.name}: {s.state}{f' at {url}' if url else ''}{who}. Command: {s.config.command}"
+                         + (" [default]" if s.config.default else ""))
+        return ToolResult("\n".join(lines))
 
 
 class PreviewStopTool(_PreviewTool):
@@ -361,7 +388,7 @@ class PreviewTabsTool(_PreviewTool):
 
 def preview_tools(image_input: bool) -> list[Tool]:
     tools: list[Tool] = [
-        PreviewStartTool(), PreviewStopTool(), PreviewLogsTool(), PreviewTabsTool(), PreviewNavigateTool(),
+        PreviewServersTool(), PreviewStartTool(), PreviewStopTool(), PreviewLogsTool(), PreviewTabsTool(), PreviewNavigateTool(),
         PreviewSnapshotTool(), PreviewClickTool(), PreviewFillTool(), PreviewConsoleTool(),
     ]
     if image_input:

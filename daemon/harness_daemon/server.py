@@ -657,12 +657,18 @@ class LiveSession:
             FILE_ROOTS.pop(self.files_token, None)
             self.files_token = None
 
+    async def _server_event(self, message: dict[str, Any]) -> None:
+        """A server event of this session. The window also gets the servers that the agent started."""
+        await self.send(message)
+        if message.get("type") == "server.status":
+            await self.conn.send_agent_servers()
+
     def start(self) -> None:
         """Start the servers, the agent browser, and the MCP servers of the session."""
         session = self.session
         assert session is not None
         self.plugins = session.agent.plugins
-        self.servers = ServerManager(session.cwd, session.agent.ctx.shell, self.send)
+        self.servers = ServerManager(session.cwd, session.agent.ctx.shell, self._server_event)
         MANAGERS.add(self.servers)
         self.preview = PreviewHost(self.servers, self.send, relay=PaneRelay(self))
         PREVIEWS.add(self.preview)
@@ -957,6 +963,24 @@ class Connection:
         self.live[live.session.id] = live
         live.start()
         self.current = live
+
+    def agent_servers(self) -> list[dict[str, Any]]:
+        """The running servers that an agent started, in the sessions of this window."""
+        items = []
+        for sid, live in self.live.items():
+            if live.servers is None:
+                continue
+            for s in live.servers.servers.values():
+                if s.started_by == "agent" and s.state in ("starting", "running"):
+                    items.append({"session_id": sid, "name": s.config.name, "port": s.port or s.config.port})
+        return items
+
+    async def send_agent_servers(self) -> None:
+        """The window asks to stop these servers when the user closes it (QuitGuard)."""
+        items = self.agent_servers()
+        if items != getattr(self, "_agent_servers_sent", None):
+            self._agent_servers_sent = items
+            await self.send({"type": "servers.agent", "items": items})
 
     async def send_running(self) -> None:
         """Tell the client which sessions have a running turn. The sidebar shows them."""
@@ -3674,6 +3698,18 @@ async def on_server_stop(conn: Connection, msg: dict[str, Any]) -> None:
         await manager.stop(name)
     except KeyError:
         raise ProtocolError(f"Unknown server: {name}") from None
+
+
+@handler("server.stop_agent")
+async def on_server_stop_agent(conn: Connection, msg: dict[str, Any]) -> None:
+    """Stop the servers that an agent started, in all the sessions of this window (a close of the window)."""
+    for live in list(conn.live.values()):
+        if live.servers is None:
+            continue
+        for s in list(live.servers.servers.values()):
+            if s.started_by == "agent" and s.state in ("starting", "running"):
+                await live.servers.stop(s.config.name)
+    await conn.send_agent_servers()
 
 
 @handler("server.restart")

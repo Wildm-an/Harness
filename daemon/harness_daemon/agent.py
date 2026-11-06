@@ -968,7 +968,8 @@ class Agent:
         attempt = 0
         while True:
             try:
-                return await client.stream(self.messages(), self.tool_schemas(), on_text, options=options)
+                return await client.stream(self.messages(), self.tool_schemas(), on_text, options=options,
+                                           on_reasoning=lambda: self.emit({"type": "thinking"}))
             except ModelError as e:
                 attempt += 1
                 if not self.hooks.has("request.error") or attempt > MAX_REQUEST_RETRIES:

@@ -609,7 +609,8 @@ class ModelClient:
         return "deepseek" in (self.provider.base_url or "").lower() or "deepseek" in self.model.lower()
 
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
-                     _retry_tunnel: bool = True, options: dict[str, Any] | None = None) -> ModelResponse:
+                     _retry_tunnel: bool = True, options: dict[str, Any] | None = None,
+                     on_reasoning: Callable[[], Awaitable[None]] | None = None) -> ModelResponse:
         """Stream one completion. ``options``: ``temperature``, ``max_tokens``, and ``stop`` from plugins, and
         ``reasoning_effort`` (the effort setting, or a plugin)."""
         import openai  # Loaded by _openai() already: this import only gives the name.
@@ -632,18 +633,19 @@ class ModelClient:
             # Some servers reject stream_options. Try once more without it.
             if self._send_stream_options and "stream_options" in str(e):
                 self._send_stream_options = False
-                return await self.stream(messages, tools, on_text, options=options)
+                return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             # A model with no effort levels can reject reasoning_effort. Try once more without it.
             if "reasoning_effort" in kwargs:
                 log.info("%s rejected reasoning_effort=%s: %s", self.label, effort, e)
                 self._send_effort = False
-                return await self.stream(messages, tools, on_text, options=options)
+                return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             raise ModelError(f"The model endpoint rejected the request: {e}") from e
         except openai.APIConnectionError as e:
             if self.provider.ssh is not None and _retry_tunnel:
                 # The tunnel can stop between two requests. The next call opens a new one.
                 await asyncio.sleep(0.5)
-                return await self.stream(messages, tools, on_text, _retry_tunnel=False, options=options)
+                return await self.stream(messages, tools, on_text, _retry_tunnel=False, options=options,
+                                         on_reasoning=on_reasoning)
             where = f"{self.provider.base_url} through SSH {self.provider.ssh.label}" if self.provider.ssh else self.provider.base_url
             raise ModelError(f"Cannot connect to the model endpoint at {where}.") from e
         except openai.APIStatusError as e:
@@ -665,8 +667,12 @@ class ModelClient:
                     delta = choice.delta
                     if delta is None:
                         continue
-                    reasoning = getattr(delta, "reasoning_content", None)
+                    # The thinking of the model: "reasoning_content" (DeepSeek, vLLM, llama.cpp) or
+                    # "reasoning" (Ollama, OpenRouter). The client shows "Thinking…" (on_reasoning).
+                    reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
                     if isinstance(reasoning, str) and reasoning:
+                        if not reasoning_parts and on_reasoning is not None:
+                            await on_reasoning()
                         reasoning_parts.append(reasoning)
                     if delta.content:
                         text_parts.append(delta.content)
