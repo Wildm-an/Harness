@@ -786,7 +786,14 @@ textarea:focus-visible {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: title-shimmer 2.2s linear infinite;
+  /* A text gradient cannot move on the GPU: each frame paints the title again. 44 steps (20 frames a
+     second) look the same on a small title and use a third of the power. */
+  animation: title-shimmer 2.2s steps(44) infinite;
+}
+
+/* The window is not in front (main.tsx): the sidebar band stops. The chat loader continues. */
+:root.app-inactive .side-session.side-session-running .side-session-title {
+  animation-play-state: paused;
 }
 
 @keyframes title-shimmer {
@@ -5586,6 +5593,14 @@ input.tree-rename-input[aria-invalid="true"] {
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A long chat: the browser does not lay out or paint the messages outside the view. Not the user
+   messages: their Rewind menu goes outside the box, and the containment would cut it. */
+.msg-assistant:not(.streaming),
+.tool-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 
 .msg-assistant {

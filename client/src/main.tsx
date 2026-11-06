@@ -9,7 +9,17 @@ import "./styles.css";
 import { restorePrefs } from "./lib/prefs";
 import { initTheme } from "./lib/theme";
 
+/** The class "app-inactive" on the root while the window is not in front: decorative animations stop. */
+function trackActivity() {
+  const update = () => document.documentElement.classList.toggle("app-inactive", document.hidden || !document.hasFocus());
+  window.addEventListener("focus", update);
+  window.addEventListener("blur", update);
+  document.addEventListener("visibilitychange", update);
+  update();
+}
+
 async function start() {
+  trackActivity();
   // The saved app settings go back into localStorage before the app reads them (lib/prefs.ts).
   await restorePrefs();
   initTheme(); // Before the first paint: no flash of the other theme.

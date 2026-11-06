@@ -142,6 +142,9 @@ class Agent:
         if any(s.model_invocable for s in self.skills.values()):
             tool_list.append(SkillTool(self.skills, self._activate_skill, self.run_fork))
         self.tools = {t.name: t for t in tool_list}
+        # The place of each tool in the request. A tool that a setting removes and adds again keeps its place,
+        # so the tool list stays the same. A change in the list makes the model server process the prompt again.
+        self._tool_rank: dict[str, int] = {}
         # The web_search tool, also while the "web_search" setting is "off" and the agent does not have it.
         self._web_search = self.tools.get("web_search")
         self._sync_web_search()
@@ -568,7 +571,10 @@ class Agent:
         return result
 
     def tool_schemas(self) -> list[dict[str, Any]]:
-        return [t.schema(self.ctx) for t in self.tools.values()]
+        for name in self.tools:
+            self._tool_rank.setdefault(name, len(self._tool_rank))
+        names = sorted(self.tools, key=self._tool_rank.__getitem__)
+        return [self.tools[n].schema(self.ctx) for n in names]
 
     async def run_turn(self, text: str, *, display: str | None = None, allow: tuple[str, ...] = (),
                        message_id: str | None = None, origin: str | None = None,

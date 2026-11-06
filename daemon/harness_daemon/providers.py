@@ -550,6 +550,10 @@ log = logging.getLogger(__name__)
 EFFORT_API = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
 DEFAULT_EFFORT = "high"  # The level with no "effort" setting, as in the Claude app.
 
+# The request fields that an endpoint rejected, by (base URL, model, field). All clients of the model share
+# this, so a new session or a title request does not send a rejected field again (one more round trip each).
+_REJECTED: set[tuple[str, str, str]] = set()
+
 
 class ModelClient:
     """Streams chat completions from an OpenAI-compatible endpoint."""
@@ -560,9 +564,6 @@ class ModelClient:
         self._base_url: str | None = None
         self._client: AsyncOpenAI | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._send_stream_options = True
-        # False after the endpoint rejected a request with reasoning_effort: the model has no effort levels.
-        self._send_effort = True
 
     async def _openai(self) -> AsyncOpenAI:
         """The API client for the current address and event loop.
@@ -608,6 +609,12 @@ class ModelClient:
         """
         return "deepseek" in (self.provider.base_url or "").lower() or "deepseek" in self.model.lower()
 
+    def _sends(self, field: str) -> bool:
+        return (self.provider.base_url or "", self.model, field) not in _REJECTED
+
+    def _reject(self, field: str) -> None:
+        _REJECTED.add((self.provider.base_url or "", self.model, field))
+
     async def stream(self, messages: list[dict], tools: list[dict], on_text: OnText,
                      _retry_tunnel: bool = True, options: dict[str, Any] | None = None,
                      on_reasoning: Callable[[], Awaitable[None]] | None = None) -> ModelResponse:
@@ -621,23 +628,23 @@ class ModelClient:
             if options and options.get(key) is not None:
                 kwargs[key] = options[key]
         effort = options.get("reasoning_effort") if options else None
-        if effort and self._send_effort:
+        if effort and self._sends("reasoning_effort"):
             kwargs["reasoning_effort"] = effort
         if tools:
             kwargs["tools"] = tools
-        if self._send_stream_options:
+        if self._sends("stream_options"):
             kwargs["stream_options"] = {"include_usage": True}
         try:
             stream = await client.chat.completions.create(**kwargs)
         except openai.BadRequestError as e:
             # Some servers reject stream_options. Try once more without it.
-            if self._send_stream_options and "stream_options" in str(e):
-                self._send_stream_options = False
+            if "stream_options" in kwargs and "stream_options" in str(e):
+                self._reject("stream_options")
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             # A model with no effort levels can reject reasoning_effort. Try once more without it.
             if "reasoning_effort" in kwargs:
                 log.info("%s rejected reasoning_effort=%s: %s", self.label, effort, e)
-                self._send_effort = False
+                self._reject("reasoning_effort")
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             raise ModelError(f"The model endpoint rejected the request: {e}") from e
         except openai.APIConnectionError as e:

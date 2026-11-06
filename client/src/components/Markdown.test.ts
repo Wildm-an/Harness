@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { codeSpanUrl } from "./Markdown";
+import { codeSpanUrl, streamBlocks } from "./Markdown";
+
+describe("streamBlocks", () => {
+  it("splits at blank lines before a line at column 0", () => {
+    expect(streamBlocks("# Title\n\nOne.\n\nTwo")).toEqual(["# Title", "One.", "Two"]);
+  });
+
+  it("keeps an indented continuation and a code fence in one block", () => {
+    const list = "1. Step\n\n   More of the step\n\n2. Next";
+    expect(streamBlocks(list)).toEqual(["1. Step\n\n   More of the step", "2. Next"]);
+    const code = "```py\na = 1\n\nb = 2\n```\n\nAfter";
+    expect(streamBlocks(code)).toEqual(["```py\na = 1\n\nb = 2\n```", "After"]);
+  });
+
+  it("keeps the last block while it is empty, and the text is the same", () => {
+    expect(streamBlocks("One.\n\n")).toEqual(["One.\n\n"]);
+    const text = "A\n\nB\n\n```\nopen fence\n\nstill code";
+    expect(streamBlocks(text).join("\n\n")).toBe(text);
+  });
+});
 
 describe("codeSpanUrl", () => {
   it("finds a URL that the model wrote in backticks", () => {

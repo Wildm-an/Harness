@@ -839,7 +839,8 @@ export function BrowserPane({
     const observer = new ResizeObserver(sync);
     if (area.current) observer.observe(area.current);
     window.addEventListener("resize", sync);
-    const timer = window.setInterval(sync, 500); // Layout moves (a split, a tab change) do not resize the area.
+    // Layout moves (a split, a tab change) do not resize the area. A hidden window does not need the check.
+    const timer = window.setInterval(() => document.hidden || sync(), 500);
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", sync);

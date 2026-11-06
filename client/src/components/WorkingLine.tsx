@@ -78,13 +78,7 @@ export function WorkingLine({
   onReview?: (toolId: string) => void;
 }) {
   const mounted = useRef(Date.now()); // A turn with no start time (for example a skill) counts from here.
-  const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   const { tasks, text } = workingStatus(items, model, !!turn?.thinking);
   const step = currentStep(items);
@@ -97,7 +91,7 @@ export function WorkingLine({
   return (
     <div className="working-wrap">
       <div className="working">
-        <GyroLoader className="working-loader" />
+        <GyroLoader className="working-loader" paused={text.startsWith("Waiting for your")} />
         <button
           type="button"
           className={`working-toggle${open ? " open" : ""}`}
@@ -108,9 +102,7 @@ export function WorkingLine({
           <span className="working-text" aria-hidden>
             {label}
           </span>
-          <span className="working-time" aria-hidden>
-            {formatElapsed(now - (turn?.startedAt ?? mounted.current))}
-          </span>
+          <Elapsed since={turn?.startedAt ?? mounted.current} />
           <span className="working-more" aria-hidden>
             <ChevronRight size={13} />
           </span>
@@ -133,5 +125,21 @@ export function WorkingLine({
         </div>
       )}
     </div>
+  );
+}
+
+/** The time of the turn. It updates each second by itself, so the working line and its tool cards do not render again. */
+function Elapsed({ since }: { since: number }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setTick((n) => n + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <span className="working-time" aria-hidden>
+      {formatElapsed(Date.now() - since)}
+    </span>
   );
 }

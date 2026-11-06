@@ -137,7 +137,7 @@ import { normalizePath, openFolderBlocked } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
-import { MessageList, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
+import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
 import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
 import { setVisualDaemon } from "./lib/visual";
@@ -378,7 +378,40 @@ export default function App() {
   const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
   // "Not now" on the unavailable model prompt, by "session id model". The prompt shows again after a restart.
   const [modelAskDismissed, setModelAskDismissed] = useState<Set<string>>(() => new Set());
-  const [chat, dispatch] = useReducer(chatReducer, emptyChat);
+  const [chat, dispatchNow] = useReducer(chatReducer, emptyChat);
+  // The model streams many small "token" messages. The chat collects their text and renders it once a frame,
+  // not once a message: each render of the chat is a render of the whole app.
+  const pendingTokens = useRef("");
+  const tokenFlush = useRef<{ raf: number; timer: number } | null>(null);
+  const flushTokens = useCallback(() => {
+    const scheduled = tokenFlush.current;
+    if (scheduled) {
+      cancelAnimationFrame(scheduled.raf);
+      window.clearTimeout(scheduled.timer);
+      tokenFlush.current = null;
+    }
+    const text = pendingTokens.current;
+    if (!text) return;
+    pendingTokens.current = "";
+    dispatchNow({ type: "daemon", msg: { type: "token", text } });
+  }, []);
+  const queueToken = useCallback(
+    (text: string) => {
+      pendingTokens.current += text;
+      if (tokenFlush.current) return;
+      // A hidden window gets no animation frames. The timer then shows the text after a short time.
+      tokenFlush.current = { raf: requestAnimationFrame(flushTokens), timer: window.setTimeout(flushTokens, 100) };
+    },
+    [flushTokens],
+  );
+  // All other chat actions come after the text that came before them.
+  const dispatch = useCallback(
+    (action: Parameters<typeof dispatchNow>[0]) => {
+      flushTokens();
+      dispatchNow(action);
+    },
+    [flushTokens],
+  );
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout);
   // The last place and size of each closed pane, per view. A pane that opens again goes back there.
   const closedSlots = useRef(new Map<ViewMode, Map<PaneId, PaneSlot>>());
@@ -1112,7 +1145,8 @@ export default function App() {
           }
           break;
       }
-      dispatch({ type: "daemon", msg });
+      if (msg.type === "token") queueToken(msg.text);
+      else dispatch({ type: "daemon", msg });
     });
     const offStatus = conn.onStatus((next) => {
       setStatus(next);
@@ -1124,7 +1158,7 @@ export default function App() {
       offMessage();
       offStatus();
     };
-  }, [conn, showProviders, showCookbook, showPlugins, syncProviderKeys, listRecent]);
+  }, [conn, showProviders, showCookbook, showPlugins, syncProviderKeys, listRecent, queueToken, dispatch]);
 
   const afterConnect = useCallback(() => {
     // The daemon lists the providers. The reply makes the app send the keys from the keychain.
@@ -1734,7 +1768,7 @@ export default function App() {
     return true;
   };
 
-  const queue = session ? (queues[session.id] ?? []) : [];
+  const queue = (session && queues[session.id]) || NO_QUEUE;
 
   // When the turn of the shown session ends, the next queued message goes to the agent.
   useEffect(() => {
@@ -1755,14 +1789,6 @@ export default function App() {
       return item ? { ...q, [session.id]: [item, ...list.filter((i) => i.id !== id)] } : q;
     });
     interrupt();
-  };
-
-  const rewind = (messageId: string, options: RewindOptions) => {
-    sendSafely({ type: "session.rewind", id: messageId, ...options });
-  };
-
-  const fork = (messageId: string) => {
-    sendSafely({ type: "session.fork", id: messageId });
   };
 
   const removeQueued = (id: string) => {
@@ -2052,8 +2078,15 @@ export default function App() {
         return false;
       }
     },
-    [conn],
+    [conn, dispatch],
   );
+
+  // Stable callbacks: each user message in the chat is memoized, and a new function renders all of them again.
+  const rewind = useCallback(
+    (messageId: string, options: RewindOptions) => void sendSafely({ type: "session.rewind", id: messageId, ...options }),
+    [sendSafely],
+  );
+  const fork = useCallback((messageId: string) => void sendSafely({ type: "session.fork", id: messageId }), [sendSafely]);
 
   // The model menus: the providers on the computer of the daemon ("Local models"), and the effort level
   // (the user setting "effort").
@@ -2378,17 +2411,22 @@ export default function App() {
   }, []);
 
   // The lines that the agent changed in the current turn: the added lines of each diff since the last prompt.
+  // The map changes only when a diff comes, not for each new text of the model: a new map sets the
+  // decorations of the editor again.
+  const turnDiffs = useRef<string[]>([]);
+  let lastUser = chat.items.length - 1;
+  while (lastUser >= 0 && chat.items[lastUser].kind !== "user") lastUser--;
+  turnDiffs.current = chat.items.slice(lastUser + 1).flatMap((i) => (i.kind === "tool" && i.diff ? [i.diff] : []));
+  const diffKey = turnDiffs.current.join("\u0000");
   const agentLines = useMemo(() => {
     const map = new Map<string, number[]>();
-    const lastUser = chat.items.map((i) => i.kind).lastIndexOf("user");
-    for (const item of chat.items.slice(lastUser + 1)) {
-      if (item.kind !== "tool" || !item.diff) continue;
-      const parsed = parseUnifiedDiff(item.diff);
+    for (const diff of turnDiffs.current) {
+      const parsed = parseUnifiedDiff(diff);
       const lines = parsed.hunks.flatMap((h) => h.lines.filter((l) => l.kind === "add").map((l) => l.newNo!));
       map.set(parsed.path, [...(map.get(parsed.path) ?? []), ...lines]);
     }
     return map;
-  }, [chat.items]);
+  }, [diffKey]);
 
   // The chat item that the diff review pane shows.
   const reviewItem = reviewId ? chat.items.find((i) => i.id === reviewId) : undefined;

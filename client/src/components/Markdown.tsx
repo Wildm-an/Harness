@@ -66,3 +66,51 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     </div>
   );
 });
+
+/**
+ * Splits streamed Markdown into blocks at blank lines outside code fences, where the next line starts at
+ * column 0 (an indented line can continue a list item). Only the last block can still change.
+ */
+export function streamBlocks(text: string): string[] {
+  const lines = text.split("\n");
+  const blocks: string[] = [];
+  let start = 0;
+  let fence: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i]);
+    if (m) {
+      if (fence === null) fence = m[1][0];
+      else if (m[1][0] === fence) fence = null;
+      continue;
+    }
+    if (fence === null && lines[i].trim() === "" && i + 1 < lines.length && /^\S/.test(lines[i + 1])) {
+      blocks.push(lines.slice(start, i).join("\n"));
+      start = i + 1;
+    }
+  }
+  blocks.push(lines.slice(start).join("\n"));
+  return blocks.filter((b, i) => b.trim() !== "" || i === blocks.length - 1);
+}
+
+/**
+ * The reply that streams now. Each finished block is parsed one time. Only the last block is parsed again
+ * for each new text, not the whole reply. The full reply is parsed one time when the stream ends.
+ */
+export function StreamingMarkdown({ text }: { text: string }) {
+  const blocks = streamBlocks(text);
+  return (
+    <div className="markdown markdown-stream">
+      {blocks.map((block, i) => (
+        <MarkdownBlock key={i} text={block} />
+      ))}
+    </div>
+  );
+}
+
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      {text}
+    </ReactMarkdown>
+  );
+});

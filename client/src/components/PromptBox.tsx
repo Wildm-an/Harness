@@ -261,13 +261,20 @@ export function PromptBox({
       setCompact(true);
     }
   };
-  useLayoutEffect(() => checkBelow.current()); // The names can change, for example after /model.
-  useEffect(() => {
+  // The names can change, for example after /model. A check on each render measures the row on each
+  // keystroke: the check runs only when the row changes size or content.
+  useLayoutEffect(() => {
     const row = belowRef.current;
     if (!row) return;
+    checkBelow.current();
     const observer = new ResizeObserver(() => checkBelow.current());
     observer.observe(row);
-    return () => observer.disconnect();
+    const changes = new MutationObserver(() => checkBelow.current());
+    changes.observe(row, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+    return () => {
+      observer.disconnect();
+      changes.disconnect();
+    };
   }, [below !== undefined]);
   const mentionList = useRef<HTMLUListElement>(null);
   const sessionRefs = useRef(new Map<string, string>()); // The session names in the prompt, and their ids.
@@ -323,18 +330,21 @@ export function PromptBox({
 
   // Grow the text box with its content, up to a limit. Measure again when the width changes.
   // An empty box keeps the CSS height: the browser includes the placeholder in scrollHeight.
+  const fitArea = () => {
+    const el = area.current;
+    if (!el) return;
+    el.style.height = "";
+    if (el.value) el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
+  };
+  useEffect(fitArea, [text]);
   useEffect(() => {
     const el = area.current;
     if (!el) return;
-    const fit = () => {
-      el.style.height = "";
-      if (el.value) el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
-    };
-    fit();
-    const observer = new ResizeObserver(fit);
+    // One observer for the life of the box, not a new one for each keystroke.
+    const observer = new ResizeObserver(() => fitArea());
     observer.observe(el.parentElement ?? el);
     return () => observer.disconnect();
-  }, [text]);
+  }, []);
 
   useEffect(() => {
     if (!disabled && focusKey !== null) area.current?.focus();

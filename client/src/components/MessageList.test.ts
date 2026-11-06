@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { nextFollow, reconcileQueue, type QueuedItem } from "./MessageList";
+import type { ChatItem } from "../chat/state";
+import { groupTools, nextFollow, reconcileQueue, type QueuedItem } from "./MessageList";
+
+describe("groupTools", () => {
+  const tool = (id: string): ChatItem => ({ kind: "tool", id, name: "bash", input: {}, status: "done" });
+
+  it("gives the same calls array again, so a memoized group does not render again", () => {
+    const items = [tool("a"), tool("b"), { kind: "assistant", id: "m", text: "Hi", streaming: true } as ChatItem];
+    const first = groupTools(items);
+    const previous = new Map(first.flatMap((s) => (s.kind === "tools" ? [[s.id, s.items] as const] : [])));
+    const next = groupTools([...items.slice(0, 2), { ...items[2], text: "Hi there" } as ChatItem], previous);
+    expect(next[0].kind === "tools" && first[0].kind === "tools" && next[0].items === first[0].items).toBe(true);
+    // A new call in the group: a new array.
+    const more = groupTools([...items.slice(0, 2), tool("c")], previous);
+    expect(more[0].kind === "tools" && more[0].items !== previous.get("tools-a")).toBe(true);
+  });
+});
 
 describe("the list follows the agent", () => {
   it("only when the user is fully at the bottom", () => {

@@ -142,7 +142,11 @@ def _first_session(c: Client, project, fake_model) -> str:
     fake_model.script({"when": "Fix the typo in README", "text": "Fixed the typo."})
     first = c.new_session(project)["session_id"]
     c.send({"type": "prompt", "text": "Fix the typo in README"})
-    c.until("turn.end")
+    _, seen = c.until("turn.end")
+    # The fake model is local: the title comes after the turn. Wait for it, so the notes of the next
+    # session show the title, not the first prompt (a "when" reply matches the prompt text).
+    if not any(m["type"] == "session.title" for m in seen):
+        c.until("session.title")
     return first
 
 
