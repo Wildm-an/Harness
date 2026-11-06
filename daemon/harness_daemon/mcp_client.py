@@ -797,6 +797,10 @@ class McpTool(Tool):
         schema = {k: v for k, v in schema.items() if k not in ("$schema", "title")}
         schema.setdefault("properties", {})
         self.parameters = schema
+        # The server says that the tool changes nothing (readOnlyHint). Auto mode trusts this, as for
+        # a read-only bash command: the user added the server.
+        annotations = getattr(tool, "annotations", None)
+        self.read_only = getattr(annotations, "read_only_hint", None) is True
 
     async def prepare(self, args: dict[str, Any], ctx: ToolContext) -> Approval:
         # "Always" adds a rule for this tool. mcp__<server>__* allows all the tools of the server.

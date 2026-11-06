@@ -214,7 +214,7 @@ class PermissionGate:
         allow = [r for r in self.rules.read()["allow"] if not is_broad_rule(r)]
         if any(rule_matches(r, name, approval.key) for r in (*allow, *self.session_allow, *self.turn_allow)):
             return True
-        if fast_path(name, approval.key):
+        if fast_path(name, approval.key) or getattr(tool, "read_only", False):
             return True
         shown = approval.input if isinstance(approval.input, dict) else args
         try:
