@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerText, collectAnswers } from "./QuestionCard";
+import { answerText, collectAnswers, collectNotes, previewOption } from "./QuestionCard";
 import { planOutcome } from "./PlanCard";
 import { chatReducer, emptyChat, requestCard } from "../chat/state";
 import type { AskQuestion } from "../daemon/protocol";
@@ -10,6 +10,20 @@ const QUESTIONS: AskQuestion[] = [
 ];
 
 describe("the question card", () => {
+  it("shows the preview of the option under the pointer, else the picked option, else the first", () => {
+    const options = [
+      { label: "Grid", description: "", preview: "[] []" },
+      { label: "List", description: "", preview: "[]" },
+    ];
+    expect(previewOption(options, "List", [])?.label).toBe("List");
+    expect(previewOption(options, null, ["List"])?.label).toBe("List");
+    expect(previewOption(options, null, [])?.label).toBe("Grid");
+  });
+
+  it("sends only the notes of answered questions", () => {
+    expect(collectNotes({ A: "Grid" }, { A: " wide ", B: "skipped", C: "  " })).toEqual({ A: "wide" });
+  });
+
   it("joins the picked options and the text of Something else", () => {
     expect(answerText(["Auth", "Search"], "  ")).toBe("Auth, Search");
     expect(answerText([], " Redis ")).toBe("Redis");

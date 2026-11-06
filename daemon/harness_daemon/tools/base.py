@@ -51,6 +51,7 @@ class ToolResult:
     diff: str | None = None  # A unified diff of a file change, for the client.
     image: str | None = None  # A data URL of an image for the model, for example a screenshot.
     created: list[str] = field(default_factory=list)  # New PDF and Word files, for the chat cards (created.py).
+    card: dict[str, Any] | None = None  # A card for the chat: files that the agent sent, or an artifact (share.py).
     stop_turn: bool = False  # The turn stops after this result, for example when the user rejects a plan.
 
 

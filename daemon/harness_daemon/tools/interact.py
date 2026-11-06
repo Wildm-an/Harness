@@ -20,6 +20,7 @@ MAX_QUESTIONS = 4
 MAX_HEADER = 12
 ACCEPT_MODES = ("acceptEdits", "default", "auto", "bypassPermissions")
 MAX_PLAN = 40_000
+MAX_PREVIEW = 4_000  # Characters of the preview of one option.
 
 
 def _clean_questions(value: Any) -> list[dict[str, Any]]:
@@ -49,7 +50,13 @@ def _clean_questions(value: Any) -> list[dict[str, Any]]:
             label = str(o["label"]).strip()
             if any(c["label"] == label for c in clean):
                 raise ToolError(f"Two options of question {n} have the same label: {label}")
-            clean.append({"label": label, "description": str(o.get("description") or "").strip()})
+            option = {"label": label, "description": str(o.get("description") or "").strip()}
+            preview = o.get("preview")
+            if isinstance(preview, str) and preview.strip():
+                if len(preview) > MAX_PREVIEW:
+                    raise ToolError(f"The preview of option {label!r} has {len(preview)} characters. The limit is {MAX_PREVIEW}.")
+                option["preview"] = preview.rstrip()
+            clean.append(option)
         out.append({"question": text, "header": header, "options": clean,
                     "multiSelect": q.get("multiSelect") is True})
     return out
@@ -67,7 +74,9 @@ class AskUserQuestionTool(Tool):
         "know a choice of the user to continue, for example between two designs, or to make a vague "
         "request clear. Do not use it for a question that the code or the docs can answer. The user can "
         "also type another answer. Put your recommended option first, and add \" (Recommended)\" to its "
-        "label. The result gives the answers."
+        "label. To compare concrete things (a layout mockup, a code snippet, a diagram), give an option a "
+        "'preview': the card shows it next to the options in a monospace box. The user can add notes to "
+        "the answer. The result gives the answers and the notes."
     )
     parameters = {
         "type": "object",
@@ -90,6 +99,10 @@ class AskUserQuestionTool(Tool):
                                 "properties": {
                                     "label": {"type": "string", "description": "1 to 5 words."},
                                     "description": {"type": "string", "description": "What the option means."},
+                                    "preview": {"type": "string", "description": (
+                                        "Optional. Text that the card shows when the user looks at this option: an "
+                                        "ASCII mockup, a code snippet, or a short comparison. Monospace, Markdown code "
+                                        "fences allowed.")},
                                 },
                                 "required": ["label"],
                             },
@@ -119,7 +132,14 @@ class AskUserQuestionTool(Tool):
         answers = reply.get("answers")
         if not isinstance(answers, dict) or not answers:
             return ToolResult("The user skipped the questions. Continue with your best choice, and tell the user what you chose.")
-        lines = [f'"{q["question"]}" = "{answers[q["question"]]}"' for q in questions if answers.get(q["question"])]
+        notes = reply.get("notes") if isinstance(reply.get("notes"), dict) else {}
+        lines = []
+        for q in questions:
+            answer = answers.get(q["question"])
+            if not answer:
+                continue
+            note = str(notes.get(q["question"]) or "").strip()
+            lines.append(f'"{q["question"]}" = "{answer}"' + (f' (the user added the note: "{note}")' if note else ""))
         skipped = [q["question"] for q in questions if not answers.get(q["question"])]
         text = "The user answered: " + ", ".join(lines) + "."
         if skipped:

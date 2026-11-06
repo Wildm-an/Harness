@@ -159,7 +159,8 @@ def test_context_breakdown(daemon, project, harness_home, fake_model):  # noqa: 
     c = Client(daemon)
     c.new_session(project)
     fake_model.script({"text": "Done."})
-    c.send({"type": "prompt", "text": "Say hello " * 50})
+    # The endpoint counts 100 tokens, and the parts are scaled to it: the message must be long enough to keep a share.
+    c.send({"type": "prompt", "text": "Say hello " * 200})
     c.until("turn.end")
     c.send({"type": "context.get"})
     usage = c.until("context.usage")[0]

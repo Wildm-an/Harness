@@ -31,7 +31,8 @@ const tool = (over: Partial<ToolItem> = {}): ToolItem => ({
 
 describe("the visual of a show_visual call", () => {
   it("reads the title and the code", () => {
-    expect(visualOf(tool())).toEqual({ id: "v1", title: "dot", code: SVG });
+    expect(visualOf(tool())).toEqual({ id: "v1", title: "dot", code: SVG, loading: [] });
+    expect(visualOf(tool({ input: { title: "dot", code: SVG, loading_messages: ["Drawing dots", 3, " "] } }))?.loading).toEqual(["Drawing dots"]);
     expect(visualOf(tool({ status: "running" }))?.code).toBe(SVG);
     expect(visualOf(tool({ input: { code: SVG } }))?.title).toBe("visual");
   });

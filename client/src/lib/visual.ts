@@ -17,6 +17,7 @@ export interface Visual {
   id: string;
   title: string;
   code: string;
+  loading: string[]; // The lines that show while the visual loads.
 }
 
 const record = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
@@ -33,7 +34,22 @@ export function visualOf(item: ToolItem): Visual | null {
   const code = typeof input?.code === "string" ? input.code : "";
   if (!code.trim()) return null;
   const title = typeof input?.title === "string" && input.title.trim() ? input.title.trim() : "visual";
-  return { id: item.id, title, code };
+  const loading = (Array.isArray(input?.loading_messages) ? input.loading_messages : [])
+    .filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+    .map((m) => m.trim().slice(0, 80))
+    .slice(0, 4);
+  return { id: item.id, title, code, loading };
+}
+
+/** The file of a downloaded visual: an <svg> as .svg, else a full HTML page. */
+export function visualFile(visual: Visual, theme: VisualTheme): { name: string; text: string; filter: { name: string; extensions: string[] } } {
+  const name = visual.title.replace(/[^a-z0-9_]/gi, "_") || "visual";
+  const code = visual.code.trim();
+  if (/^<svg[\s>]/i.test(code)) {
+    const svg = /xmlns=/.test(code.slice(0, 200)) ? code : code.replace(/^<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+    return { name: `${name}.svg`, text: svg, filter: { name: "SVG image", extensions: ["svg"] } };
+  }
+  return { name: `${name}.html`, text: visualDocument(code, theme), filter: { name: "HTML page", extensions: ["html"] } };
 }
 
 // The CSS variables that a visual can use (the tool description lists them), and the app tokens

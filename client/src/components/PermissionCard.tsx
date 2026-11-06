@@ -52,6 +52,10 @@ function describe(item: PermissionItem): { action: string; prefix?: string; obje
     const path = typeof input?.path === "string" ? input.path : summary;
     return { action: input?.create === true ? "create" : "edit", object: path, detail: null };
   }
+  if (item.tool === "artifact") {
+    const title = (item.input as { title?: unknown } | null)?.title;
+    return { action: "delete", prefix: "the artifact", object: typeof title === "string" && title ? title : summary, detail: null };
+  }
   return { action: "use", object: item.tool, detail: summary || null };
 }
 

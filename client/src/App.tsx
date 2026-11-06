@@ -131,10 +131,11 @@ import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
-import { notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
+import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
+import { CardActionsContext, fileKind, opensInPane, type CardActions } from "./lib/cardActions";
 import { normalizePath, openFolderBlocked } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
@@ -142,7 +143,7 @@ import { ContextRing } from "./components/ContextRing";
 import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
 import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
-import { setVisualDaemon } from "./lib/visual";
+import { isLoopback, setVisualDaemon } from "./lib/visual";
 import { SessionSearch } from "./components/SessionSearch";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
 import { compareVersions } from "./lib/version";
@@ -1813,10 +1814,10 @@ export default function App() {
 
   /** The answers of a question card. null: the user skipped. */
   const answerQuestion = useCallback(
-    (requestId: string, answers: Record<string, string> | null) => {
+    (requestId: string, answers: Record<string, string> | null, notes?: Record<string, string>) => {
       try {
-        conn.send({ type: "question.reply", request_id: requestId, answers });
-        dispatch({ type: "answer", requestId, answers });
+        conn.send({ type: "question.reply", request_id: requestId, answers, notes });
+        dispatch({ type: "answer", requestId, answers, notes });
       } catch (e) {
         dispatch({ type: "notice", level: "error", text: errorText(e) });
       }
@@ -2273,6 +2274,17 @@ export default function App() {
     setLayout((l) => openPane(l, "browser"));
   }, []);
 
+  // The cards of send_file and artifact: the Browser pane, and the files of a daemon on this computer.
+  const cardActions = useMemo<CardActions>(() => {
+    let local = false;
+    try {
+      local = !!daemonHttp && isTauri() && isLoopback(new URL(daemonHttp).hostname);
+    } catch {
+      local = false;
+    }
+    return { openInBrowser: showInBrowser, daemonBase: daemonHttp, local };
+  }, [showInBrowser, daemonHttp]);
+
   // "Open links in built-in browser": the chat links open in the Browser pane.
   useEffect(() => {
     setPaneOpener(showInBrowser);
@@ -2396,6 +2408,29 @@ export default function App() {
       setLayout((l) => openPane(l, "editor"));
     },
     [editor.openFile, filesToken, showInBrowser, openPreview],
+  );
+
+  // send_file: "render" opens the first file that a pane can show at once. "proactive" also shows a
+  // notification when the user does not see the session. Only live results: not the history.
+  useEffect(
+    () =>
+      conn.onMessage((msg) => {
+        if (msg.type !== "tool.result" || msg.card?.type !== "files") return;
+        const card = msg.card;
+        if (card.display === "render") {
+          const first = card.files.find((f) => f.project && opensInPane(fileKind(f.name)));
+          if (first) openPath(first.path);
+        }
+        if (card.status === "proactive") {
+          const names = card.files.map((f) => f.name).join(", ");
+          void notifyFilesSent(card.caption || names, sessionRef.current?.id ?? null, {
+            windowVisible: !document.hidden,
+            windowFocused: document.hasFocus(),
+            shownSessionId: shownIdRef.current,
+          });
+        }
+      }),
+    [conn, openPath],
   );
 
   // mcp.init created (or found) .harness/mcp.json: open it in the editor.
@@ -3531,6 +3566,7 @@ export default function App() {
         )}
         {screen === "chat" && session && (
           <OpenPathContext.Provider value={openPath}>
+            <CardActionsContext.Provider value={cardActions}>
             <div className="split-row" ref={splitRowRef} {...splitDrop.handlers}>
             <div className="session-body">
               <Workspace layout={layout} onChange={setLayout} panes={panes} reveal={reveal} />
@@ -3607,6 +3643,7 @@ export default function App() {
             )}
             {splitDrop.over && <SplitDropZone />}
             </div>
+            </CardActionsContext.Provider>
           </OpenPathContext.Provider>
         )}
       </main>

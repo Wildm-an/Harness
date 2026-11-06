@@ -13,6 +13,7 @@ from .office import OfficeEditTool
 from .progress import UpdatePlanTool, WrapUpTool
 from .read import ReadTool
 from .shell import ShellInfo, detect_shell
+from .share import ArtifactTool, SendFileTool
 from .skill import SkillTool
 from .visual import ShowVisualTool
 from .web import WebFetchTool, WebSearchTool
@@ -20,7 +21,7 @@ from .write import WriteTool
 
 
 def default_tools() -> list[Tool]:
-    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool(), OfficeEditTool(), ShowDocumentTool(), ShowVisualTool(), UpdatePlanTool(), WrapUpTool(),
+    return [ReadTool(), GlobTool(), GrepTool(), EditTool(), WriteTool(), BashTool(), OfficeEditTool(), ShowDocumentTool(), ShowVisualTool(), SendFileTool(), ArtifactTool(), UpdatePlanTool(), WrapUpTool(),
             WebSearchTool(), WebFetchTool()]
 
 
@@ -33,6 +34,8 @@ __all__ = [
     "OfficeEditTool",
     "ShowDocumentTool",
     "ShowVisualTool",
+    "SendFileTool",
+    "ArtifactTool",
     "ReadTool",
     "ShellInfo",
     "SkillTool",

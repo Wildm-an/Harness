@@ -20,6 +20,23 @@ describe("chatReducer", () => {
     expect(s.items[2]).toMatchObject({ kind: "file", path: "out/report.docx", toolId: "c1" });
   });
 
+  it("puts the card of send_file or artifact after its tool call, also from the history", () => {
+    const card = { type: "artifact" as const, id: "a1b2c3d4", title: "Report", description: "", version: 2, updated: 1 };
+    const s = run(
+      { type: "tool.start", id: "c1", name: "artifact", input: { file_path: "r.html" } },
+      { type: "tool.result", id: "c1", output: "Published", is_error: false, card },
+    );
+    expect(s.items.map((i) => i.kind)).toEqual(["user", "tool", "card"]);
+    expect(s.items[2]).toMatchObject({ kind: "card", toolId: "c1", card });
+    const items = historyToItems([
+      { role: "user", content: "publish" },
+      { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "artifact", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "c1", content: "Published", card, ts: 2 },
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["user", "tool", "card"]);
+    expect(items[1]).toMatchObject({ ts: 2000 });
+  });
+
   it("shows the file cards again when the session opens", () => {
     const items = historyToItems([
       { role: "user", content: "make a memo" },
