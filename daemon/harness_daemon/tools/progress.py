@@ -21,6 +21,8 @@ from .base import Tool, ToolContext, ToolError, ToolResult
 STATUSES = ("pending", "in_progress", "completed")
 MAX_STEPS = 12
 MAX_ACTIONS = 2
+MAX_RECAP = 300  # Characters, as in the Claude app: about 40 words.
+MAX_ASK = 100
 
 
 class UpdatePlanTool(Tool):
@@ -73,8 +75,10 @@ class WrapUpTool(Tool):
     description = (
         "At the end of a turn in which you changed files, ran commands, or did work of more than one "
         "step, show the user a short recap in a box: what is now true and what is not done or not "
-        "checked (2 or 3 sentences). When the next move is the user's decision, add one short "
-        "question in 'ask', and one or two answer buttons in 'actions': the first is your "
+        f"checked. 2 or 3 short sentences, about 40 words, {MAX_RECAP} characters or less. Do not list "
+        "each check or step that you did: the details go in your final answer. When the next move is "
+        f"the user's decision, add one short question in 'ask' ({MAX_ASK} characters or less), and one "
+        "or two answer buttons in 'actions': the first is your "
         "recommendation. A button has a label of 1 to 3 words, and a message that it sends as the "
         "user's next prompt. Call it once, as the last tool call of the turn, then write your final "
         "answer. Do not use it for a short answer to a question."
@@ -82,8 +86,9 @@ class WrapUpTool(Tool):
     parameters = {
         "type": "object",
         "properties": {
-            "recap": {"type": "string", "description": "2 or 3 short sentences: what changed, and what is not done."},
-            "ask": {"type": "string", "description": "Optional: one short question for a decision of the user."},
+            "recap": {"type": "string", "description": (
+                f"2 or 3 short sentences, {MAX_RECAP} characters or less: what changed, and what is not done.")},
+            "ask": {"type": "string", "description": f"Optional: one short question for a decision of the user, {MAX_ASK} characters or less."},
             "actions": {
                 "type": "array",
                 "description": "Optional: 1 or 2 answer buttons. The first is your recommendation.",
@@ -104,6 +109,12 @@ class WrapUpTool(Tool):
         recap = args.get("recap")
         if not isinstance(recap, str) or not recap.strip():
             raise ToolError("recap is empty.")
+        if len(recap.strip()) > MAX_RECAP:
+            raise ToolError(f"recap has {len(recap.strip())} characters. Give 2 or 3 short sentences, {MAX_RECAP} "
+                            "characters or less: what is now true, and what is not done. Put the details in your "
+                            "final answer.")
+        if len(str(args.get("ask") or "").strip()) > MAX_ASK:
+            raise ToolError(f"ask has more than {MAX_ASK} characters. Ask only the decision, in one short sentence.")
         actions = args.get("actions") or []
         if not isinstance(actions, list) or len(actions) > MAX_ACTIONS:
             raise ToolError(f"actions must be a list of at most {MAX_ACTIONS} buttons.")

@@ -7825,6 +7825,20 @@ mark.word-del {
   cursor: default;
 }
 
+/* "Read" or "Sent", then "|", then the time (the user asked for text in place of the Claude check icon). */
+.msg-status {
+  cursor: default;
+}
+
+.msg-status:not(:has(+ .msg-sep)) {
+  margin-right: 6px;
+}
+
+.msg-sep {
+  margin: 0 6px;
+  opacity: 0.6;
+}
+
 .msg-action {
   width: 26px;
   height: 26px;
@@ -10124,6 +10138,20 @@ body.sorting * {
 .wrapup-recap {
   margin: 0;
   color: var(--text-muted);
+}
+
+/* A finished plan at the top of the box: no frame of its own, a line under it. */
+.wrapup-plan {
+  margin: -4px 0 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.wrapup-plan .plan-folded,
+.wrapup-plan .plan-block {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .wrapup-ask {

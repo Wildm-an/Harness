@@ -235,10 +235,11 @@ function MessageAttachments({ images, chips }: { images?: string[]; chips: { lab
   );
 }
 
-/** A user message. On hover: the time, Copy, Rewind, and Fork. */
-const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork }: {
+/** A user message. On hover: "Read" or "Sent" and the time, Copy, Rewind, and Fork. */
+const UserMessage = memo(function UserMessage({ item, running, read, onRewind, onFork }: {
   item: UserItem;
   running: boolean;
+  read: boolean; // The agent read the message (unreadMessages).
   onRewind: (messageId: string, options: RewindOptions) => void;
   onFork: (messageId: string) => void;
 }) {
@@ -257,10 +258,18 @@ const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork 
       <MessageAttachments images={item.images} chips={chips} />
       {text && <div className="msg-user">{text}</div>}
       <div className="msg-actions">
+        <span className="msg-status" title={read ? "Read by the agent" : "The agent did not read this message yet"}>
+          {read ? "Read" : "Sent"}
+        </span>
         {item.ts !== undefined && (
-          <span className="msg-time" title={fullTime.format(new Date(item.ts))}>
-            {relativeTime(item.ts)}
-          </span>
+          <>
+            <span className="msg-sep" aria-hidden>
+              |
+            </span>
+            <span className="msg-time" title={fullTime.format(new Date(item.ts))}>
+              {relativeTime(item.ts)}
+            </span>
+          </>
         )}
         <button type="button" className="icon-btn ghost msg-action" aria-label="Copy" title={copied ? "Copied" : "Copy"} onClick={copy}>
           {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
@@ -311,6 +320,18 @@ const BOTTOM_SLACK = 2;
  * Follow the agent or not, after a scroll. The list follows new output only when the user is fully
  * at the bottom. A scroll up stops the follow. The programmatic scrolls of the follow only go down.
  */
+/**
+ * The user messages that the agent did not read yet: during a turn, the user messages at the end of
+ * the chat with no reply, tool call, or card after them. The agent reads a message when the model
+ * request starts to give output. All other user messages are read.
+ */
+export function unreadMessages(items: ChatItem[], running: boolean): Set<string> {
+  const unread = new Set<string>();
+  if (!running) return unread;
+  for (let i = items.length - 1; i >= 0 && items[i].kind === "user"; i--) unread.add(items[i].id);
+  return unread;
+}
+
 export function nextFollow(follow: boolean, gap: number, top: number, lastTop: number): boolean {
   if (gap <= BOTTOM_SLACK) return true;
   if (top < lastTop - 1) return false;
@@ -444,6 +465,20 @@ export function MessageList({
   const liveTools = running && tail?.kind === "tools" ? tail.items : [];
   if (liveTools.length > 0) shown.splice(at, 1);
 
+  const showWrap = !!wrap && !running && !!onAction;
+  const unread = unreadMessages(items, running);
+  const planBlock = plan && (
+    <PlanBlock
+      steps={plan.steps}
+      running={running && plan.current}
+      finished={plan.finished}
+      times={plan.times}
+      total={plan.total}
+      // A plan of an older turn, or a message that the user wrote during the turn: the plan can change.
+      stale={!plan.current || (running && queued.length > 0)}
+    />
+  );
+
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -470,7 +505,7 @@ export function MessageList({
           switch (item.kind) {
             case "user":
               if (item.origin === "task") return <TaskNote key={item.id} item={item} />;
-              return <UserMessage key={item.id} item={item} running={running} onRewind={onRewind} onFork={onFork} />;
+              return <UserMessage key={item.id} item={item} running={running} read={!unread.has(item.id)} onRewind={onRewind} onFork={onFork} />;
             case "assistant":
               return (
                 <div key={item.id} className={`msg-assistant${item.streaming ? " streaming" : ""}`}>
@@ -512,18 +547,9 @@ export function MessageList({
         {queued.map((item) => (
           <QueuedMessage key={item.id} item={item} onSendNow={onSendNow} onRemove={onRemoveQueued} />
         ))}
-        {plan && (
-          <PlanBlock
-            steps={plan.steps}
-            running={running && plan.current}
-            finished={plan.finished}
-            times={plan.times}
-            total={plan.total}
-            // A plan of an older turn, or a message that the user wrote during the turn: the plan can change.
-            stale={!plan.current || (running && queued.length > 0)}
-          />
-        )}
-        {wrap && !running && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} />}
+        {/* A finished plan and the end-of-turn box are one card (the user asked for this). */}
+        {plan && !(plan.finished && showWrap) && planBlock}
+        {showWrap && wrap && onAction && <WrapUpBox wrap={wrap} disabled={running} onAction={onAction} plan={plan?.finished ? planBlock : undefined} />}
         {running && <WorkingLine turn={turn} items={items} model={model} tools={liveTools} reviewId={reviewId} onReview={onReview} />}
         {footer}
         {away && items.length > 0 && (

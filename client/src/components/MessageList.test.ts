@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatItem } from "../chat/state";
-import { endHidden, groupTools, nextFollow, reconcileQueue, type QueuedItem } from "./MessageList";
+import { endHidden, groupTools, nextFollow, reconcileQueue, unreadMessages, type QueuedItem } from "./MessageList";
 
 describe("groupTools", () => {
   const tool = (id: string): ChatItem => ({ kind: "tool", id, name: "bash", input: {}, status: "done" });
@@ -69,5 +69,17 @@ describe("endHidden", () => {
     expect(endHidden(view, null, 0)).toBe(false);
     expect(endHidden(view, null, 2)).toBe(false);
     expect(endHidden(view, null, 40)).toBe(true);
+  });
+});
+
+describe("unreadMessages", () => {
+  const user = (id: string): ChatItem => ({ kind: "user", id, text: "Hi" });
+  const reply: ChatItem = { kind: "assistant", id: "a1", text: "Hello", streaming: false };
+
+  it("marks the user messages at the end of a running turn as sent, and the rest as read", () => {
+    expect([...unreadMessages([user("u1"), reply, user("u2"), user("u3")], true)]).toEqual(["u3", "u2"]);
+    expect(unreadMessages([user("u1"), reply], true).size).toBe(0);
+    // No turn runs: the agent read all messages.
+    expect(unreadMessages([user("u1"), user("u2")], false).size).toBe(0);
   });
 });
