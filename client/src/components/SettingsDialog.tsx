@@ -410,13 +410,13 @@ export function AppearanceSettings() {
           id="setting-interface-font"
           value={font}
           onChange={(e) => {
-            const next: InterfaceFont = e.target.value === "system" ? "system" : "default";
+            const next: InterfaceFont = e.target.value === "plex" ? "plex" : "system";
             setFont(next);
             setInterfaceFont(next);
           }}
         >
-          <option value="default">IBM Plex Sans (default)</option>
-          <option value="system">System font</option>
+          <option value="system">System font (default)</option>
+          <option value="plex">IBM Plex Sans</option>
         </select>
       </Row>
 

@@ -77,7 +77,7 @@ describe("the code font", () => {
 
 describe("the appearance defaults", () => {
   it("use the default values when no preference is saved", () => {
-    expect(interfaceFont()).toBe("default");
+    expect(interfaceFont()).toBe("system");
     expect(transcriptWidth()).toBe("default");
     expect(lightCodeTheme()).toBe("vs");
     expect(darkCodeTheme()).toBe("vs-dark");
