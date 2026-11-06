@@ -3150,6 +3150,8 @@ export default function App() {
                   <PanelRight size={16} aria-hidden />
                 </button>
               )}
+              {/* A line between the session rail toggle and the pane buttons (the user asked for this). */}
+              {view === "code" && <span className="topbar-sep" aria-hidden />}
               <PaneToggle
                 icon={SquareTerminal}
                 label={`Terminal (${shortcutLabel("terminal")})`}
