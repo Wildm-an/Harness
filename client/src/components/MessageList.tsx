@@ -3,7 +3,7 @@ import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RotateCcw
 import type { ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
-import type { Submission } from "./PromptBox";
+import { splitAttachmentLines, type Submission } from "./PromptBox";
 import { Markdown, StreamingMarkdown } from "./Markdown";
 import { PermissionCard } from "./PermissionCard";
 import { QuestionCard } from "./QuestionCard";
@@ -206,6 +206,34 @@ const TaskNote = memo(function TaskNote({ item }: { item: UserItem }) {
   );
 });
 
+/** The pasted images and the attachment chips of a user message, above its text, as in the prompt box. */
+function MessageAttachments({ images, chips }: { images?: string[]; chips: { label: string; detail: string }[] }) {
+  return (
+    <>
+      {images && images.length > 0 && (
+        <div className="msg-user-images">
+          {images.map((src, i) => (
+            <a key={i} href={src} target="_blank" rel="noreferrer" title="Open the image">
+              <img src={src} alt={`Image ${i + 1}`} />
+            </a>
+          ))}
+        </div>
+      )}
+      {chips.length > 0 && (
+        <ul className="prompt-attachments msg-user-chips" aria-label="Attached context">
+          {chips.map((c, i) => (
+            <li key={i} className="prompt-attachment" title={`${c.label}: ${c.detail}`}>
+              <code>
+                <span className="prompt-attachment-label">{c.label}</span> {c.detail}
+              </code>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
 /** A user message. On hover: the time, Copy, Rewind, and Fork. */
 const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork }: {
   item: UserItem;
@@ -222,18 +250,11 @@ const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork 
     });
   };
   const messageId = item.messageId;
+  const { text, chips } = splitAttachmentLines(item.text);
   return (
     <div className={`msg-user-wrap${menuOpen ? " menu-open" : ""}`}>
-      {item.images && item.images.length > 0 && (
-        <div className="msg-user-images">
-          {item.images.map((src, i) => (
-            <a key={i} href={src} target="_blank" rel="noreferrer" title="Open the image">
-              <img src={src} alt={`Image ${i + 1}`} />
-            </a>
-          ))}
-        </div>
-      )}
-      {item.text && <div className="msg-user">{item.text}</div>}
+      <MessageAttachments images={item.images} chips={chips} />
+      {text && <div className="msg-user">{text}</div>}
       <div className="msg-actions">
         {item.ts !== undefined && (
           <span className="msg-time" title={fullTime.format(new Date(item.ts))}>
@@ -262,9 +283,11 @@ const UserMessage = memo(function UserMessage({ item, running, onRewind, onFork 
 
 /** A queued message. On hover: Remove, and Send now (it interrupts the turn). */
 function QueuedMessage({ item, onSendNow, onRemove }: { item: QueuedItem; onSendNow: (id: string) => void; onRemove: (id: string) => void }) {
+  const { text, chips } = splitAttachmentLines(item.label);
   return (
     <div className="msg-user-wrap queued">
-      <div className="msg-user">{item.label}</div>
+      <MessageAttachments images={item.submission.kind === "prompt" ? item.submission.images : undefined} chips={chips} />
+      {text && <div className="msg-user">{text}</div>}
       <div className="msg-actions">
         {item.steering && <span className="msg-time" title="The agent reads this message at its next step.">Steering</span>}
         {!item.steering && (

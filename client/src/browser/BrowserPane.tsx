@@ -27,8 +27,7 @@ import { browserView, isTauri, openExternal, pickFile, pickSavePath, type Bounds
 import { ServerMenu } from "../servers/ServerMenu";
 import type { ServersApi } from "../servers/useServers";
 import { ServerBlock, type ServerApproval } from "./ServerBlock";
-import { annotateCall, annotateScript, parseAnnotation, type Annotation } from "./annotate";
-import { AnnotateBar, COLORS, SHAPES, WIDTHS, type AnnotateTool, type ShapeTool } from "./AnnotateBar";
+import { COLORS, SHAPES, WIDTHS, annotateCall, annotateScript, annotateTheme, pageMessage, parseAnnotation, type Annotation, type ShapeTool } from "./annotate";
 import { imageToDataUrl } from "../lib/images";
 
 type Device = "desktop" | "tablet" | "phone";
@@ -41,6 +40,7 @@ const DEVICES: Record<Device, { label: string; icon: typeof Monitor; size?: { wi
 };
 
 const MAX_TABS = 12;
+const SHAPE_IDS = new Set<string>(SHAPES.map((s) => s.id));
 
 /** Adds "http://" to an address with no scheme. Keeps "about:blank" and file: addresses. */
 export function normalizeAddress(text: string): string {
@@ -521,6 +521,8 @@ export function BrowserPane({
   const overlay = useOverlayOpen();
   const lastSync = useRef(new Map<string, string>()); // The last bounds and visibility of each webview.
   const selectOnFocus = useRef(false);
+  const addressRef = useRef<HTMLInputElement>(null);
+  const focusAddress = useRef(false); // A new tab of the user: the address bar takes the focus.
 
   useEffect(() => {
     kept = { tabs, active: { ...actives, [key]: active.id } };
@@ -565,12 +567,10 @@ export function BrowserPane({
   const onScreenshotRef = useRef(onScreenshot);
   onScreenshotRef.current = onScreenshot;
 
-  // The tool of the annotation bar ("none" at the start), the last shape, the color, and the line width.
-  const [tool, setTool] = useState<AnnotateTool>("none");
-  const [shape, setShape] = useState<ShapeTool>("rect");
-  const [color, setColor] = useState(COLORS[0][0]);
-  const [lineWidth, setLineWidth] = useState(WIDTHS[1][0]);
-  const [capturing, setCapturing] = useState(false);
+  // The annotation bar is in the page (annotate.ts). The pane keeps the last shape, color, and line
+  // width of the bar for the next time.
+  const prefs = useRef<{ shape: ShapeTool; color: string; width: number }>({ shape: "rect", color: COLORS[0][0], width: WIDTHS[1][0] });
+  const capturing = useRef(false);
 
   /** Run a script in the page of a tab. A page of another origin in an iframe refuses it. */
   const runInPage = useCallback(
@@ -590,35 +590,35 @@ export function BrowserPane({
     [tauri],
   );
   const runAnnotate = useCallback(
-    (id: string, on: boolean) => runInPage(id, (send) => annotateScript(on, send)),
-    [runInPage],
+    (id: string, on: boolean) =>
+      runInPage(id, (send) => annotateScript(on, send, on ? { ...prefs.current, capture: tauri, theme: annotateTheme() } : {})),
+    [runInPage, tauri],
   );
-  const chooseTool = (next: AnnotateTool, nextColor = color, nextWidth = lineWidth) => {
-    setTool(next);
-    if (SHAPES.some((s) => s.id === next)) setShape(next as ShapeTool);
-    if (annotating) void runInPage(annotating, () => annotateCall("setTool", next, nextColor, nextWidth)).catch(() => undefined);
-  };
 
   /** "Add to prompt": a screenshot of the page with the marks goes into the prompt box. */
   const addScreenshot = async () => {
     const id = annotatingRef.current;
-    if (!id || !tauri) return;
-    setCapturing(true);
+    if (!id || !tauri || capturing.current) return;
+    capturing.current = true;
+    void browserView.evalScript(id, annotateCall("busy", true)).catch(() => undefined);
     try {
       await browserView.evalScript(id, annotateCall("prepare", true)); // Hide the hint and the outline.
       await new Promise((r) => setTimeout(r, 120)); // The page draws again before the capture.
       const png = await browserView.capture(id);
       await browserView.evalScript(id, annotateCall("prepare", false));
       const small = await imageToDataUrl(await (await fetch(png)).blob());
-      onScreenshotRef.current(small, active.url ?? "");
+      onScreenshotRef.current(small, tabsRef.current.find((t) => t.id === id)?.url ?? "");
       await browserView.evalScript(id, annotateCall("clear"));
     } catch (e) {
       onError(`The screenshot failed: ${e instanceof Error ? e.message : String(e)}`);
       void browserView.evalScript(id, annotateCall("prepare", false)).catch(() => undefined);
     } finally {
-      setCapturing(false);
+      capturing.current = false;
+      void browserView.evalScript(id, annotateCall("busy", false)).catch(() => undefined);
     }
   };
+  const addScreenshotRef = useRef(addScreenshot);
+  addScreenshotRef.current = addScreenshot;
 
   const stopAnnotate = useCallback(() => {
     const id = annotatingRef.current;
@@ -627,11 +627,23 @@ export function BrowserPane({
     void runAnnotate(id, false).catch(() => undefined);
   }, [runAnnotate]);
 
-  /** A message of the page script: a note, or the end of the mode (Esc in the page). */
+  /** A message of the page script: a note, the end of the mode (Esc or "Done"), "Add to prompt", or the bar settings. */
   const onPageData = useCallback((id: string, data: unknown) => {
     if (id !== annotatingRef.current) return;
-    if (typeof data === "string" && data.includes('"type":"stop"')) {
+    const message = pageMessage(data);
+    if (message?.type === "stop") {
       setAnnotating(null);
+      return;
+    }
+    if (message?.type === "add") {
+      void addScreenshotRef.current();
+      return;
+    }
+    if (message?.type === "prefs") {
+      const { shape, color, width } = message;
+      if (typeof shape === "string" && SHAPE_IDS.has(shape)) prefs.current.shape = shape as ShapeTool;
+      if (typeof color === "string" && COLORS.some(([c]) => c === color)) prefs.current.color = color;
+      if (typeof width === "number" && WIDTHS.some(([w]) => w === width)) prefs.current.width = width;
       return;
     }
     const note = parseAnnotation(data);
@@ -697,6 +709,20 @@ export function BrowserPane({
     setTabs(others);
     if (id === active.id) setActiveId(rest[Math.max(0, index - 1)].id);
   };
+
+  /** "New tab" (the + button or Ctrl+T): the address bar takes the focus, so the user can type an address at once. */
+  const openNewTab = () => {
+    if (addTab()) focusAddress.current = true;
+  };
+  useEffect(() => {
+    if (!focusAddress.current) return;
+    focusAddress.current = false;
+    const input = addressRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+    selectOnFocus.current = false; // No click: the next mouseup must not keep the selection.
+  }, [active.id]);
 
   // A navigation request from the app: a server, a project file, or /preview. It uses the tab that
   // shows no page, or a new tab.
@@ -830,6 +856,7 @@ export function BrowserPane({
       shown = null;
       for (const tab of tabs) {
         const show = tab.id === active.id && !!bounds && !covered && !!tab.url && view === "page";
+        const unpark = show && parked.has(tab.id);
         if (show) {
           shown = tab.id;
           parked.delete(tab.id);
@@ -855,6 +882,18 @@ export function BrowserPane({
           continue;
         }
         if (!opened.has(tab.id)) continue;
+        if (unpark && bounds) {
+          // A parked tab (minimized to the rail, or an agent tab) moves back from out of sight. A move
+          // with the same size does not make WebView2 draw again: the page stays blank until a resize.
+          // A change of size and a hide and show make it draw.
+          void (async () => {
+            await browserView.bounds(tab.id, { ...bounds, width: bounds.width + 1 });
+            await browserView.bounds(tab.id, bounds);
+            await browserView.visible(tab.id, false);
+            await browserView.visible(tab.id, true);
+          })().catch(() => undefined);
+          continue;
+        }
         if (show && bounds) void browserView.bounds(tab.id, bounds);
         if (!show) parked.delete(tab.id);
         void browserView.visible(tab.id, show);
@@ -899,7 +938,7 @@ export function BrowserPane({
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
     if (e.key === "t") {
       e.preventDefault();
-      addTab();
+      openNewTab();
     } else if (e.key === "w") {
       e.preventDefault();
       closeTab(active.id);
@@ -918,7 +957,7 @@ export function BrowserPane({
             setView("page");
           }}
           onClose={closeTab}
-          onAdd={() => addTab()}
+          onAdd={openNewTab}
           addLabel="New tab (Ctrl+T)"
         />
       </PaneHeader>
@@ -1098,6 +1137,7 @@ export function BrowserPane({
         </label>
         <input
           id="browser-address"
+          ref={addressRef}
           className={`mono browser-address${agentView ? " agent" : ""}`}
           value={agentView ? agentFrame.url : active.address}
           onChange={(e) => update(active.id, { address: e.target.value })}
@@ -1130,9 +1170,6 @@ export function BrowserPane({
               .then((ok) => {
                 if (!ok) return onError("This page is on another origin. Annotations of it work in the desktop app.");
                 setAnnotating(id);
-                // No tool at the start: the user picks one in the bar.
-                setTool("none");
-                void runInPage(id, () => annotateCall("setTool", "none", color, lineWidth));
               })
               .catch((e) => onError(e instanceof Error ? e.message : String(e)));
           }}
@@ -1209,29 +1246,6 @@ export function BrowserPane({
             ) : null,
           )}
       </div>
-      {annotating && annotating === active.id && (
-        <AnnotateBar
-          tool={tool}
-          shape={shape}
-          color={color}
-          width={lineWidth}
-          busy={capturing}
-          canCapture={tauri}
-          onTool={(t) => chooseTool(t)}
-          onColor={(c) => {
-            setColor(c);
-            chooseTool(tool, c);
-          }}
-          onWidth={(w) => {
-            setLineWidth(w);
-            chooseTool(tool, color, w);
-          }}
-          onUndo={() => void runInPage(annotating, () => annotateCall("undo")).catch(() => undefined)}
-          onClear={() => void runInPage(annotating, () => annotateCall("clear")).catch(() => undefined)}
-          onAdd={() => void addScreenshot()}
-          onClose={stopAnnotate}
-        />
-      )}
     </section>
   );
 }

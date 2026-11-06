@@ -53,6 +53,22 @@ export function withAttachments(s: Submission, attachments: readonly PromptAttac
   return { kind: "prompt", text, ...(display !== text ? { display } : {}), ...(images.length ? { images } : {}) };
 }
 
+// A line of the chat text for a block attachment (withAttachments): "[Annotation 2: button.primary — Make this blue.]".
+const ATTACHMENT_LINE = /^\[(Annotation \d+): (.*)\]$/;
+
+/** The chat text of a user message, and the chips of its block attachments (the lines at its end). */
+export function splitAttachmentLines(display: string): { text: string; chips: { label: string; detail: string }[] } {
+  const lines = display.split(/\r?\n/);
+  const chips: { label: string; detail: string }[] = [];
+  while (lines.length) {
+    const m = ATTACHMENT_LINE.exec(lines[lines.length - 1]);
+    if (!m) break;
+    chips.unshift({ label: m[1], detail: m[2] });
+    lines.pop();
+  }
+  return { text: lines.join("\n").trimEnd(), chips };
+}
+
 /** Splits "/name args" into a command. Other text is a prompt. */
 export function parseSubmission(raw: string): Submission | null {
   const text = raw.trim();

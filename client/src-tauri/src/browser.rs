@@ -97,6 +97,9 @@ pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds, fresh: bool) -
     // A fresh webview starts on a blank page: the clear runs before the page of the tab loads.
     let first = if fresh { Url::parse("about:blank").map_err(|e| e.to_string())? } else { target.clone() };
     let mut builder = WebviewBuilder::new(label(id)?, WebviewUrl::External(first))
+        // A new tab does not take the keyboard focus: the user can be typing in the prompt box while
+        // the agent opens a page. A click on the page gives it the focus.
+        .focused(false)
         .on_navigation(move |url| {
             if url.host_str() == Some(ANNOTATE_HOST) {
                 let data = url.fragment().unwrap_or_default().to_string();
