@@ -194,7 +194,7 @@ export function SessionRail({
     // The pull request of the branch, the work in three parts (uncommitted, not pushed, pushed),
     // and the git button ("Create PR", "Commit", "Push"), as in the Claude app.
     changes: changes?.repo ? (
-      <RailChanges sessionId={sessionId} changes={changes} pr={branchPr} prs={prs} onAction={onChangesAction} onOpenChanges={onOpenChanges} onOpenPr={onOpenPr} />
+      <RailChanges sessionId={sessionId} changes={changes} pr={branchPr} prs={prs} running={running} onAction={onChangesAction} onOpenChanges={onOpenChanges} onOpenPr={onOpenPr} />
     ) : null,
     environment: (
       <>
