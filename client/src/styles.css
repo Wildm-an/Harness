@@ -43,10 +43,19 @@
   --ctx-mcp-tools: #8fd3ff;
   --ctx-messages: #ff5e1a;
   --ctx-tool-results: #a98bff;
+  /* The pull request and work colors (lib/pr.ts): Clear Sight hues. Orange: uncommitted work. Purple:
+     a merged pull request. Blue (--info): commits that are not pushed. Green (--success): pushed work
+     and an open pull request. Vermilion (--danger): a closed pull request. */
+  --orange: #ffa31f;
+  --orange-soft: rgba(255, 163, 31, 0.14);
+  --purple: #a98bff;
+  --purple-soft: rgba(169, 139, 255, 0.16);
   --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
-  /* The git state of a file in the file tree (gitStatus.ts). */
-  --git-modified: #d4b483;
-  --git-added: #81c995;
+  /* The git state of a file in the file tree (gitStatus.ts): Clear Sight hues. A changed file has the
+     orange of uncommitted work in the rail, and a new file has the green. Deleted files and conflicts
+     use --danger. */
+  --git-modified: var(--orange);
+  --git-added: var(--success);
   --violet: #c3a6f0;
   --teal: #6fc8c0;
   --backdrop: rgba(15, 14, 13, 0.6);
@@ -118,9 +127,13 @@
   --ctx-mcp-tools: #3a9fd6;
   --ctx-messages: #d55e00;
   --ctx-tool-results: #7e57c2;
+  --orange: #a85a00;
+  --orange-soft: rgba(230, 159, 0, 0.12);
+  --purple: #7e57c2;
+  --purple-soft: rgba(126, 87, 194, 0.1);
   --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
-  --git-modified: #8a5a00;
-  --git-added: #2e7d32;
+  --git-modified: var(--orange);
+  --git-added: var(--success);
   --violet: #7a4fc0;
   --teal: #1f7f78;
   --backdrop: rgba(31, 30, 29, 0.35);
@@ -8776,7 +8789,7 @@ textarea.setting-textarea:disabled {
 }
 
 .side-pr-merged {
-  color: var(--violet);
+  color: var(--purple);
 }
 
 .side-pr-closed {
@@ -9491,7 +9504,7 @@ body.sorting * {
 }
 
 .rail-pr-icon.merged {
-  color: var(--violet);
+  color: var(--purple);
 }
 
 .rail-pr-icon.closed {
@@ -10969,7 +10982,7 @@ body.sorting * {
 }
 .pr-icon.pr-merged,
 .pr-state-text.pr-merged {
-  color: var(--violet);
+  color: var(--purple);
 }
 .pr-icon.pr-closed,
 .pr-state-text.pr-closed {
@@ -11078,8 +11091,8 @@ body.sorting * {
   color: var(--success);
 }
 .pr-pill-merged {
-  background: color-mix(in srgb, var(--violet) 18%, transparent);
-  color: var(--violet);
+  background: var(--purple-soft);
+  color: var(--purple);
 }
 .pr-pill-closed {
   background: var(--danger-soft);
@@ -11106,7 +11119,7 @@ body.sorting * {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--violet) 30%, var(--surface));
+  background: var(--purple-soft);
   color: var(--text);
   font-size: 10px;
   font-weight: 600;
@@ -11220,7 +11233,7 @@ body.sorting * {
   cursor: default;
 }
 .rail-work-row.work-uncommitted {
-  --work-color: var(--git-modified);
+  --work-color: var(--orange);
 }
 .rail-work-row.work-unpushed {
   --work-color: var(--info);
