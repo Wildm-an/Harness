@@ -110,6 +110,7 @@ import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater"
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
 import { OperatingHarnessSettings } from "./components/OperatingHarnessSettings";
+import { HarnessMenu } from "./components/HarnessMenu";
 import { StorageDialog } from "./components/StorageDialog";
 import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
@@ -986,6 +987,11 @@ export default function App() {
           return;
         case "skills":
           setCommands(msg.items);
+          return;
+        case "acp.state":
+          // The models and the commands of the ACP harness of the session. The / menu asks again for the commands.
+          setSession((s) => (s && (!msg.session_id || msg.session_id === s.id) ? { ...s, harness: msg.harness } : s));
+          setCommands(null);
           return;
         case "fs.dirs": {
           const { type: _type, ...listing } = msg;
@@ -2624,9 +2630,11 @@ export default function App() {
                 <ModeMenu mode={permissionMode} onChange={changeMode} />
                 <div className="prompt-below-right">
                 {session.harness ? (
-                  <span className="prompt-chip harness-label" title={`${session.harness.name} runs this session through ACP. It chooses its own model.`}>
-                    <span className="prompt-chip-text">{session.harness.name}</span>
-                  </span>
+                  <HarnessMenu
+                    harness={session.harness}
+                    disabled={chat.running}
+                    onSelect={(model) => sendSafely({ type: "acp.model", model })}
+                  />
                 ) : (
                 <ModelMenu
                   value={session.model}
@@ -2642,7 +2650,8 @@ export default function App() {
                   onManage={showProviders}
                 />
                 )}
-                {chat.context && !session.harness && (
+                {/* An ACP session shows the ring only when its harness reports the usage (usage_update). */}
+                {chat.context && (!session.harness || chat.context.tokens > 0) && (
                   <ContextRing
                     tokens={chat.context.tokens}
                     length={chat.context.length}
