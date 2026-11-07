@@ -79,6 +79,12 @@ def main(argv: list[str] | None = None) -> None:
         # The frozen daemon runs the Cookbook host script this way (cookbook/hosts.py).
         frozen.run_python_stdin()
         return
+    if argv[:1] == ["--mcp-bridge"] and len(argv) == 2:
+        # The stdio bridge of the Harness MCP server, for an ACP harness with no HTTP MCP support (acp_mcp.py).
+        from .acp_mcp import run_bridge
+
+        run_bridge(argv[1])
+        return
     if argv[:2] == ["--mcp-server", "mail"]:
         # The built-in mail server of the Email connector, on stdio (mail_server.py, connectors.py).
         from .mail_server import main as mail_main

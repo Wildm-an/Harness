@@ -14,9 +14,19 @@ changes the ``session/update`` notifications into the events of the client proto
 - ``session/request_permission`` -> ``permission.request``
 - the end of ``session/prompt`` -> ``turn.end``
 
-The harness runs its own tools, model, and context. The daemon gives it no file system and no
-terminal of its own, and no MCP servers yet. The history of the session keeps the messages in
-the form of agent.py, so the client shows a stored session in the same way.
+The harness runs its own model and context. Harness connects its features to the harness when
+the harness supports them:
+
+- ``fs/read_text_file`` and ``fs/write_text_file``: file reads and edits go through Harness. An edit
+  gets a checkpoint (rewind), the deny rules and plan mode apply, and the editor tabs update.
+- ``terminal/*``: Harness runs the commands (acp_terminal.py). The tool rows show their output.
+- The MCP server "harness" (acp_mcp.py): the Harness tools and the MCP servers of the user.
+- ``available_commands_update``: the commands of the harness are in the / menu.
+- The models (``models`` or a ``configOptions`` entry of the category "model"): the model menu.
+- ``usage_update``: the context ring.
+
+The history of the session keeps the messages in the form of agent.py, so the client shows a
+stored session in the same way.
 """
 
 from __future__ import annotations
@@ -34,12 +44,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from . import __version__
+from . import __version__, acp_mcp
 from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
+from .acp_terminal import TerminalError, TerminalHost
 from .agent import INTERRUPTED, Agent, user_message
 from .files import file_hash, relpath
+from .permissions import PLAN_BLOCK
 from .providers import ModelClient, Provider
-from .tools import truncate
+from .tools import ToolResult, truncate
 
 log = logging.getLogger("harness.acp")
 
@@ -54,6 +66,8 @@ RECAP_MESSAGES = 24
 RECAP_CHARS = 12_000
 AUTH_REQUIRED = -32000
 METHOD_NOT_FOUND = -32601
+MAX_READ_BYTES = 10 * 1024 * 1024  # fs/read_text_file: the largest file.
+MAX_COMMANDS = 100
 
 # The tool name and the input of a tool call, for the tool rows of the client (client chat/toolText.ts).
 ACP_TOOL = "acp"  # A call with no Harness tool name: the client shows its title.
@@ -388,6 +402,7 @@ class AcpAgent(Agent):
         self.model_warnings: list[str] = []
         self._conn: AcpConnection | None = None
         self._start_lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
         self._agent_caps: dict[str, Any] = {}
         self._auth_methods: list[dict[str, Any]] = []
         self.acp_session: str | None = self._stored_session()
@@ -400,6 +415,17 @@ class AcpAgent(Agent):
         self._thinking = False
         self._replaying = False  # session/load replays the old conversation: the client does not get it.
         self._cancelling = False
+        self._needs_recap = False  # A new ACP session for a session with history: the next prompt has a recap.
+        # The Harness MCP server of this session (acp_mcp.py). The server sets the address of the daemon.
+        self.mcp_base: str | None = None
+        self._mcp_secret: str | None = None
+        self.terminals = TerminalHost(self.cwd, self.ctx.shell)
+        # The features of the harness that the client shows.
+        self.acp_commands: list[dict[str, str]] = []  # The / commands of the harness: name, description, hint.
+        self.acp_models: list[dict[str, str]] = []  # id, name, description.
+        self.acp_model: str | None = None
+        self._model_option: str | None = None  # The configOptions id of the model, when the harness uses one.
+        self._usage_known: tuple[int, int] | None = None  # usage_update: (used tokens, context size).
 
     # -- the harness process -------------------------------------------------------------------------------
 
@@ -427,7 +453,7 @@ class AcpAgent(Agent):
             try:
                 result = await conn.request("initialize", {
                     "protocolVersion": PROTOCOL_VERSION,
-                    "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False},
+                    "clientCapabilities": {"fs": {"readTextFile": True, "writeTextFile": True}, "terminal": True},
                     "clientInfo": {"name": "harness", "title": "Harness", "version": __version__},
                 }, timeout=START_TIMEOUT)
             except AcpError:
@@ -443,6 +469,10 @@ class AcpAgent(Agent):
     async def _ensure_session(self) -> tuple[AcpConnection, bool]:
         """The connection and the ACP session. The flag is True when the harness has no context of the
         earlier conversation (a new ACP session for a session with history)."""
+        async with self._session_lock:
+            return await self._ensure_session_now()
+
+    async def _ensure_session_now(self) -> tuple[AcpConnection, bool]:
         conn = await self._ensure_started()
         if self.acp_session is not None and self._loaded:
             return conn, False
@@ -450,16 +480,17 @@ class AcpAgent(Agent):
             self._replaying = True
             try:
                 result = await conn.request("session/load", {"sessionId": self.acp_session, "cwd": str(self.cwd),
-                                                             "mcpServers": []})
-                self._read_modes(result)
+                                                             "mcpServers": self._mcp_servers()})
+                self._read_session(result)
                 self._loaded = True
+                await self._send_state()
                 return conn, False
             except AcpError as e:
                 log.info("%s could not load the session %s: %s", self.harness.name, self.acp_session, e)
             finally:
                 self._replaying = False
         try:
-            result = await conn.request("session/new", {"cwd": str(self.cwd), "mcpServers": []})
+            result = await conn.request("session/new", {"cwd": str(self.cwd), "mcpServers": self._mcp_servers()})
         except AcpError as e:
             if getattr(e, "code", None) == AUTH_REQUIRED or "auth" in str(e).lower():
                 raise AcpError(self._auth_text(str(e))) from None
@@ -469,14 +500,90 @@ class AcpAgent(Agent):
             raise AcpError(f"{self.harness.name} did not give a session id.")
         self.acp_session = sid
         self._loaded = True
-        self._read_modes(result)
-        return conn, any(m.get("role") in ("user", "assistant") for m in self.history[:-1])
+        self._read_session(result)
+        # The conversation before this ACP session: in a turn, the last message is the prompt of the turn.
+        prior = self.history[:-1] if self.in_turn else self.history
+        self._needs_recap = any(m.get("role") in ("user", "assistant") for m in prior)
+        await self._send_state()
+        return conn, self._needs_recap
 
     def _auth_text(self, error: str) -> str:
         names = [str(m.get("name") or m.get("id")) for m in self._auth_methods]
         how = f" Sign-in methods: {', '.join(names)}." if names else ""
         return (f"{self.harness.name} needs a sign-in ({error}). Sign in to {self.harness.name} in a terminal on the "
                 f"daemon computer, then send the prompt again.{how}")
+
+    def _mcp_servers(self) -> list[dict[str, Any]]:
+        """The Harness MCP server for session/new and session/load. None before the server sets the address."""
+        if not self.mcp_base:
+            return []
+        if self._mcp_secret is None:
+            self._mcp_secret = acp_mcp.register(self)
+        return [acp_mcp.server_entry(self._agent_caps, f"{self.mcp_base}/acp-mcp/{self._mcp_secret}")]
+
+    async def prepare(self) -> None:
+        """Start the harness and its session when the session opens, so the model menu and the / menu
+        have the features of the harness before the first prompt. A failure waits for the first prompt."""
+        try:
+            await self._ensure_session()
+        except AcpError as e:
+            log.info("%s did not start at the session open: %s", self.harness.name, e)
+        except Exception:  # noqa: BLE001 - the first prompt reports the problem.
+            log.exception("%s did not start at the session open", self.harness.name)
+
+    def _read_session(self, result: Any) -> None:
+        """The modes, the models, and the config options of session/new or session/load."""
+        self._read_modes(result)
+        if not isinstance(result, dict):
+            return
+        models = result.get("models")
+        if isinstance(models, dict) and isinstance(models.get("availableModels"), list):
+            self.acp_models = [{"id": str(m.get("modelId")), "name": str(m.get("name") or m.get("modelId")),
+                                "description": str(m.get("description") or "")}
+                               for m in models["availableModels"] if isinstance(m, dict) and m.get("modelId")]
+            current = models.get("currentModelId")
+            self.acp_model = current if isinstance(current, str) else self.acp_model
+            self._model_option = None
+        if isinstance(result.get("configOptions"), list):
+            self._read_config(result["configOptions"])
+
+    def _read_config(self, options: list[Any]) -> None:
+        """A configOptions entry of the category "model" is the model menu (it replaces "models")."""
+        for option in options:
+            if not isinstance(option, dict) or option.get("category") != "model" or option.get("type") != "select":
+                continue
+            values: list[dict[str, str]] = []
+            for item in option.get("options") or []:
+                group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
+                for value in group:
+                    if isinstance(value, dict) and value.get("value") is not None:
+                        values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
+                                       "description": str(value.get("description") or "")})
+            if values:
+                self.acp_models = values
+                self.acp_model = str(option.get("currentValue")) if option.get("currentValue") is not None else None
+                self._model_option = str(option.get("id"))
+            return
+
+    async def _send_state(self) -> None:
+        await self.emit({"type": "acp.state", "harness": self.public_harness()})
+
+    async def set_model(self, model_id: str) -> None:
+        """Change the model of the ACP session (the model menu)."""
+        if model_id not in {m["id"] for m in self.acp_models}:
+            raise AcpError(f"{self.harness.name} has no model {model_id}.")
+        conn, _ = await self._ensure_session()
+        if self._model_option is not None:
+            result = await conn.request("session/set_config_option", {
+                "sessionId": self.acp_session, "configId": self._model_option, "value": model_id})
+            if isinstance(result, dict) and isinstance(result.get("configOptions"), list):
+                self._read_config(result["configOptions"])
+            else:
+                self.acp_model = model_id
+        else:
+            await conn.request("session/set_model", {"sessionId": self.acp_session, "modelId": model_id})
+            self.acp_model = model_id
+        await self._send_state()
 
     def _read_modes(self, result: Any) -> None:
         modes = result.get("modes") if isinstance(result, dict) else None
@@ -504,18 +611,24 @@ class AcpAgent(Agent):
         conn, self._conn = self._conn, None
         if conn is not None:
             await conn.close()
+        await self.terminals.close()
+        acp_mcp.unregister(self._mcp_secret)
+        self._mcp_secret = None
 
     # -- notifications and requests of the harness ------------------------------------------------------------
 
     async def _on_notification(self, method: str, params: dict[str, Any]) -> None:
         if method != "session/update" or self._replaying:
             return
-        if params.get("sessionId") not in (None, self.acp_session):
+        # A harness can send updates right after the reply to session/new, before the id is stored here.
+        if self.acp_session is not None and params.get("sessionId") not in (None, self.acp_session):
             return
         update = params.get("update")
-        if not isinstance(update, dict) or not self.in_turn:
+        if not isinstance(update, dict):
             return
         kind = update.get("sessionUpdate")
+        if await self._state_update(kind, update) or not self.in_turn:
+            return
         if kind == "agent_message_chunk":
             text = _text_of(update.get("content"))
             if text:
@@ -545,9 +658,62 @@ class AcpAgent(Agent):
             if isinstance(entries, list):
                 await self._show_plan(entries)
 
+    async def _state_update(self, kind: Any, update: dict[str, Any]) -> bool:
+        """The updates of the session state: the commands, the mode, the options, and the usage.
+        True: the update was one of them."""
+        if kind == "available_commands_update":
+            commands = update.get("availableCommands")
+            self.acp_commands = [
+                {"name": str(c["name"]).lstrip("/"), "description": str(c.get("description") or ""),
+                 "hint": str((c.get("input") or {}).get("hint") or "") if isinstance(c.get("input"), dict) else ""}
+                for c in (commands if isinstance(commands, list) else [])[:MAX_COMMANDS]
+                if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
+            await self._send_state()
+            return True
+        if kind == "current_mode_update":
+            if isinstance(update.get("currentModeId"), str):
+                self._mode = update["currentModeId"]
+            return True
+        if kind == "config_option_update":
+            if isinstance(update.get("configOptions"), list):
+                self._read_config(update["configOptions"])
+                await self._send_state()
+            return True
+        if kind == "usage_update":
+            used, size = update.get("used"), update.get("size")
+            if isinstance(used, int) and isinstance(size, int) and size > 0:
+                self._usage_known = (used, size)  # turn.end gives it to the client (the context ring).
+                self.context_length = size
+            return True
+        return kind in ("session_info_update", "available_modes_update")
+
     async def _on_request(self, method: str, params: dict[str, Any]) -> Any:
         if method == "session/request_permission":
             return await self._permission(params)
+        try:
+            if method == "fs/read_text_file":
+                return await self._read_file(params)
+            if method == "fs/write_text_file":
+                return await self._write_file(params)
+            if method == "terminal/create":
+                return self._terminal_create(params)
+            if method == "terminal/output":
+                terminal = self.terminals.get(params)
+                result: dict[str, Any] = {"output": terminal.output(), "truncated": terminal.truncated}
+                status = terminal.exit_status()
+                if status is not None:
+                    result["exitStatus"] = status
+                return result
+            if method == "terminal/wait_for_exit":
+                return await self.terminals.get(params).wait()
+            if method == "terminal/kill":
+                await self.terminals.get(params).kill()
+                return {}
+            if method == "terminal/release":
+                await self.terminals.release(str(params.get("terminalId")))
+                return {}
+        except (TerminalError, OSError, ValueError) as e:
+            raise AcpError(str(e)) from None
         error = AcpError(f"Harness does not support {method}.")
         error.code = METHOD_NOT_FOUND  # type: ignore[attr-defined]
         raise error
@@ -605,6 +771,81 @@ class AcpAgent(Agent):
             return selected(pick("allow_once", "allow_always"))
         return selected(pick("reject_once", "reject_always"))
 
+    # -- the features of Harness for the harness ------------------------------------------------------------
+
+    def _file(self, params: dict[str, Any]) -> Path:
+        path = params.get("path")
+        if not isinstance(path, str) or not path:
+            raise AcpError("The request needs a 'path'.")
+        p = Path(path)
+        return p if p.is_absolute() else self.cwd / p
+
+    def _in_project(self, path: Path) -> str | None:
+        try:
+            return relpath(self.cwd, path)
+        except ValueError:
+            return None
+
+    async def _read_file(self, params: dict[str, Any]) -> dict[str, Any]:
+        path = self._file(params)
+        try:
+            if path.stat().st_size > MAX_READ_BYTES:
+                raise AcpError(f"The file is larger than {MAX_READ_BYTES // (1024 * 1024)} MB: {path}")
+            data = await asyncio.to_thread(path.read_bytes)
+        except FileNotFoundError:
+            raise AcpError(f"The file does not exist: {path}") from None
+        except IsADirectoryError:
+            raise AcpError(f"The path is a folder: {path}") from None
+        text = data.decode("utf-8", errors="replace")
+        line, limit = params.get("line"), params.get("limit")
+        if isinstance(line, int) or isinstance(limit, int):
+            lines = text.splitlines(keepends=True)
+            start = max(int(line) - 1, 0) if isinstance(line, int) else 0
+            end = start + int(limit) if isinstance(limit, int) and limit >= 0 else len(lines)
+            text = "".join(lines[start:end])
+        return {"content": text}
+
+    async def _write_file(self, params: dict[str, Any]) -> None:
+        """An edit of the harness. In the project: the deny rules and plan mode apply, and the old content
+        is a checkpoint of the current user message (the rewind of the code)."""
+        path = self._file(params)
+        content = params.get("content")
+        if not isinstance(content, str):
+            raise AcpError("fs/write_text_file needs a 'content' text.")
+        rel = self._in_project(path)
+        if rel is not None:
+            if self.gate.rules.denies("write", rel) or self.gate.rules.denies("edit", rel):
+                raise AcpError(f"A deny rule of the project settings blocks the change of {rel}.")
+            if self._mode_setting() == "plan":
+                raise AcpError(PLAN_BLOCK)
+            if self.on_checkpoint is not None and self.message_id is not None:
+                try:
+                    old: bytes | None = path.read_bytes()
+                except FileNotFoundError:
+                    old = None
+                self.on_checkpoint(self.message_id, rel, old)
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_text, content, "utf-8", None, "")
+        if rel is not None:
+            await self._changed(str(path))
+        return None
+
+    def _terminal_create(self, params: dict[str, Any]) -> dict[str, Any]:
+        command = " ".join([str(params.get("command") or ""), *[str(a) for a in params.get("args") or []]]).strip()
+        if command and self.gate.rules.denies("bash", command):
+            raise AcpError(f"A deny rule of the project settings blocks the command: {command}")
+        terminal = self.terminals.create(params)
+        return {"terminalId": terminal.id}
+
+    async def run_harness_tool(self, name: str, args: dict[str, Any]) -> ToolResult:
+        """A call of the Harness MCP server (acp_mcp.py). The permissions and the hooks of Harness apply."""
+        call_id = f"harness_{uuid.uuid4().hex[:12]}"
+        result = await self._execute(name, args, None, call_id)
+        result.output = truncate(result.output, int(self.settings["max_output_chars"]))
+        for path in result.changed_paths:
+            await self._changed(str(path))
+        return result
+
     # -- tool calls ---------------------------------------------------------------------------------------
 
     def _rel(self, path: Any) -> str:
@@ -634,7 +875,14 @@ class AcpAgent(Agent):
         raw = call.raw_input
         title = call.title or call.kind
         if call.kind == "execute":
-            return "bash", {"command": _command_text(raw) or title}
+            command = _command_text(raw)
+            if not command:
+                for block in call.content:
+                    terminal = self.terminals.terminals.get(str(block.get("terminalId"))) \
+                        if block.get("type") == "terminal" else None
+                    if terminal is not None:
+                        command = terminal.label
+            return "bash", {"command": command or title}
         if call.kind == "read":
             path = self._path(call)
             if path:
@@ -671,6 +919,10 @@ class AcpAgent(Agent):
                 text = _text_of(block.get("content"))
                 if text:
                     parts.append(text)
+            elif block.get("type") == "terminal":
+                terminal = self.terminals.terminals.get(str(block.get("terminalId")))
+                if terminal is not None:
+                    parts.append(terminal.output().rstrip() or "(no output)")
         if not parts and call.raw_output is not None:
             raw = call.raw_output
             if isinstance(raw, str):
@@ -812,10 +1064,12 @@ class AcpAgent(Agent):
         try:
             if self._conn is None:
                 await self.emit({"type": "notice", "level": "info", "text": f"Starting {self.harness.name}."})
-            conn, fresh = await self._ensure_session()
+            conn, _ = await self._ensure_session()
             message["acp_session"] = self.acp_session
             await self._sync_mode(conn)
-            blocks = self._prompt_blocks(text, images, self._recap() if fresh else None)
+            recap = self._recap() if self._needs_recap else None
+            self._needs_recap = False
+            blocks = self._prompt_blocks(text, images, recap)
             while True:
                 prompt = conn.request_future("session/prompt", {"sessionId": self.acp_session, "prompt": blocks})
                 result = await prompt
@@ -880,6 +1134,8 @@ class AcpAgent(Agent):
                     await asyncio.wait_for(asyncio.shield(prompt), CANCEL_WAIT)
                 except (asyncio.TimeoutError, AcpError, asyncio.CancelledError):
                     pass
+        for terminal in list(self.terminals.terminals.values()):
+            await terminal.kill()
         for call in self._calls.values():
             if call.started and not call.ended:
                 await self._end_call(call, INTERRUPTED, True)
@@ -904,6 +1160,7 @@ class AcpAgent(Agent):
         super().rewind(index)
         self.acp_session = None
         self._loaded = False
+        self._usage_known = None
 
     def clear(self) -> None:
         super().clear()
@@ -911,10 +1168,15 @@ class AcpAgent(Agent):
         self._loaded = False
 
     def context_tokens(self) -> int:
-        return 0  # The harness has its own context. The client does not show the context ring.
+        """The tokens of the last usage_update of the harness. 0: unknown (the client shows no ring)."""
+        return self._usage_known[0] if self._usage_known else 0
 
     def context_breakdown(self) -> dict[str, Any]:
-        return {"tokens": 0, "length": self.context_length, "compact_at": 1.0, "source": "acp", "parts": []}
+        tokens = self.context_tokens()
+        return {"tokens": tokens, "length": self.context_length, "compact_at": 1.0, "source": "acp",
+                "parts": [{"kind": "messages", "tokens": tokens}] if tokens else []}
 
     def public_harness(self) -> dict[str, Any]:
-        return {"id": self.harness.id, "name": self.harness.name}
+        """The harness of the session for the client: its models and its / commands, when it has them."""
+        return {"id": self.harness.id, "name": self.harness.name, "models": self.acp_models,
+                "model": self.acp_model, "commands": self.acp_commands}

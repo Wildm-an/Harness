@@ -37,7 +37,7 @@ def methods(log: Path) -> list[str]:
 def test_acp_session_streams_and_loads_its_session_again(daemon, project, fake_acp):
     c = Client(daemon)
     ready = c.new_session(project)
-    assert ready["harness"] == {"id": "custom-fake-acp", "name": "Fake ACP"}
+    assert {k: ready["harness"][k] for k in ("id", "name")} == {"id": "custom-fake-acp", "name": "Fake ACP"}
     assert ready["model"] == "acp/custom-fake-acp"
     c.send({"type": "prompt", "text": "hello"})
     end, seen = c.until("turn.end", timeout=30)
@@ -194,3 +194,109 @@ def test_unified_diff_for_a_change_and_a_new_file():
     new = unified_diff("b.py", None, "z = 1")
     assert new.startswith("--- /dev/null\n+++ b/b.py\n") and new.endswith("+z = 1\n")
     assert unified_diff("c.py", "same\n", "same\n") == ""
+
+
+def test_acp_models_commands_and_usage(daemon, project, fake_acp):
+    c = Client(daemon)
+    c.new_session(project)
+    # The open starts the harness: the client gets its models and its commands before the first prompt.
+    state = c.until("acp.state", timeout=30)[0]
+    while not (state["harness"]["commands"] and state["harness"]["models"]):
+        state = c.until("acp.state", timeout=30)[0]
+    harness = state["harness"]
+    assert [m["id"] for m in harness["models"]] == ["fast", "smart"] and harness["model"] == "fast"
+    assert harness["commands"] == [{"name": "review", "description": "Review the code", "hint": "path"}]
+
+    c.send({"type": "skills.list"})
+    items = c.until("skills")[0]["items"]
+    review = next(i for i in items if i["name"] == "review")
+    assert review["source"] == "Fake ACP" and review["acp"] is True
+
+    c.send({"type": "acp.model", "model": "smart"})
+    assert c.until("acp.state")[0]["harness"]["model"] == "smart"
+    assert "session/set_model" in methods(fake_acp)
+    c.send({"type": "acp.model", "model": "nope"})
+    assert "has no model" in c.until("error")[0]["message"]
+
+    c.send({"type": "command", "name": "review", "args": "src"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "review: src"
+
+    c.send({"type": "prompt", "text": "hello"})
+    end, _ = c.until("turn.end", timeout=30)
+    assert end["usage"]["context_tokens"] == 1234 and end["usage"]["context_length"] == 200000
+    c.close()
+
+
+def test_acp_files_through_harness(daemon, project, fake_acp):
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "fsread"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "read: return 'hello'"
+    sent = [json.loads(line) for line in fake_acp.read_text().splitlines()]
+    assert sent[0]["params"]["clientCapabilities"] == {"fs": {"readTextFile": True, "writeTextFile": True},
+                                                      "terminal": True}
+
+    c.send({"type": "prompt", "text": "fswrite"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert (project / "hello.py").read_text() == "print('written')\n"
+    assert any(m["type"] == "fs.changed" and m["path"] == "hello.py" for m in seen)
+    c.close()
+
+
+def test_acp_write_respects_deny_rules(daemon, project, fake_acp):
+    (project / ".harness").mkdir()
+    (project / ".harness" / "settings.json").write_text(json.dumps({"deny": ["write(hello.py)"]}))
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "fswrite"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "write failed"
+    assert "'hello'" in (project / "hello.py").read_text()
+    c.close()
+
+
+def test_acp_terminal_runs_in_harness(daemon, project, fake_acp):
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "term"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "exit=0 out=hi-from-term"
+    start = next(m for m in seen if m["type"] == "tool.start" and m["id"] == "call_t")
+    assert start["name"] == "bash" and start["input"] == {"command": "echo hi-from-term"}
+    result = next(m for m in seen if m["type"] == "tool.result" and m["id"] == "call_t")
+    assert result["output"].strip() == "hi-from-term"
+    c.close()
+
+
+def test_acp_harness_mcp_server(daemon, project, fake_acp):
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "mcp"})
+    _, seen = c.until("turn.end", timeout=30)
+    text = "".join(m["text"] for m in seen if m["type"] == "token")
+    tools = text.split(" call=")[0].removeprefix("tools=").split(",")
+    assert "cron_list" in tools and "show_document" in tools
+    assert not {"bash", "read", "edit", "update_plan"} & set(tools)  # The harness has its own.
+    assert text.endswith("call=No scheduled tasks.")
+    sent = [json.loads(line) for line in fake_acp.read_text().splitlines()]
+    server = next(m for m in sent if m.get("method") == "session/new")["params"]["mcpServers"][0]
+    assert server["type"] == "http" and server["name"] == "harness" and "/acp-mcp/" in server["url"]
+
+    # The stdio bridge gives the same server to a harness with no HTTP MCP support.
+    import subprocess
+    bridge = subprocess.run([sys.executable, "-m", "harness_daemon", "--mcp-bridge", server["url"]],
+                            input=json.dumps({"jsonrpc": "2.0", "id": 7, "method": "ping"}) + "\n",
+                            capture_output=True, text=True, timeout=60,
+                            cwd=str(Path(__file__).resolve().parents[1]))
+    assert json.loads(bridge.stdout) == {"jsonrpc": "2.0", "id": 7, "result": {}}
+    c.close()
+
+
+def test_mcp_server_entry_without_http_support():
+    from harness_daemon.acp_mcp import server_entry
+    entry = server_entry({"mcpCapabilities": {"http": False}}, "http://127.0.0.1:1/acp-mcp/x")
+    assert entry["name"] == "harness" and entry["args"][-2:] == ["--mcp-bridge", "http://127.0.0.1:1/acp-mcp/x"]
+    assert server_entry({"mcpCapabilities": {"http": True}}, "u") == {"type": "http", "name": "harness", "url": "u",
+                                                                      "headers": []}
