@@ -11803,3 +11803,185 @@ body.sorting * {
   margin-left: 12px;
   color: var(--info);
 }
+
+/* Settings > Operating Harness (OperatingHarnessSettings.tsx). */
+
+.harness-intro {
+  display: block;
+  margin: 0 0 8px;
+}
+
+.harness-error {
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.harness-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.harness-tools .settings-section {
+  margin: 0;
+}
+
+.harness-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.harness-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.harness-choice {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.harness-choice:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.harness-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.harness-choice:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.harness-radio {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--accent-text);
+}
+
+.harness-row.checked .harness-radio {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.harness-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.harness-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.harness-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.harness-badge.ready {
+  color: var(--success);
+}
+
+.harness-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.harness-meta code {
+  overflow-wrap: anywhere;
+  font-size: 11.5px;
+}
+
+.harness-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-top: 10px;
+}
+
+.harness-skeleton {
+  height: 64px;
+  border-radius: 8px;
+  background: var(--hover);
+}
+
+.harness-empty {
+  display: block;
+  padding: 12px 8px;
+}
+
+.harness-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.harness-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.harness-field .setting-text-input {
+  width: 100%;
+  max-width: 420px;
+}
+
+.harness-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* The harness of an ACP session, in place of the model menu under the prompt box. */
+.harness-label {
+  cursor: default;
+}
+
+.harness-group-title {
+  margin: 14px 0 0;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}

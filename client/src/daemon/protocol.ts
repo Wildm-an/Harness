@@ -35,6 +35,7 @@ export interface PermissionRequest {
   input: unknown;
   diff: string | null;
   rule: string | null; // The rule that "allow_always" adds. null: a plugin asks each time, so there is no "always".
+  remember?: string | null; // An ACP harness keeps the "always" choice, not the project settings. Its name.
   reason?: string | null; // Why a plugin asks for approval.
   agent?: string; // A background subagent asks. Its card stays open after the turn ends.
   background?: boolean;
@@ -222,6 +223,8 @@ export interface UserSettings {
   offline_model?: string | null;
   effort?: Effort | null; // The effort level of the model menu. null: the model decides.
   new_task_prompt?: NewTaskPrompt; // "When you ask for an unrelated task" (offer_session). Default "ask".
+  // Settings > Operating Harness: the id of the ACP harness for new sessions. null or "harness": the built-in loop.
+  operating_harness?: string | null;
   auto_archive_days?: number; // "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.
   // The agent instructions of the user. The system prompt includes them. null: no instructions.
   instructions_thinking?: string | null;
@@ -234,6 +237,29 @@ export interface UserSettings {
 }
 
 export type WebSearchProvider = "duckduckgo" | "brave" | "tavily" | "searxng" | "off";
+
+/** A harness that can run the agent loop through ACP (daemon acp_harnesses.py). */
+export interface HarnessItem {
+  id: string;
+  name: string;
+  description: string;
+  website: string;
+  license: string;
+  command: string; // The command line that starts it in ACP mode.
+  // installed: the program is on the PATH. npx or uvx: it downloads at the first start. missing: install it first.
+  status: "installed" | "npx" | "uvx" | "missing";
+  detail: string;
+  custom: boolean; // A harness that the user added.
+  recommended: number | null; // The place in the Recommended group of the page, or null.
+  reason: string; // Why the harness is recommended. Empty for the others.
+  local_models: boolean; // It can use a local model server.
+}
+
+/** The harness of an ACP session. */
+export interface SessionHarness {
+  id: string;
+  name: string;
+}
 
 /** A background task: a command that the agent runs with bash and run_in_background. */
 export type TaskKind = "shell" | "monitor" | "agent" | "wakeup" | "cron"; // cron: a scheduled prompt (cron_create).
@@ -814,6 +840,9 @@ export type ClientMessage =
   | { type: "routines.token"; id: string; action: "generate" | "delete" } // The API trigger token of a routine.
   | { type: "disk.usage" } // Settings > General > Storage.
   // Settings > Your Harness > Memory. cwd: the project folder. Each project has its own memory.
+  | { type: "harnesses.list" }
+  | { type: "harnesses.save"; name: string; command: string; id?: string }
+  | { type: "harnesses.delete"; id: string }
   | { type: "memory.list"; cwd: string }
   | { type: "memory.save"; cwd: string; name: string; old_name?: string; description: string; memory_type: MemoryType; content: string }
   | { type: "memory.delete"; cwd: string; name: string }
@@ -960,6 +989,7 @@ export type DaemonMessage =
       cwd: string;
       model: string;
       model_unavailable?: string | null; // Why the stored model cannot run: its provider is gone or off.
+      harness?: SessionHarness | null; // Another harness runs the agent loop through ACP. null: the built-in loop.
       title: string | null;
       warnings: string[];
       history: HistoryMessage[];
@@ -1009,7 +1039,8 @@ export type DaemonMessage =
   | { type: "tasks"; items: TaskItem[] } // The background tasks of the session, after each start and end.
   | ({ type: "task" } & TaskDetail)
   | { type: "keep_awake"; on: boolean; active: boolean } // active: the computer stays awake now.
-  | { type: "user_settings"; values: UserSettings; path: string; version: string }
+  // harness: the operating harness of new sessions (Settings > Operating Harness). null: the built-in loop.
+  | { type: "user_settings"; values: UserSettings; path: string; version: string; harness?: SessionHarness | null }
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
@@ -1063,6 +1094,7 @@ export type DaemonMessage =
   | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
+  | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
   | { type: "memory.parsed"; items: MemoryFact[] }
   | ({ type: "disk.usage" } & DiskUsage)
   | { type: "memory.export"; cwd: string; name: string; data: string; count: number } // data: the .zip as base64.

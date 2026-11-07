@@ -3,6 +3,23 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Operating Harness
+
+- Settings has a new page, "Operating Harness". It chooses the harness that runs the agent loop of new
+  sessions. "Harness" (the built-in loop) is the default.
+- Other harnesses connect through ACP, the Agent Client Protocol. The list has 41 harnesses from the
+  ACP registry, for example OpenCode, Codex, Claude Agent, Gemini CLI, goose, Qwen Code, Cline, and
+  Oh My Pi. Each row shows if the program is installed, or if it runs with npx or uvx.
+- A "Recommended" group comes first: OpenCode, Oh My Pi, Codex, Claude Agent, Gemini CLI, goose,
+  Qwen Code, and Cline. Each row says why, and a "Local models" pill shows the harnesses that can use
+  a local model server.
+- You can add a custom harness with a name and the command that starts it in ACP mode.
+- In a session of another harness, the chat shows its text, thinking, tool calls with diffs, task
+  list, and permission requests. The harness name replaces the model menu, and the context ring does
+  not show.
+
 ## 0.1.57 (2026-11-06)
 
 ### Window

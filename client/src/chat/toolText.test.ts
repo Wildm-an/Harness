@@ -30,6 +30,9 @@ describe("the text of tool calls", () => {
     expect(toolAction(tool("mcp__github__create_issue", {})).object).toBe("github: create_issue");
     expect(toolAction(tool("bash", { command: "npm test" }, { status: "running" })).verb).toBe("Running");
     expect(toolAction(tool("write", { path: "src/toolText.ts" }, { diff: NEW_FILE })).verb).toBe("Created");
+    // A tool call of an ACP harness with no Harness tool name shows its title.
+    expect(toolAction(tool("acp", { title: "Move a.txt to b.txt" }))).toEqual({ verb: "Move a.txt to b.txt", object: "", mono: false });
+    expect(toolAction(tool("acp", {})).verb).toBe("Used a tool");
   });
 
   it("sums a group as Claude does", () => {

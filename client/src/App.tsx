@@ -109,6 +109,7 @@ import { ToastStack } from "./components/ToastStack";
 import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
+import { OperatingHarnessSettings } from "./components/OperatingHarnessSettings";
 import { StorageDialog } from "./components/StorageDialog";
 import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
@@ -130,7 +131,7 @@ import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, ServerItem, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
@@ -260,6 +261,7 @@ interface ActiveSession {
   cwd: string;
   model: string;
   modelUnavailable: string | null; // Why the daemon cannot use the stored model (its provider is gone or off).
+  harness: SessionHarness | null; // Another harness runs the agent loop through ACP. null: the built-in loop.
   title: string | null;
   project: string | null; // The name of the saved project.
   worktree: SessionWorktree | null; // The session works in this git worktree.
@@ -506,6 +508,7 @@ export default function App() {
   // The Settings dialog (Ctrl+,): General, Local Models, Providers, and Computers.
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  const [startHarness, setStartHarness] = useState<SessionHarness | null>(null); // The operating harness of new sessions.
   const [storageOpen, setStorageOpen] = useState(false); // Settings > General > Storage > Manage.
   useEffect(() => {
     if (!settingsPage) setStorageOpen(false); // The Storage dialog closes with Settings.
@@ -533,6 +536,7 @@ export default function App() {
       conn.onMessage((msg) => {
         if (msg.type === "user_settings") {
           setUserSettings(msg.values);
+          setStartHarness(msg.harness ?? null);
           setUserSettingsInfo({ path: msg.path, version: msg.version });
           // A change of the preferred models changes the name on the "Default model" chip.
           const { auto_model, online_model, offline_model } = msg.values;
@@ -557,7 +561,7 @@ export default function App() {
       setSettingsPage(page);
       setSettingsError(null);
       try {
-        if (page === "general" || page === "harness" || page === "connections") conn.send({ type: "user_settings.get" }); // Providers: the model by network.
+        if (page === "general" || page === "harness" || page === "operating" || page === "connections") conn.send({ type: "user_settings.get" }); // Providers: the model by network.
         if (page === "connections") {
           setProviderError(null);
           setProviderTest(null);
@@ -718,6 +722,7 @@ export default function App() {
             cwd: msg.cwd,
             model: msg.model,
             modelUnavailable: msg.model_unavailable ?? null,
+            harness: msg.harness ?? null,
             title: msg.title,
             project: msg.project?.name ?? null,
             worktree: msg.worktree ?? null,
@@ -1601,7 +1606,8 @@ export default function App() {
 
   // No provider gives the model of the session. With "Preferred providers" on, the model by
   // network replaces it with no question. Else the chat asks the user (ModelUnavailable).
-  const modelGone = !!session && isModelUnavailable(session.model, models, session.modelUnavailable);
+  // An ACP session has no model of the providers: its harness chooses the model.
+  const modelGone = !!session && !session.harness && isModelUnavailable(session.model, models, session.modelUnavailable);
   const autoModel = modelGone ? networkModel(status === "open" ? userSettings : null, models) : null;
   const autoSwitched = useRef<Set<string>>(new Set()); // "session id model": one try for each.
   useEffect(() => {
@@ -2550,7 +2556,7 @@ export default function App() {
         onDecide={decide}
         onAnswer={answerQuestion}
         turn={chat.turn}
-        model={session?.model ?? ""}
+        model={session?.harness?.name ?? session?.model ?? ""}
         footer={
           session &&
           !chat.running &&
@@ -2617,6 +2623,11 @@ export default function App() {
                 <>
                 <ModeMenu mode={permissionMode} onChange={changeMode} />
                 <div className="prompt-below-right">
+                {session.harness ? (
+                  <span className="prompt-chip harness-label" title={`${session.harness.name} runs this session through ACP. It chooses its own model.`}>
+                    <span className="prompt-chip-text">{session.harness.name}</span>
+                  </span>
+                ) : (
                 <ModelMenu
                   value={session.model}
                   models={models}
@@ -2630,7 +2641,8 @@ export default function App() {
                   onSelect={switchModel}
                   onManage={showProviders}
                 />
-                {chat.context && (
+                )}
+                {chat.context && !session.harness && (
                   <ContextRing
                     tokens={chat.context.tokens}
                     length={chat.context.length}
@@ -3408,6 +3420,8 @@ export default function App() {
             effort={effortControl}
             onRequestModels={requestModels}
             onManageProviders={showProviders}
+            harness={status === "open" ? startHarness : null}
+            onManageHarness={() => openSettings("operating")}
             onSaveProject={saveProject}
             onDeleteProject={deleteProject}
             selectProject={startProject}
@@ -3490,6 +3504,18 @@ export default function App() {
           >
             {settingsPage === "changelog" && <ChangelogPage appVersion={appVersion} />}
             {settingsPage === "appearance" && <AppearanceSettings />}
+            {settingsPage === "operating" && (
+              <OperatingHarnessSettings
+                conn={conn}
+                connected={status === "open"}
+                values={status === "open" ? userSettings : null}
+                error={settingsError}
+                onSet={(values) => {
+                  setSettingsError(null);
+                  sendSafely({ type: "user_settings.set", values });
+                }}
+              />
+            )}
             {settingsPage === "general" && (
               <GeneralSettings
                 values={status === "open" ? userSettings : null}

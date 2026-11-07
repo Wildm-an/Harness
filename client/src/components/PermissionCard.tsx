@@ -56,6 +56,11 @@ function describe(item: PermissionItem): { action: string; prefix?: string; obje
     const title = (item.input as { title?: unknown } | null)?.title;
     return { action: "delete", prefix: "the artifact", object: typeof title === "string" && title ? title : summary, detail: null };
   }
+  if (item.tool === "acp") {
+    // A tool call of an ACP harness (daemon acp.py): its title.
+    const title = (item.input as { title?: unknown } | null)?.title;
+    return { action: "use", prefix: "the tool", object: typeof title === "string" && title ? title : "of the harness", detail: null };
+  }
   return { action: "use", object: item.tool, detail: summary || null };
 }
 
@@ -70,9 +75,11 @@ export function PermissionTitle({ item }: { item: PermissionItem }) {
   );
 }
 
-/** Where "Always allow" saves the rule (docs/UI_RULES.md M9). The daemon adds it to .harness/settings.json of the project. */
-export function ScopeNote({ rule }: { rule: string | null }) {
+/** Where "Always allow" saves the rule (docs/UI_RULES.md M9). The daemon adds it to .harness/settings.json of the project.
+ * In an ACP session, the harness keeps the choice (``remember`` is its name). */
+export function ScopeNote({ rule, remember }: { rule: string | null; remember?: string | null }) {
   if (!rule) return null;
+  if (remember) return <p className="permission-scope">{remember} keeps the "Always allow" choice</p>;
   return (
     <p className="permission-scope">
       Saves to project settings · <code>{rule}</code>
@@ -225,7 +232,7 @@ export const PermissionCard = memo(function PermissionCard({
           {!item.diff && detail && <pre className="permission-command">{detail}</pre>}
           {item.reason && <p className="permission-reason">{item.reason}</p>}
           <div className="permission-foot">
-            <ScopeNote rule={item.rule} />
+            <ScopeNote rule={item.rule} remember={item.remember} />
             <div
               className="permission-actions"
               role="group"
