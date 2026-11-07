@@ -190,7 +190,7 @@ export const DiffReview = memo(function DiffReview({
                 <PermissionTitle item={permission} />
               </div>
               <div className="permission-foot">
-                <ScopeNote rule={permission.rule} />
+                <ScopeNote rule={permission.rule} remember={permission.remember} />
                 <div className="permission-actions">
                   <PermissionButtons item={permission} onDecide={(decision) => onDecide(permission.id, decision)} />
                 </div>

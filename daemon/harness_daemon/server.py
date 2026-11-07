@@ -29,6 +29,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from . import __version__
 from .agent import Agent
+from . import acp_harnesses
+from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, placeholder_client
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
 from .osname import os_name
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
@@ -663,6 +665,8 @@ class LiveSession:
         if self.preview is not None:
             await self.preview.close()
             PREVIEWS.discard(self.preview)
+        if self.session is not None and isinstance(self.session.agent, AcpAgent):
+            await self.session.agent.close()  # The harness process of the session.
             self.preview = None
         if self.servers is not None:
             await self.servers.stop_all()
@@ -1064,6 +1068,9 @@ class Connection:
         session. With "auto_model" on, the session gets the model by network. Else (or if that model
         is not available too) the client asks the user to switch to an available model."""
         settings = load_settings(cwd)
+        acp_id = _acp_id(provider_name, model)
+        if acp_id is not None:
+            return self.make_acp_agent(live, cwd, acp_id, settings, history, summary)
         pending = False  # The model checks must run after the open.
         await self.drop_start_plugins()  # The session loads its own plugins.
         # The plugins load first: a plugin can register the provider of the model.
@@ -1103,6 +1110,22 @@ class Connection:
             raise
         warnings += [f"The plugin {s.row.id} did not load: {s.error}" for s in plugins.rows.values()
                      if s.state == "failed"]
+        return agent, warnings
+
+    def make_acp_agent(self, live: LiveSession, cwd: Path, harness_id: str, settings: dict[str, Any],
+                       history: list[dict] | None, summary: str | None) -> tuple[Agent, list[str]]:
+        """An agent whose loop runs in another harness through ACP (acp.py). A harness that is gone
+        (a deleted custom harness) still opens the session: the first prompt gives the error."""
+        spec = acp_harnesses.find(harness_id)
+        warnings: list[str] = []
+        if spec is None:
+            spec = acp_harnesses.HarnessSpec(id=harness_id, name=harness_id, description="", website="", license="",
+                                             bin=(harness_id, ()))
+            warnings.append(f"The harness {harness_id} is not in Settings > Operating Harness. Add it again, or "
+                            "start a new session.")
+        agent = AcpAgent(harness=spec, aux_client=_aux_client(settings), cwd=cwd,
+                         client=placeholder_client(spec.id), emit=live.send, approver=live.approve,
+                         settings=settings, history=history, summary=summary, context_source="acp")
         return agent, warnings
 
     @staticmethod
@@ -1182,6 +1205,8 @@ class Connection:
             "session_id": s.id,
             "cwd": str(s.cwd),
             "model": s.agent.client.label,
+            # The operating harness of an ACP session ({"id", "name"}), else None: the built-in agent loop.
+            "harness": s.agent.public_harness() if isinstance(s.agent, AcpAgent) else None,
             # Why the stored model cannot run (its provider is gone or off), else None. The client asks to switch.
             "model_unavailable": s.agent.client.provider.unavailable,
             "title": s.title,
@@ -1300,7 +1325,8 @@ class Connection:
         placeholder = session.title
 
         async def work() -> None:
-            title = await summarize_title(session.agent.client, prompt)
+            client = model_client(session.agent)
+            title = await summarize_title(client, prompt) if client is not None else None
             if session.title != placeholder:  # The user renamed the session.
                 live.title_prompt = None
                 return
@@ -1325,8 +1351,12 @@ class Connection:
             return
         history = list(session.agent.history)
 
+        client = model_client(session.agent)
+        if client is None:
+            return
+
         async def work() -> None:
-            text = await suggest_prompt(session.agent.client, history)
+            text = await suggest_prompt(client, history)
             if text and not live.running:
                 await live.send({"type": "prompt.suggestion", "text": text})
 
@@ -1700,6 +1730,35 @@ def _project_ref(storage: Storage, cwd: Path) -> dict[str, str] | None:
     return {"id": found["id"], "name": found["name"]} if found else None
 
 
+def _acp_id(provider_name: str | None, model: str | None) -> str | None:
+    """The harness id of an ACP session ("acp" provider, or the model "acp/<id>"), else None."""
+    if provider_name == ACP_PROVIDER and model:
+        return model
+    if model and model.startswith(ACP_PROVIDER + "/") and not provider_name:
+        return model[len(ACP_PROVIDER) + 1:] or None
+    return None
+
+
+def _aux_client(settings: dict[str, Any]) -> ModelClient | None:
+    """A model of the providers for the titles, the prompt suggestions, and the side chat of an ACP
+    session: the default model. None: no default model."""
+    spec = settings.get("default_model") or settings.get("online_model") or settings.get("offline_model")
+    if not spec:
+        return None
+    try:
+        provider, model = resolve_model(spec)
+    except ConfigError:
+        return None
+    return ModelClient(provider, model)
+
+
+def model_client(agent: Agent) -> ModelClient | None:
+    """The model client for a request beside the turn. An ACP session uses its aux client (or None)."""
+    if isinstance(agent, AcpAgent):
+        return agent.aux_client
+    return agent.client
+
+
 def _project_dir(value: Any) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ProtocolError("'cwd' is required.")
@@ -1746,7 +1805,11 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
 
     "worktree": true or {"base": <branch>}: the session works in a new git worktree of the project.
     """
-    live, warnings = await create_session(conn, _project_dir(msg.get("cwd")), msg.get("provider"), msg.get("model"),
+    provider, model = msg.get("provider"), msg.get("model")
+    harness = load_settings(None).get("operating_harness")
+    if isinstance(harness, str) and harness and harness != acp_harnesses.BUILTIN_ID:
+        provider, model = ACP_PROVIDER, harness  # Settings > Operating Harness: another harness runs the loop.
+    live, warnings = await create_session(conn, _project_dir(msg.get("cwd")), provider, model,
                                           msg.get("permission_mode"), _worktree_arg(msg))
     await conn.open_session(live)
     await conn.send_ready(warnings)
@@ -2117,7 +2180,10 @@ async def on_side_ask(conn: Connection, msg: dict[str, Any]) -> None:
 
     async def work() -> None:
         try:
-            response = await agent.client.stream(messages, tools, token)
+            client = model_client(agent)
+            if client is None:
+                raise RuntimeError("The side chat needs a model of the providers. Choose one in Settings > Providers.")
+            response = await client.stream(messages, tools, token)
             text = response.text
             if not text.strip() and response.tool_calls:
                 text = NO_TOOLS_REPLY
@@ -3088,6 +3154,8 @@ async def on_session_fork(conn: Connection, msg: dict[str, Any]) -> None:
     live = LiveSession(conn)
     agent, warnings = await conn.make_agent(live, source.cwd, client.provider.name, client.model, history, summary,
                                             stored=True)
+    if isinstance(agent, AcpAgent):
+        agent.acp_session = None  # The fork starts a new session of the harness, with a recap.
     # The sidebar shows the fork nested under its source session.
     session_id = conn.storage.create_session(str(source.cwd), agent.client.provider.name, agent.client.model,
                                              parent_id=source.id)
@@ -3223,6 +3291,9 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
             await result(text=f"Model: {session.agent.client.label}. Providers: {providers}.")
             return
         conn.require_idle()
+        if isinstance(session.agent, AcpAgent):
+            raise ProtocolError(f"This session runs in {session.agent.harness.name}, which chooses its own model. "
+                                "Start a new session to use another model.")
         provider, model = resolve_model(args.strip())
         warnings, context, images = await conn.model_checks(provider, model, session.agent.settings)
         session.agent.set_client(ModelClient(provider, model), context.length, images, context.source)
@@ -3438,7 +3509,10 @@ async def on_editor_complete(conn: Connection, msg: dict[str, Any]) -> None:
     live.cancel_completion()
 
     async def work() -> None:
-        text = await complete_code(session.agent.client, path, prefix, suffix)
+        client = model_client(session.agent)
+        if client is None:
+            return
+        text = await complete_code(client, path, prefix, suffix)
         await live.send({"type": "editor.completion", "id": request_id, "text": text})
 
     live.completion_task = asyncio.create_task(work())
@@ -3501,6 +3575,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "offline_model": (str, type(None)),
     "effort": (str, type(None)),  # The effort level of the model menu. None: the default level, High.
     "new_task_prompt": (str,),
+    "operating_harness": (str, type(None)),  # Settings > Operating Harness: an ACP harness id (acp_harnesses.py).
     "tool_search": (str,),  # MCP tools by name only until the model loads them: auto, on, or off (agent.py).
     "auto_archive_days": (int,),  # "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
@@ -3523,8 +3598,12 @@ def _user_settings_path() -> Path:
 
 async def _send_user_settings(conn: Connection) -> None:
     values = load_settings(None)
+    # The operating harness of new sessions, for the start screen: {"id", "name"}, or None for the built-in loop.
+    harness_id = values.get("operating_harness")
+    spec = acp_harnesses.find(harness_id) if isinstance(harness_id, str) and harness_id         and harness_id != acp_harnesses.BUILTIN_ID else None
     await conn.send({"type": "user_settings", "path": str(_user_settings_path()), "version": __version__,
-                     "values": {k: values.get(k) for k in USER_SETTINGS}})
+                     "values": {k: values.get(k) for k in USER_SETTINGS},
+                     "harness": {"id": spec.id, "name": spec.name} if spec is not None else None})
 
 
 @handler("user_settings.get")
@@ -3554,6 +3633,9 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"'new_task_prompt' must be one of: {', '.join(NEW_TASK_CHOICES)}.")
         if key == "effort" and value is not None and value not in EFFORT_API:
             raise ProtocolError(f"'effort' must be null or one of: {', '.join(EFFORT_API)}.")
+        if (key == "operating_harness" and isinstance(value, str) and value.strip()
+                and value.strip() != acp_harnesses.BUILTIN_ID and acp_harnesses.find(value.strip()) is None):
+            raise ProtocolError(f"Unknown harness: {value}. See Settings > Operating Harness.")
         if key == "tool_search" and value not in ("auto", "on", "off"):
             raise ProtocolError("'tool_search' must be one of: auto, on, off.")
         if key == "web_search" and value not in WEB_PROVIDERS:
@@ -3583,6 +3665,49 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
     await _send_user_settings(conn)
     if "auto_archive_days" in changes:
         await archive_inactive(conn.storage)
+
+
+# Settings > Operating Harness: the harnesses that can run the agent loop through ACP (acp_harnesses.py).
+# They need no session.
+
+async def _send_harnesses(conn: Connection) -> None:
+    items = await asyncio.to_thread(acp_harnesses.listing)  # shutil.which reads the PATH folders.
+    current = load_settings(None).get("operating_harness") or acp_harnesses.BUILTIN_ID
+    await conn.send({"type": "harnesses", "items": items, "current": current,
+                     "path": str(harness_home() / "harnesses.json")})
+
+
+@handler("harnesses.list")
+async def on_harnesses_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_harnesses(conn)
+
+
+@handler("harnesses.save")
+async def on_harnesses_save(conn: Connection, msg: dict[str, Any]) -> None:
+    """Add a custom harness, or change one: {"name", "command", "id"?}."""
+    harness_id = msg.get("id") if isinstance(msg.get("id"), str) and msg.get("id") else None
+    try:
+        acp_harnesses.save_custom(_text_arg(msg, "name"), _text_arg(msg, "command"), harness_id)
+    except acp_harnesses.HarnessError as e:
+        raise ProtocolError(str(e)) from None
+    await _send_harnesses(conn)
+
+
+@handler("harnesses.delete")
+async def on_harnesses_delete(conn: Connection, msg: dict[str, Any]) -> None:
+    """Delete a custom harness: {"id"}. If it is the operating harness, the built-in loop is used again."""
+    harness_id = _text_arg(msg, "id")
+    try:
+        acp_harnesses.delete_custom(harness_id)
+    except acp_harnesses.HarnessError as e:
+        raise ProtocolError(str(e)) from None
+    path = _user_settings_path()
+    data = read_json(path, {})
+    if data.get("operating_harness") == harness_id:
+        data.pop("operating_harness", None)
+        write_json(path, data)
+        await _send_user_settings(conn)
+    await _send_harnesses(conn)
 
 
 # Settings > Your Harness > Memory: see, add, change, delete, import, and export the memories of a

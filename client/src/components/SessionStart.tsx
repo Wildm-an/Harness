@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { CommandItem, Effort, GitBranches, PermissionMode, ProjectItem } from "../daemon/protocol";
+import type { CommandItem, Effort, GitBranches, PermissionMode, ProjectItem, SessionHarness } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
@@ -288,7 +288,12 @@ export function SessionStart({
   folderChosen = true,
   onChooseFolder,
   view = "code",
+  harness = null,
+  onManageHarness,
 }: {
+  // The operating harness of new sessions (Settings > Operating Harness). null: the built-in loop, with the model menu.
+  harness?: SessionHarness | null;
+  onManageHarness?: () => void;
   // false: the user did not select a folder yet, so the folder block keeps the focus. The block stays
   // in the center until the session starts.
   folderChosen?: boolean;
@@ -526,6 +531,16 @@ export function SessionStart({
                   )}
                   {worktree.on && <WorktreeMenu choice={worktree} info={branchInfo} onChange={changeWorktree} />}
                 </div>
+                {harness ? (
+                  <button
+                    type="button"
+                    className="prompt-chip harness-label"
+                    onClick={onManageHarness}
+                    title={`New sessions run in ${harness.name} through ACP. It chooses its own model. Click to change the operating harness.`}
+                  >
+                    <span className="prompt-chip-text">{harness.name}</span>
+                  </button>
+                ) : (
                 <ModelMenu
                   value={model}
                   models={models}
@@ -538,6 +553,7 @@ export function SessionStart({
                   onSelect={setModel}
                   onManage={onManageProviders}
                 />
+                )}
               </>
             }
           />

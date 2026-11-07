@@ -134,6 +134,9 @@ export function toolAction(item: ToolItem): ToolAction {
       if (action === "delete") return { verb: pick("Deleted", "Deleting"), object: "an artifact", mono: false };
       return { verb: pick("Published", "Publishing"), object: text(a.title) || baseName(text(a.file_path) || "an artifact"), mono: false };
     }
+    case "acp":
+      // A tool call of an ACP harness with no Harness tool name (daemon acp.py): its title.
+      return { verb: text(a.title) || pick("Used a tool", "Using a tool"), object: "", mono: false };
     case "show_document":
       // The agent opened a PDF or Word file in the Preview pane (daemon tools/document.py).
       return { verb: pick("Opened preview of", "Opening preview of"), object: baseName(text(a.path) || "a document"), mono: false };

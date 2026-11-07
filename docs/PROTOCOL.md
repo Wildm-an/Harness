@@ -132,6 +132,26 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 
 
+### Operating harness (ACP)
+
+Settings > Operating Harness chooses the harness that runs the agent loop of new sessions. The user setting `operating_harness` holds its id. No value (or `harness`) is the built-in loop. Another harness runs through ACP, the Agent Client Protocol (`acp.py`): the daemon starts it as a subprocess and changes its `session/update` notifications into `token`, `thinking`, `tool.start`, `tool.result`, `fs.changed`, `permission.request`, and `turn.end`. An ACP plan becomes an `update_plan` call. Storage keeps an ACP session with the provider `acp` and the harness id as the model.
+
+| `type` | Fields | Function |
+|---|---|---|
+| `harnesses.list` | none | The reply is `harnesses`. It needs no session. |
+| `harnesses.save` | `name`, `command`, `id` (optional) | Add a custom harness, or change the custom harness `id`. `command` starts it in ACP mode. The reply is `harnesses`. |
+| `harnesses.delete` | `id` | Delete a custom harness. If it is the operating harness, the setting goes back to the built-in loop (`user_settings` comes first). The reply is `harnesses`. |
+| `harnesses` (daemon to client) | `items`, `current`, `path` | Each item has `id`, `name`, `description`, `website`, `license`, `command`, `status` (`installed`, `npx`, `uvx`, or `missing`), `detail`, `custom`, `recommended` (its place in the Recommended group, or null), `reason` (why it is recommended), and `local_models` (it can use a local model server). `current` is the operating harness id. `path` is the file of the custom harnesses. |
+
+An ACP session differs from a session of the built-in loop:
+
+- The harness chooses its own model. `command` `model` gets an `error`. `context.get` gives no parts.
+- `/compact` gives a `command.result`: the harness manages its own context.
+- A rewind or a fork starts a new ACP session. Its first prompt has a recap of the last messages.
+- A `steer` message goes to the harness as the next prompt of the same turn, after the current prompt ends.
+- A reopened session uses `session/load` when the harness supports it. Else the next prompt has a recap.
+- The harness gets no Harness tools and no MCP servers yet.
+
 ### Daemon to client
 
 
@@ -227,6 +247,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 
 | `permission.request` | `rule` | The rule that `allow_always` adds, for example `edit(src/app.py)` or `bash(npm test)`. `null` when a plugin asks for approval: there is no "always" choice, because the plugin asks each time. |
 | `permission.request` | `reason` | Why a plugin asks for approval, if a plugin asks. |
+| `permission.request` | `remember` | In an ACP session: the name of the harness, when it offers "always allow". The harness keeps that choice, not the project settings. |
+| `session.ready` | `harness` | `{"id", "name"}` of the operating harness of an ACP session, else null. `model` is then `acp/<id>`. |
 | `permission.request` | `kind`, `questions`, `plan` | `kind: "question"`: the agent asks with `ask_user_question`. `questions` has 1 to 4 items with `question`, `header`, `options` (`label`, `description`), and `multiSelect`. The reply is `question.reply`. `kind: "plan"`: the agent gives its plan with `exit_plan_mode` in plan mode. `plan` is Markdown. The reply is `plan.reply`. With no `kind`, it is a permission request. |
 
 | `tool.result` | `diff` | A unified diff of the file change, for a tool that changed a file. The field is not present for other tools. |

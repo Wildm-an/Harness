@@ -27,6 +27,7 @@ export type ChatItem =
       input: unknown;
       diff: string | null;
       rule: string | null;
+      remember?: string | null; // An ACP harness keeps the "always" choice: its name.
       reason?: string | null;
       decision?: Decision;
       expired?: boolean; // The turn ended before a decision.
@@ -129,6 +130,7 @@ export function requestCard(r: PermissionRequest): ChatItem {
     input: r.input,
     diff: r.diff,
     rule: r.rule,
+    remember: r.remember ?? null,
     reason: r.reason ?? (r.background && r.agent ? `The background agent "${r.agent}" asks.` : r.reason),
     background: r.background,
     agent: r.agent,

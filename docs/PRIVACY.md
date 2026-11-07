@@ -41,6 +41,10 @@ Harness connects to these services only after you add them or turn them on:
 - **The Cookbook.** The Local Models screen searches huggingface.co when you open it. Model details
   and downloads use huggingface.co. Harness sends your Hugging Face token only if you save one.
 - **Plugins.** A plugin install from a git address clones the repository.
+- **Operating harness.** When you choose another harness in Settings > Operating Harness, a new session
+  starts that program. A harness that runs with npx or uvx downloads its package from npm or PyPI at the
+  first start. The harness then sends your prompts and project files to its own model service, under its
+  own privacy policy.
 - **The agent browser.** The agent browser opens the servers of the project. It opens other sites
   only after you allow them. Chromium downloads only when you run `harness-daemon --install-browser`.
 - **The Browser pane, the terminal, and the agent tools.** These open the addresses and run the

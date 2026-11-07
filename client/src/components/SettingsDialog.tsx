@@ -4,7 +4,7 @@
 // Computers are the screens that the sidebar opened before. Plugins are on the Capabilities page.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, UserRound, Workflow, X, type LucideIcon } from "lucide-react";
 import type { NewTaskPrompt, PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
 import type { WebKeyProvider } from "../lib/providerKeys";
 import { useOverlay } from "../lib/overlay";
@@ -56,11 +56,12 @@ import { useLinksInPane } from "../lib/openLink";
 import { compareVersions } from "../lib/version";
 import { availableVersion, checkAtStart, checkForUpdate, installUpdate, setCheckAtStart, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "harness" | "appearance" | "models" | "connections" | "computers" | "changelog";
+export type SettingsPage = "general" | "harness" | "operating" | "appearance" | "models" | "connections" | "computers" | "changelog";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
   { id: "harness", label: "Your Harness", icon: UserRound },
+  { id: "operating", label: "Operating Harness", icon: Workflow },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "models", label: "Local Models", icon: Boxes },
   { id: "connections", label: "Providers", icon: Cable },
