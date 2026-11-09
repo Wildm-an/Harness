@@ -67,6 +67,9 @@ def test_the_agent_works_in_the_tab(app_url, chromium):
             await browser.snapshot()
         info = await browser.navigate(app_url + "/")
         assert info == {"url": app_url + "/", "title": "Test app", "status": 200}
+        assert browser.tab == "t1"  # The browser card of the chat opens this tab.
+        thumb = await browser.thumbnail()
+        assert thumb[:2] == bytes([0xFF, 0xD8])  # A JPEG.
         assert page.url == app_url + "/"  # The same page: the user sees it.
         assert calls.count("Page.addScriptToEvaluateOnNewDocument") == 1
 

@@ -49,6 +49,8 @@ LIVE_QUALITY = 50
 LIVE_SIZE = {"maxWidth": 800, "maxHeight": 500}  # The live frames are small: the rail and the pane show them.
 LIVE_INTERVAL = 0.3  # Seconds between two live frames, at most.
 SCREENSHOT_QUALITY = 70
+THUMB_WIDTH = 480  # The width of the picture on the browser card of the chat.
+THUMB_QUALITY = 60
 ALWAYS_ALLOWED_SCHEMES = ("about:", "data:", "blob:")
 
 INSTALL_HINT = (
@@ -613,6 +615,19 @@ class AgentBrowser:
             return await page.screenshot(type="jpeg", quality=quality, full_page=full_page)
         return await self._call(run)
 
+    async def thumbnail(self) -> bytes:
+        """A small JPEG of the visible page, for the browser card of the chat."""
+        async def run() -> bytes:
+            page = self._page
+            if page is None or page.is_closed() or self._context is None:
+                raise BrowserError("No page is open.")
+            session = await self._context.new_cdp_session(page)
+            try:
+                return await _thumbnail(session.send)
+            finally:
+                await session.detach()
+        return await self._call(run)
+
     async def page_info(self) -> dict[str, Any] | None:
         async def run() -> dict[str, Any] | None:
             page = self._page
@@ -936,9 +951,33 @@ class PaneBrowser:
         state = await self._state()
         return {"url": state.get("url", ""), "title": state.get("title", "")}
 
+    @property
+    def tab(self) -> str | None:
+        """The id of the tab of the Browser pane that the agent works in."""
+        return self._tab
+
+    async def thumbnail(self) -> bytes:
+        """A small JPEG of the visible page, for the browser card of the chat."""
+        self._require()
+        return await _thumbnail(lambda method, params: self._call(method, params, 10))
+
     async def close(self) -> None:
         """The tab stays open: the user can use it."""
         self.started = False
+
+
+async def _thumbnail(send: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]) -> bytes:
+    """A small JPEG of the visible part of a page. ``send`` runs a DevTools protocol method."""
+    metrics = await send("Page.getLayoutMetrics", {})
+    view = metrics.get("cssLayoutViewport") or metrics.get("layoutViewport") or {}
+    width = float(view.get("clientWidth") or VIEWPORT["width"])
+    height = float(view.get("clientHeight") or VIEWPORT["height"])
+    scale = min(1.0, THUMB_WIDTH / max(width, 1.0))
+    result = await send("Page.captureScreenshot", {
+        "format": "jpeg", "quality": THUMB_QUALITY,
+        "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": scale},
+    })
+    return base64.b64decode(result.get("data") or "")
 
 
 def _first_line(error: Exception) -> str:

@@ -193,6 +193,16 @@ class PreviewLogsTool(_PreviewTool):
         return ToolResult(f"{status}\nThe last {len(lines)} lines:\n{body}")
 
 
+async def _page_card(host: "PreviewHost", info: dict[str, Any]) -> dict[str, Any]:
+    """The browser card of the chat for a page that the agent opened: the URL, the title, the tab of
+    the Browser pane (None for the headless browser), and a small picture of the page."""
+    try:
+        image: str | None = data_url(await host.browser.thumbnail())
+    except Exception:  # noqa: BLE001 - the card shows with no picture.
+        image = None
+    return {"type": "browser", "url": info["url"], "title": info["title"], "tab": host.browser.tab, "image": image}
+
+
 class PreviewNavigateTool(_PreviewTool):
     name = "preview_navigate"
     description = (
@@ -248,7 +258,7 @@ class PreviewNavigateTool(_PreviewTool):
         if errors:
             lines.append(_errors_text(errors, "Console errors"))
         lines.append("Use preview_snapshot to read the page.")
-        return ToolResult("\n".join(lines), is_error=bool(status and status >= 400))
+        return ToolResult("\n".join(lines), is_error=bool(status and status >= 400), card=await _page_card(host, info))
 
 
 class PreviewSnapshotTool(_PreviewTool):
