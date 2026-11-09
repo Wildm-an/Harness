@@ -2917,14 +2917,16 @@ export default function App() {
     if (!narrow() && viewRef.current !== "ide") savePref("sidebar.open", open ? "1" : "0");
   };
 
-  // Ctrl+E switches between the Code view and the IDE view, on every screen. The capture phase runs
-  // before the editor and the terminal get the key.
+  // Ctrl+E switches between the Code view and the IDE view, only on the chat screen. On other screens
+  // the key does nothing. The capture phase runs before the editor and the terminal get the key.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isViewShortcut(e)) return;
-      e.preventDefault();
+      e.preventDefault(); // Also on other screens, so the WebView does not do its own Ctrl+E action.
       e.stopPropagation();
-      if (e.repeat) return;
+      if (e.repeat || screenRef.current !== "chat") return;
       switchViewRef.current(viewRef.current === "ide" ? "code" : "ide");
     };
     window.addEventListener("keydown", onKey, true);
