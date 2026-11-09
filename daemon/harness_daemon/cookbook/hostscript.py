@@ -473,8 +473,34 @@ def pid_alive(pid):
         return False
 
 
+def clear_inherited_dll_directory():
+    """Windows: do not give the DLL folder of a packaged daemon to llama-server. True if it was cleared.
+
+    The PyInstaller bootloader of the daemon sets its _internal folder as the DLL folder
+    (SetDllDirectoryW), and child processes get this setting. Then llama-server loads
+    VCRUNTIME140.dll from that folder, and the installer of the next version cannot replace it.
+    Clear the setting only if Windows has the Visual C++ runtime: else llama-server cannot start.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    buffer = ctypes.create_unicode_buffer(1024)
+    if not kernel32.GetDllDirectoryW(len(buffer), buffer) or not buffer.value:
+        return False
+    system = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32")
+    if not all(os.path.isfile(os.path.join(system, dll)) for dll in ("vcruntime140.dll", "vcruntime140_1.dll")):
+        return False
+    return bool(kernel32.SetDllDirectoryW(None))
+
+
 def cmd_serve_start():
-    """Start llama-server in tmux (or as a detached process), so that it continues after the daemon stops."""
+    """Start llama-server in tmux (or as a detached process).
+
+    On a remote host, the server continues after the daemon stops. A local server on Windows stops
+    with the daemon: the daemon puts this script in a Job Object (winjob.py), and llama-server is in
+    the job too.
+    """
     name = ARGS["name"]
     binary = llama_server_argv()
     if not binary:
@@ -504,6 +530,7 @@ def cmd_serve_start():
         kwargs = {"stdout": out, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008 | 0x08000000  # DETACHED, NO_WINDOW
+            clear_inherited_dll_directory()  # This script ends after the start, so the change stays here.
         else:
             kwargs["start_new_session"] = True
         state["pid"] = subprocess.Popen(argv, **kwargs).pid

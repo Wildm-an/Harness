@@ -246,10 +246,12 @@ async def lifespan(app: FastAPI):
     ROUTINES.scheduler = RoutineScheduler(app.state.storage, run_routine, ROUTINES.broadcast)
     ROUTINES.scheduler.start()
     archiver = asyncio.create_task(_archive_loop(app.state.storage))
+    serves = asyncio.create_task(_drop_stopped_local_serves())
     try:
         yield
     finally:
         archiver.cancel()
+        serves.cancel()
         await ROUTINES.scheduler.stop()
         ROUTINES.scheduler = None
         await HEADLESS.close_all()
@@ -258,13 +260,24 @@ async def lifespan(app: FastAPI):
         stop_all_servers()
 
 
+async def _drop_stopped_local_serves() -> None:
+    """Windows: the local llama-servers stopped with the previous daemon. Remove their state and providers."""
+    try:
+        dropped = await COOKBOOK.drop_stopped_local_serves()
+    except (HostError, OSError, KeyError, TypeError) as e:
+        log.warning("cannot check the local served models: %s", e)
+        return
+    if dropped:
+        log.info("removed the stopped local served models: %s", ", ".join(dropped))
+
+
 def stop_all_servers() -> None:
     """Stop the local servers and the agent browsers of all sessions at once. For a daemon that stops."""
     for manager in list(MANAGERS):
         manager.kill_all_now()
     for host in list(PREVIEWS):
         host.close_now()
-    COOKBOOK.stop_all()  # The downloads can continue after the next start. Served models keep running.
+    COOKBOOK.stop_all()  # The downloads can continue after the next start. See winjob.py for served models.
     for manager in list(MCPS):
         manager.close_now()
 

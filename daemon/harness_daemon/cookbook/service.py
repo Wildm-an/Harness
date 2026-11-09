@@ -8,17 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import httpx
 
 from ..nethttp import async_client
 
-from ..config import write_json
+from ..config import harness_home, write_json
 from ..provider_config import providers_path
 from ..providers import read_provider_entries
 from .fit import RECOMMEND_CONTEXT, Hardware, estimate_badge, fit, recommend
@@ -376,10 +378,38 @@ class Cookbook:
             remove_provider(host, state["port"])
         await self.broadcast({"type": "serve.status", "host": host.name, "name": name, "state": "stopped"})
 
+    async def drop_stopped_local_serves(self) -> list[str]:
+        """Windows: remove the state and the provider of each local server that is not alive. Return the names.
+
+        A local llama-server on Windows stops with the daemon (winjob.py). The daemon calls this at
+        the start, so that the Local Models screen and the model list do not show a stopped server.
+        """
+        serve_dir = local_serve_dir()
+        if os.name != "nt" or not any(serve_dir.glob("*.json")):
+            return []
+        # The providers are in harness_home(). With another HARNESS_HOME (for example a test daemon),
+        # the servers of the serve folder are not the servers of this daemon.
+        if harness_home().resolve() != serve_dir.parent.parent.resolve():
+            return []
+        host = get_host(LOCAL)
+        dropped = []
+        for s in (await run_script(host, "serve-status"))["serves"]:
+            if s["alive"] or (host.name, s["name"]) in self.starting:
+                continue
+            await run_script(host, "serve-stop", {"name": s["name"]})
+            remove_provider(host, s["port"])
+            dropped.append(s["name"])
+        return dropped
+
     async def serve_output(self, host_name: str | None, name: str) -> dict[str, Any]:
         host = get_host(host_name)
         result = await run_script(host, "serve-log", {"name": name, "lines": 300})
         return {"type": "serve.output", "host": host.name, "name": name, "text": result["text"]}
+
+
+def local_serve_dir() -> Path:
+    """The serve state folder of the host script (SERVE_DIR in hostscript.py) on this computer."""
+    return Path(os.path.expanduser("~")) / ".harness" / "cookbook" / "serves"
 
 
 def default_context(weights: int, shape: ModelShape | None, hw: Hardware) -> int:

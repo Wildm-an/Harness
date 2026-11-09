@@ -3,6 +3,21 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Updates
+
+- An update of Harness on Windows does not fail with "Error opening file for writing" on
+  `harness-daemon\_internal\VCRUNTIME140.dll` again. The cause was a local llama-server that
+  continued after Harness closed and kept that file open.
+- A local llama-server on Windows now stops when the daemon stops, also when the app kills the
+  daemon. The daemon puts it in a Job Object. At the next start, the Local Models screen and the
+  model list do not show the stopped server.
+- llama-server does not load DLL files from the daemon folder when Windows has the Visual C++
+  runtime.
+- Before the installer writes the files, it stops each process that runs a file of the install
+  folder or has a DLL file of that folder open. The uninstaller does this too.
+
 ## 0.1.59 (2026-11-09)
 
 ### Operating Harness
