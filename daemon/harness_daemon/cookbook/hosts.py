@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 from ..config import ConfigError, harness_home, read_json, write_json
 from ..tunnels import SshTarget, parse_ssh
-from .. import frozen, tunnels
+from .. import frozen, tunnels, winjob
 
 LOCAL = "local"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,40}$")
@@ -201,6 +201,10 @@ def start_script(host: Host, command: str, args: dict[str, Any],
     except OSError as e:
         what = "ssh" if host.remote else "Python"
         raise HostError(f"Cannot start {what} for the host {host.name}: {e}") from e
+    if not host.remote:
+        # Windows: the script and its child processes (a local llama-server) stop when the daemon stops.
+        # The daemon sends the script text after this call, so no child process starts before it.
+        winjob.stop_with_daemon(proc)
     run = ScriptRun(proc, done)
     text = script_text(command, {**args, "llama_server": host.llama_server})
 
@@ -244,7 +248,10 @@ def start_script(host: Host, command: str, args: dict[str, Any],
                 detail = stderr.splitlines()[-1] if stderr else f"exit code {proc.returncode}"
                 where = f"through SSH ({host.ssh.label})" if host.ssh else "on this computer"
                 error = f"The host script failed {where}: {detail}"
-        loop.call_soon_threadsafe(finish, result, error)
+        try:
+            loop.call_soon_threadsafe(finish, result, error)
+        except RuntimeError:  # The event loop closed (the daemon stops): no one waits for the result.
+            pass
 
     threading.Thread(target=read, daemon=True).start()
     return run

@@ -230,6 +230,29 @@ Var HarnessDirLabel
   Call HarnessShowPercent
 !macroend
 
+; Stop each process that runs a file of $INSTDIR or has a DLL file of $INSTDIR open: harness.exe,
+; harness-daemon.exe, and processes that the daemon started. For example, a llama-server.exe of a
+; previous version loaded VCRUNTIME140.dll from harness-daemon\_internal, and the installer could
+; not replace that file ("Error opening file for writing"). This setup process does not stop.
+; 64-bit PowerShell: a 32-bit process cannot read the DLL list of a 64-bit process.
+!macro HarnessStopInstallProcesses
+  Push $0
+  Push $1
+  StrCpy $1 $INSTDIR ; A register: a quote in the folder name cannot break the call.
+  System::Call "kernel32::GetCurrentProcessId() i .r0"
+  System::Call "kernel32::SetEnvironmentVariable(t 'HARNESS_INSTDIR', t r1) i"
+  System::Call "kernel32::SetEnvironmentVariable(t 'HARNESS_SETUP_PID', t '$0') i"
+  ${DisableX64FSRedirection}
+  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:HARNESS_INSTDIR.TrimEnd('\') + '\'; $$me = [int]$$env:HARNESS_SETUP_PID; $$ids = @(); foreach ($$p in Get-Process) { if ($$p.Id -eq $$me -or $$p.Id -eq $$PID) { continue }; try { $$files = @($$p.Path) + @($$p.Modules.FileName) } catch { continue }; foreach ($$f in $$files) { if ($$f -and $$f.StartsWith($$d, [StringComparison]::OrdinalIgnoreCase)) { $$ids += $$p.Id; break } } }; if ($$ids) { Stop-Process -Id $$ids -Force -ErrorAction SilentlyContinue; Wait-Process -Id $$ids -Timeout 15 -ErrorAction SilentlyContinue }"`
+  Pop $0
+  ${EnableX64FSRedirection}
+  ; The app that this setup starts at the end must not get these variables.
+  System::Call "kernel32::SetEnvironmentVariable(t 'HARNESS_INSTDIR', p 0) i"
+  System::Call "kernel32::SetEnvironmentVariable(t 'HARNESS_SETUP_PID', p 0) i"
+  Pop $1
+  Pop $0
+!macroend
+
 !macro HARNESS_FUNCTIONS UN
 Function ${UN}HarnessScale
   System::Call "user32::GetDpiForWindow(p $HWNDPARENT) i .r9"
@@ -1254,6 +1277,7 @@ Section Install
   !endif
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  !insertmacro HarnessStopInstallProcesses
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
@@ -1414,6 +1438,7 @@ Section Uninstall
   !endif
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  !insertmacro HarnessStopInstallProcesses
 
   ; Delete the app directory and its content from disk
   ; Copy main executable
