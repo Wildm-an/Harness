@@ -41,6 +41,7 @@ import re
 import subprocess
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -48,6 +49,7 @@ from . import __version__, acp_mcp
 from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
 from .acp_terminal import TerminalError, TerminalHost
 from .agent import INTERRUPTED, Agent, user_message
+from .created import before_call, created_files
 from .files import file_hash, relpath
 from .permissions import PLAN_BLOCK
 from .providers import ModelClient, Provider
@@ -390,6 +392,25 @@ class _Call:
             self.locations = [loc for loc in data["locations"] if isinstance(loc, dict)]
 
 
+@dataclass
+class _McpCard:
+    """The chat cards of one call of the Harness MCP server: a ToolCardData, and the new PDF and Word files."""
+
+    name: str
+    args: dict[str, Any]
+    output: str
+    card: dict[str, Any] | None
+    created: list[str]
+
+    def matches(self, call: _Call) -> bool:
+        """True when the tool call of the harness is this MCP call: the title has the tool name (for example
+        "mcp__harness__send_file"), or the input is the same."""
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(self.name)}(?![A-Za-z0-9])", call.title):
+            return True
+        raw = call.raw_input
+        return bool(self.args) and (raw == self.args or raw.get("arguments") == self.args)
+
+
 class AcpAgent(Agent):
     """An agent whose loop runs in another harness, through ACP."""
 
@@ -419,7 +440,10 @@ class AcpAgent(Agent):
         # The Harness MCP server of this session (acp_mcp.py). The server sets the address of the daemon.
         self.mcp_base: str | None = None
         self._mcp_secret: str | None = None
-        self.terminals = TerminalHost(self.cwd, self.ctx.shell)
+        # The chat cards (card, created) of the Harness MCP calls of this turn. Each one waits for the tool
+        # call of the harness that made it (_end_call). A card with no such tool call gets its own row.
+        self._cards: list[_McpCard] = []
+        self.terminals =TerminalHost(self.cwd, self.ctx.shell)
         # The features of the harness that the client shows.
         self.acp_commands: list[dict[str, str]] = []  # The / commands of the harness: name, description, hint.
         self.acp_models: list[dict[str, str]] = []  # id, name, description.
@@ -840,8 +864,13 @@ class AcpAgent(Agent):
     async def run_harness_tool(self, name: str, args: dict[str, Any]) -> ToolResult:
         """A call of the Harness MCP server (acp_mcp.py). The permissions and the hooks of Harness apply."""
         call_id = f"harness_{uuid.uuid4().hex[:12]}"
+        snapshot = await asyncio.to_thread(before_call, self.cwd, name, args)
         result = await self._execute(name, args, None, call_id)
         result.output = truncate(result.output, int(self.settings["max_output_chars"]))
+        created = await asyncio.to_thread(created_files, self.cwd, snapshot, result.changed_paths)
+        # The harness reports the call itself, after this reply. Its tool row gets the cards (_end_call).
+        if result.card or created:
+            self._cards.append(_McpCard(name, dict(args), result.output, result.card, created))
         for path in result.changed_paths:
             await self._changed(str(path))
         return result
@@ -956,10 +985,19 @@ class AcpAgent(Agent):
         failed = call.status == "failed" if is_error is None else is_error
         text = truncate(output if output is not None else self._output(call), int(self.settings["max_output_chars"]))
         diff = self._diff(call) or None
-        self._add_tool_result(call.id, text, failed, diff)
+        cards = next((c for c in self._cards if c.matches(call)), None) if call.kind != "plan" else None
+        if cards is not None:
+            self._cards.remove(cards)
+        card = cards.card if cards else None
+        created = cards.created if cards else []
+        self._add_tool_result(call.id, text, failed, diff, created=created, card=card)
         event: dict[str, Any] = {"type": "tool.result", "id": call.id, "output": text, "is_error": failed}
         if diff:
             event["diff"] = diff
+        if created:
+            event["created"] = created
+        if card:
+            event["card"] = card
         await self.emit(event)
         if call.kind in ("edit", "delete", "move") and not failed:
             for block in call.content:
@@ -1002,6 +1040,26 @@ class AcpAgent(Agent):
         await self.emit({"type": "tool.start", "id": call.id, "name": "update_plan", "input": args})
         done = sum(1 for i in items if i["status"] == "completed")
         await self._end_call(call, f"Plan shown: {done} of {len(items)} steps completed.", False)
+
+    async def _flush_cards(self) -> None:
+        """The cards of the Harness MCP calls that the harness did not report as tool calls: a row for each."""
+        cards, self._cards = self._cards, []
+        for c in cards:
+            call_id = f"harness_{uuid.uuid4().hex[:12]}"
+            text = "".join(self._text) or None
+            self._text.clear()
+            self.streamed.clear()
+            self.history.append({"role": "assistant", "content": text, "tool_calls": [
+                {"id": call_id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(c.args)}},
+            ]})
+            await self.emit({"type": "tool.start", "id": call_id, "name": c.name, "input": c.args})
+            self._add_tool_result(call_id, c.output, False, created=c.created, card=c.card)
+            event: dict[str, Any] = {"type": "tool.result", "id": call_id, "output": c.output, "is_error": False}
+            if c.created:
+                event["created"] = c.created
+            if c.card:
+                event["card"] = c.card
+            await self.emit(event)
 
     # -- turns --------------------------------------------------------------------------------------------
 
@@ -1053,6 +1111,7 @@ class AcpAgent(Agent):
         self.turn_number += 1
         self.in_turn = True
         self._calls = {}
+        self._cards = []
         self._text = []
         self._thinking = False
         self._cancelling = False
@@ -1115,6 +1174,7 @@ class AcpAgent(Agent):
         for call in self._calls.values():
             if call.started and not call.ended:
                 await self._end_call(call)
+        await self._flush_cards()
         text = "".join(self._text)
         self._text.clear()
         self.streamed.clear()
@@ -1139,6 +1199,7 @@ class AcpAgent(Agent):
         for call in self._calls.values():
             if call.started and not call.ended:
                 await self._end_call(call, INTERRUPTED, True)
+        await self._flush_cards()
         text = "".join(self._text)
         self._text.clear()
         self.streamed.clear()

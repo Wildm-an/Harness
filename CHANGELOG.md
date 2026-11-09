@@ -7,6 +7,8 @@ this file on its Changelog page.
 
 ### Updates
 
+- In an ACP session, the browser, file, and artifact cards now show in the chat when the other
+  harness uses a Harness tool. The new PDF and Word files of these tools also get a card.
 - An update of Harness on Windows does not fail with "Error opening file for writing" on
   `harness-daemon\_internal\VCRUNTIME140.dll` again. The cause was a local llama-server that
   continued after Harness closed and kept that file open.

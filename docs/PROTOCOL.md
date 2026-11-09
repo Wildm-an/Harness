@@ -157,6 +157,7 @@ An ACP session differs from a session of the built-in loop:
 - A reopened session uses `session/load` when the harness supports it. Else the next prompt has a recap.
 - Harness tells the harness that it can read and write files (`fs/read_text_file`, `fs/write_text_file`) and run commands (`terminal/*`). A harness that uses them gets Harness behavior: a write in the project keeps a checkpoint for the rewind, the deny rules (`write`, `edit`, `bash`) and plan mode apply, and `fs.changed` goes to the client. Harness runs a terminal command in its shell when the command has no arguments. A tool call with `terminal` content shows the output of the terminal.
 - The harness gets one MCP server, `harness` (`acp_mcp.py`): the Harness tools that it does not have (the browser preview, documents, background tasks, memory, session search) and the tools of the MCP servers of the user. Each call goes through the permission rules and the hooks of Harness. A harness with `mcpCapabilities.http` gets `POST /acp-mcp/<secret>` on the daemon address. Another harness gets the stdio bridge: the daemon program with `--mcp-bridge <url>`.
+- A call of the `harness` MCP server that makes a chat card (`send_file`, `artifact`, `preview_navigate`, or a new PDF or Word file) gives the `card` and `created` to the `tool.result` of the tool call of the harness. The tool call matches when its title has the tool name or its `rawInput` is the same input. A call that the harness does not report gets its own tool row at the end of the prompt.
 
 ### Daemon to client
 
