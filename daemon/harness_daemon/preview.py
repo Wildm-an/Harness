@@ -114,6 +114,14 @@ class SessionBrowser:
     async def screenshot(self, full_page: bool = False, quality: int = 70) -> bytes:
         return await self._active().screenshot(full_page=full_page, quality=quality)
 
+    @property
+    def tab(self) -> str | None:
+        """The tab of the Browser pane that the agent works in. None for the headless browser."""
+        return self.pane.tab if self.pane is not None and self.current is self.pane else None
+
+    async def thumbnail(self) -> bytes:
+        return await self._active().thumbnail()
+
     async def page_info(self) -> dict[str, Any] | None:
         if self.current is self.pane and (self.relay is None or not self.relay.available()):
             return None

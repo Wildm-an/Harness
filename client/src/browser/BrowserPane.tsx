@@ -169,6 +169,7 @@ let paneHooks: {
   activate: (id: string) => void;
   has: (id: string) => boolean;
   resync: (id: string) => void;
+  close: (id: string) => void;
   list: () => { tabs: BrowserTab[]; active: Record<string, string> };
 } | null = null;
 
@@ -205,6 +206,36 @@ export function agentBrowserOf(session: string | null | undefined): { tab: strin
 export async function captureAgentTab(tab: string): Promise<string> {
   const result = await browserView.cdp(tab, "Page.captureScreenshot", { format: "jpeg", quality: 45 }, 5_000);
   return `data:image/jpeg;base64,${String(result.data ?? "")}`;
+}
+
+/** The tab is open in the Browser pane (or in the saved tabs of a closed pane). */
+export function hasTab(id: string): boolean {
+  return tabExists(id);
+}
+
+/** Show a tab in its session. The app opens the pane. false: the tab is closed. */
+export function showTab(id: string): boolean {
+  const tab = allTabs().tabs.find((t) => t.id === id);
+  if (!tab) return false;
+  if (paneHooks) paneHooks.activate(id);
+  else if (kept) kept = { ...kept, active: { ...kept.active, [ownerOf(tab)]: id } };
+  return true;
+}
+
+/** Close a tab, as its close button does. With no pane, the saved tabs lose it. */
+export function closeTabById(id: string): void {
+  if (paneHooks?.has(id)) {
+    paneHooks.close(id);
+    return;
+  }
+  if (opened.delete(id)) void browserView.close(id).catch(() => undefined);
+  dropAgentTab(id);
+  if (kept) {
+    const tab = kept.tabs.find((t) => t.id === id);
+    const active = { ...kept.active };
+    if (tab && active[ownerOf(tab)] === id) delete active[ownerOf(tab)];
+    kept = { tabs: kept.tabs.filter((t) => t.id !== id), active };
+  }
 }
 
 /** Show the agent tab of a session in the pane. The app opens the pane. */
@@ -529,6 +560,7 @@ export function BrowserPane({
   const selectOnFocus = useRef(false);
   const addressRef = useRef<HTMLInputElement>(null);
   const focusAddress = useRef(false); // A new tab of the user: the address bar takes the focus.
+  const requested = useRef<string | null>(null); // The tab of the last navigation request from the app.
 
   useEffect(() => {
     kept = { tabs, active: { ...actives, [key]: active.id } };
@@ -556,6 +588,7 @@ export function BrowserPane({
       },
       has: (id) => tabsRef.current.some((t) => t.id === id),
       resync: (id) => lastSync.current.delete(id),
+      close: (id) => closeTabRef.current(id),
       list: () => ({ tabs: tabsRef.current, active: { ...activesRef.current, [keyRef.current]: activeRef.current } }),
     };
     return () => {
@@ -718,6 +751,9 @@ export function BrowserPane({
     if (id === active.id) setActiveId(rest[Math.max(0, index - 1)].id);
   };
 
+  const closeTabRef = useRef(closeTab);
+  closeTabRef.current = closeTab;
+
   /** "New tab" (the + button or Ctrl+T): the address bar takes the focus, so the user can type an address at once. */
   const openNewTab = () => {
     if (addTab()) focusAddress.current = true;
@@ -739,13 +775,17 @@ export function BrowserPane({
     handledRequest = request.key;
     setView("page");
     const target = active.url ? addTab(request.url) : active;
-    if (target) void go(target.id, request.url);
+    if (target) {
+      requested.current = target.id;
+      void go(target.id, request.url);
+    }
   }, [request?.key]);
 
-  // A new page of the agent browser. With no page of its own, the pane shows the agent page.
+  // A new page of the agent browser. With no page of its own, the pane shows the agent page. A tab
+  // that the app just asked to open (for example "Open" of a card) keeps the page view.
   useEffect(() => {
     if (!agentFrame) return;
-    if (!active.url) setView("agent");
+    if (!active.url && requested.current !== active.id) setView("agent");
   }, [agentFrame?.key]);
 
   useEffect(() => {

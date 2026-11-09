@@ -57,7 +57,9 @@ export interface SentFile {
 /** The card of a tool result: files that the agent sent, or an artifact that it published. */
 export type ToolCardData =
   | { type: "files"; files: SentFile[]; caption: string; display: "render" | "attach" | "auto"; status: "normal" | "proactive" }
-  | { type: "artifact"; id: string; title: string; description: string; version: number; updated: number };
+  | { type: "artifact"; id: string; title: string; description: string; version: number; updated: number }
+  // A page that the agent opened (preview_navigate). tab: its tab of the Browser pane, null for the headless browser.
+  | { type: "browser"; url: string; title: string; tab: string | null; image: string | null };
 
 /** A question of ask_user_question: 2 to 4 options. */
 export interface AskQuestion {
