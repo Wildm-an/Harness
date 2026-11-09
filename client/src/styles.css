@@ -2555,6 +2555,12 @@ textarea:focus-visible {
   margin-top: 0;
 }
 
+/* The mode choice of Outlook (classic): one choice on each line. */
+.mcp-signin-stack {
+  display: grid;
+  gap: 6px;
+}
+
 /* The account choice and the read-only box of a device connector (Outlook). */
 .mcp-signin .checkbox {
   color: var(--text);

@@ -153,8 +153,9 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 | `harness_daemon/providers.py` | Providers, the tool support check, and the streaming model client. |
 | `harness_daemon/mcp_client.py` | The MCP client: the configuration, the connections in their own thread, and the `mcp__*` tools. |
 | `harness_daemon/mcp_auth.py` | OAuth for HTTP and SSE MCP servers: the token store, the callback listener, and the provider of the MCP SDK. |
-| `harness_daemon/connectors.py` | The connectors of the Connectors tab: GitHub (a token), Microsoft Outlook (a device code), and Email (IMAP). |
+| `harness_daemon/connectors.py` | The connectors of the Connectors tab: GitHub (a token), Microsoft Outlook (a device code), Outlook (classic), and Email (IMAP). |
 | `harness_daemon/mail_server.py` | The built-in IMAP and SMTP server of the Email connector (`--mcp-server mail`). |
+| `harness_daemon/outlook_server.py` | The built-in COM server of the Outlook (classic) connector (`--mcp-server outlook`). Windows only. |
 | `harness_daemon/cookbook/` | The Cookbook: `hosts.py` (hosts, SSH, the host script runner), `hostscript.py` (runs on the host), `gguf.py` (the GGUF header), `fit.py` (the fit calculator), `hub.py` (the Hugging Face browser), `service.py` (downloads and serve control). |
 | `harness_daemon/provider_config.py` | Changes to `providers.json` from the Providers screen, the client keys, and the connection test. |
 | `harness_daemon/tools/` | The `read`, `glob`, `grep`, `edit`, `write`, `bash`, `skill`, and `preview_*` tools. |
@@ -329,11 +330,26 @@ The Email connector is part of Harness: `harness_daemon/mail_server.py`, an MCP 
 - Read-only (chosen with the first account) removes the tools that send, change, move, or delete (`HARNESS_MAIL_READ_ONLY`).
 - Outlook.com and Microsoft 365 do not take passwords for IMAP since 2024: use the Microsoft Outlook connector. A Google Workspace admin can block app passwords. "None" as the security is only for a mail server on the same computer.
 
+#### Outlook (classic)
+
+The Outlook (classic) connector is part of Harness: `harness_daemon/outlook_server.py`, an MCP server on stdio that uses the classic Outlook desktop app through COM (pywin32). It works only on Windows, and only with the classic Outlook app, not the new Outlook app. It uses the accounts that are signed in to Outlook, so it needs no Microsoft sign-in, no app registration, and no admin approval. The MCP client runs the daemon itself with `--mcp-server outlook`, in place of the command in `mcp.json`:
+
+```json
+"outlook-classic": { "command": "harness-daemon", "args": ["--mcp-server", "outlook"], "connector": "outlook-classic" }
+```
+
+- The user chooses the tools, and clicks "Connect". The daemon runs the server with `--check`. The check opens Outlook in the background if it is closed, and reads the accounts of the Outlook profile. `mcp-auth.json` keeps the account names and the mode.
+- The modes (`HARNESS_OUTLOOK_MODE`, from `connectors.server_env`): `read` (`list_folders`, `list_messages`, `search_messages`, `get_message`, `list_events`), `draft` (the default: also `create_draft` and `create_reply_draft`, which save in Drafts), and `send` (also `send_draft`, for an item in Drafts). To change the mode, disconnect and connect again.
+- The folder tools read only the default mailbox. `list_folders` shows the other mailboxes, with a note.
+- All COM calls run on one worker thread. If Outlook closes or restarts, the server connects again one time.
+- The server instructions tell the agent to treat email and event text as data, and not to follow instructions in it.
+- An old or unsupported antivirus can make Outlook show a security prompt when the server reads sender addresses.
+
 #### Removed connectors
 
 Harness 0.1.44 had a Chrome connector (Chrome DevTools MCP) and a Gmail connector (workspace-mcp with a Google OAuth client). They are removed. `connectors.RETIRED` lists them: the Connectors tab removes their entries from `~/.harness/mcp.json`, their records, and the Gmail credential files in `~/.harness/connectors/gmail/`. The MCP client shows a clear message for an entry that is still there.
 
-Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, `device`, or `mail`, `token`, `options`), `connectors.cancel` (`id`), `connectors.remove_account` (`id`, `login`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, and `connectors.device_code` (`id`, `url`, `code`) for a device sign-in. The items never include a token or a secret.
+Messages: `connectors.list`, `connectors.connect` (`id`, `source`: `gh`, `token`, `device`, `mail`, or `desktop`, `token`, `options`), `connectors.cancel` (`id`), `connectors.remove_account` (`id`, `login`), and `connectors.disconnect` (`id`). The replies are `connectors` with the items, and `connectors.device_code` (`id`, `url`, `code`) for a device sign-in. The items never include a token or a secret.
 
 ## Cookbook
 

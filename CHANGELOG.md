@@ -5,6 +5,13 @@ this file on its Changelog page.
 
 ## Unreleased
 
+### Connectors
+
+- A new Outlook (classic) connector uses the classic Outlook app on the daemon computer, with the
+  accounts that are signed in to Outlook. It needs no Microsoft sign-in and no app registration.
+  Windows only. The agent can read folders, messages, and calendar events. You choose if the agent
+  can also make drafts and replies, or also send a draft. The server is part of Harness.
+
 ### Updates
 
 - An update of Harness on Windows does not fail with "Error opening file for writing" on

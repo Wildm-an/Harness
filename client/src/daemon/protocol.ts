@@ -536,19 +536,28 @@ export interface ConnectorOptions {
   read_only: boolean;
 }
 
+/** The tools of Outlook (classic): "read" only, also make "draft"s, or also "send" a draft. */
+export type OutlookMode = "read" | "draft" | "send";
+
+/** The options of a "desktop" connector (Outlook (classic)). */
+export interface DesktopConnectOptions {
+  mode: OutlookMode;
+}
+
 /**
  * A connector of the Connectors tab: an MCP server that Harness sets up in one step (connectors.py).
  * "token" (GitHub): a remote server and a bearer token. "device" (Outlook): a local npm server that signs in
- * with a Microsoft device code and keeps its own tokens.
+ * with a Microsoft device code and keeps its own tokens. "mail" (Email) and "desktop" (Outlook (classic)):
+ * servers that Harness has built in.
  */
 export interface ConnectorItem {
   id: string;
   name: string;
   description: string;
-  kind: "token" | "device" | "mail";
+  kind: "token" | "device" | "mail" | "desktop";
   url: string; // The MCP server ("token"), or the page of the server ("device").
   installed: boolean; // The server entry is in ~/.harness/mcp.json.
-  source: "gh" | "token" | "device" | "mail" | null; // How it signed in. null: not connected.
+  source: "gh" | "token" | "device" | "mail" | "desktop" | null; // How it signed in. null: not connected.
   login: string | null; // The account.
   signing_in: boolean; // A device sign-in waits for the user.
   gh_available?: boolean; // "token": the GitHub CLI is signed in on the daemon computer.
@@ -557,6 +566,8 @@ export interface ConnectorItem {
   package?: string; // "device": the npm package, with its version.
   accounts?: ConnectorAccount[]; // "device" and "mail": the signed-in accounts.
   providers?: MailProvider[]; // "mail": the mail services with known settings, and "other".
+  mode?: OutlookMode; // "desktop": the tools of the server.
+  available?: boolean; // "desktop": false when the daemon computer is not Windows.
 }
 
 /** A mail service of the Email connector, with its IMAP and SMTP settings: [host, port, security]. */
@@ -915,9 +926,9 @@ export type ClientMessage =
   | {
       type: "connectors.connect";
       id: string;
-      source: "gh" | "token" | "device" | "mail";
+      source: "gh" | "token" | "device" | "mail" | "desktop";
       token?: string;
-      options?: ConnectorOptions | MailConnectOptions;
+      options?: ConnectorOptions | MailConnectOptions | DesktopConnectOptions;
     }
   | { type: "connectors.cancel"; id: string }
   | { type: "connectors.remove_account"; id: string; login: string }

@@ -115,7 +115,7 @@ On macOS and Linux, `pywin32`, `pywinpty`, and `colorama` are not in the closure
 Notes:
 
 - `colorama` and `pywinpty` have no license field. The classifiers and the LICENSE files show BSD-3-Clause and MIT.
-- `pywin32 312` shows `License: PSF` in its metadata. The file `win32/License.txt` contains a BSD-3-Clause style text (Mark Hammond). The sidecar contains only `pywintypes311.dll` and four `win32` modules.
+- `pywin32 312` shows `License: PSF` in its metadata. The file `win32/License.txt` contains a BSD-3-Clause style text (Mark Hammond). The sidecar contains `pywintypes311.dll`, `pythoncom311.dll`, some `win32` modules, and `win32com` (for the Outlook (classic) connector).
 - The SBOM files of `cryptography`, `hf-xet`, `jiter`, `pydantic_core`, `pywinpty`, and `rpds-py` list the Rust crates in their compiled modules. All of those crates have OSI-approved licenses. Some crates have choices such as `MIT OR Apache-2.0 OR LGPL-2.1-or-later` or `Apache-2.0 OR GPL-2.0-only`. The permissive option applies.
 - `hf-xet 1.6.0` is Apache-2.0. Its LICENSE file contains the Apache License 2.0. Its SBOM lists 238 crates, which include two MPL-2.0 crates (`colored`, `option-ext`).
 - `cryptography 50.0.1` contains OpenSSL 4.0.2 in its compiled module. OpenSSL 3.0 and later use Apache-2.0.

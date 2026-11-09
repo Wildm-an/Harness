@@ -6,7 +6,7 @@
 // THIRD_PARTY_LICENSES.md (section 5).
 //
 // Exception: Microsoft does not permit its product icons without a license, so Microsoft Outlook shows a
-// generic icon (lucide "Mail") next to its full name. The user chose this. The Email connector serves
+// generic icon (lucide "Mail") next to its full name. The user chose this. Outlook (classic) shows the same icon. The Email connector serves
 // many mail services, so it has a generic icon too (lucide "Inbox").
 //
 // GitHub: "mark-github-24" from Primer Octicons 19.42.0 (https://github.com/primer/octicons),
@@ -18,6 +18,7 @@ import { Inbox, Mail, Plug, type LucideIcon } from "lucide-react";
 /** Connectors that show a generic icon, because the terms of the brand do not permit its logo. */
 const GLYPHS: Record<string, LucideIcon> = {
   outlook: Mail,
+  "outlook-classic": Mail,
   email: Inbox,
 };
 
