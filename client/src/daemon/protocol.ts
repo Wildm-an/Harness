@@ -259,6 +259,9 @@ export interface HarnessItem {
 export interface SessionHarness {
   id: string;
   name: string;
+  models?: { id: string; name: string; description: string }[]; // The model menu. Empty: the harness gives none.
+  model?: string | null; // The current model id.
+  commands?: { name: string; description: string; hint: string }[]; // The / commands of the harness.
 }
 
 /** A background task: a command that the agent runs with bash and run_in_background. */
@@ -291,6 +294,7 @@ export interface CommandItem {
   source: string;
   builtin: boolean;
   bundled?: boolean; // A skill that comes with Harness (the Built-in skills list of the Capabilities page).
+  acp?: boolean; // A command of the ACP harness of the session. "source" is the harness name.
   path?: string;
   "user-invocable"?: boolean;
   "model-invocable"?: boolean;
@@ -840,6 +844,7 @@ export type ClientMessage =
   | { type: "routines.token"; id: string; action: "generate" | "delete" } // The API trigger token of a routine.
   | { type: "disk.usage" } // Settings > General > Storage.
   // Settings > Your Harness > Memory. cwd: the project folder. Each project has its own memory.
+  | { type: "acp.model"; model: string } // The model menu of an ACP session. The reply is acp.state.
   | { type: "harnesses.list" }
   | { type: "harnesses.save"; name: string; command: string; id?: string }
   | { type: "harnesses.delete"; id: string }
@@ -1095,6 +1100,7 @@ export type DaemonMessage =
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
+  | { type: "acp.state"; session_id?: string; harness: SessionHarness } // The models and the commands of an ACP harness.
   | { type: "memory.parsed"; items: MemoryFact[] }
   | ({ type: "disk.usage" } & DiskUsage)
   | { type: "memory.export"; cwd: string; name: string; data: string; count: number } // data: the .zip as base64.

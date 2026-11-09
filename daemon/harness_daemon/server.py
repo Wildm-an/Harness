@@ -25,12 +25,13 @@ from urllib.parse import urlparse
 from typing import Any, Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from . import __version__
 from .agent import Agent
 from . import acp_harnesses
-from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, placeholder_client
+from . import acp_mcp
+from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
 from .osname import os_name
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
@@ -132,6 +133,21 @@ NOT_AVAILABLE: dict[str, str] = {}
 
 # Project files for the Browser pane: a random token for each session -> the project folder.
 FILE_ROOTS: dict[str, Path] = {}
+# The HTTP address of this daemon (for example http://127.0.0.1:53817), from the first client connection.
+# The Harness MCP server of an ACP session uses it (acp_mcp.py).
+DAEMON_BASE: str | None = None
+
+
+def _daemon_base(scope: dict[str, Any]) -> str | None:
+    server = scope.get("server")
+    if not server or not server[1]:
+        return None
+    host = str(server[0])
+    if host in ("0.0.0.0", "::", ""):
+        host = "127.0.0.1"  # The harness runs on the daemon computer.
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{server[1]}"
 # The server managers of all connections. The daemon stops their servers when it stops.
 MANAGERS: set[ServerManager] = set()
 # The preview hosts of all connections. The daemon stops their agent browsers when it stops.
@@ -296,6 +312,8 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
             except (RuntimeError, WebSocketDisconnect):
                 pass
             return
+        global DAEMON_BASE
+        DAEMON_BASE = _daemon_base(websocket.scope) or DAEMON_BASE
         conn = Connection(websocket, app.state.storage)
         await conn.send({"type": "auth.ok", "version": __version__, "host": host_info(),
                          "updatable": update.refusal() is None})
@@ -325,6 +343,27 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
             await websocket.close(code=4404)
             return
         await _pipe(websocket, port)
+
+    @app.post("/acp-mcp/{secret}")
+    async def acp_mcp_endpoint(secret: str, request: Request):
+        """The Harness MCP server of an ACP session (acp_mcp.py). The secret of the URL is the access."""
+        agent = acp_mcp.find(secret)
+        if agent is None:
+            raise HTTPException(status_code=404)
+        try:
+            body = json.loads(await request.body())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+                                status_code=400)
+        reply = await acp_mcp.handle(agent, body)
+        if reply is None:
+            return Response(status_code=202)
+        return JSONResponse(reply)
+
+    @app.get("/acp-mcp/{secret}")
+    async def acp_mcp_stream(secret: str):
+        """No server-sent events: the replies come with the POST requests."""
+        return Response(status_code=405, headers={"Allow": "POST"})
 
     @app.get("/visual-frame")
     async def visual_frame():
@@ -506,6 +545,7 @@ class LiveSession:
         # A routine run: called with True when a permission request waits, and False after the answer.
         self.on_waiting: Callable[[bool], None] | None = None
         self.model_task: asyncio.Task | None = None  # The model checks after the open (check_model).
+        self.acp_task: asyncio.Task | None = None  # The start of the harness of an ACP session (AcpAgent.prepare).
         self.next_model_check = 0.0  # The time of the next check if the context length is the default.
 
     @property
@@ -679,6 +719,8 @@ class LiveSession:
             await self.preview.close()
             PREVIEWS.discard(self.preview)
         if self.session is not None and isinstance(self.session.agent, AcpAgent):
+            if self.acp_task is not None and not self.acp_task.done():
+                self.acp_task.cancel()
             await self.session.agent.close()  # The harness process of the session.
             self.preview = None
         if self.servers is not None:
@@ -725,6 +767,9 @@ class LiveSession:
         if getattr(session.agent, "model_checks_pending", False):
             session.agent.model_checks_pending = False
             self.model_task = asyncio.create_task(self.check_model())
+        if isinstance(session.agent, AcpAgent):
+            session.agent.mcp_base = DAEMON_BASE
+            self.acp_task = asyncio.create_task(session.agent.prepare())
 
     async def check_model(self) -> None:
         """Check the model endpoint after the open: tool support, context length, image input.
@@ -3256,6 +3301,13 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
     args = msg.get("args") or ""
     if not isinstance(args, str):
         raise ProtocolError("'args' must be a string.")
+    agent = conn.session.agent if conn.session is not None else None
+    if (isinstance(agent, AcpAgent) and any(c["name"] == name for c in agent.acp_commands)
+            and (name not in BUILTIN_COMMANDS or name in ACP_OWN_COMMANDS)):
+        # A command of the harness: the harness gets it as a prompt, as ACP says.
+        text = f"/{name} {args}".strip()
+        await conn.start_turn(lambda live: conn.run_turn(live, text, text))
+        return
     if name not in BUILTIN_COMMANDS:
         # Built-in commands have priority over plugin commands. Plugin commands have priority over skills.
         if await conn.run_plugin_command(name, args):
@@ -3820,6 +3872,24 @@ async def on_memory_export(conn: Connection, msg: dict[str, Any]) -> None:
                      "count": len(store.items())})
 
 
+# Built-in commands that a harness command with the same name replaces in an ACP session: the
+# harness manages its own context.
+ACP_OWN_COMMANDS = {"compact"}
+
+
+@handler("acp.model")
+async def on_acp_model(conn: Connection, msg: dict[str, Any]) -> None:
+    """The model menu of an ACP session: {"model": <model id of the harness>}. The reply is acp.state."""
+    session = conn.require_session()
+    if not isinstance(session.agent, AcpAgent):
+        raise ProtocolError("This session runs in the built-in loop. Use the model menu of Harness.")
+    conn.require_idle()
+    try:
+        await session.agent.set_model(_text_arg(msg, "model"))
+    except AcpError as e:
+        raise ProtocolError(str(e)) from None
+
+
 @handler("skills.list")
 async def on_skills_list(conn: Connection, msg: dict[str, Any]) -> None:
     """The contents of the / menu: the built-in commands, then the user-invocable skills.
@@ -3842,7 +3912,17 @@ async def on_skills_list(conn: Connection, msg: dict[str, Any]) -> None:
                 for c in plugin_commands.values() if c.name not in BUILTIN_COMMANDS]
     skills = [s.summary() for s in found.values()
               if s.user_invocable and s.name not in BUILTIN_COMMANDS and s.name not in plugin_commands]
-    await conn.send({"type": "skills", "items": builtins + commands + skills})
+    harness: list[dict[str, Any]] = []
+    agent = conn.session.agent if conn.session is not None and folder in (None, conn.session.cwd) else None
+    if isinstance(agent, AcpAgent):
+        # The commands of the harness of an ACP session (available_commands_update). They go to the harness.
+        harness = [{"name": c["name"], "description": c["description"], "argument-hint": c["hint"],
+                    "source": agent.harness.name, "builtin": False, "acp": True} for c in agent.acp_commands]
+        names = {c["name"] for c in harness}
+        builtins = [b for b in builtins if b["name"] not in names or b["name"] not in ACP_OWN_COMMANDS]
+        commands = [c for c in commands if c["name"] not in names]
+        skills = [s for s in skills if s["name"] not in names]
+    await conn.send({"type": "skills", "items": builtins + harness + commands + skills})
 
 
 @handler("skills.get")

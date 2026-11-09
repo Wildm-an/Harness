@@ -141,16 +141,22 @@ Settings > Operating Harness chooses the harness that runs the agent loop of new
 | `harnesses.list` | none | The reply is `harnesses`. It needs no session. |
 | `harnesses.save` | `name`, `command`, `id` (optional) | Add a custom harness, or change the custom harness `id`. `command` starts it in ACP mode. The reply is `harnesses`. |
 | `harnesses.delete` | `id` | Delete a custom harness. If it is the operating harness, the setting goes back to the built-in loop (`user_settings` comes first). The reply is `harnesses`. |
+| `acp.model` | `model` | The model menu of an ACP session: a model id of the harness. The daemon sends `session/set_model`, or `session/set_config_option` when the harness gives the model as a config option. The reply is `acp.state`. |
+| `acp.state` (daemon to client) | `harness` | The state of the harness of an ACP session: `id`, `name`, `models` (`id`, `name`, `description`), `model`, and `commands` (`name`, `description`, `hint`). It comes when the harness starts (at the session open) and when its models or commands change. `session.ready` has the same object in `harness`. |
 | `harnesses` (daemon to client) | `items`, `current`, `path` | Each item has `id`, `name`, `description`, `website`, `license`, `command`, `status` (`installed`, `npx`, `uvx`, or `missing`), `detail`, `custom`, `recommended` (its place in the Recommended group, or null), `reason` (why it is recommended), and `local_models` (it can use a local model server). `current` is the operating harness id. `path` is the file of the custom harnesses. |
 
 An ACP session differs from a session of the built-in loop:
 
-- The harness chooses its own model. `command` `model` gets an `error`. `context.get` gives no parts.
-- `/compact` gives a `command.result`: the harness manages its own context.
+- The open of the session starts the harness and its ACP session, so `acp.state` comes before the first prompt.
+- The model menu uses `acp.model`. `command` `model` gets an `error`.
+- The context ring uses the `usage_update` of the harness (in `turn.end`). With no usage, the tokens are 0 and the client shows no ring.
+- `/compact` gives a `command.result`, unless the harness has its own `compact` command.
+- The `/` menu (`skills`) has the commands of the harness first, with `acp: true` and the harness name as `source`. A `command` with such a name goes to the harness as the prompt `/<name> <args>`.
 - A rewind or a fork starts a new ACP session. Its first prompt has a recap of the last messages.
 - A `steer` message goes to the harness as the next prompt of the same turn, after the current prompt ends.
 - A reopened session uses `session/load` when the harness supports it. Else the next prompt has a recap.
-- The harness gets no Harness tools and no MCP servers yet.
+- Harness tells the harness that it can read and write files (`fs/read_text_file`, `fs/write_text_file`) and run commands (`terminal/*`). A harness that uses them gets Harness behavior: a write in the project keeps a checkpoint for the rewind, the deny rules (`write`, `edit`, `bash`) and plan mode apply, and `fs.changed` goes to the client. Harness runs a terminal command in its shell when the command has no arguments. A tool call with `terminal` content shows the output of the terminal.
+- The harness gets one MCP server, `harness` (`acp_mcp.py`): the Harness tools that it does not have (the browser preview, documents, background tasks, memory, session search) and the tools of the MCP servers of the user. Each call goes through the permission rules and the hooks of Harness. A harness with `mcpCapabilities.http` gets `POST /acp-mcp/<secret>` on the daemon address. Another harness gets the stdio bridge: the daemon program with `--mcp-bridge <url>`.
 
 ### Daemon to client
 

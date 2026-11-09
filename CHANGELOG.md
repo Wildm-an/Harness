@@ -18,6 +18,21 @@ this file on its Changelog page.
 - Before the installer writes the files, it stops each process that runs a file of the install
   folder or has a DLL file of that folder open. The uninstaller does this too.
 
+## 0.1.59 (2026-11-09)
+
+### Operating Harness
+
+- Harness connects its features to the other harness when the harness supports them:
+  - The file reads and edits go through Harness: an edit keeps a checkpoint for the rewind, the deny
+    rules and plan mode apply, and the open editor tabs update.
+  - Harness runs the commands of the harness, and the tool rows show their output.
+  - The harness gets the Harness tools that it does not have (browser preview, documents, background
+    tasks, memory, session search) and your MCP servers, through one MCP server named "harness".
+  - The commands of the harness show first in the `/` menu.
+  - The chip under the prompt box shows the model of the harness, and opens a menu to change it.
+  - The context ring shows the context use that the harness reports.
+- The harness starts when the session opens, so its models and commands show before the first prompt.
+
 ## 0.1.58 (2026-11-06)
 
 ### Operating Harness
