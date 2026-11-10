@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HarnessItem, UserSettings } from "../daemon/protocol";
-import { BUILTIN_HARNESS, currentHarness, filterHarnesses, harnessAction, progressText, sortHarnesses, splitHarnesses } from "./OperatingHarnessSettings";
+import { BUILTIN_HARNESS, currentHarness, filterHarnesses, harnessAction, modelGroups, progressText, sortHarnesses, splitHarnesses } from "./OperatingHarnessSettings";
 
 const harness = (id: string, name: string, extra: Partial<HarnessItem> = {}): HarnessItem => ({
   id,
@@ -20,6 +20,9 @@ const harness = (id: string, name: string, extra: Partial<HarnessItem> = {}): Ha
   update: false,
   can_download: false,
   busy: null,
+  provider_models: false,
+  provider_model: null,
+  provider_note: "",
   ...extra,
 });
 
@@ -77,5 +80,20 @@ describe("the Operating Harness page", () => {
     expect(progressText({ stage: "Downloading", received: 50, total: 200 })).toBe("Downloading 25%");
     expect(progressText({ stage: "Downloading", received: 50, total: 0 })).toBe("Downloading…");
     expect(progressText({ stage: "Installing with npm", received: 0, total: 0 })).toBe("Installing with npm…");
+  });
+
+  it("groups the models of the providers for the Model menu", () => {
+    const models = [
+      { provider: "local-ollama", model: "qwen3-coder:30b" },
+      { provider: "openrouter", model: "openai/gpt-5" },
+      { provider: "local-ollama", model: "llama3" },
+    ];
+    expect(modelGroups(models, null)).toEqual([
+      { provider: "local-ollama", values: ["local-ollama/qwen3-coder:30b", "local-ollama/llama3"] },
+      { provider: "openrouter", values: ["openrouter/openai/gpt-5"] },
+    ]);
+    // A saved model of a provider that does not answer stays as a choice.
+    expect(modelGroups(models, "BugsAI/big")).toContainEqual({ provider: "BugsAI", values: ["BugsAI/big"] });
+    expect(modelGroups(models, "local-ollama/llama3")).toHaveLength(2);
   });
 });

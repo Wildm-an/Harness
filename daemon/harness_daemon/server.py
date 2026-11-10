@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from . import __version__
 from .agent import Agent
-from . import acp_harnesses, acp_install
+from . import acp_harnesses, acp_install, acp_models
 from . import acp_mcp
 from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
@@ -3663,12 +3663,14 @@ def _user_settings_path() -> Path:
 
 async def _send_user_settings(conn: Connection) -> None:
     values = load_settings(None)
-    # The operating harness of new sessions, for the start screen: {"id", "name"}, or None for the built-in loop.
+    # The operating harness of new sessions, for the start screen: {"id", "name", "model"}, or None for the
+    # built-in loop. "model": the model of a Harness provider (acp_models.py), or None.
     harness_id = values.get("operating_harness")
     spec = acp_harnesses.find(harness_id) if isinstance(harness_id, str) and harness_id         and harness_id != acp_harnesses.BUILTIN_ID else None
     await conn.send({"type": "user_settings", "path": str(_user_settings_path()), "version": __version__,
                      "values": {k: values.get(k) for k in USER_SETTINGS},
-                     "harness": {"id": spec.id, "name": spec.name} if spec is not None else None})
+                     "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id)}
+                     if spec is not None else None})
 
 
 @handler("user_settings.get")
@@ -3737,7 +3739,12 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
 
 async def _send_harnesses(conn: Connection) -> None:
     items = await asyncio.to_thread(acp_harnesses.listing)  # shutil.which reads the PATH folders.
-    current = load_settings(None).get("operating_harness") or acp_harnesses.BUILTIN_ID
+    settings = load_settings(None)
+    current = settings.get("operating_harness") or acp_harnesses.BUILTIN_ID
+    for item in items:  # The model of a Harness provider (acp_models.py).
+        item["provider_models"] = not item["custom"] and acp_models.supports(item["id"])
+        item["provider_model"] = acp_models.choice(settings, item["id"])
+        item["provider_note"] = acp_models.NOTES.get(item["id"], "")
     await conn.send({"type": "harnesses", "items": items, "current": current,
                      "path": str(harness_home() / "harnesses.json")})
 
@@ -3791,6 +3798,34 @@ async def on_harnesses_install(conn: Connection, msg: dict[str, Any]) -> None:
         await _send_harnesses(conn)
 
     asyncio.create_task(run())
+
+
+@handler("harnesses.model")
+async def on_harnesses_model(conn: Connection, msg: dict[str, Any]) -> None:
+    """The model of a Harness provider for a harness: {"id", "model": "<provider>/<model>" or null}.
+    null: the harness uses its own model settings. Applies to new sessions. The reply is the list."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None or spec.custom:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    try:
+        value = acp_models.check_choice(harness_id, msg.get("model"))
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
+    path = _user_settings_path()
+    data = read_json(path, {})
+    models = data.get(acp_models.SETTING) if isinstance(data.get(acp_models.SETTING), dict) else {}
+    if value is None:
+        models.pop(harness_id, None)
+    else:
+        models[harness_id] = value
+    if models:
+        data[acp_models.SETTING] = models
+    else:
+        data.pop(acp_models.SETTING, None)
+    write_json(path, data)
+    await _send_harnesses(conn)
+    await _send_user_settings(conn)  # The chip of the start screen shows the model.
 
 
 @handler("harnesses.uninstall")

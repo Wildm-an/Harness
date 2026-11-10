@@ -12,6 +12,7 @@ The prompt text selects the script:
 - "mcpcard": two send_file calls of the Harness MCP server. The agent reports the first one as a tool call
   ("call_m"), and does not report the second one.
 - "/review <x>": the command of the agent.
+- "env": a reply with the arguments and some environment variables of the agent, as JSON (acp_models.py).
 
 The agent has two models ("fast" and "smart") and one command ("review"). "hello" sends a usage update.
 
@@ -138,6 +139,9 @@ def script(rid: int, params: dict) -> None:
         mcp_post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                        "params": {"name": "send_file", "arguments": {"files": ["hello.py"], "caption": "unreported"}}})
         chunk(sid, "sent")
+    elif text == "env":
+        names = ["GOOSE_PROVIDER", "GOOSE_MODEL", "OPENAI_HOST", "OPENAI_BASE_PATH", "OPENAI_API_KEY", "GOOSE_CONTEXT_LIMIT"]
+        chunk(sid, json.dumps({"argv": sys.argv[1:], "env": {n: os.environ.get(n) for n in names}}))
     elif text.startswith("/review"):
         chunk(sid, "review: " + text[len("/review"):].strip())
     elif text == "edit":

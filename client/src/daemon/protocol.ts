@@ -261,6 +261,9 @@ export interface HarnessItem {
   update: boolean; // The registry has a newer version than the download.
   can_download: boolean; // Harness can download it for the daemon computer.
   busy: HarnessProgress | null; // A download runs now.
+  provider_models: boolean; // It can use a model of a Harness provider (daemon acp_models.py).
+  provider_model: string | null; // The chosen "<provider>/<model>". null: the model settings of the harness.
+  provider_note: string; // What the server of the provider must have, for example the Responses API.
 }
 
 /** The state of a harness download (harnesses.progress). total 0: the size is not known. */
@@ -275,7 +278,7 @@ export interface SessionHarness {
   id: string;
   name: string;
   models?: { id: string; name: string; description: string }[]; // The model menu. Empty: the harness gives none.
-  model?: string | null; // The current model id.
+  model?: string | null; // The current model id. On the start screen (user_settings): the model of a Harness provider, "<provider>/<model>".
   commands?: { name: string; description: string; hint: string }[]; // The / commands of the harness.
 }
 
@@ -874,6 +877,7 @@ export type ClientMessage =
   | { type: "harnesses.list"; refresh?: boolean } // refresh: read the ACP registry again ("Check again").
   | { type: "harnesses.install"; id: string } // Download the harness, or its update.
   | { type: "harnesses.uninstall"; id: string } // Delete the download.
+  | { type: "harnesses.model"; id: string; model: string | null } // A model of a Harness provider. null: the harness settings.
   | { type: "harnesses.save"; name: string; command: string; id?: string }
   | { type: "harnesses.delete"; id: string }
   | { type: "memory.list"; cwd: string }

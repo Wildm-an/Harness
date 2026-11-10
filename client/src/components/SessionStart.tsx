@@ -536,9 +536,14 @@ export function SessionStart({
                     type="button"
                     className="prompt-chip harness-label"
                     onClick={onManageHarness}
-                    title={`New sessions run in ${harness.name} through ACP. It chooses its own model. Click to change the operating harness.`}
+                    title={`New sessions run in ${harness.name} through ACP. ${
+                      harness.model ? `It uses the model ${harness.model} of your providers.` : "It chooses its own model."
+                    } Click to change the operating harness.`}
                   >
-                    <span className="prompt-chip-text">{harness.name}</span>
+                    {/* "model" here is the model of a Harness provider: "<provider>/<model>" (daemon acp_models.py). */}
+                    <span className="prompt-chip-text">
+                      {harness.model ? `${harness.name} · ${harness.model.slice(harness.model.indexOf("/") + 1)}` : harness.name}
+                    </span>
                   </button>
                 ) : (
                 <ModelMenu

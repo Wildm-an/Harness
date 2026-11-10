@@ -159,7 +159,7 @@ def test_harness_list_custom_harnesses_and_the_setting(daemon, harness_home):
     c.send({"type": "user_settings.set", "values": {"operating_harness": "custom-my-agent"}})
     settings = c.until("user_settings")[0]
     assert settings["values"]["operating_harness"] == "custom-my-agent"
-    assert settings["harness"] == {"id": "custom-my-agent", "name": "My agent"}  # For the start screen.
+    assert settings["harness"] == {"id": "custom-my-agent", "name": "My agent", "model": None}  # For the start screen.
     c.send({"type": "user_settings.set", "values": {"operating_harness": "no-such-harness"}})
     assert "Unknown harness" in c.until("error")[0]["message"]
 

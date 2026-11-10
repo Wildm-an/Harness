@@ -54,6 +54,22 @@ export function harnessAction(h: HarnessItem, progress?: HarnessProgress | null)
   return h.can_download && h.status !== "installed" ? "download" : null;
 }
 
+/** The choices of the Model menu of a harness: the models of each provider, by provider. A saved model
+ * that the list does not have (its provider is off or does not answer) stays as a choice. */
+export function modelGroups(models: { provider: string; model: string }[], current: string | null): { provider: string; values: string[] }[] {
+  const groups = new Map<string, string[]>();
+  for (const m of models) {
+    const values = groups.get(m.provider) ?? [];
+    values.push(`${m.provider}/${m.model}`);
+    groups.set(m.provider, values);
+  }
+  if (current && ![...groups.values()].some((v) => v.includes(current))) {
+    const provider = current.split("/")[0];
+    groups.set(provider, [current, ...(groups.get(provider) ?? [])]);
+  }
+  return [...groups].map(([provider, values]) => ({ provider, values }));
+}
+
 /** The text of a running download: the percent when the size is known, else the stage. */
 export function progressText(p: HarnessProgress): string {
   if (p.stage === "Downloading" && p.total > 0) return `Downloading ${Math.min(100, Math.floor((p.received / p.total) * 100))}%`;
@@ -82,6 +98,8 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
   const [confirmRemove, setConfirmRemove] = useState<HarnessItem | null>(null);
   // The running downloads (harnesses.progress), by harness id. The list replaces them when it comes.
   const [progress, setProgress] = useState<Record<string, HarnessProgress>>({});
+  // The models of the Harness providers (models.list), for the Model menu. null: not loaded yet.
+  const [models, setModels] = useState<{ provider: string; model: string }[] | null>(null);
   const [checking, setChecking] = useState(false);
   const saving = useRef(false); // A save was sent: the next list closes the form.
   const current = currentHarness(values);
@@ -98,6 +116,8 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
             saving.current = false;
             setDraft(null);
           }
+        } else if (msg.type === "models") {
+          setModels(msg.items);
         } else if (msg.type === "harnesses.progress") {
           const { stage, received, total } = msg;
           setProgress((p) => ({ ...p, [msg.id]: { stage, received, total } }));
@@ -121,7 +141,10 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
   };
 
   useEffect(() => {
-    if (connected) send({ type: "harnesses.list" });
+    if (connected) {
+      send({ type: "harnesses.list" });
+      send({ type: "models.list" });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- send uses only the connection.
   }, [conn, connected]);
 
@@ -185,9 +208,42 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
       )}
       {selected && (
         <p className="settings-note setting-help">
-          New sessions run in {selected.name}. It uses its own model and settings, so the model menu, the context
-          ring, and the Harness tools (the browser preview, the task tools) are not available in these sessions.
+          New sessions run in {selected.name}.{" "}
+          {selected.provider_model
+            ? `It uses the model ${selected.provider_model} of your providers.`
+            : "It uses its own model settings."}{" "}
+          The model menu of a session shows the models of {selected.name}.
         </p>
+      )}
+      {selected?.provider_models && (
+        <div className="setting-row harness-model-row">
+          <div className="setting-text">
+            <label htmlFor="harness-model">Model</label>
+            <span className="setting-help">
+              Use a model of your providers in {selected.name}, or the model settings of {selected.name}. Applies to new
+              sessions.{selected.provider_note ? ` ${selected.provider_note}` : ""}
+            </span>
+          </div>
+          <div className="setting-control">
+            <select
+              id="harness-model"
+              value={selected.provider_model ?? ""}
+              disabled={!connected}
+              onChange={(e) => send({ type: "harnesses.model", id: selected.id, model: e.target.value || null })}
+            >
+              <option value="">{selected.name} settings</option>
+              {modelGroups(models ?? [], selected.provider_model).map((g) => (
+                <optgroup key={g.provider} label={g.provider}>
+                  {g.values.map((v) => (
+                    <option key={v} value={v}>
+                      {v.slice(g.provider.length + 1)}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+        </div>
       )}
 
       <div className="harness-list" role="radiogroup" aria-label="Operating harness">
@@ -242,6 +298,7 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
                   command={h.command}
                   license={h.license}
                   version={h.download ? h.download.version : undefined}
+                  model={h.provider_model ?? undefined}
                   website={h.website}
                   checked={current === h.id}
                   disabled={!connected}
@@ -385,7 +442,7 @@ function DownloadControl({ item, progress, disabled, onDownload, onRemove }: {
   );
 }
 
-function HarnessRow({ id, name, description, localModels = false, badge, badgeTitle, ready = true, command, license, version, website, checked, disabled, onChoose, actions }: {
+function HarnessRow({ id, name, description, localModels = false, badge, badgeTitle, ready = true, command, license, version, model, website, checked, disabled, onChoose, actions }: {
   id: string;
   name: string;
   description: string;
@@ -396,6 +453,7 @@ function HarnessRow({ id, name, description, localModels = false, badge, badgeTi
   command: string | null;
   license?: string;
   version?: string; // The version of the download.
+  model?: string; // The model of a Harness provider.
   website?: string;
   checked: boolean;
   disabled: boolean;
@@ -432,6 +490,7 @@ function HarnessRow({ id, name, description, localModels = false, badge, badgeTi
             <span className="harness-meta">
               <code>{command}</code>
               {version && <span>Version {version}</span>}
+              {model && <span>Model {model}</span>}
               {license && <span>{license}</span>}
             </span>
           )}

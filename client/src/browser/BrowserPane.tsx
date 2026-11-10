@@ -408,6 +408,11 @@ export function minimizeTab(session: string, id: string): boolean {
   return true;
 }
 
+/** "Minimize" of the tab that the pane shows now (a double-click on the divider next to the pane). */
+export function minimizeShownTab(session: string): void {
+  if (shown) minimizeTab(session, shown);
+}
+
 /** Forget the agent tab when the user closes it. The next agent call opens a new one. */
 function dropAgentTab(id: string) {
   minimized.delete(id);
