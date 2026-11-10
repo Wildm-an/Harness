@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, contextShare, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, contextShare, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -107,12 +107,20 @@ describe("the room for a pane", () => {
 });
 
 describe("the background tasks of the rail", () => {
-  it("shows all the running tasks, then three ended tasks", () => {
+  it("shows only the running tasks, the newest first", () => {
     const list = [
       ...["r1", "r2", "r3", "r4", "r5"].map((id, i) => task(id, "running", i)),
       ...["e1", "e2", "e3", "e4"].map((id, i) => task(id, "done", 10 + i)),
     ];
-    expect(railTasks(list).map((t) => t.id)).toEqual(["r5", "r4", "r3", "r2", "r1", "e4", "e3", "e2"]);
+    expect(railTasks(list).map((t) => t.id)).toEqual(["r5", "r4", "r3", "r2", "r1"]);
+    expect(railTasks([task("e1", "done", 1), task("e2", "failed", 2)])).toEqual([]);
+  });
+
+  it("puts the ended tasks of the pane in the Finished group, the newest first", () => {
+    const list = [task("r1", "running", 1), task("d1", "done", 2), task("f1", "failed", 3), task("r2", "running", 4), task("s1", "stopped", 5)];
+    const { active, finished } = splitTasks(list);
+    expect(active.map((t) => t.id)).toEqual(["r2", "r1"]);
+    expect(finished.map((t) => t.id)).toEqual(["s1", "f1", "d1"]);
   });
 
   it("names the kind of each task, and counts down a wakeup", () => {
