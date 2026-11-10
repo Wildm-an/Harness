@@ -160,6 +160,9 @@ const parked = new Set<string>();
 // Tabs that the user minimized to the session rail: they stay parked and live (the rail shows them)
 // until the pane shows them again or the user closes them.
 const minimized = new Set<string>();
+// Agent tabs that the session rail does not show: the user closed the Browser pane with its X. The
+// next agent call in the tab shows it in the rail again.
+const railHidden = new Set<string>();
 const creating = new Map<string, Promise<string>>(); // Session id -> the tab that opens now.
 const agentListeners = new Set<() => void>();
 let shown: string | null = null; // The tab that the pane shows now.
@@ -210,7 +213,7 @@ function agentUsedLately(id: string): boolean {
 export function agentBrowserOf(session: string | null | undefined): { tab: string; live: boolean; agent: boolean; url: string; title: string } | null {
   const tab = session ? agentTabs.get(session) : undefined;
   const info = tab ? agentInfo.get(tab) : undefined;
-  if (!tab || !info || !opened.has(tab)) return null;
+  if (!tab || !info || !opened.has(tab) || railHidden.has(tab)) return null;
   return { tab, live: agentLive(tab), agent: agentUsedLately(tab), url: info.url, title: info.title };
 }
 
@@ -422,9 +425,10 @@ export async function runAgentCall(session: string, method: string, params: unkn
   const wasUsed = agentUsedLately(tab);
   if (info) info.last = Date.now();
   agentUsed.set(tab, Date.now());
+  const back = railHidden.delete(tab); // The agent works in the tab again: the rail shows it.
   if (shown !== tab && !parked.has(tab)) await park(tab);
   if (method === "Page.navigate") paneHooks?.activate(tab);
-  if (!wasLive || !wasUsed) agentChanged();
+  if (!wasLive || !wasUsed || back) agentChanged();
   return { tab, result: await browserView.cdp(tab, method, params, timeoutMs) };
 }
 
@@ -437,6 +441,7 @@ export function minimizeTab(session: string, id: string): boolean {
   const tab = allTabs().tabs.find((t) => t.id === id);
   watchAgentTabs();
   minimized.add(id);
+  railHidden.delete(id);
   agentTabs.set(session, id);
   agentInfo.set(id, { session, last: Date.now(), url: tab?.url ?? "about:blank", title: tab?.title ?? "" });
   agentChanged();
@@ -448,9 +453,22 @@ export function minimizeShownTab(session: string): void {
   if (shown) minimizeTab(session, shown);
 }
 
+/**
+ * The X of the Browser pane: the session rail stops its view of the agent tab of the session (the user
+ * asked for this). The tab stays open, and the agent can go on in it. Its next call shows it again.
+ */
+export function hideRailBrowser(session: string): void {
+  const tab = agentTabs.get(session);
+  if (!tab) return;
+  minimized.delete(tab);
+  railHidden.add(tab);
+  agentChanged();
+}
+
 /** Forget the agent tab when the user closes it. The next agent call opens a new one. */
 function dropAgentTab(id: string) {
   minimized.delete(id);
+  railHidden.delete(id);
   agentUsed.delete(id);
   const info = agentInfo.get(id);
   if (!info) return;

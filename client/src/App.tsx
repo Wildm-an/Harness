@@ -129,6 +129,7 @@ import {
   clearBrowserData,
   closeTabById,
   hasTab,
+  hideRailBrowser,
   keepCookies,
   minimizeShownTab,
   minimizeTab,
@@ -2923,6 +2924,13 @@ export default function App() {
               showRail(true);
             }
           : undefined,
+      // The X: the session rail stops its view of the agent page (the user asked for this). The next
+      // agent call in the browser shows it again.
+      onClose: () => {
+        if (session) hideRailBrowser(session.id);
+        setAgentFrame(null);
+        setFrameLive(false);
+      },
       render: () => (
         <BrowserPane
           session={session?.id ?? null}
