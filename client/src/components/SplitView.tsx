@@ -303,7 +303,7 @@ export function SplitPane({ sessionId, target, main, focusKey, onClose, onState,
             interrupt();
           }}
           onRemoveQueued={(id) => setQueue((q) => q.filter((i) => i.id !== id))}
-          onRewind={(messageId, options) => void send({ type: "session.rewind", id: messageId, ...options })}
+          onRewind={(messageId) => void send({ type: "session.rewind", id: messageId, conversation: true, code: true })}
           onAction={(message) => submitOrQueue({ kind: "prompt", text: message })}
           turn={chat.turn}
           model={shown?.model ?? ""}
