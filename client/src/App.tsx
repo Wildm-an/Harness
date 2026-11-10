@@ -173,6 +173,7 @@ import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
 import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
+import { DeleteSessionConfirm } from "./components/DeleteSessionConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { ModelUnavailable } from "./components/ModelUnavailable";
@@ -388,6 +389,7 @@ export default function App() {
   const [session, setSession] = useState<ActiveSession | null>(null);
   const [branches, setBranches] = useState<(GitBranches & { cwd: string }) | null>(null); // For the worktree chip.
   const [archiveAsk, setArchiveAsk] = useState<{ id: string; branch: string } | null>(null); // A worktree with changes.
+  const [deleteAsk, setDeleteAsk] = useState<string | null>(null); // The id of the session that "Delete session?" asks about.
   // The next prompt that the model predicts after a turn, for the session that got it.
   const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
   // "Not now" on the unavailable model prompt, by "session id model". The prompt shows again after a restart.
@@ -2971,10 +2973,7 @@ export default function App() {
         return next;
       }),
     onRename: (id, title) => void sendSafely({ type: "session.update", session_id: id, title }),
-    onDelete: (id) => {
-      if (id === split) setSplit(null);
-      sendSafely({ type: "session.delete", session_id: id });
-    },
+    onDelete: (id) => setDeleteAsk(id), // Delete always asks first (UI_RULES S8).
   };
 
   /** "Open in" > "Split view", or a drop on the main view: the session opens at the right of the shown session. */
@@ -3621,6 +3620,18 @@ export default function App() {
             onArchive={() => {
               sendSafely({ type: "session.update", session_id: archiveAsk.id, archived: true, force: true });
               setArchiveAsk(null);
+            }}
+          />
+        )}
+        {deleteAsk && (
+          <DeleteSessionConfirm
+            title={recent.find((r) => r.id === deleteAsk)?.title ?? "Untitled session"}
+            branch={recent.find((r) => r.id === deleteAsk)?.branch}
+            onCancel={() => setDeleteAsk(null)}
+            onDelete={() => {
+              if (deleteAsk === split) setSplit(null);
+              sendSafely({ type: "session.delete", session_id: deleteAsk });
+              setDeleteAsk(null);
             }}
           />
         )}
