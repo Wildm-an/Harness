@@ -7,6 +7,7 @@ import { parentHints } from "../lib/projectLabels";
 import { reorder, useSortable } from "../lib/useSortable";
 import { PointMenu } from "./PointMenu";
 import { SessionRow, sessionState, type NestedActivity, type SessionActions, type SessionState } from "./SessionRow";
+import { SkeletonRows } from "./Skeleton";
 import { SidebarFilter, loadView, saveView, type SidebarView, type SortBy, type StatusFilter } from "./SidebarFilter";
 
 export { sessionState } from "./SessionRow";
@@ -356,7 +357,10 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
             { label: "Sort A to Z", onClick: onSort },
             {
               label: `Archive all (${toArchive.length})`,
-              onClick: () => toArchive.forEach((s) => actions.onArchive(s.id, true)),
+              onClick: () =>
+                actions.onArchiveAll
+                  ? actions.onArchiveAll(toArchive.map((s) => s.id))
+                  : toArchive.forEach((s) => actions.onArchive(s.id, true)),
               disabled: disabled || toArchive.length === 0,
               separatorBefore: true,
             },
@@ -409,6 +413,7 @@ export function Sidebar({
   activeId,
   screen,
   status,
+  loading = false,
   connection,
   settings,
   onNewSession,
@@ -431,6 +436,7 @@ export function Sidebar({
   activeId: string | null;
   screen: string;
   status: ConnectionStatus;
+  loading?: boolean; // The first session list has not arrived: skeleton rows in place of "No projects yet." (rule R8).
   connection: React.ReactNode; // The computer button at the bottom.
   settings: React.ReactNode; // The Settings button, on the right of the computer button.
   onNewSession: () => void;
@@ -620,7 +626,9 @@ export function Sidebar({
           </button>
           <SidebarFilter view={view} onChange={changeView} />
         </div>
-        {view.groupBy === "none" ? (
+        {loading && pinned.length === 0 && unpinned.length === 0 ? (
+          <SkeletonRows count={5} className="side-skeleton" label="Loading the sessions" />
+        ) : view.groupBy === "none" ? (
           unpinned.length === 0 ? (
             <p className="side-empty">{!open ? "Connect to a computer to see its sessions." : view.status === "archived" ? "No archived sessions." : "No sessions yet."}</p>
           ) : (

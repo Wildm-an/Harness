@@ -19,7 +19,7 @@ describe("the Cookbook", () => {
   });
 
   it("formats sizes, counts, parameters, and tokens", () => {
-    expect(formatBytes(4683073536)).toBe("4.4 GB");
+    expect(formatBytes(4683073536)).toBe("4.7 GB");
     expect(formatBytes(0)).toBe("0 B");
     expect(formatCount(294985)).toBe("295.0K");
     expect(formatParams(7615616512)).toBe("7.6B");

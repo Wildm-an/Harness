@@ -3,8 +3,12 @@
 // instructions and the memory) is in YourHarnessSettings.tsx. Local Models, Providers, and
 // Computers are the screens that the sidebar opened before. Plugins are on the Capabilities page.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { RowsPending, useRowsPending } from "./Skeleton";
+import { Switch } from "./Switch";
 import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, UserRound, Workflow, X, type LucideIcon } from "lucide-react";
+import { SecretInput } from "./SecretInput";
 import type { NewTaskPrompt, PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
 import type { WebKeyProvider } from "../lib/providerKeys";
 import { useOverlay } from "../lib/overlay";
@@ -63,7 +67,7 @@ const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "harness", label: "Your Harness", icon: UserRound },
   { id: "operating", label: "Operating Harness", icon: Workflow },
   { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "models", label: "Local Models", icon: Boxes },
+  { id: "models", label: "Local models", icon: Boxes },
   { id: "connections", label: "Providers", icon: Cable },
   { id: "computers", label: "Computers", icon: Monitor },
   { id: "changelog", label: "Changelog", icon: ScrollText },
@@ -90,10 +94,23 @@ export function busySend(): BusySend {
   return toBusySend(loadPref(BUSY_SEND_PREF, "queue"));
 }
 
+/** The forms of the Settings pages that are open now. A form with a Cancel button marks it `data-form-cancel`. */
+function openForms(root: HTMLElement | null): HTMLFormElement[] {
+  return [...(root?.querySelectorAll<HTMLFormElement>(".settings-body form") ?? [])];
+}
+
+/** A form with text in a field. An emptied field has nothing to lose. */
+function hasText(form: HTMLFormElement): boolean {
+  return [...form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")].some(
+    (f) => !["checkbox", "radio", "hidden", "button", "submit", "range", "color"].includes(f.type) && f.value.trim() !== "",
+  );
+}
+
 export function SettingsDialog({
   page,
   onPage,
   onClose,
+  closeRef,
   configPath,
   onOpenConfig,
   children,
@@ -101,6 +118,7 @@ export function SettingsDialog({
   page: SettingsPage;
   onPage: (page: SettingsPage) => void;
   onClose: () => void;
+  closeRef?: MutableRefObject<(() => void) | null>; // The guarded close, for the Ctrl+, key of the app.
   configPath: string | null; // ~/.harness/settings.json of the daemon. null: not connected.
   onOpenConfig: (() => void) | null; // null: the file is on another computer.
   children: ReactNode; // The current page.
@@ -119,11 +137,78 @@ export function SettingsDialog({
     };
   }, []);
 
+  // The forms that the user typed in (audit U9). A form that closes leaves the page, so it does not count.
+  const changed = useRef(new WeakSet<HTMLFormElement>());
+  useEffect(() => {
+    const el = dialog.current;
+    if (!el) return;
+    const mark = (e: Event) => {
+      const form = e.target instanceof Element ? e.target.closest("form") : null;
+      if (form) changed.current.add(form);
+    };
+    // A small form that stays on the page (for example a token field) is saved by its submit. A form with
+    // Cancel stays marked: after a failed save it still has the text of the user.
+    const submitted = (e: Event) => {
+      const form = e.target instanceof HTMLFormElement ? e.target : null;
+      if (form && !form.querySelector("[data-form-cancel]")) changed.current.delete(form);
+    };
+    // A form that closes takes its focused button with it, and the focus falls to the page body, where Esc
+    // does nothing. Then the focus goes back to the page in the dialog.
+    // In the observer, Chrome can still give the removed element as the active element: check that it is gone.
+    // A dialog over the settings (for example Storage) keeps its focus.
+    const lost = new MutationObserver(() => {
+      const active = document.activeElement;
+      if (el.isConnected && (active === null || active === document.body || !active.isConnected)) {
+        el.querySelector<HTMLElement>(".settings-nav [aria-current='page']")?.focus({ preventScroll: true });
+      }
+    });
+    lost.observe(el, { childList: true, subtree: true });
+    el.addEventListener("input", mark);
+    el.addEventListener("change", mark);
+    el.addEventListener("submit", submitted, true);
+    return () => {
+      lost.disconnect();
+      el.removeEventListener("input", mark);
+      el.removeEventListener("change", mark);
+      el.removeEventListener("submit", submitted, true);
+    };
+  }, []);
+  const isChanged = (f: HTMLFormElement) => changed.current.has(f) && hasText(f);
+
+  // A question before typed text goes away: "after" runs on "Discard".
+  const [ask, setAsk] = useState<{ title: string; after: () => void; focus: Element | null } | null>(null);
+  const guard = (title: string, after: () => void) => {
+    if (openForms(dialog.current).some(isChanged)) setAsk({ title, after, focus: document.activeElement });
+    else after();
+  };
+  const requestClose = () => guard("Close the settings?", onClose);
+  useEffect(() => {
+    if (!closeRef) return;
+    closeRef.current = requestClose;
+    return () => {
+      closeRef.current = null;
+    };
+  });
+
+  /** Esc: an open form closes first (with its Cancel button), then the dialog. */
+  const escape = () => {
+    const form = openForms(dialog.current).filter((f) => f.querySelector("[data-form-cancel]")).pop();
+    if (!form) {
+      // A setting field saves when the focus leaves it: leave it first, so its text is not lost.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active.matches("input, textarea") && !active.closest("form")) active.blur();
+      return requestClose();
+    }
+    const cancel = () => form.querySelector<HTMLButtonElement>("[data-form-cancel]")?.click();
+    if (isChanged(form)) setAsk({ title: "Discard the changes in the form?", after: cancel, focus: document.activeElement });
+    else cancel();
+  };
+
   return (
     <div
       className="modal-backdrop settings-backdrop"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) requestClose();
       }}
     >
       <div
@@ -133,12 +218,31 @@ export function SettingsDialog({
         aria-modal="true"
         aria-labelledby="settings-title"
         onKeyDown={(e) => {
-          if (e.key === "Escape") {
+          // A field or a menu that used Esc (for example to close a list) keeps it.
+          if (e.key === "Escape" && !e.defaultPrevented) {
             e.stopPropagation();
-            onClose();
+            escape();
           }
         }}
       >
+        {ask && (
+          <ConfirmDialog
+            title={ask.title}
+            confirmLabel="Discard"
+            onConfirm={() => {
+              const after = ask.after;
+              setAsk(null);
+              after();
+            }}
+            onCancel={() => {
+              const back = ask.focus;
+              setAsk(null);
+              if (back instanceof HTMLElement) back.focus();
+            }}
+          >
+            The changes that you typed in the form are not saved.
+          </ConfirmDialog>
+        )}
         <header className="settings-head">
           <h1 id="settings-title">Settings</h1>
           <span className="spacer" />
@@ -147,7 +251,7 @@ export function SettingsDialog({
               <FileCog size={14} aria-hidden /> Open configuration file
             </button>
           )}
-          <button type="button" className="icon-btn ghost" onClick={onClose} aria-label="Close the settings" title={`Close (Esc)`}>
+          <button type="button" className="icon-btn ghost" onClick={requestClose} aria-label="Close the settings" title={`Close (Esc)`}>
             <X size={16} aria-hidden />
           </button>
         </header>
@@ -161,7 +265,7 @@ export function SettingsDialog({
                   type="button"
                   className={`settings-nav-item${p.id === page ? " active" : ""}`}
                   aria-current={p.id === page ? "page" : undefined}
-                  onClick={() => onPage(p.id)}
+                  onClick={() => p.id !== page && guard("Leave this page?", () => onPage(p.id))}
                 >
                   <Icon size={16} aria-hidden />
                   {p.label}
@@ -191,32 +295,25 @@ export function Row({ label, help, htmlFor, child, title, children }: {
   title?: string;
   children: ReactNode;
 }) {
+  // While the value loads (RowsPending), a gray bar takes the place of the control (rule R8).
+  const pending = useRowsPending();
   return (
-    <div className={child ? "setting-row setting-row-child" : "setting-row"} style={child ? { paddingLeft: 24 } : undefined} title={title}>
+    <div
+      className={`${child ? "setting-row setting-row-child" : "setting-row"}${pending ? " pending" : ""}`}
+      style={child ? { paddingLeft: 24 } : undefined}
+      title={title}
+      aria-busy={pending || undefined}
+    >
       <div className="setting-text">
-        {htmlFor ? <label htmlFor={htmlFor}>{label}</label> : <span className="setting-label">{label}</span>}
+        {htmlFor && !pending ? <label htmlFor={htmlFor}>{label}</label> : <span className="setting-label">{label}</span>}
         {help && <span className="setting-help">{help}</span>}
       </div>
-      <div className="setting-control">{children}</div>
+      <div className="setting-control">{pending ? <span className="skeleton skeleton-control" /> : children}</div>
     </div>
   );
 }
 
-export function Switch({ checked, label, disabled, onChange }: { checked: boolean; label: string; disabled?: boolean; onChange: (on: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      className={`switch${checked ? " on" : ""}`}
-      onClick={() => onChange(!checked)}
-    >
-      <span className="switch-knob" aria-hidden />
-    </button>
-  );
-}
+export { Switch }; // The one switch of the app (Switch.tsx).
 
 /** A number field. A step with the arrows saves at once. Typed text saves on Enter or when the focus leaves it. */
 function NumberField({ id, value, min, max, unit, disabled, onSave }: {
@@ -276,7 +373,7 @@ const SHORTCUTS: [string, string][] = [
   ["Back and forward", "Alt+Left, Alt+Right"],
   ["New browser tab", "Ctrl+T"],
   ["New terminal tab", "Ctrl+Shift+T"],
-  ["Interrupt the agent", "Esc"],
+  ["Stop the agent", "Esc"],
   ["Rewind the session", "Esc Esc"],
 ];
 
@@ -651,7 +748,12 @@ export function GeneralSettings({
       <div className="settings-page-head">
         <h2 className="settings-page-title">General</h2>
         <span className="settings-status" aria-live="polite">
-          {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : ""}
+          {/* M14: the key makes each new text fade in. */}
+          {status && (
+            <span key={status} className="save-status">
+              {status === "saving" ? "Saving…" : "Saved"}
+            </span>
+          )}
         </span>
       </div>
       {error && (
@@ -677,6 +779,8 @@ export function GeneralSettings({
         </select>
       </Row>
 
+      {/* The rows of the daemon settings show gray bars until the values arrive (rule R8). */}
+      <RowsPending.Provider value={connected && values === null}>
       <h3 className="settings-section">The agent</h3>
       {!connected && <p className="help settings-note">Connect to a computer to change the settings of its daemon.</p>}
 
@@ -813,6 +917,8 @@ export function GeneralSettings({
           />
         </Row>
       )}
+
+      </RowsPending.Provider>
 
       <h3 className="settings-section">Browser</h3>
       <Row label="Open links in" help="Where a link in the chat opens, for example a link that the agent lists. Applies to this computer." htmlFor="setting-open-links">
@@ -975,9 +1081,9 @@ function KeyField({ id, saved, disabled, onSave }: {
   };
   return (
     <span className="setting-key">
-      <input
+      <SecretInput
+        what="the key"
         id={id}
-        type="password"
         className="setting-text-input mono"
         value={text}
         placeholder={saved ? "••••••••  Saved" : "Paste the API key"}

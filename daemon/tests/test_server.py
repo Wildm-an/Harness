@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import socket
 import stat
+import sys
 import threading
 import time
 
@@ -301,6 +302,26 @@ def test_terminal_tabs_have_their_own_shells(daemon, project, fake_model):
     gone, seen = c.until("term.exit")
     assert gone["id"] == b["id"] and gone["code"] is None
     assert not [m for m in seen if m["type"] == "error"]
+    c.close()
+
+
+def test_terminal_running_names_the_programs_of_a_shell(daemon, project, fake_model):
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "term.open", "cols": 80, "rows": 24})
+    shell = c.until("term.opened")[0]["id"]
+    time.sleep(2)  # The shell starts.
+    c.send({"type": "term.running", "id": shell})
+    idle = c.until("term.running")[0]
+    assert (idle["id"], idle["names"]) == (shell, [])
+    sleep = f'"{sys.executable}" -c "import time; time.sleep(8)"'
+    c.send({"type": "term.input", "id": shell, "data": (f"& {sleep}" if os.name == "nt" else sleep) + "\r"})
+    time.sleep(2)
+    c.send({"type": "term.running", "id": shell})
+    assert [n.lower().removesuffix(".exe") for n in c.until("term.running")[0]["names"]] == [Path(sys.executable).stem.lower()]
+    # An unknown shell runs nothing.
+    c.send({"type": "term.running", "id": "gone"})
+    assert c.until("term.running")[0]["names"] == []
     c.close()
 
 
@@ -691,9 +712,37 @@ def test_rewind_and_fork(daemon, project, fake_model):
     c.send({"type": "session.resume", "session_id": source})
     c.until("session.ready")
     c.send({"type": "session.rewind", "id": "p2", "conversation": False, "code": True})
-    notice = c.until("notice")[0]
-    assert "1 file restored" in notice["text"]
+    done = c.until("rewind.done")[0]
+    assert "1 file restored" in done["text"]
     assert not (project / "new.txt").exists()
+
+    # "Undo rewind": the file comes back.
+    c.send({"type": "session.rewind_undo"})
+    assert c.until("rewind.undone")[0]["text"]
+    assert (project / "new.txt").read_text() == "new"
+
+    # Undo of a rewind of the code and the conversation: the messages and the files come back.
+    # (The rewind in the fork already gave hello.py its original text.)
+    (project / "hello.py").write_text("edited by the user\n")
+    c.send({"type": "session.rewind", "id": "p1", "conversation": True, "code": True})
+    assert c.until("session.ready")[0]["history"] == []
+    c.until("rewind.done")
+    assert (project / "hello.py").read_text() == original and not (project / "new.txt").exists()
+    c.send({"type": "session.rewind_undo"})
+    ready = c.until("session.ready")[0]
+    assert [m["content"] for m in ready["history"] if m["role"] == "user"] == ["change hello", "make a file"]
+    c.until("rewind.undone")
+    assert (project / "hello.py").read_text() == "edited by the user\n" and (project / "new.txt").exists()
+    # The checkpoints came back too: a second rewind restores the code again.
+    c.send({"type": "session.rewind", "id": "p2", "conversation": False, "code": True})
+    assert "1 file restored" in c.until("rewind.done")[0]["text"]
+
+    # One undo only.
+    c.send({"type": "session.rewind_undo"})
+    c.until("rewind.undone")
+    c.send({"type": "session.rewind_undo"})
+    assert "no rewind to undo" in c.until("error")[0]["message"]
+
     c.send({"type": "session.rewind", "id": "missing", "conversation": True})
     assert "not in the context" in c.until("error")[0]["message"]
     c.close()

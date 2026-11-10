@@ -51,7 +51,7 @@ export function ContextRing({
   length: number;
   source?: string;
   usage: ContextUsage | null; // The last context.usage reply.
-  running: boolean; // A turn runs: "Compact now" waits.
+  running: boolean; // A turn runs: "Compact this session" waits.
   onOpen: () => void; // Asks the daemon for the breakdown.
   onCompact: () => void;
 }) {
@@ -133,7 +133,7 @@ export function ContextRing({
             title={running ? "Wait for the end of the turn." : "Summarize the old turns now (/compact)."}
           >
             <Archive size={14} aria-hidden />
-            Compact now
+            Compact this session
           </button>
         </div>
       )}

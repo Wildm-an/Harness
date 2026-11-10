@@ -79,8 +79,14 @@
   --prompt-radius: 8px; /* The prompt box and the chat bubble of the user (the user asked for one radius). */
   --column: 780px;
   --sidebar-width: 264px;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --duration: 160ms;
+  /* Motion (UI_RULES T11). Animate only opacity and transform (translate, scale). */
+  --ease-out: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --dur-fast: 60ms;
+  --dur-snap: 120ms;
+  --dur-base: 200ms;
+  --dur-sheet: 300ms;
+  --dur-slow: 450ms;
+  --duration: var(--dur-snap); /* Hover colors and small state changes. */
   --titlebar-height: 36px;
 
   /* z-index scale */
@@ -358,7 +364,7 @@ input {
 input.mono {
   font-variant-ligatures: none;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 input::placeholder,
@@ -876,7 +882,7 @@ textarea:focus-visible {
 .side-empty {
   margin: 8px var(--side-label-x);
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .side-project-sessions .side-empty {
@@ -1001,7 +1007,7 @@ textarea:focus-visible {
 
 .conn-host {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .conn-dot {
@@ -1227,6 +1233,11 @@ textarea:focus-visible {
   background: var(--danger);
 }
 
+/* Work runs (not a failure): the accent color. */
+.toggle-alert.busy {
+  background: var(--accent);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -1260,7 +1271,7 @@ textarea:focus-visible {
 .help {
   margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 /* ---------- start and connect screens ---------- */
@@ -1302,7 +1313,7 @@ textarea:focus-visible {
 .start-help {
   margin: 10px 4px 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: center;
 }
 
@@ -1482,7 +1493,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -1510,7 +1521,7 @@ textarea:focus-visible {
   margin: 2px 0 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1646,10 +1657,14 @@ textarea:focus-visible {
   gap: 12px;
 }
 
-.confirm-title {
+/* Two classes: a dialog inside a panel does not take the style of `.panel h2`. */
+.confirm-dialog .confirm-title {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .confirm-text {
@@ -1814,7 +1829,7 @@ textarea:focus-visible {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .context-list li {
@@ -1893,7 +1908,7 @@ textarea:focus-visible {
 .menu-heading {
   padding: 8px 10px 2px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -1902,7 +1917,7 @@ textarea:focus-visible {
 .model-menu-heading {
   padding: 8px 10px 4px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -2382,7 +2397,7 @@ textarea:focus-visible {
   border-radius: 9px;
   background: var(--border);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 18px;
   text-align: center;
 }
@@ -2435,7 +2450,7 @@ textarea:focus-visible {
 
 .cap-count {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cap-section-actions {
@@ -2533,13 +2548,13 @@ textarea:focus-visible {
 
 .cap-desc {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cap-source {
   flex: none;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -2775,7 +2790,7 @@ textarea:focus-visible {
 .mcp-log {
   max-height: 180px;
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .mcp-tools {
@@ -2940,9 +2955,9 @@ select {
 
 .cb-host-select {
   display: inline-flex;
+  margin-bottom: 12px;
   align-items: center;
   gap: 8px;
-  margin-left: 12px;
   color: var(--text-muted);
   font-size: 13px;
 }
@@ -2956,7 +2971,7 @@ select {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-sunken);
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -3031,7 +3046,7 @@ select {
   align-items: center;
   gap: 6px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cb-results,
@@ -3082,7 +3097,7 @@ select {
 
 .cb-author {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cb-meta {
@@ -3104,7 +3119,7 @@ select {
   flex: none;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -3168,7 +3183,7 @@ select {
 .cb-files {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cb-files th {
@@ -3213,7 +3228,7 @@ select {
   align-items: center;
   gap: 4px;
   color: var(--success);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cb-inline-progress {
@@ -3337,7 +3352,7 @@ select {
   gap: 8px;
   padding: 6px 0;
   border-top: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cb-file-row .help {
@@ -3366,7 +3381,7 @@ select {
   align-items: center;
   gap: 6px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cb-serve-form input {
@@ -3599,7 +3614,7 @@ select {
   align-items: flex-start;
   gap: 6px;
   margin: 8px 0;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .notice-inline.warn {
@@ -3861,7 +3876,7 @@ select {
   align-items: center;
   gap: 6px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -3923,9 +3938,38 @@ select {
 }
 
 .split-handle {
+  position: relative;
   flex: none;
   z-index: var(--z-sticky);
-  transition: background var(--duration) var(--ease-out);
+}
+
+/* The accent line of a handle: it shows after 100 ms of hover, so a pointer that passes does not flash it (M12). */
+.split-handle::after {
+  content: "";
+  position: absolute;
+  opacity: 0;
+  background: var(--focus);
+  pointer-events: none;
+  transition: opacity var(--dur-snap) var(--ease-out);
+}
+
+.split-view.row > .split-handle::after {
+  inset: 0 auto 0 1px;
+  width: 3px;
+}
+
+.split-view.column > .split-handle::after {
+  inset: 1px 0 auto 0;
+  height: 3px;
+}
+
+.split-handle:hover::after {
+  opacity: 1;
+  transition-delay: 100ms;
+}
+
+.split-handle:focus-visible::after {
+  opacity: 1;
 }
 
 .split-view.row > .split-handle {
@@ -3942,16 +3986,8 @@ select {
   background: linear-gradient(to bottom, transparent 2px, var(--border) 2px 3px, transparent 3px);
 }
 
-.split-view.row > .split-handle:hover,
-.split-view.row > .split-handle:focus-visible {
+.split-handle:focus-visible {
   outline: none;
-  background: linear-gradient(to right, transparent 1px, var(--focus) 1px 4px, transparent 4px);
-}
-
-.split-view.column > .split-handle:hover,
-.split-view.column > .split-handle:focus-visible {
-  outline: none;
-  background: linear-gradient(to bottom, transparent 1px, var(--focus) 1px 4px, transparent 4px);
 }
 
 .pane-group {
@@ -4044,7 +4080,7 @@ select {
   border-radius: 999px;
   background: var(--warning-soft);
   color: var(--warning);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -4340,7 +4376,7 @@ select {
   height: 22px;
   margin-right: -4px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -4747,7 +4783,7 @@ input.tree-rename-input[aria-invalid="true"] {
   gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: 13px;
   flex: none;
 }
 
@@ -4779,7 +4815,7 @@ input.tree-rename-input[aria-invalid="true"] {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
-  font-size: 12.5px;
+  font-size: 13px;
   flex: none;
 }
 
@@ -4792,7 +4828,7 @@ input.tree-rename-input[aria-invalid="true"] {
   border-top: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   flex: none;
   white-space: nowrap;
   overflow: hidden;
@@ -5195,13 +5231,13 @@ input.tree-rename-input[aria-invalid="true"] {
 .menu-note {
   margin: 6px 10px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .menu-dim {
   margin-left: auto;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .menu-check {
@@ -5378,7 +5414,7 @@ input.tree-rename-input[aria-invalid="true"] {
 .server-block-port {
   flex: none;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .server-block-go {
@@ -5427,7 +5463,7 @@ input.tree-rename-input[aria-invalid="true"] {
 .server-block-foot {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   text-align: center;
 }
@@ -5896,7 +5932,7 @@ input.tree-rename-input[aria-invalid="true"] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-sunken);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -6008,7 +6044,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .tool-object.mono {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 400;
 }
 
@@ -6284,7 +6320,7 @@ input.tree-rename-input[aria-invalid="true"] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-sunken);
-  font-size: 12.5px;
+  font-size: 13px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -6348,7 +6384,7 @@ input.tree-rename-input[aria-invalid="true"] {
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -6401,9 +6437,9 @@ input.tree-rename-input[aria-invalid="true"] {
   width: 20px;
   height: 20px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -6420,7 +6456,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .question-label {
-  font-size: 13.5px;
+  font-size: 14px;
 }
 
 .question-label.muted {
@@ -6429,7 +6465,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .question-description {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .question-other {
@@ -6444,7 +6480,7 @@ input.tree-rename-input[aria-invalid="true"] {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 14px;
   outline: none;
 }
 
@@ -6532,7 +6568,7 @@ input.tree-rename-input[aria-invalid="true"] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-sunken);
-  font-size: 13.5px;
+  font-size: 14px;
 }
 
 .plan-card.decided .plan-body {
@@ -6610,6 +6646,52 @@ input.tree-rename-input[aria-invalid="true"] {
 .notice-error {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* The same text came more than one time: it shows one time, with the count. */
+.notice-count {
+  flex: none;
+  margin-left: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* "Undo rewind" at the end of the rewind line (rule M3). */
+.notice-action {
+  flex: none;
+  margin: -3px 0 -3px auto;
+  white-space: nowrap;
+}
+
+/* The error of a failed turn (rule M18): a title, the text, "Try again", and "Copy details". */
+.error-card {
+  padding: 12px;
+}
+
+.error-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.error-card-title {
+  font-weight: 600;
+}
+
+.error-card-body {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.error-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 /* context summary */
@@ -6704,7 +6786,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .file-card-name {
   overflow: hidden;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6821,7 +6903,7 @@ input.tree-rename-input[aria-invalid="true"] {
   display: -webkit-box;
   overflow: hidden;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -6939,7 +7021,7 @@ input.tree-rename-input[aria-invalid="true"] {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .slash-empty {
@@ -6955,7 +7037,7 @@ input.tree-rename-input[aria-invalid="true"] {
   padding: 6px 12px;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .tool-agent {
@@ -6966,6 +7048,20 @@ input.tree-rename-input[aria-invalid="true"] {
   color: var(--info);
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+/* The answer to the permission request of the call (audit R1): "Allowed once", "Always allowed", "Denied". */
+.tool-approval {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.tool-approval.denied {
+  color: var(--danger);
 }
 
 /* the skill view of the Capabilities page */
@@ -7020,7 +7116,7 @@ input.tree-rename-input[aria-invalid="true"] {
   grid-template-columns: max-content 1fr;
   gap: 4px 12px;
   margin: 12px 0;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .skill-meta dt {
@@ -7034,7 +7130,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .skill-files {
   margin-bottom: 10px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .skill-files summary {
@@ -7102,7 +7198,7 @@ input.tree-rename-input[aria-invalid="true"] {
 .working-details {
   flex: none;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -7124,7 +7220,7 @@ input.tree-rename-input[aria-invalid="true"] {
   margin-left: -6px;
   padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -7140,7 +7236,7 @@ input.tree-rename-input[aria-invalid="true"] {
   margin: -2px 0 -2px -6px;
   padding: 2px 0 2px 6px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -7151,7 +7247,7 @@ input.tree-rename-input[aria-invalid="true"] {
 .working-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .working-toggle:hover {
@@ -7232,7 +7328,7 @@ input.tree-rename-input[aria-invalid="true"] {
   background: var(--surface-2);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7720,7 +7816,7 @@ mark.word-del {
 }
 
 .cv-scope-btn .mono {
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .cv-scope-branch {
@@ -8037,12 +8133,12 @@ mark.word-del {
 .field-error {
   margin: 6px 0 0;
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .rules-help {
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -8418,7 +8514,7 @@ mark.word-del {
   align-items: center;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .msg-task-note > svg {
@@ -8437,7 +8533,7 @@ mark.word-del {
   min-height: 26px;
   margin-top: 2px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   opacity: 0;
   transition: opacity var(--duration) var(--ease-out);
 }
@@ -8560,7 +8656,7 @@ mark.word-del {
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -8594,7 +8690,7 @@ mark.word-del {
 .side-chat-note {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .side-chat-box {
@@ -8670,7 +8766,7 @@ mark.word-del {
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -8805,7 +8901,7 @@ mark.word-del {
 
 .task-command {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .task-time {
@@ -8881,7 +8977,7 @@ mark.word-del {
   width: min(1000px, 100%);
   height: min(760px, 100%);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xl, 16px);
+  border-radius: var(--radius-lg); /* A dialog (T7a). */
   background: var(--surface);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
@@ -8968,8 +9064,14 @@ mark.word-del {
   background: transparent;
 }
 
-.settings-embed .panel-head h1 {
+.settings-embed .panel-head h1,
+.settings-embed .panel-head h2 {
+  margin: 0;
+  color: var(--text);
   font-size: 16px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 /* The General page. */
@@ -8992,7 +9094,7 @@ mark.word-del {
 
 .settings-status {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .settings-section {
@@ -9031,13 +9133,13 @@ mark.word-del {
 .setting-text label,
 .setting-label {
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
 }
 
 .setting-help {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .setting-block > .setting-help {
@@ -9071,13 +9173,13 @@ mark.word-del {
 
 .setting-unit {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 input.setting-text-input {
   width: 220px;
   min-height: 32px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 /* An API key field and its Remove button (Settings > General > Web). */
@@ -9187,7 +9289,7 @@ textarea.setting-textarea:disabled {
 .settings-version {
   margin: 20px 0 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 @media (max-width: 720px) {
@@ -9263,7 +9365,7 @@ textarea.setting-textarea:disabled {
 }
 
 .update-banner-title {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -9308,6 +9410,18 @@ textarea.setting-textarea:disabled {
   color: var(--accent);
 }
 
+/* The error popups (ErrorToasts.tsx): an error that is not part of the conversation. */
+.error-toast .update-toast-icon {
+  color: var(--danger);
+}
+
+.error-toast .error-toast-body {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
 .update-toast-text {
   flex: 1;
   min-width: 0;
@@ -9317,13 +9431,13 @@ textarea.setting-textarea:disabled {
 }
 
 .update-toast-title {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .update-toast-body {
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -9486,7 +9600,7 @@ textarea.setting-textarea:disabled {
   gap: 2px;
   margin-left: 6px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -10428,7 +10542,7 @@ body.sorting * {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 /* The autocomplete switch in the editor status bar: muted when off, the accent color when on. */
@@ -10483,11 +10597,11 @@ body.sorting * {
   margin-top: 4px;
   color: var(--text);
   font-weight: 500;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .ide-preset-help {
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -10740,7 +10854,7 @@ body.sorting * {
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13px;
   outline: none;
 }
 
@@ -10775,7 +10889,7 @@ body.sorting * {
 
 .language-filter {
   min-height: 28px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .language-list {
@@ -11076,7 +11190,7 @@ body.sorting * {
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   opacity: 0.8;
   text-overflow: ellipsis;
 }
@@ -11197,7 +11311,7 @@ body.sorting * {
 
 .ide-layout-help {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .ide-sketch.small {
@@ -11576,7 +11690,7 @@ body.sorting * {
 .storage-total strong,
 .storage-size {
   flex: none;
-  font-size: 13.5px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -11603,7 +11717,7 @@ body.sorting * {
   padding: 0;
   list-style: none;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .storage-legend li {
@@ -11634,7 +11748,7 @@ body.sorting * {
 .storage-details {
   margin-top: 6px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .storage-details summary {
@@ -12186,7 +12300,7 @@ body.sorting * {
 
 .harness-error {
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .harness-tools {
@@ -12273,7 +12387,7 @@ body.sorting * {
   align-items: center;
   gap: 8px;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -12301,7 +12415,7 @@ body.sorting * {
 
 .harness-meta code {
   overflow-wrap: anywhere;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .harness-actions {
@@ -12331,6 +12445,7 @@ body.sorting * {
   height: 64px;
   border-radius: 8px;
   background: var(--hover);
+  animation: skeleton-pulse 1.6s ease-in-out infinite; /* The shared pulse of the skeletons (M16). */
 }
 
 .harness-empty {
@@ -12370,6 +12485,315 @@ body.sorting * {
   margin: 14px 0 0;
   padding: 0 8px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
+}
+
+/* ---------- motion (UI_RULES T11 and M-rules, audit section 6.2) ----------
+   Entry motion only: an element animates when it mounts. The keyframes use the separate
+   `translate` and `scale` properties, so they add to a `transform` that places the element
+   (for example `translateX(-50%)`). The rule for prefers-reduced-motion at the top of this
+   file makes all of them instant. */
+
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* --enter-y: the start offset. A menu under its trigger starts 4px up, a menu over it 4px down. */
+@keyframes enter-rise {
+  from {
+    opacity: 0;
+    translate: 0 var(--enter-y, 4px);
+  }
+}
+
+@keyframes enter-drop {
+  from {
+    opacity: 0;
+    translate: 0 -2px;
+  }
+}
+
+@keyframes enter-scale {
+  from {
+    opacity: 0;
+    scale: 0.98;
+  }
+}
+
+@keyframes enter-pop {
+  from {
+    opacity: 0;
+    scale: 0.9;
+  }
+}
+
+@keyframes enter-left {
+  from {
+    opacity: 0;
+    translate: -8px 0;
+  }
+}
+
+@keyframes enter-right {
+  from {
+    opacity: 0;
+    translate: 12px 0;
+  }
+}
+
+@keyframes enter-slide-left {
+  from {
+    translate: -100% 0;
+  }
+}
+
+@keyframes leave-fade {
+  to {
+    opacity: 0;
+  }
+}
+
+/* M1: menus and popovers. */
+.menu,
+.slash-menu,
+.pr-card-float {
+  --enter-y: -4px;
+  animation: enter-rise var(--dur-snap) var(--ease-out);
+}
+
+/* Menus that open over their trigger. */
+.slash-menu,
+.annotate-menu,
+.plan-menu,
+.menu.up,
+.menu.context-panel,
+.menu.language-dropdown {
+  --enter-y: 4px;
+}
+
+/* M2: dialogs. */
+.modal-backdrop {
+  animation: enter-fade var(--dur-base) var(--ease-out);
+}
+
+.modal,
+.quit-dialog,
+.storage-dialog {
+  animation: enter-scale var(--dur-base) var(--ease-out);
+}
+
+.settings-dialog {
+  animation: enter-scale var(--dur-sheet) var(--ease-out);
+}
+
+/* M4: a card that gets its answer changes its border, background, and glow smoothly. */
+.permission-card {
+  transition: border-color var(--dur-base) var(--ease-out), background-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+
+/* M5: the body of a row that opens. */
+.tool-group-list,
+.tool-body,
+.working-details,
+.plan-block,
+.cap-more,
+.rail-section-body {
+  animation: enter-drop var(--dur-snap) var(--ease-out);
+}
+
+/* M6: the sidebar. In a narrow window it slides over the page, and the scrim fades in. */
+.sidebar {
+  animation: enter-left var(--dur-base) var(--ease-out);
+}
+
+.sidebar-peek .sidebar {
+  animation: none; /* The peek has its own reveal. */
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    animation-name: enter-slide-left;
+  }
+
+  .sidebar-scrim {
+    animation: enter-fade var(--dur-base) var(--ease-out);
+  }
+}
+
+/* M15: the peek sidebar fades out when it closes (usePresence in lib/presence.ts). */
+.sidebar-peek.leaving {
+  pointer-events: none;
+  animation: leave-fade var(--dur-snap) var(--ease-out) forwards;
+}
+
+/* M7: the session rail. */
+.session-rail {
+  animation: enter-right var(--dur-base) var(--ease-out);
+}
+
+/* M8: a pane that opens fades in. Its size does not animate: the editor, the terminal, and the
+   browser webview would resize at each frame. */
+.pane-window {
+  animation: enter-fade var(--dur-snap) var(--ease-out);
+}
+
+/* M9: a new Settings page, a Capabilities tab, and a list or detail view. */
+.settings-page,
+.cap-section {
+  animation: enter-fade var(--dur-snap) var(--ease-out);
+}
+
+/* M10: the scroll-to-bottom button. */
+.scroll-bottom {
+  animation: enter-pop var(--dur-snap) var(--ease-out);
+}
+
+.scroll-bottom-dots,
+.scroll-bottom-jump {
+  animation: enter-fade var(--dur-snap) var(--ease-out);
+}
+
+/* M11: a new tab of the browser and the terminal. */
+.win-tab {
+  animation: enter-fade var(--dur-snap) var(--ease-out);
+}
+
+/* M13: the drop zone of a dragged pane fades in and moves between the sides. */
+.drop-zone {
+  animation: enter-fade var(--dur-snap) var(--ease-out);
+  transition: top var(--dur-snap) var(--ease-out), right var(--dur-snap) var(--ease-out),
+    bottom var(--dur-snap) var(--ease-out), left var(--dur-snap) var(--ease-out);
+}
+
+/* M14: "Saving", "Modified", "Saved". The text has a key, so each new text fades in. */
+.save-status {
+  animation: enter-fade var(--dur-snap) var(--ease-out);
+}
+
+/* ---------- copy commands (audit U10) ---------- */
+
+/* A code block of a reply: the copy button is at its top right. */
+.markdown .md-pre {
+  position: relative;
+  margin: 0 0 10px;
+}
+
+.markdown .md-pre > pre {
+  margin: 0;
+}
+
+.md-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+.md-pre:hover .md-copy,
+.md-copy:focus-visible {
+  opacity: 1;
+}
+
+/* "Copy message" under a finished reply: as the row of a user message, it shows on hover and focus. */
+.msg-assistant:hover .msg-reply-actions,
+.msg-assistant:focus-within .msg-reply-actions {
+  opacity: 1;
+}
+
+/* ---------- a queued message (audit U11) ---------- */
+
+/* It is not sent yet: a muted bubble with a dashed edge. Its label and actions always show. */
+.msg-user-wrap.queued .msg-user {
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.msg-user-wrap.queued .msg-actions {
+  opacity: 1;
+}
+
+.msg-queued-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+  cursor: default;
+}
+
+/* ---------- skeletons (UI_RULES R8, audit M16) ---------- */
+
+@keyframes skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.skeleton {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-row {
+  height: 14px;
+}
+
+/* The sidebar: rows of session names. */
+.skeleton-list.side-skeleton {
+  gap: 14px;
+  padding: 8px 12px;
+}
+
+/* The Changes pane: rows of file names. */
+.skeleton-list.changes-skeleton {
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+/* A setting row while its value loads: the bar has the size of a small control. */
+.skeleton.skeleton-control {
+  width: 120px;
+  height: 28px;
+}
+
+.setting-row.pending .setting-control {
+  justify-content: flex-end;
+}
+
+/* A text area of a setting while its value loads. */
+.skeleton.skeleton-textarea {
+  width: 100%;
+  height: 66px;
+  margin-top: 6px;
+}
+
+/* A secret field with one show and hide button (SecretInput.tsx, audit C10). */
+.key-field.secret-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-field.secret-field input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 38px;
+}
+
+.key-field.secret-field .key-field-btn {
+  right: 4px;
 }

@@ -81,10 +81,15 @@ export function useSideChat(conn: DaemonConnection, sessionId: string | null) {
     setChats((all) => ({ ...all, [sessionId]: (all[sessionId] ?? []).map((i) => (i.status === "running" ? { ...i, status: "stopped" } : i)) }));
   }, [conn, sessionId, items]);
 
-  const clear = useCallback(() => {
+  /** Empties the side chat. Returns a function that brings the items back ("Undo"), or null when it was empty. */
+  const clear = useCallback((): (() => void) | null => {
     stop();
-    if (sessionId) setChats((all) => ({ ...all, [sessionId]: [] }));
-  }, [sessionId, stop]);
+    if (!sessionId || items.length === 0) return null;
+    const removed = items.map((i) => (i.status === "running" ? { ...i, status: "stopped" as const } : i));
+    setChats((all) => ({ ...all, [sessionId]: [] }));
+    // New questions after the clear stay after the old ones.
+    return () => setChats((all) => ({ ...all, [sessionId]: [...removed, ...(all[sessionId] ?? [])] }));
+  }, [sessionId, stop, items]);
 
   return { items, ask, stop, clear, running: items.some((i) => i.status === "running") };
 }

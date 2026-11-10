@@ -1,4 +1,5 @@
-import { memo, useEffect, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -86,10 +87,32 @@ function Code({ className, children }: { className?: string; children?: ReactNod
   return <code className={className}>{children}</code>;
 }
 
+/** A code block with a copy button at its top right (audit U10). The button shows on hover and on keyboard focus. */
+function Pre({ children }: { children?: ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    const text = (ref.current?.textContent ?? "").replace(/\n$/, "");
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className="md-pre">
+      <pre ref={ref}>{children}</pre>
+      <button type="button" className="icon-btn ghost md-copy" aria-label="Copy code" title={copied ? "Copied" : "Copy code"} onClick={copy}>
+        {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+      </button>
+    </div>
+  );
+}
+
 const components: Components = {
   // Open links in the system browser, or in the Browser pane. Do not let a link replace the app page.
   a: ({ href, children }) => <Link href={href}>{children}</Link>,
   code: ({ className, children }) => <Code className={className}>{children}</Code>,
+  pre: ({ children }) => <Pre>{children}</Pre>,
   // A table that is wider than the chat scrolls in its own box. The chat does not scroll sideways.
   table: ({ children }) => (
     <div className="md-table">

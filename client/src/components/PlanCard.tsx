@@ -8,13 +8,11 @@ import type { PermissionMode, PlanDecision } from "../daemon/protocol";
 import type { PlanItem } from "../chat/state";
 import { Markdown } from "./Markdown";
 import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
+import { useCardKeys } from "../lib/cardKeys";
+import { MODES } from "./ModeMenu";
 
-const MODE_NAMES: Partial<Record<PermissionMode, string>> = {
-  acceptEdits: "Allow edits",
-  default: "Ask permissions",
-  auto: "Auto mode",
-  bypassPermissions: "Bypass permissions",
-};
+// The names of the mode menu, so that the card and the menu use one word for one mode (audit C7).
+const MODE_NAMES: Partial<Record<PermissionMode, string>> = Object.fromEntries(MODES.map((m) => [m.mode, m.label]));
 
 /** The text of a decided plan card. */
 export function planOutcome(item: PlanItem): string {
@@ -60,6 +58,14 @@ export const PlanCard = memo(function PlanCard({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [pending, revising, item.id, inSplit]);
+
+  // Esc opens "Revise…" (or closes the menu), also from the prompt box (lib/cardKeys.ts).
+  useCardKeys(pending && !revising, {
+    escape: () => {
+      if (menu) setMenu(false);
+      else setRevising(true);
+    },
+  });
 
   useEffect(() => {
     if (!pending) return;
@@ -118,13 +124,6 @@ export const PlanCard = memo(function PlanCard({
           className="permission-foot plan-foot"
           ref={actions}
           tabIndex={-1}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              if (menu) setMenu(false);
-              else setRevising(true);
-            }
-          }}
         >
           <div className="plan-actions-left">
             <button type="button" className="btn permission-deny" onClick={() => decide("reject")}>

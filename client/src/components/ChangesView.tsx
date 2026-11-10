@@ -9,6 +9,7 @@ import { fileRows, htmlRuns, mergeRuns, splitPath, type ChangeRow, type Run } fr
 import { loadPref, savePref } from "../lib/prefs";
 import { codeTheme, onThemeChange } from "../lib/theme";
 import { PaneActions, PaneHeader } from "../layout/Workspace";
+import { SkeletonRows } from "./Skeleton";
 
 const COLORIZE_LIMIT = 40_000; // Characters of a file. A longer file shows with no syntax colors.
 const LIST_PREF = "changes.fileList";
@@ -189,8 +190,9 @@ function FileSection({ file, open, viewed, onToggle, onViewed, onOpenFile, secti
 /** "master": a base ref with no "origin/". */
 const shortRef = (ref: string | null) => (ref ? ref.replace(/^origin\//, "") : null);
 
-export function ChangesView({ diff, scope, onScope, onRefresh, onOpenFile, connected }: {
+export function ChangesView({ diff, scope, onScope, onRefresh, onOpenFile, connected, error = null }: {
   diff: GitDiff | null; // null: no reply yet.
+  error?: string | null; // The last request failed: the text of the daemon.
   scope: GitDiffScope;
   onScope: (scope: GitDiffScope) => void;
   onRefresh: () => void;
@@ -343,8 +345,24 @@ export function ChangesView({ diff, scope, onScope, onRefresh, onOpenFile, conne
           </button>
         </div>
       )}
+      {/* A failed request shows here, not in the chat (rule M18a). An old diff stays under the line. */}
+      {error && connected && (
+        <div className="notice-bar bad" role="alert">
+          <span>Couldn't load the changes. {error}</span>
+          <span className="spacer" />
+          <button type="button" className="btn btn-small" onClick={onRefresh}>
+            <RotateCw size={13} aria-hidden /> Try again
+          </button>
+        </div>
+      )}
       {!diff ? (
-        <p className="pane-empty">{connected ? "Loading the changes…" : "Connect to a computer to see the changes."}</p>
+        error && connected ? null : (
+          connected ? (
+            <SkeletonRows count={4} className="changes-skeleton" label="Loading the changes" />
+          ) : (
+            <p className="pane-empty">Connect to a computer to see the changes.</p>
+          )
+        )
       ) : !diff.repo ? (
         <p className="pane-empty">This folder is not a git repository. The Changes pane shows each change that the agent asks to make.</p>
       ) : files.length === 0 ? (

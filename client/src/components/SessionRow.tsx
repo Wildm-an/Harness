@@ -20,6 +20,7 @@ export interface SessionActions {
   onResume: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void;
   onArchive: (id: string, archived: boolean) => void;
+  onArchiveAll?: (ids: string[]) => void; // "Archive all" of a project: one "Undo" popup for all of them.
   onMarkUnread: (id: string, unread: boolean) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;

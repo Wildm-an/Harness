@@ -19,6 +19,7 @@ export type ChatItem =
       image?: string; // A data URL, for example a screenshot of preview_screenshot.
       agent?: string; // The forked skill that runs this tool in a subagent.
       ts?: number; // The end time of the call (epoch ms), for the step times of the task list.
+      approval?: Decision; // Display only (foldCards in MessageList): the answer to the permission card of the call.
     }
   | {
       kind: "permission";
@@ -35,10 +36,14 @@ export type ChatItem =
       agent?: string;
     }
   // ask_user_question (daemon tools/interact.py). answers: null when the user skipped.
-  | { kind: "question"; id: string; questions: AskQuestion[]; answers?: Record<string, string> | null; notes?: Record<string, string>; expired?: boolean }
+  // tool: the tool call that asks (its row folds into the card).
+  | { kind: "question"; id: string; questions: AskQuestion[]; answers?: Record<string, string> | null; notes?: Record<string, string>; expired?: boolean; tool?: string }
   // exit_plan_mode: the plan of the agent in plan mode.
-  | { kind: "plan"; id: string; plan: string; decision?: PlanDecision; mode?: PermissionMode; expired?: boolean }
-  | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string }
+  | { kind: "plan"; id: string; plan: string; decision?: PlanDecision; mode?: PermissionMode; expired?: boolean; tool?: string }
+  // count: the times that the same text came in a row (it shows one time). turn: the error of a
+  // failed turn, which shows as an error card (rule M18).
+  // undo: the line of a rewind, with "Undo rewind" until the next user message (rule M3).
+  | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string; count?: number; turn?: boolean; undo?: boolean }
   // A new PDF or Word file of a tool call (daemon created.py): a card with "Open" for the Preview pane.
   | { kind: "file"; id: string; path: string; toolId: string }
   // send_file and artifact (daemon tools/share.py): the files that the agent sent, or an artifact card.
@@ -124,8 +129,8 @@ function expirePermissions(items: ChatItem[]): ChatItem[] {
 
 /** The card of a request: a permission card, a question card, or a plan card. */
 export function requestCard(r: PermissionRequest): ChatItem {
-  if (r.kind === "question") return { kind: "question", id: r.request_id, questions: r.questions ?? [] };
-  if (r.kind === "plan") return { kind: "plan", id: r.request_id, plan: r.plan ?? "" };
+  if (r.kind === "question") return { kind: "question", id: r.request_id, questions: r.questions ?? [], tool: r.tool };
+  if (r.kind === "plan") return { kind: "plan", id: r.request_id, plan: r.plan ?? "", tool: r.tool };
   return {
     kind: "permission",
     id: r.request_id,
@@ -290,9 +295,17 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
     case "steer.taken":
       return { ...state, items: [...endStreaming(state.items), { kind: "user", id: nextId("user"), text: msg.text, messageId: msg.id, ts: Date.now(), origin: msg.origin }] };
     case "error":
-      return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: "error", text: msg.message }] };
+      // Only an error of the conversation comes here (lib/errorRoute.ts). No ref: the turn failed.
+      return { ...state, items: addNotice(endStreaming(state.items), "error", msg.message, !msg.ref) };
     case "notice":
-      return { ...state, items: [...endStreaming(state.items), { kind: "notice", id: nextId("notice"), level: msg.level, text: msg.text }] };
+      return { ...state, items: addNotice(endStreaming(state.items), msg.level, msg.text) };
+    case "rewind.done":
+      return { ...state, items: [...state.items, { kind: "notice", id: nextId("notice"), level: "info", text: msg.text, undo: true }] };
+    case "rewind.undone": {
+      // The rewind lines lose their button: there is nothing more to undo.
+      const items = state.items.map((i) => (i.kind === "notice" && i.undo ? { ...i, undo: false } : i));
+      return { ...state, items: [...items, { kind: "notice", id: nextId("notice"), level: "info", text: msg.text }] };
+    }
     case "session.model_info": {
       // The checks of the model endpoint finished after the open.
       const notices: ChatItem[] = msg.warnings.map((text) => ({ kind: "notice", id: nextId("notice"), level: "warning", text }));
@@ -318,6 +331,18 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
   }
 }
 
+/**
+ * Adds a notice at the end. When the last item is the same notice, that item gets a count: the
+ * same text does not show two times in a row.
+ */
+export function addNotice(items: ChatItem[], level: "error" | "warning" | "info", text: string, turn = false): ChatItem[] {
+  const last = items[items.length - 1];
+  if (last?.kind === "notice" && last.level === level && last.text === text) {
+    return [...items.slice(0, -1), { ...last, count: (last.count ?? 1) + 1 }];
+  }
+  return [...items, { kind: "notice", id: nextId("notice"), level, text, ...(turn ? { turn } : {}) }];
+}
+
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case "daemon":
@@ -334,10 +359,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...state,
         running: false,
         turn: null,
-        items: [
-          ...expirePermissions(endStreaming(state.items)),
-          { kind: "notice", id: nextId("notice"), level: "error", text: "The connection to the daemon closed." },
-        ],
+        // Each failed reconnect comes here again: the line shows one time, with a count.
+        items: addNotice(expirePermissions(endStreaming(state.items)), "error", "The connection to the daemon closed."),
       };
     case "decide":
       return { ...state, items: updateItem(state.items, action.requestId, "permission", { decision: action.decision }) };
@@ -346,7 +369,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "plan":
       return { ...state, items: updateItem(state.items, action.requestId, "plan", { decision: action.decision, mode: action.mode }) };
     case "notice":
-      return { ...state, items: [...state.items, { kind: "notice", id: nextId("notice"), level: action.level, text: action.text }] };
+      return { ...state, items: addNotice(state.items, action.level, action.text) };
     case "load": {
       const warnings: ChatItem[] = action.warnings.map((text) => ({ kind: "notice", id: nextId("notice"), level: "warning", text }));
       const summary: ChatItem[] = action.summary

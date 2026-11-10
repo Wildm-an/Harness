@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   Check,
-  Boxes,
   Copy,
   Cpu,
   Download,
@@ -26,10 +24,14 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
+import { SecretInput } from "../components/SecretInput";
+import { BackLink } from "../components/BackLink";
 import type { DownloadItem, FitDetail, FitResult, HfDetail, HfFileGroup, InstalledRepo, ServeItem } from "../daemon/protocol";
 import { Markdown } from "../components/Markdown";
 import { loadPref, savePref } from "../lib/prefs";
 import { isTauri, openExternal } from "../lib/tauri";
+import { useFormIntoView } from "../lib/formFocus";
+import { useConfirm } from "../components/ConfirmDialog";
 import { formatBytes, formatCount, formatParams, formatTokens, type CookbookApi } from "./useCookbook";
 
 type Tab = "models" | "downloads" | "installed" | "served" | "hosts";
@@ -293,10 +295,7 @@ function DetailView({ api, detail, onServe }: { api: CookbookApi; detail: HfDeta
 
   return (
     <div className="cb-detail">
-      <button type="button" className="btn btn-ghost" onClick={api.closeModel}>
-        <ArrowLeft size={14} aria-hidden />
-        Back to the results
-      </button>
+      <BackLink to="Search results" onClick={api.closeModel} />
       <div className="cb-detail-head">
         <h2>{detail.repo_id}</h2>
         <button type="button" className="btn btn-small" onClick={() => void openExternal(detail.url)}>
@@ -491,7 +490,7 @@ function ServeForm({ file, onStart, onCancel }: { file: string; onStart: (contex
       <button type="submit" className="btn btn-small btn-primary">
         <Play size={12} aria-hidden /> Start
       </button>
-      <button type="button" className="btn btn-small btn-ghost" onClick={onCancel}>
+      <button type="button" className="btn btn-small btn-ghost" onClick={onCancel} data-form-cancel>
         Cancel
       </button>
     </form>
@@ -695,6 +694,7 @@ function InstalledTab({ api, serveTarget, setServeTarget }: {
 
 function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSession: boolean; onUseModel: (model: string) => void }) {
   const [logFor, setLogFor] = useState<string | null>(null);
+  const confirm = useConfirm();
   useEffect(() => {
     api.loadServes();
   }, [api.host]);
@@ -738,7 +738,18 @@ function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSessi
                 <button type="button" className="btn btn-small" onClick={() => setLogFor(logFor === s.name ? null : s.name)} aria-pressed={logFor === s.name}>
                   <ScrollText size={12} aria-hidden /> Log
                 </button>
-                <button type="button" className="btn btn-small btn-ghost" onClick={() => api.stopServe(s.name)}>
+                <button
+                  type="button"
+                  className="btn btn-small btn-ghost"
+                  onClick={() =>
+                    confirm.ask({
+                      title: `Stop ${s.name}?`,
+                      text: `The model server stops. Sessions that use ${s.provider}/${s.alias} cannot get replies until you serve the model again.`,
+                      confirmLabel: "Stop",
+                      onConfirm: () => api.stopServe(s.name),
+                    })
+                  }
+                >
                   <Square size={12} aria-hidden /> Stop
                 </button>
               </div>
@@ -751,6 +762,7 @@ function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSessi
           ))}
         </ul>
       )}
+      {confirm.dialog}
       <p className="help">
         A served model continues after the app closes. It runs in tmux when the host has tmux. The Cookbook adds it to the providers when it is ready.
       </p>
@@ -762,6 +774,8 @@ function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSessi
 
 function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSaved: boolean; onSaveToken: (token: string | null) => void }) {
   const [editing, setEditing] = useState<{ previous?: string; name: string; ssh: string; python: string; llama_server: string } | null>(null);
+  const hostFormRef = useFormIntoView();
+  const confirm = useConfirm();
   const [token, setToken] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -793,7 +807,16 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
                   <Pencil size={14} aria-hidden />
                 </button>
                 {h.remote && (
-                  <button type="button" className="icon-btn ghost" aria-label={`Delete ${h.name}`} title="Delete" onClick={() => api.deleteHost(h.name)}>
+                  <button type="button" className="icon-btn ghost" aria-label={`Delete ${h.name}`} title="Delete"
+                    onClick={() =>
+                      confirm.ask({
+                        title: `Delete the host ${h.name}?`,
+                        text: "Harness forgets the host and its settings. The files and the models on the host stay.",
+                        confirmLabel: "Delete",
+                        onConfirm: () => api.deleteHost(h.name),
+                      })
+                    }
+                  >
                     <Trash2 size={14} aria-hidden />
                   </button>
                 )}
@@ -803,6 +826,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
         </ul>
         {editing && (
           <form
+            ref={hostFormRef}
             className="project-form"
             onSubmit={(e) => {
               e.preventDefault();
@@ -842,7 +866,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
             </div>
             <div className="form-actions">
               <span className="spacer" />
-              <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>
+              <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)} data-form-cancel>
                 Cancel
               </button>
               <button type="submit" className="btn btn-primary">
@@ -853,6 +877,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
         )}
       </section>
 
+      {confirm.dialog}
       <section aria-labelledby="cb-key-title">
         <h3 id="cb-key-title" className="cb-h3">
           <KeyRound size={15} aria-hidden /> SSH key
@@ -909,7 +934,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
           <label htmlFor="cb-token" className="sr-only">
             Hugging Face token
           </label>
-          <input id="cb-token" className="mono" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder={tokenSaved ? "A token is saved. Enter a new one to replace it." : "hf_..."} />
+          <SecretInput what="the token" id="cb-token" className="mono" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder={tokenSaved ? "A token is saved. Enter a new one to replace it." : "hf_..."} />
           <button type="submit" className="btn btn-primary" disabled={!token.trim()}>
             Save
           </button>
@@ -962,23 +987,13 @@ export function CookbookScreen({
     if (api.ready) setTab("served");
   }, [api.ready?.key]);
 
+  // The header has only the title, as on the other pages (audit C5). In Settings the dialog has the h1.
+  const Title = embedded ? "h2" : "h1";
   return (
     <div className={embedded ? "settings-embed cookbook-screen" : "start-screen cookbook-screen"}>
       <section className="panel cookbook" aria-labelledby="cookbook-title">
         <div className="panel-head">
-          <h1 id="cookbook-title">
-            <Boxes size={20} aria-hidden /> Local Models
-          </h1>
-          <label className="cb-host-select">
-            Host
-            <select value={api.host} onChange={(e) => api.setHost(e.target.value)}>
-              {(hostNames.length ? hostNames : ["local"]).map((n) => (
-                <option key={n} value={n}>
-                  {n === "local" ? "This computer (daemon)" : n}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Title id="cookbook-title">Local models</Title>
           <span className="spacer" />
           {!embedded && (
             <button type="button" className="btn btn-ghost" onClick={onReturn}>
@@ -986,6 +1001,16 @@ export function CookbookScreen({
             </button>
           )}
         </div>
+        <label className="cb-host-select">
+          Host
+          <select value={api.host} onChange={(e) => api.setHost(e.target.value)}>
+            {(hostNames.length ? hostNames : ["local"]).map((n) => (
+              <option key={n} value={n}>
+                {n === "local" ? "This computer (daemon)" : n}
+              </option>
+            ))}
+          </select>
+        </label>
         <HardwareBar api={api} />
         <div className="cb-tabs" role="tablist" aria-label="Cookbook">
           {TABS.map((t) => (

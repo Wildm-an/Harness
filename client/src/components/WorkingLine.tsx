@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { ChatItem, ToolItem, TurnInfo } from "../chat/state";
 import { latestPlan } from "../lib/progress";
+import { toolAction } from "../chat/toolText";
 import { ToolCard, toolLabel } from "./ToolCard";
 import { GyroLoader } from "./GyroLoader";
 
@@ -48,7 +49,12 @@ export function workingStatus(items: ChatItem[], model: string, thinking = false
   let text: string;
   if (asking) text = "Waiting for your answer…";
   else if (waiting) text = "Waiting for your approval…";
-  else if (running.length > 0) text = `Running ${toolLabel(running[running.length - 1].name)}…`;
+  else if (running.length > 0) {
+    // The words of the tool row ("Running git status…"), so that the line and the row say the same (audit C7).
+    const now = running[running.length - 1];
+    const action = toolAction(now);
+    text = `${[action.verb, action.object].filter(Boolean).join(" ") || `Running ${toolLabel(now.name)}`}…`;
+  }
   else if (last?.kind === "assistant" && last.streaming) text = "Writing…";
   else if (thinking) text = "Thinking…"; // The reasoning of the model streams (the user asked for this word).
   else text = `Waiting for ${modelName(model)}…`;

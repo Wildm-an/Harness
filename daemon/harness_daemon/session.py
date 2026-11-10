@@ -42,6 +42,8 @@ class Session:
         self.worktree = worktree
         self.offers = True  # False for a routine session: the agent has no offer_session (disable_offer).
         self._saved = len(agent.history)  # The number of history messages in storage.
+        # The state before the last rewind, for "Undo rewind". A new turn, /clear, or a summary removes it.
+        self.rewind_undo: dict[str, Any] | None = None
         agent.on_compact = self.on_compact
         agent.on_checkpoint = lambda message_id, path, content: storage.add_checkpoint(self.id, message_id, path, content)
         # "Search and reference chats": the agent can search the other sessions of the project.
@@ -153,8 +155,10 @@ class Session:
         """The agent removed the first ``removed`` history messages. They are all in storage."""
         self.storage.compact_context(self.id, removed, summary)
         self._saved -= removed
+        self.rewind_undo = None  # The history indexes changed.
 
     def clear(self) -> None:
+        self.rewind_undo = None
         self.persist()
         self.agent.clear()
         self.storage.clear_context(self.id)
@@ -180,8 +184,18 @@ class Session:
         message = self.agent.history[index]
         later = self.message_ids_from(index)
         restored: list[Path] = []
+        checkpoints = self.storage.first_checkpoints(self.id, later) if code else {}
+        # Keep what the rewind changes, for "Undo rewind": the files as they are now, and the removed messages.
+        undo: dict[str, Any] = {"files": {}, "index": None}
+        for rel in checkpoints:
+            path = Path(self.cwd) / rel
+            undo["files"][rel] = path.read_bytes() if path.is_file() else None
+        if conversation:
+            undo["index"] = index
+            undo["messages"] = self.agent.history[index:]
+            undo["checkpoints"] = self.storage.checkpoint_rows(self.id, later)
         if code:
-            for rel, content in self.storage.first_checkpoints(self.id, later).items():
+            for rel, content in checkpoints.items():
                 path = Path(self.cwd) / rel
                 if content is None:
                     path.unlink(missing_ok=True)  # The agent made the file.
@@ -195,4 +209,34 @@ class Session:
             self.storage.delete_checkpoints(self.id, later)
             self.agent.rewind(index)
             self._saved = index
+        self.rewind_undo = undo
         return message.get("display") or message.get("content") or "", restored
+
+    def undo_rewind(self) -> tuple[bool, list[Path]]:
+        """Go back to the state before the last rewind. Return True if the conversation came back, and the files.
+
+        ValueError: no rewind to undo, or the conversation changed after the rewind.
+        """
+        undo = self.rewind_undo
+        if undo is None:
+            raise ValueError("There is no rewind to undo. A new turn, /clear, or a summary removes the undo.")
+        index = undo["index"]
+        if index is not None and len(self.agent.history) != index:
+            raise ValueError("The conversation changed after the rewind, so the rewind cannot be undone.")
+        self.rewind_undo = None
+        restored: list[Path] = []
+        for rel, content in undo["files"].items():
+            path = Path(self.cwd) / rel
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            restored.append(path)
+        if index is not None:
+            self.agent.rewind(index)  # Resets the token count (and the ACP session) as a rewind does.
+            self.agent.history.extend(undo["messages"])
+            for message_id, rel, content in undo["checkpoints"]:
+                self.storage.add_checkpoint(self.id, message_id, rel, content)
+            self.persist()
+        return index is not None, restored

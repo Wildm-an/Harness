@@ -115,7 +115,7 @@ BUILTIN_COMMANDS: dict[str, str] = {
     "model": "Show the model, or change it: /model <provider>/<model>.",
     "skills": "Open the Skills panel: the skills and their sources.",
     "local-models": "Open the Local Models screen: find, download, serve, and delete local models.",
-    "connections": "Open the Connections screen: the model endpoints and their API keys.",
+    "connections": "Open Settings > Providers: the model endpoints and their API keys.",
     "mcp": "Open the MCP panel: the MCP servers of the project and their tools.",
     "plugins": "Open the Plugins screen: install, turn on or off, and remove plugins.",
     "servers": "Show the dev servers in the Browser pane.",
@@ -1215,7 +1215,7 @@ class Connection:
         warnings = []
         if provider.key_missing:
             warnings.append(f"The provider {provider.name} has no API key. {provider.key_missing} "
-                            "Open the Connections screen to enter the key.")
+                            "Open Settings > Providers to enter the key.")
         if support is False:
             warnings.append(f"The model {model} does not support tool calls. "
                             "The agent cannot read files, edit files, or run commands.")
@@ -1373,6 +1373,8 @@ class Connection:
         elif live.running:
             return
         live.cancel_suggestion()  # The model can start the turn at once.
+        if live.session is not None:
+            live.session.rewind_undo = None  # A new turn ends the time for "Undo rewind".
         live.turn_started = time.time()
         live.last_stop = live.last_error = None
         live.turn_tokens = 0
@@ -2305,6 +2307,15 @@ async def on_term_close(conn: Connection, msg: dict[str, Any]) -> None:
     _terminal(conn).close_one(_text_arg(msg, "id"))
 
 
+@handler("term.running")
+async def on_term_running(conn: Connection, msg: dict[str, Any]) -> None:
+    """Before a tab closes: the programs that run in its shell. The client asks first when there are any."""
+    terminal_id = _text_arg(msg, "id")
+    terminal = _terminal(conn).terminals.get(terminal_id)
+    names = await asyncio.to_thread(terminal.running) if terminal is not None else []
+    await conn.require_live().send({"type": "term.running", "id": terminal_id, "names": names})
+
+
 @handler("term.input")
 async def on_term_input(conn: Connection, msg: dict[str, Any]) -> None:
     """Keys for a shell. A shell that is gone (for example after session.move) gets "term.exit":
@@ -3224,10 +3235,30 @@ async def on_session_rewind(conn: Connection, msg: dict[str, Any]) -> None:
     if conversation:
         await conn.send_ready([])
         await live.send({"type": "prompt.fill", "text": text})
+    # One line with "Undo rewind" in the client (it replaces the info notice of older versions).
+    parts = ["Rewound the conversation." if conversation else "Rewound the code."]
     if code:
         count = len(restored)
-        files = "No files changed" if count == 0 else f"{count} {'file' if count == 1 else 'files'} restored"
-        await live.send({"type": "notice", "level": "info", "text": f"Rewind: {files}. Changes of commands are not restored."})
+        parts.append("No files changed." if count == 0 else f"{count} {'file' if count == 1 else 'files'} restored.")
+        parts.append("Changes of commands are not restored.")
+    await live.send({"type": "rewind.done", "text": " ".join(parts)})
+
+
+@handler("session.rewind_undo")
+async def on_session_rewind_undo(conn: Connection, msg: dict[str, Any]) -> None:
+    """Undo the last rewind: the files and the messages come back. Only before the next turn."""
+    session = conn.require_session()
+    conn.require_idle()
+    try:
+        conversation, restored = session.undo_rewind()
+    except ValueError as e:
+        raise ProtocolError(str(e)) from None
+    live = conn.require_live()
+    for path in restored:
+        await live.send({"type": "fs.changed", "path": relpath(session.cwd, path), "hash": file_hash(path), "by": "agent"})
+    if conversation:
+        await conn.send_ready([])
+    await live.send({"type": "rewind.undone", "text": "The rewind is undone."})
 
 
 @handler("session.fork")

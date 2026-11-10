@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
+import { Archive, ArrowDown, BellRing, Check, CircleAlert, Clock, Copy, Info, RefreshCw, RotateCcw, Split, TriangleAlert, Undo2 } from "lucide-react";
 import type { ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
+import { errorKind } from "../lib/errorRoute";
 import { splitAttachmentLines, type Submission } from "./PromptBox";
 import { Markdown, StreamingMarkdown } from "./Markdown";
 import { PermissionCard } from "./PermissionCard";
@@ -15,6 +16,7 @@ import { WorkingLine } from "./WorkingLine";
 import { VisualBlock } from "./VisualBlock";
 import { FileCard } from "./FileCard";
 import { isVisualItem, visualOf } from "../lib/visual";
+import { useEnterMotion } from "../lib/motion";
 import type { TurnInfo } from "../chat/state";
 
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
@@ -27,6 +29,96 @@ type Shown = ChatItem | { kind: "tools"; id: string; items: ToolItem[] };
  * `previous`: the groups of the last render. A group with the same calls is the same object, so its
  * memoized row does not render again for each new text of the model.
  */
+// One copy of a tool item for each answer, so that a memoized row does not draw again.
+const approvalCopies = new WeakMap<ToolItem, ToolItem>();
+
+/**
+ * One request shows in one place (audit R1, R3). A card folds the row of the tool call that asks:
+ * - A permission card that waits: the row of its call does not show. The card says what the call does.
+ * - A permission card with an answer: the card goes, and the row of the call gets the answer as a
+ *   mark ("Allowed once", "Always allowed", "Denied"). A card that expired stays, with its row.
+ * - A question card or a plan card: the row of its call ("Asked 2 questions") does not show.
+ * The row of a call is the nearest tool item before the card, with the same tool (and for a permission,
+ * the same input), after the last message of the user. With no such row, nothing changes.
+ */
+export function foldCards(items: ChatItem[]): ChatItem[] {
+  const drop = new Set<string>();
+  const mark = new Map<string, Decision>();
+  const paired = new Set<string>();
+  const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+  items.forEach((card, i) => {
+    if (card.kind !== "permission" && card.kind !== "question" && card.kind !== "plan") return;
+    const name = card.kind === "permission" ? card.tool : (card.tool ?? (card.kind === "question" ? "ask_user_question" : "exit_plan_mode"));
+    for (let j = i - 1; j >= 0; j--) {
+      const t = items[j];
+      if (t.kind === "user") return;
+      if (t.kind !== "tool" || paired.has(t.id) || t.name !== name) continue;
+      if (card.kind === "permission" && !same(t.input, card.input)) continue;
+      paired.add(t.id);
+      if (card.kind !== "permission" || (card.decision === undefined && !card.expired)) drop.add(t.id);
+      else if (card.decision !== undefined) {
+        drop.add(card.id);
+        mark.set(t.id, card.decision);
+      }
+      return;
+    }
+  });
+  if (drop.size === 0 && mark.size === 0) return items;
+  return items.flatMap((item) => {
+    if (drop.has(item.id)) return [];
+    const label = item.kind === "tool" ? mark.get(item.id) : undefined;
+    if (item.kind !== "tool" || label === undefined) return [item];
+    let copy = approvalCopies.get(item);
+    if (!copy || copy.approval !== label) {
+      copy = { ...item, approval: label };
+      approvalCopies.set(item, copy);
+    }
+    return [copy];
+  });
+}
+
+/**
+ * The text of each finished reply, by the id of its last text item (audit U10). A reply is the text of
+ * the agent between two messages of the user. A reply of the running turn is not finished.
+ */
+export function replyTexts(items: ChatItem[], running: boolean): Map<string, string> {
+  const out = new Map<string, string>();
+  let parts: string[] = [];
+  let lastId: string | null = null;
+  const close = () => {
+    if (lastId && parts.length) out.set(lastId, parts.join("\n\n"));
+    parts = [];
+    lastId = null;
+  };
+  for (const item of items) {
+    if (item.kind === "user" && item.origin !== "task") close();
+    else if (item.kind === "assistant" && item.text.trim()) {
+      parts.push(item.text.trim());
+      lastId = item.id;
+    }
+  }
+  if (!running) close();
+  return out;
+}
+
+/** "Copy message" under a finished reply. It shows on hover and on keyboard focus, as the row of a user message. */
+function ReplyActions({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className="msg-actions msg-reply-actions">
+      <button type="button" className="icon-btn ghost msg-action" aria-label="Copy message" title={copied ? "Copied" : "Copy message"} onClick={copy}>
+        {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+      </button>
+    </div>
+  );
+}
+
 export function groupTools(items: ChatItem[], previous?: Map<string, ToolItem[]>): Shown[] {
   const out: Shown[] = [];
   for (const item of items) {
@@ -50,12 +142,85 @@ const fullTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeS
 
 const NOTICE_ICONS = { error: CircleAlert, warning: TriangleAlert, info: Info };
 
-const Notice = memo(function Notice({ item }: { item: NoticeItem }) {
+const Notice = memo(function Notice({ item, onUndo }: { item: NoticeItem; onUndo?: () => void }) {
   const Icon = NOTICE_ICONS[item.level];
   return (
     <div className={`notice notice-${item.level}`} role={item.level === "error" ? "alert" : "status"}>
       <Icon size={15} aria-hidden />
       <span>{item.text}</span>
+      {(item.count ?? 1) > 1 && (
+        <span className="notice-count" aria-label={`${item.count} times`} title={`This message came ${item.count} times`}>
+          ×{item.count}
+        </span>
+      )}
+      {onUndo && (
+        <button type="button" className="btn btn-small notice-action" onClick={onUndo} title="Bring back the messages and the files">
+          <Undo2 size={13} aria-hidden />
+          Undo rewind
+        </button>
+      )}
+    </div>
+  );
+});
+
+/** The rewind line that can get "Undo rewind" (rule M3): the last one, with no message of the user after it. */
+export function undoTarget(items: ChatItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "user") return null;
+    if (item.kind === "notice" && item.undo) return item.id;
+  }
+  return null;
+}
+
+/** The id of the turn error that can get "Try again": the last one, with no message of the user after it. */
+export function retryTarget(items: ChatItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "user" && item.origin !== "task") return null;
+    if (item.kind === "notice" && item.turn) return errorKind(item.text).retry ? item.id : null;
+  }
+  return null;
+}
+
+/** The error of a failed turn (rule M18): a title, the text of the daemon, "Try again", and "Copy details". */
+const ErrorCard = memo(function ErrorCard({ item, onRetry }: { item: NoticeItem; onRetry?: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const { title } = errorKind(item.text);
+  const copy = () => {
+    void navigator.clipboard
+      .writeText(`${title}
+${item.text}`)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  };
+  return (
+    <div className="notice notice-error error-card" role="alert">
+      <CircleAlert size={15} aria-hidden />
+      <div className="error-card-text">
+        <span className="error-card-title">
+          {title}
+          {(item.count ?? 1) > 1 && (
+            <span className="notice-count" aria-label={`${item.count} times`}>
+              ×{item.count}
+            </span>
+          )}
+        </span>
+        <span className="error-card-body">{item.text}</span>
+        <div className="error-card-actions">
+          {onRetry && (
+            <button type="button" className="btn btn-small" onClick={onRetry} title="Send the last prompt again">
+              <RefreshCw size={13} aria-hidden /> Try again
+            </button>
+          )}
+          <button type="button" className="btn btn-small btn-ghost" onClick={copy}>
+            {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />} {copied ? "Copied" : "Copy details"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 });
@@ -239,17 +404,30 @@ const UserMessage = memo(function UserMessage({ item, running, read, onRewind, o
 function QueuedMessage({ item, onSendNow, onRemove }: { item: QueuedItem; onSendNow: (id: string) => void; onRemove: (id: string) => void }) {
   const { text, chips } = splitAttachmentLines(item.label);
   return (
-    <div className="msg-user-wrap queued">
+    // A muted bubble with a dashed edge, a "Queued" label, and actions that always show (audit U11).
+    <div className={`msg-user-wrap queued${item.steering ? " steering" : ""}`}>
       <MessageAttachments images={item.submission.kind === "prompt" ? item.submission.images : undefined} chips={chips} />
       {text && <div className="msg-user">{text}</div>}
       <div className="msg-actions">
-        {item.steering && <span className="msg-time" title="The agent reads this message at its next step.">Steering</span>}
+        <span
+          className="msg-queued-label"
+          title={item.steering ? "The agent reads this message at its next step." : "Queued. The agent reads this message after the current turn."}
+        >
+          <Clock size={12} aria-hidden />
+          {item.steering ? "Steering" : "Queued"}
+        </span>
         {!item.steering && (
-          <button type="button" className="msg-text-btn" onClick={() => onRemove(item.id)}>
+          <button type="button" className="msg-text-btn" aria-label="Remove queued message" onClick={() => onRemove(item.id)}>
             Remove
           </button>
         )}
-        <button type="button" className="msg-text-btn" title="Interrupt the turn and send this message now" onClick={() => onSendNow(item.id)}>
+        <button
+          type="button"
+          className="msg-text-btn"
+          aria-label="Send queued message now"
+          title="Interrupt the turn and send this message now"
+          onClick={() => onSendNow(item.id)}
+        >
           Send now
         </button>
       </div>
@@ -328,6 +506,8 @@ export function MessageList({
   onRemoveQueued = () => {},
   onRewind = () => {},
   onFork = () => {},
+  onRetry,
+  onUndoRewind,
   onAction,
   emptyHint,
   turn = null,
@@ -346,6 +526,8 @@ export function MessageList({
   onRemoveQueued?: (id: string) => void;
   onRewind?: (messageId: string) => void;
   onFork?: (messageId: string) => void;
+  onRetry?: () => void; // "Try again" on the error card of a failed turn. Not given: no button.
+  onUndoRewind?: () => void; // "Undo rewind" on the line of the last rewind. Not given: no button.
   onAction?: (message: string) => void; // A button of the end-of-turn box: the message is the next prompt.
   emptyHint: React.ReactNode;
   turn?: TurnInfo | null; // The running turn: the working line at the bottom shows its time.
@@ -353,6 +535,9 @@ export function MessageList({
   footer?: React.ReactNode; // A prompt at the end of the chat, for example "The model is not available".
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  // M3: a new chat item fades in and rises. A transcript that loads all at once does not move.
+  const column = useRef<HTMLDivElement>(null);
+  useEnterMotion(column);
   const follow = useRef(true);
   const lastTop = useRef(0);
   const groups = useRef<Map<string, ToolItem[]>>(new Map()); // The tool groups of the last render.
@@ -435,7 +620,7 @@ export function MessageList({
   // During a turn, the tool calls at the end of the chat go into the working line, as in Claude Code:
   // its caret shows them. When the turn ends, they are a group line again.
   // An answered permission card after the tools stays in the chat.
-  const shown = groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name))), groups.current);
+  const shown = groupTools(foldCards(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name)))), groups.current);
   groups.current = new Map(shown.flatMap((s) => (s.kind === "tools" ? [[s.id, s.items] as const] : [])));
   let at = shown.length - 1;
   while (at >= 0 && shown[at].kind === "permission") {
@@ -449,6 +634,9 @@ export function MessageList({
 
   const showWrap = !!wrap && !running && !!onAction;
   const unread = unreadMessages(items, running);
+  const retryId = onRetry ? retryTarget(items) : null;
+  const undoId = onUndoRewind ? undoTarget(items) : null;
+  const replies = replyTexts(items, running);
   const planBlock = plan && (
     <PlanBlock
       steps={plan.steps}
@@ -482,7 +670,7 @@ export function MessageList({
       }}
       aria-live="polite"
     >
-      <div className="column">
+      <div className="column" ref={column}>
         {items.length === 0 && queued.length === 0 && <div className="empty-hint">{emptyHint}</div>}
         {shown.map((item) => {
           switch (item.kind) {
@@ -493,6 +681,7 @@ export function MessageList({
               return (
                 <div key={item.id} className={`msg-assistant${item.streaming ? " streaming" : ""}`}>
                   {item.streaming ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
+                  {replies.has(item.id) && <ReplyActions text={replies.get(item.id)!} />}
                 </div>
               );
             case "tools":
@@ -517,7 +706,8 @@ export function MessageList({
             case "plan":
               return <PlanCard key={item.id} item={item} onDecide={onPlan} />;
             case "notice":
-              return <Notice key={item.id} item={item} />;
+              if (item.turn) return <ErrorCard key={item.id} item={item} onRetry={!running && item.id === retryId ? onRetry : undefined} />;
+              return <Notice key={item.id} item={item} onUndo={!running && item.id === undoId ? onUndoRewind : undefined} />;
             case "summary":
               return <SummaryCard key={item.id} item={item} />;
             case "file":
@@ -536,7 +726,7 @@ export function MessageList({
         {running && <WorkingLine turn={turn} items={items} model={model} tools={liveTools} reviewId={reviewId} onReview={onReview} />}
         {footer}
         {away && items.length > 0 && (
-          <div className="scroll-bottom-wrap">
+          <div className="scroll-bottom-wrap" data-no-enter>
             <button
               type="button"
               className={`scroll-bottom${running ? " active" : ""}`}

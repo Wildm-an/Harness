@@ -4,14 +4,12 @@ import type { PermissionItem } from "../chat/state";
 import type { Decision } from "../daemon/protocol";
 import { parseUnifiedDiff } from "../lib/diff";
 import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
+import { useCardKeys } from "../lib/cardKeys";
+import { DECIDED } from "../lib/decisions";
 import { DiffStats } from "./DiffStats";
 import { toolSummary } from "./ToolCard";
 
-export const DECIDED: Record<Decision, string> = {
-  allow_once: "Allowed once",
-  allow_always: "Always allowed",
-  deny: "Denied",
-};
+export { DECIDED }; // The answer texts: DiffReview and the tool rows use them too.
 
 // The buttons from left to right, as in Claude desktop (docs/UI_RULES.md M8). The keys 1, 2, and 3 select them.
 const CHOICES: Decision[] = ["deny", "allow_always", "allow_once"];
@@ -174,17 +172,20 @@ export const PermissionCard = memo(function PermissionCard({
     document.getElementById(promptId)?.focus({ preventScroll: true });
   };
   usePermissionShortcuts(item, decide);
+  // 1, 2, 3, and Esc, also from the prompt box (lib/cardKeys.ts).
+  useCardKeys(!decided, {
+    digit: (n) => {
+      const choice = choiceForKey(permissionChoices(item), String(n));
+      if (choice) decide(choice);
+      return choice !== null;
+    },
+    escape: () => decide("deny"),
+  });
 
+  // The arrow keys move between the buttons. The number keys and Esc are in useCardKeys.
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const choice = choiceForKey(permissionChoices(item), e.key);
-    if (choice) {
-      e.preventDefault();
-      decide(choice);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      decide("deny");
-    } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
       const buttons = [...(options.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
       const at = buttons.indexOf(document.activeElement as HTMLButtonElement);

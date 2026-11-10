@@ -5,7 +5,6 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   ChevronRight,
   CircleCheck,
   CircleSlash,
@@ -22,10 +21,13 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
+import { SecretInput } from "./SecretInput";
+import { BackLink } from "./BackLink";
 import { SlashIcon } from "./SlashIcon";
 import { Markdown } from "./Markdown";
 import { openExternal } from "../lib/tauri";
 import { ConnectorLogo, hasConnectorLogo } from "./ConnectorLogo";
+import { useConfirm } from "./ConfirmDialog";
 import type { CommandItem, ConnectorItem, ConnectorOptions, DesktopConnectOptions, MailConnectOptions, MailProvider, MailSecurity, McpServerItem, McpState, McpStatus, OutlookMode, PluginsStatus, SkillDetail } from "../daemon/protocol";
 
 export type CapabilityStatus =
@@ -129,10 +131,7 @@ function SkillView({ detail, onBack }: { detail: SkillDetail; onBack: () => void
   const { frontmatter, body } = useMemo(() => splitFrontmatter(detail.content), [detail.content]);
   return (
     <div className="skill-view">
-      <button type="button" className="btn btn-small" onClick={onBack}>
-        <ArrowLeft size={14} aria-hidden />
-        All capabilities
-      </button>
+      <BackLink to="Skills" onClick={onBack} />
       <div className="cap-view-head">
         <h2 className="mono">/{detail.name}</h2>
         <StatusPill status={skillStatus(detail)} />
@@ -226,10 +225,10 @@ function SectionHead({ id, title, count, children }: { id: string; title: string
   );
 }
 
-function SkillRow({ item, onOpen }: { item: CommandItem; onOpen: () => void }) {
+function SkillRow({ item, loading, onOpen }: { item: CommandItem; loading?: boolean; onOpen: () => void }) {
   return (
     <li className="cap-item">
-      <button type="button" className="cap-row" onClick={onOpen}>
+      <button type="button" className="cap-row" onClick={onOpen} aria-busy={loading || undefined} disabled={loading}>
         <span className="cap-icon" aria-hidden>
           <SlashIcon size={15} />
         </span>
@@ -239,7 +238,7 @@ function SkillRow({ item, onOpen }: { item: CommandItem; onOpen: () => void }) {
         </span>
         <span className="cap-source">{item.source}</span>
         <StatusPill status={skillStatus(item)} />
-        <ChevronRight size={14} aria-hidden className="cap-go" />
+        {loading ? <LoaderCircle size={14} className="spin cap-go" aria-label="Loading" /> : <ChevronRight size={14} aria-hidden className="cap-go" />}
       </button>
     </li>
   );
@@ -317,6 +316,7 @@ function McpRow({
   useEffect(() => {
     if (item.state === "authenticating") setOpen(true);
   }, [item.state]);
+  const confirm = useConfirm();
   const status = MCP_STATUS[item.state];
   return (
     <li className={`cap-item${open ? " open" : ""}`}>
@@ -373,7 +373,18 @@ function McpRow({
               <button type="button" className="btn btn-small" onClick={() => onAuth({ kind: "auth", name: item.name })}>
                 Re-authenticate
               </button>
-              <button type="button" className="btn btn-small btn-ghost" onClick={() => onAuth({ kind: "logout", name: item.name })}>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                onClick={() =>
+                  confirm.ask({
+                    title: `Clear the sign-in of ${item.name}?`,
+                    text: `Harness deletes the saved tokens of ${item.name}. Its tools stop until you authenticate again.`,
+                    confirmLabel: "Clear",
+                    onConfirm: () => onAuth({ kind: "logout", name: item.name }),
+                  })
+                }
+              >
                 Clear authentication
               </button>
             </div>
@@ -392,6 +403,7 @@ function McpRow({
           )}
         </div>
       )}
+      {confirm.dialog}
     </li>
   );
 }
@@ -475,8 +487,8 @@ function TokenConnect({ item, busy, onAction }: { item: ConnectorItem; busy: boo
           submit();
         }}
       >
-        <input
-          type="password"
+        <SecretInput
+          what="the token"
           className="mono"
           value={token}
           onChange={(e) => setToken(e.target.value)}
@@ -776,8 +788,8 @@ function MailConnect({
           {server("SMTP", smtp, setSmtp)}
         </>
       )}
-      <input
-        type="password"
+      <SecretInput
+        what="the password"
         className="mono"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
@@ -825,6 +837,7 @@ function DeviceAccounts({
   onAction: (action: ConnectorAction) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const confirm = useConfirm();
   const accounts = item.accounts ?? [];
   useEffect(() => {
     if (!busy && !item.signing_in) setAdding(false);
@@ -849,7 +862,14 @@ function DeviceAccounts({
             <button
               type="button"
               className="btn btn-small btn-ghost"
-              onClick={() => onAction({ kind: "remove_account", id: item.id, login: a.login })}
+              onClick={() =>
+                confirm.ask({
+                  title: `Remove ${a.login}?`,
+                  text: `The agent can no longer use this account in ${item.name}. The other accounts stay.`,
+                  confirmLabel: "Remove",
+                  onConfirm: () => onAction({ kind: "remove_account", id: item.id, login: a.login }),
+                })
+              }
               aria-label={`Remove ${a.login}`}
             >
               Remove
@@ -867,10 +887,22 @@ function DeviceAccounts({
         <button type="button" className="btn btn-small" onClick={() => setAdding(true)}>
           Add account
         </button>
-        <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
+        <button
+          type="button"
+          className="btn btn-small btn-ghost"
+          onClick={() =>
+            confirm.ask({
+              title: accounts.length > 1 ? `Disconnect all ${accounts.length} accounts of ${item.name}?` : `Disconnect ${item.name}?`,
+              text: `Harness signs out and removes the MCP server "${item.id}" from your mcp.json. To use ${item.name} again, connect again.`,
+              confirmLabel: "Disconnect",
+              onConfirm: () => onAction({ kind: "disconnect", id: item.id }),
+            })
+          }
+        >
           {accounts.length > 1 ? "Disconnect all" : "Disconnect"}
         </button>
       </div>
+      {confirm.dialog}
     </>
   );
 }
@@ -891,6 +923,7 @@ function ConnectorRow({
   const connected = item.source !== null;
   // All rows start collapsed (the user asked for this). A device code opens its row.
   const [open, setOpen] = useState(false);
+  const confirm = useConfirm();
   useEffect(() => {
     if (code) setOpen(true);
   }, [code]);
@@ -933,7 +966,18 @@ function ConnectorRow({
                 allows it, for example <code>mcp__{item.id}__*</code>.
               </p>
               <div className="mcp-signin-actions">
-                <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
+                <button
+                  type="button"
+                  className="btn btn-small btn-ghost"
+                  onClick={() =>
+                    confirm.ask({
+                      title: `Disconnect ${item.name}?`,
+                      text: `Harness removes the MCP server "${item.id}" from your mcp.json. To use ${item.name} again, connect again.`,
+                      confirmLabel: "Disconnect",
+                      onConfirm: () => onAction({ kind: "disconnect", id: item.id }),
+                    })
+                  }
+                >
                   Disconnect
                 </button>
               </div>
@@ -949,6 +993,7 @@ function ConnectorRow({
           )}
         </div>
       )}
+      {confirm.dialog}
     </li>
   );
 }
@@ -1005,6 +1050,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   onEditConfig: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [clickedSkill, setClickedSkill] = useState<string | null>(null); // The skill that loads (M17).
   const [skillGroup, setSkillGroup] = useState<SkillGroup | null>(null);
   const groupSkills = useMemo(() => (skills && skillGroup ? skillsOfGroup(skills, skillGroup) : []), [skills, skillGroup]);
   const shownSkills = useMemo(() => groupSkills.filter((i) => matches(query, i.name, i.description)), [groupSkills, query]);
@@ -1030,15 +1076,12 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
     </div>
   );
 
+  // While a skill loads, the list stays, with a spinner in the clicked row (audit M17).
+  const loadingSkill = skillDetail === "loading" ? clickedSkill : null;
+  const detail = skillDetail === "loading" ? null : skillDetail;
   let body: React.ReactNode;
-  if (skillDetail === "loading") {
-    body = (
-      <p className="cap-empty">
-        <LoaderCircle size={16} className="spin" aria-hidden /> Loading the skill.
-      </p>
-    );
-  } else if (skillDetail) {
-    body = <SkillView detail={skillDetail} onBack={onBack} />;
+  if (detail) {
+    body = <SkillView detail={detail} onBack={onBack} />;
   } else {
     body = (
       <>
@@ -1073,10 +1116,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
 
         {tab === "skills" && group && (
           <section className="cap-section" aria-labelledby="cap-skills">
-            <button type="button" className="btn btn-small cap-back" onClick={() => setSkillGroup(null)}>
-              <ArrowLeft size={14} aria-hidden />
-              Skills
-            </button>
+            <BackLink to="Skills" onClick={() => setSkillGroup(null)} />
             <SectionHead id="cap-skills" title={group.title} count={groupSkills.length > 0 ? String(groupSkills.length) : undefined} />
             {groupSkills.length > 0 && filterField}
             {skills === null ? (
@@ -1097,7 +1137,15 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
             ) : (
               <ul className="cap-list">
                 {shownSkills.map((item) => (
-                  <SkillRow key={item.name} item={item} onOpen={() => onOpenSkill(item.name)} />
+                  <SkillRow
+                    key={item.name}
+                    item={item}
+                    loading={loadingSkill === item.name}
+                    onOpen={() => {
+                      setClickedSkill(item.name);
+                      onOpenSkill(item.name);
+                    }}
+                  />
                 ))}
               </ul>
             )}
@@ -1244,7 +1292,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
             )}
           </p>
         </header>
-        {!skillDetail && (
+        {!detail && (
           <div className="cap-tabs" role="tablist" aria-label="Capabilities">
             {CAP_TABS.map(([id, label]) => (
               <button
@@ -1267,7 +1315,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
             ))}
           </div>
         )}
-        <div role={skillDetail ? "region" : "tabpanel"} id="cap-tab-panel" aria-labelledby={skillDetail ? "capabilities-title" : `cap-tab-${tab}`}>
+        <div role={detail ? "region" : "tabpanel"} id="cap-tab-panel" aria-labelledby={detail ? "capabilities-title" : `cap-tab-${tab}`}>
           {body}
         </div>
       </div>

@@ -3,7 +3,6 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
   CalendarClock,
   Check,
   ChevronRight,
@@ -22,8 +21,9 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { BackLink } from "./BackLink";
 import type { PermissionMode, ProjectItem, RoutineFields, RoutineItem, RoutineRun, RoutineRunStatus } from "../daemon/protocol";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { ConfirmDialog, useConfirm } from "./ConfirmDialog";
 import { ModeMenu } from "./ModeMenu";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { Switch } from "./ProvidersScreen";
@@ -416,10 +416,7 @@ function RoutineForm({
 
   return (
     <div className="routine-view">
-      <button type="button" className="btn btn-small cap-back" onClick={onBack}>
-        <ArrowLeft size={14} aria-hidden />
-        All routines
-      </button>
+      <BackLink to="Routines" onClick={onBack} />
       <div className="cap-view-head">
         <h2>{item ? item.name : "New routine"}</h2>
         {item && <StatePills item={item} />}
@@ -522,7 +519,9 @@ function RoutineForm({
             {error}
           </p>
         )}
+        {/* Cancel and Save at the right, as in the other forms (audit C11). */}
         <div className="form-actions">
+          <span className="spacer" />
           <button type="button" className="btn" onClick={onBack}>
             Cancel
           </button>
@@ -603,6 +602,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 /** "API access" of a routine, as the API trigger of the Claude app: the fire URL, the token, and an example request. */
 function ApiAccess({ item, api }: { item: RoutineItem; api: ApiProps }) {
   const active = !!item.api?.active;
+  const confirm = useConfirm();
   const url = api.base ? fireUrl(api.base, item.id) : null;
   return (
     <section className="cap-section routine-api" aria-labelledby="rt-api">
@@ -638,11 +638,33 @@ function ApiAccess({ item, api }: { item: RoutineItem; api: ApiProps }) {
         <div className="routine-actions">
           {active ? (
             <>
-              <button type="button" className="btn btn-small" onClick={() => api.onToken("generate")}>
+              <button
+                type="button"
+                className="btn btn-small"
+                onClick={() =>
+                  confirm.ask({
+                    title: "Regenerate the token?",
+                    text: "The current token stops working at once. Code that uses it fails until it gets the new token.",
+                    confirmLabel: "Regenerate",
+                    onConfirm: () => api.onToken("generate"),
+                  })
+                }
+              >
                 <RefreshCw size={14} aria-hidden />
                 Regenerate
               </button>
-              <button type="button" className="btn btn-small btn-danger" onClick={() => api.onToken("delete")}>
+              <button
+                type="button"
+                className="btn btn-small btn-danger"
+                onClick={() =>
+                  confirm.ask({
+                    title: "Delete the token?",
+                    text: "The token stops working, and API access of this routine turns off. Its other triggers do not change.",
+                    confirmLabel: "Delete",
+                    onConfirm: () => api.onToken("delete"),
+                  })
+                }
+              >
                 <Trash2 size={14} aria-hidden />
                 Delete token
               </button>
@@ -665,6 +687,7 @@ function ApiAccess({ item, api }: { item: RoutineItem; api: ApiProps }) {
           </div>
         </div>
       )}
+      {confirm.dialog}
     </section>
   );
 }
@@ -686,7 +709,7 @@ function RoutineRow({ item, onOpen, onToggle }: { item: RoutineItem; onOpen: () 
         <StatePills item={item} />
         <ChevronRight size={14} aria-hidden className="cap-go" />
       </button>
-      <Switch checked={item.enabled} label={`The routine ${item.name} runs on its schedule`} onChange={onToggle} />
+      <Switch checked={item.enabled} label={`Run ${item.name} on the schedule`} onChange={onToggle} />
     </li>
   );
 }

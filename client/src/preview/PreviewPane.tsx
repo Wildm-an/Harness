@@ -72,7 +72,7 @@ export function PreviewPane({
               aria-label="Zoom out"
               title="Zoom out"
             >
-              <ZoomOut size={13} aria-hidden />
+              <ZoomOut size={15} aria-hidden />
             </button>
             <button
               type="button"
@@ -82,7 +82,7 @@ export function PreviewPane({
               aria-pressed={zoom === "fit"}
               title="Fit to width"
             >
-              <Maximize size={13} aria-hidden />
+              <Maximize size={15} aria-hidden />
             </button>
             <button
               type="button"
@@ -91,12 +91,12 @@ export function PreviewPane({
               aria-label="Zoom in"
               title="Zoom in"
             >
-              <ZoomIn size={13} aria-hidden />
+              <ZoomIn size={15} aria-hidden />
             </button>
           </>
         )}
         <button type="button" className="icon-btn ghost win-btn" onClick={onReload} aria-label="Reload" title="Reload">
-          <RotateCw size={13} aria-hidden />
+          <RotateCw size={15} aria-hidden />
         </button>
       </PaneActions>
       {doc.status === "loading" && (

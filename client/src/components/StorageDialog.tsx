@@ -9,18 +9,8 @@ import type { DiskItem, DiskUsage } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { appStorage, isTauri, revealInExplorer, type AppFolder } from "../lib/tauri";
 
-/** A size as Claude shows it: "512 B", "95.3 MB", "1 GB" (powers of 1000, one decimal, no ".0"). */
-export function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = Math.max(0, bytes);
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  const text = unit === 0 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, "");
-  return `${text} ${units[unit]}`;
-}
+import { formatBytes } from "../lib/bytes";
+export { formatBytes }; // One formula for all sizes (lib/bytes.ts).
 
 /** "just now", "5 minutes ago", "2 hours ago". */
 export function checkedAgo(checkedAt: number, now: number): string {

@@ -206,7 +206,6 @@ function ProjectMenu({
             return (
               <div key={p.id} className="project-menu-row">
                 <button type="button" role="menuitemradio" aria-checked={checked} onClick={close(() => onSelect(p.id))}>
-                  <span className="menu-check">{checked && <Check size={14} aria-hidden />}</span>
                   <span className="project-text">
                     <span className="project-name">{p.name}</span>
                     <span className="project-path mono" title={p.path}>
@@ -219,6 +218,8 @@ function ProjectMenu({
                     )}
                   </span>
                   <span className="project-count">{p.sessions === 1 ? "1 session" : `${p.sessions} sessions`}</span>
+                  {/* The check mark is at the right, as in the mode menu (audit C9). */}
+                  <span className="menu-check">{checked && <Check size={14} aria-hidden />}</span>
                 </button>
                 {confirmRemove === p.id ? (
                   <button type="button" className="project-remove" onClick={close(() => onDelete(p.id))} title="Remove from the list. The folder and its files stay.">
