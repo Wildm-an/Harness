@@ -5778,7 +5778,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 /* A long chat: the browser does not lay out or paint the messages outside the view. Not the user
-   messages: their Rewind menu goes outside the box, and the containment would cut it. */
+   messages: their toolbar goes outside the box, and the containment would cut it. */
 .msg-assistant:not(.streaming),
 .tool-group {
   content-visibility: auto;
@@ -8390,10 +8390,9 @@ mark.word-del {
   transition: opacity var(--duration) var(--ease-out);
 }
 
-/* The row shows on hover, on keyboard focus, and while the rewind menu is open. */
+/* The row shows on hover and on keyboard focus. */
 .msg-user-wrap:hover .msg-actions,
-.msg-user-wrap:focus-within .msg-actions,
-.msg-user-wrap.menu-open .msg-actions {
+.msg-user-wrap:focus-within .msg-actions {
   opacity: 1;
 }
 
@@ -8445,14 +8444,6 @@ mark.word-del {
 .msg-text-btn:hover,
 .msg-text-btn:focus-visible {
   color: var(--text);
-}
-
-.rewind-menu {
-  position: relative;
-}
-
-.menu.rewind-dropdown {
-  min-width: 270px;
 }
 
 /* A text character as an icon, for example the "/" of skills. */

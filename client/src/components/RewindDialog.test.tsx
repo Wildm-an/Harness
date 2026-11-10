@@ -26,7 +26,8 @@ describe("the Rewind dialog", () => {
       />,
     );
     expect(html).toContain(">Rewind</h2>");
-    expect(html).toContain("Restore the session to an earlier message.");
+    expect(html).toContain("Restore the code and the conversation to the time before a message.");
+    expect(html).not.toContain("Restore the code</li>"); // No second step with choices.
     expect(html).toContain('aria-selected="false" class="rewind-item">First');
     expect(html).toContain('aria-selected="true" class="rewind-item selected">Second');
   });

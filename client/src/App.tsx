@@ -159,7 +159,7 @@ import { normalizePath, openFolderBlocked } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
-import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
+import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
 import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
 import { isLoopback, setVisualDaemon } from "./lib/visual";
@@ -2183,7 +2183,8 @@ export default function App() {
 
   // Stable callbacks: each user message in the chat is memoized, and a new function renders all of them again.
   const rewind = useCallback(
-    (messageId: string, options: RewindOptions) => void sendSafely({ type: "session.rewind", id: messageId, ...options }),
+    // A rewind always restores the code and the conversation (the user asked for this).
+    (messageId: string) => void sendSafely({ type: "session.rewind", id: messageId, conversation: true, code: true }),
     [sendSafely],
   );
   const fork = useCallback((messageId: string) => void sendSafely({ type: "session.fork", id: messageId }), [sendSafely]);
