@@ -12000,6 +12000,21 @@ body.sorting * {
   padding-top: 10px;
 }
 
+.harness-actions .harness-download {
+  margin-right: 4px;
+}
+
+.harness-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .harness-skeleton {
   height: 64px;
   border-radius: 8px;

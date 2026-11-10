@@ -248,13 +248,26 @@ export interface HarnessItem {
   website: string;
   license: string;
   command: string; // The command line that starts it in ACP mode.
-  // installed: the program is on the PATH. npx or uvx: it downloads at the first start. missing: install it first.
-  status: "installed" | "npx" | "uvx" | "missing";
+  // downloaded: Harness downloaded it (Download button). installed: the program is on the PATH.
+  // npx or uvx: it downloads at the first start. missing: install it first.
+  status: "downloaded" | "installed" | "npx" | "uvx" | "missing";
   detail: string;
   custom: boolean; // A harness that the user added.
   recommended: number | null; // The place in the Recommended group of the page, or null.
   reason: string; // Why the harness is recommended. Empty for the others.
   local_models: boolean; // It can use a local model server.
+  download: { version: string; kind: "binary" | "npx" | "uvx" } | null; // The download of Harness (daemon acp_install.py).
+  latest: string | null; // The newest version in the ACP registry.
+  update: boolean; // The registry has a newer version than the download.
+  can_download: boolean; // Harness can download it for the daemon computer.
+  busy: HarnessProgress | null; // A download runs now.
+}
+
+/** The state of a harness download (harnesses.progress). total 0: the size is not known. */
+export interface HarnessProgress {
+  stage: string;
+  received: number;
+  total: number;
 }
 
 /** The harness of an ACP session. */
@@ -858,7 +871,9 @@ export type ClientMessage =
   | { type: "disk.usage" } // Settings > General > Storage.
   // Settings > Your Harness > Memory. cwd: the project folder. Each project has its own memory.
   | { type: "acp.model"; model: string } // The model menu of an ACP session. The reply is acp.state.
-  | { type: "harnesses.list" }
+  | { type: "harnesses.list"; refresh?: boolean } // refresh: read the ACP registry again ("Check again").
+  | { type: "harnesses.install"; id: string } // Download the harness, or its update.
+  | { type: "harnesses.uninstall"; id: string } // Delete the download.
   | { type: "harnesses.save"; name: string; command: string; id?: string }
   | { type: "harnesses.delete"; id: string }
   | { type: "memory.list"; cwd: string }
@@ -1113,6 +1128,7 @@ export type DaemonMessage =
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
+  | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
   | { type: "acp.state"; session_id?: string; harness: SessionHarness } // The models and the commands of an ACP harness.
   | { type: "memory.parsed"; items: MemoryFact[] }
   | ({ type: "disk.usage" } & DiskUsage)

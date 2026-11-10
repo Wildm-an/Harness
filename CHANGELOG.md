@@ -14,6 +14,12 @@ this file on its Changelog page.
 
 ### Updates
 
+- Settings > Operating Harness has a "Download" button for the harnesses of the ACP registry. Harness
+  downloads the program for your computer (it checks the sha256 of the registry), or installs the npm or
+  Python package. A downloaded harness shows "Update" when the registry has a newer version, and you can
+  delete the download. "Check again" also looks for updates.
+- In an ACP session, the browser, file, and artifact cards now show in the chat when the other
+  harness uses a Harness tool. The new PDF and Word files of these tools also get a card.
 - An update of Harness on Windows does not fail with "Error opening file for writing" on
   `harness-daemon\_internal\VCRUNTIME140.dll` again. The cause was a local llama-server that
   continued after Harness closed and kept that file open.

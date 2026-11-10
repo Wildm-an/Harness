@@ -9,6 +9,8 @@ The prompt text selects the script:
 - "fsread", "fswrite": a file read and a file write through the client (fs/*).
 - "term": a command in a terminal of the client (terminal/*).
 - "mcp": a call of the Harness MCP server (tools/list, then tools/call cron_list).
+- "mcpcard": two send_file calls of the Harness MCP server. The agent reports the first one as a tool call
+  ("call_m"), and does not report the second one.
 - "/review <x>": the command of the agent.
 
 The agent has two models ("fast" and "smart") and one command ("review"). "hello" sends a usage update.
@@ -59,6 +61,14 @@ def ask(method: str, params: dict) -> dict:
     send({"id": rid, "method": method, "params": params})
     event.wait(30)
     return answers.pop(rid, {})
+
+
+def mcp_post(url: str, body: dict) -> dict:
+    """One JSON-RPC message to the Harness MCP server (HTTP)."""
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read() or b"{}")
 
 
 def chunk(sid: str, text: str) -> None:
@@ -112,15 +122,22 @@ def script(rid: int, params: dict) -> None:
         url = mcp_urls[sid]
 
         def post(body: dict) -> dict:
-            request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
-                                             headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read() or b"{}")
+            return mcp_post(url, body)
 
         post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
         names = [t["name"] for t in post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
         called = post({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "cron_list", "arguments": {}}})
         chunk(sid, f"tools={','.join(sorted(names))} call={called['result']['content'][0]['text']}")
+    elif text == "mcpcard":
+        url = mcp_urls[sid]
+        args = {"files": ["hello.py"]}
+        update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call_m", "title": "mcp__harness__send_file",
+                     "kind": "other", "status": "in_progress", "rawInput": args})
+        mcp_post(url, {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "send_file", "arguments": args}})
+        update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call_m", "status": "completed"})
+        mcp_post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                       "params": {"name": "send_file", "arguments": {"files": ["hello.py"], "caption": "unreported"}}})
+        chunk(sid, "sent")
     elif text.startswith("/review"):
         chunk(sid, "review: " + text[len("/review"):].strip())
     elif text == "edit":

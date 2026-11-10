@@ -294,6 +294,32 @@ def test_acp_harness_mcp_server(daemon, project, fake_acp):
     c.close()
 
 
+def test_acp_harness_mcp_cards(daemon, project, fake_acp):
+    """A card of a Harness MCP tool (send_file) shows on the tool row of the harness, or on its own row."""
+    c = Client(daemon)
+    ready = c.new_session(project)
+    c.send({"type": "prompt", "text": "mcpcard"})
+    _, seen = c.until("turn.end", timeout=30)
+    results = [m for m in seen if m["type"] == "tool.result"]
+    reported = next(m for m in results if m["id"] == "call_m")
+    assert reported["card"]["type"] == "files" and reported["card"]["files"][0]["path"] == "hello.py"
+    assert reported["card"]["caption"] == ""
+    other = next(m for m in results if m.get("card", {}).get("caption") == "unreported")
+    assert other["id"] != "call_m"
+    start = next(m for m in seen if m["type"] == "tool.start" and m["id"] == other["id"])
+    assert start["name"] == "send_file" and start["input"] == {"files": ["hello.py"], "caption": "unreported"}
+    c.close()
+
+    # The stored session keeps the cards.
+    c2 = Client(daemon)
+    c2.until("auth.ok")
+    c2.send({"type": "session.resume", "session_id": ready["session_id"]})
+    history = c2.until("session.ready")[0]["history"]
+    cards = {m["tool_call_id"]: m["card"]["caption"] for m in history if m["role"] == "tool" and m.get("card")}
+    assert cards == {"call_m": "", other["id"]: "unreported"}
+    c2.close()
+
+
 def test_mcp_server_entry_without_http_support():
     from harness_daemon.acp_mcp import server_entry
     entry = server_entry({"mcpCapabilities": {"http": False}}, "http://127.0.0.1:1/acp-mcp/x")

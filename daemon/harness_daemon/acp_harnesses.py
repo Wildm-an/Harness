@@ -14,6 +14,8 @@ November 2026), plus Oh My Pi, which is not in the registry. An entry starts in 
 An entry with ``bin`` and ``npx`` uses the program when it is on the PATH, else npx.
 
 The user can add custom harnesses (a name and a command line). They are in ~/.harness/harnesses.json.
+
+Harness can also download a harness of the list (acp_install.py). A download comes first at the start.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import acp_install
 from .config import harness_home, read_json, write_json
 
 BUILTIN_ID = "harness"  # The agent loop of Harness. It is not an ACP harness.
@@ -231,6 +234,9 @@ def delete_custom(harness_id: str) -> None:
 def launch_argv(spec: HarnessSpec) -> tuple[list[str], dict[str, str]]:
     """The program with its arguments, and the extra environment. Raise HarnessError when the program
     is not on the daemon computer."""
+    download = acp_install.installed(spec.id) if not spec.custom else None
+    if download is not None:
+        return [str(a) for a in download["argv"]], {**spec.env, **download.get("env", {})}
     if spec.bin is not None:
         program, args = spec.bin
         path = program if re.search(r"[\\/]", program) and os.path.exists(program) else shutil.which(program)
@@ -254,7 +260,10 @@ def launch_argv(spec: HarnessSpec) -> tuple[list[str], dict[str, str]]:
 
 
 def status(spec: HarnessSpec) -> tuple[str, str]:
-    """The state for the client: ("installed" | "npx" | "uvx" | "missing", a short detail)."""
+    """The state for the client: ("downloaded" | "installed" | "npx" | "uvx" | "missing", a short detail)."""
+    download = acp_install.installed(spec.id) if not spec.custom else None
+    if download is not None:
+        return "downloaded", f"Harness downloaded version {download.get('version')} to {download.get('dir')}."
     if spec.bin is not None:
         program = spec.bin[0]
         found = program if re.search(r"[\\/]", program) and os.path.exists(program) else shutil.which(program)
@@ -273,6 +282,11 @@ def status(spec: HarnessSpec) -> tuple[str, str]:
 
 def public(spec: HarnessSpec) -> dict[str, Any]:
     state, detail = status(spec)
+    download = acp_install.summary(spec)
+    command = spec.command_text()
+    if state == "downloaded":
+        argv = acp_install.installed(spec.id)["argv"]  # type: ignore[index]
+        command = " ".join([os.path.basename(argv[0]), *argv[1:]])
     reason, local = RECOMMENDED.get(spec.id, ("", False)) if not spec.custom else ("", False)
     rank = list(RECOMMENDED).index(spec.id) if reason else None
     return {
@@ -284,10 +298,11 @@ def public(spec: HarnessSpec) -> dict[str, Any]:
         "description": spec.description,
         "website": spec.website,
         "license": spec.license,
-        "command": spec.command_text(),
+        "command": command,
         "status": state,
         "detail": detail,
         "custom": spec.custom,
+        **download,  # download, latest, update, can_download, busy
     }
 
 

@@ -138,12 +138,15 @@ Settings > Operating Harness chooses the harness that runs the agent loop of new
 
 | `type` | Fields | Function |
 |---|---|---|
-| `harnesses.list` | none | The reply is `harnesses`. It needs no session. |
+| `harnesses.list` | `refresh` (optional) | The reply is `harnesses`. It needs no session. `refresh: true` ("Check again") reads the ACP registry first. Else the daemon reads an old copy of the registry (older than 6 hours) in the background, and sends `harnesses` again when the versions changed. |
+| `harnesses.install` | `id` | Download a harness of the list, or its update, from the ACP registry (`acp_install.py`). The client gets `harnesses.progress` while it runs, then `harnesses`. A failure gives an `error` with the ref `harnesses.install`, then `harnesses`. |
+| `harnesses.uninstall` | `id` | Delete the download of a harness. The harness then starts from the PATH, npx, or uvx. The reply is `harnesses`. |
 | `harnesses.save` | `name`, `command`, `id` (optional) | Add a custom harness, or change the custom harness `id`. `command` starts it in ACP mode. The reply is `harnesses`. |
 | `harnesses.delete` | `id` | Delete a custom harness. If it is the operating harness, the setting goes back to the built-in loop (`user_settings` comes first). The reply is `harnesses`. |
 | `acp.model` | `model` | The model menu of an ACP session: a model id of the harness. The daemon sends `session/set_model`, or `session/set_config_option` when the harness gives the model as a config option. The reply is `acp.state`. |
 | `acp.state` (daemon to client) | `harness` | The state of the harness of an ACP session: `id`, `name`, `models` (`id`, `name`, `description`), `model`, and `commands` (`name`, `description`, `hint`). It comes when the harness starts (at the session open) and when its models or commands change. `session.ready` has the same object in `harness`. |
-| `harnesses` (daemon to client) | `items`, `current`, `path` | Each item has `id`, `name`, `description`, `website`, `license`, `command`, `status` (`installed`, `npx`, `uvx`, or `missing`), `detail`, `custom`, `recommended` (its place in the Recommended group, or null), `reason` (why it is recommended), and `local_models` (it can use a local model server). `current` is the operating harness id. `path` is the file of the custom harnesses. |
+| `harnesses.progress` (daemon to client) | `id`, `stage`, `received`, `total` | A download runs. `stage` is "Checking the registry", "Downloading", "Unpacking", "Installing with npm", or "Installing with uv". `received` and `total` are bytes. `total` 0: the size is not known. |
+| `harnesses` (daemon to client) | `items`, `current`, `path` | Each item has `id`, `name`, `description`, `website`, `license`, `command`, `status` (`downloaded`, `installed`, `npx`, `uvx`, or `missing`), `detail`, `custom`, `recommended` (its place in the Recommended group, or null), `reason` (why it is recommended), `local_models` (it can use a local model server), `download` (`version` and `kind` of the Harness download, or null), `latest` (the version in the ACP registry, or null), `update` (the registry has a newer version than the download), `can_download` (Harness can download it for the daemon computer), and `busy` (a running download: `stage`, `received`, `total`, or null). `current` is the operating harness id. `path` is the file of the custom harnesses. |
 
 An ACP session differs from a session of the built-in loop:
 
@@ -157,6 +160,7 @@ An ACP session differs from a session of the built-in loop:
 - A reopened session uses `session/load` when the harness supports it. Else the next prompt has a recap.
 - Harness tells the harness that it can read and write files (`fs/read_text_file`, `fs/write_text_file`) and run commands (`terminal/*`). A harness that uses them gets Harness behavior: a write in the project keeps a checkpoint for the rewind, the deny rules (`write`, `edit`, `bash`) and plan mode apply, and `fs.changed` goes to the client. Harness runs a terminal command in its shell when the command has no arguments. A tool call with `terminal` content shows the output of the terminal.
 - The harness gets one MCP server, `harness` (`acp_mcp.py`): the Harness tools that it does not have (the browser preview, documents, background tasks, memory, session search) and the tools of the MCP servers of the user. Each call goes through the permission rules and the hooks of Harness. A harness with `mcpCapabilities.http` gets `POST /acp-mcp/<secret>` on the daemon address. Another harness gets the stdio bridge: the daemon program with `--mcp-bridge <url>`.
+- A call of the `harness` MCP server that makes a chat card (`send_file`, `artifact`, `preview_navigate`, or a new PDF or Word file) gives the `card` and `created` to the `tool.result` of the tool call of the harness. The tool call matches when its title has the tool name or its `rawInput` is the same input. A call that the harness does not report gets its own tool row at the end of the prompt.
 
 ### Daemon to client
 

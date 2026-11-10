@@ -1,18 +1,19 @@
 // Settings > Operating Harness: the harness that runs the agent loop of new sessions. "Harness" is the
 // built-in loop (daemon agent.py). The other harnesses connect through ACP, the Agent Client Protocol
 // (daemon acp.py). The list comes from the daemon (acp_harnesses.py): the ACP registry, and the custom
-// harnesses of the user.
+// harnesses of the user. "Download" and "Update" get a harness from the ACP registry (daemon acp_install.py).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ExternalLink, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowUpCircle, Check, Download, ExternalLink, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { DaemonConnection } from "../daemon/connection";
-import type { HarnessItem, UserSettings } from "../daemon/protocol";
+import type { HarnessItem, HarnessProgress, UserSettings } from "../daemon/protocol";
 import { openLink } from "../lib/openLink";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 export const BUILTIN_HARNESS = "harness";
 
 const STATUS_TEXT: Record<HarnessItem["status"], string> = {
+  downloaded: "Downloaded",
   installed: "Installed",
   npx: "Runs with npx",
   uvx: "Runs with uvx",
@@ -45,6 +46,20 @@ export function splitHarnesses(items: HarnessItem[]): { recommended: HarnessItem
   return { recommended, others: sortHarnesses(items.filter((h) => h.recommended === null)) };
 }
 
+/** The download button of a harness row: "busy" (a download runs), "update", "download", or null. A harness
+ * on the PATH gets no "Download": the user installed it. */
+export function harnessAction(h: HarnessItem, progress?: HarnessProgress | null): "busy" | "update" | "download" | null {
+  if (progress || h.busy) return "busy";
+  if (h.download) return h.update ? "update" : null;
+  return h.can_download && h.status !== "installed" ? "download" : null;
+}
+
+/** The text of a running download: the percent when the size is known, else the stage. */
+export function progressText(p: HarnessProgress): string {
+  if (p.stage === "Downloading" && p.total > 0) return `Downloading ${Math.min(100, Math.floor((p.received / p.total) * 100))}%`;
+  return `${p.stage}…`;
+}
+
 interface Draft {
   id: string | null; // null: a new harness.
   name: string;
@@ -64,6 +79,9 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
   const [problem, setProblem] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [confirm, setConfirm] = useState<HarnessItem | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<HarnessItem | null>(null);
+  // The running downloads (harnesses.progress), by harness id. The list replaces them when it comes.
+  const [progress, setProgress] = useState<Record<string, HarnessProgress>>({});
   const [checking, setChecking] = useState(false);
   const saving = useRef(false); // A save was sent: the next list closes the form.
   const current = currentHarness(values);
@@ -75,10 +93,14 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
           setItems(msg.items);
           setPath(msg.path);
           setChecking(false);
+          setProgress({});
           if (saving.current) {
             saving.current = false;
             setDraft(null);
           }
+        } else if (msg.type === "harnesses.progress") {
+          const { stage, received, total } = msg;
+          setProgress((p) => ({ ...p, [msg.id]: { stage, received, total } }));
         } else if (msg.type === "error" && msg.ref?.startsWith("harnesses.")) {
           saving.current = false;
           setChecking(false);
@@ -119,6 +141,11 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
   };
   const selected = current === BUILTIN_HARNESS ? null : items?.find((h) => h.id === current) ?? null;
 
+  const download = (h: HarnessItem) => {
+    setProgress((p) => ({ ...p, [h.id]: { stage: "Starting", received: 0, total: 0 } }));
+    send({ type: "harnesses.install", id: h.id });
+  };
+
   const saveDraft = () => {
     if (!draft) return;
     if (!draft.name.trim()) return setProblem("Give a name.");
@@ -138,9 +165,9 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
           disabled={!connected || checking}
           onClick={() => {
             setChecking(true);
-            send({ type: "harnesses.list" });
+            send({ type: "harnesses.list", refresh: true });
           }}
-          title="Look for the installed programs again"
+          title="Look for the installed programs and the updates again"
         >
           <RefreshCw size={14} aria-hidden /> Check again
         </button>
@@ -214,21 +241,31 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
                   ready={h.status !== "missing"}
                   command={h.command}
                   license={h.license}
+                  version={h.download ? h.download.version : undefined}
                   website={h.website}
                   checked={current === h.id}
                   disabled={!connected}
                   onChoose={choose}
                   actions={
-                    h.custom && (
-                      <>
-                        <button type="button" className="icon-btn ghost" aria-label={`Edit ${h.name}`} title="Edit" onClick={() => setDraft({ id: h.id, name: h.name, command: h.command })}>
-                          <Pencil size={14} aria-hidden />
-                        </button>
-                        <button type="button" className="icon-btn ghost" aria-label={`Delete ${h.name}`} title="Delete" onClick={() => setConfirm(h)}>
-                          <Trash2 size={14} aria-hidden />
-                        </button>
-                      </>
-                    )
+                    <>
+                      <DownloadControl
+                        item={h}
+                        progress={progress[h.id] ?? h.busy}
+                        disabled={!connected}
+                        onDownload={() => download(h)}
+                        onRemove={() => setConfirmRemove(h)}
+                      />
+                      {h.custom && (
+                        <>
+                          <button type="button" className="icon-btn ghost" aria-label={`Edit ${h.name}`} title="Edit" onClick={() => setDraft({ id: h.id, name: h.name, command: h.command })}>
+                            <Pencil size={14} aria-hidden />
+                          </button>
+                          <button type="button" className="icon-btn ghost" aria-label={`Delete ${h.name}`} title="Delete" onClick={() => setConfirm(h)}>
+                            <Trash2 size={14} aria-hidden />
+                          </button>
+                        </>
+                      )}
+                    </>
                   }
                 />
               ))}
@@ -295,11 +332,60 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
           {confirm.id === current && " New sessions use the built-in loop of Harness."}
         </ConfirmDialog>
       )}
+      {confirmRemove && (
+        <ConfirmDialog
+          title={`Delete the download of ${confirmRemove.name}?`}
+          confirmLabel="Delete"
+          onCancel={() => setConfirmRemove(null)}
+          onConfirm={() => {
+            send({ type: "harnesses.uninstall", id: confirmRemove.id });
+            setConfirmRemove(null);
+          }}
+        >
+          Harness deletes the files that it downloaded. The harness stays in the list, and you can download it again.
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
 
-function HarnessRow({ id, name, description, localModels = false, badge, badgeTitle, ready = true, command, license, website, checked, disabled, onChoose, actions }: {
+/** "Download", "Update", or the progress of a running download, and "Delete the download". */
+function DownloadControl({ item, progress, disabled, onDownload, onRemove }: {
+  item: HarnessItem;
+  progress: HarnessProgress | null;
+  disabled: boolean;
+  onDownload: () => void;
+  onRemove: () => void;
+}) {
+  const action = harnessAction(item, progress);
+  const version = item.latest ? ` ${item.latest}` : "";
+  return (
+    <>
+      {action === "busy" && progress && (
+        <span className="harness-progress" role="status" aria-live="polite">
+          <LoaderCircle size={13} className="spin" aria-hidden /> {progressText(progress)}
+        </span>
+      )}
+      {action === "download" && (
+        <button type="button" className="btn btn-small harness-download" disabled={disabled} title={`Download ${item.name}${version}`} onClick={onDownload}>
+          <Download size={14} aria-hidden /> Download
+        </button>
+      )}
+      {action === "update" && (
+        <button type="button" className="btn btn-small harness-download" disabled={disabled} title={`Update ${item.name} to version ${item.latest}`} onClick={onDownload}>
+          <ArrowUpCircle size={14} aria-hidden /> Update
+        </button>
+      )}
+      {item.download && action !== "busy" && (
+        <button type="button" className="icon-btn ghost" disabled={disabled} aria-label={`Delete the download of ${item.name}`} title="Delete the download" onClick={onRemove}>
+          <Trash2 size={14} aria-hidden />
+        </button>
+      )}
+    </>
+  );
+}
+
+function HarnessRow({ id, name, description, localModels = false, badge, badgeTitle, ready = true, command, license, version, website, checked, disabled, onChoose, actions }: {
   id: string;
   name: string;
   description: string;
@@ -309,6 +395,7 @@ function HarnessRow({ id, name, description, localModels = false, badge, badgeTi
   ready?: boolean;
   command: string | null;
   license?: string;
+  version?: string; // The version of the download.
   website?: string;
   checked: boolean;
   disabled: boolean;
@@ -344,6 +431,7 @@ function HarnessRow({ id, name, description, localModels = false, badge, badgeTi
           {command && (
             <span className="harness-meta">
               <code>{command}</code>
+              {version && <span>Version {version}</span>}
               {license && <span>{license}</span>}
             </span>
           )}
