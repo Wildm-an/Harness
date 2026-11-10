@@ -3,6 +3,26 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.67 (2026-11-10)
+
+### Browser
+
+- The Browser pane page stays inside its pane. Before, a difference in the screen scale could put
+  the page over the chat.
+- The chat shows no browser card when the agent opens a page. The page shows in the Browser pane
+  and in the session rail.
+
+### Chat
+
+- "Send now" of a queued message keeps the task list. A stop with Esc still hides it.
+- "Open" on a file card opens the file in its default app. Programs and scripts do not open. A
+  file that does not open shows an error popup.
+
+### Session rail
+
+- The grip of a section heading does not cover the value of the heading, for example the context
+  share.
+
 ## 0.1.66 (2026-11-10)
 
 ### Chat
