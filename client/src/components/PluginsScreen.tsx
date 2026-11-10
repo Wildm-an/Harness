@@ -44,7 +44,7 @@ function RowItem({ row, bundleOn, onSet }: { row: PluginRow; bundleOn: boolean; 
           </span>
         )}
       </div>
-      <Switch checked={!row.disabled && bundleOn} label={`The plugin ${row.id} is on`} onChange={(next) => onSet(row.id, next)} />
+      <Switch checked={!row.disabled && bundleOn} label={`The plugin ${row.id}`} onChange={(next) => onSet(row.id, next)} />
     </li>
   );
 }
@@ -124,7 +124,7 @@ function BundleItem({
             <button type="button" className="icon-btn ghost" onClick={() => setConfirm(true)} disabled={busy} aria-label={`Remove ${bundle.name}`} title="Remove">
               <Trash2 size={16} aria-hidden />
             </button>
-            <Switch checked={bundle.enabled} label={`${bundle.name} is on`} onChange={(next) => onSetBundle(bundle.name, next)} />
+            <Switch checked={bundle.enabled} label={bundle.name} onChange={(next) => onSetBundle(bundle.name, next)} />
           </>
         )}
       </div>

@@ -3,6 +3,7 @@
 // session starts with "Default model" (server.py default_model_for_network). Off: the choice is manual.
 
 import { useEffect } from "react";
+import { Switch } from "./Switch";
 import type { ProviderItem, UserSettings } from "../daemon/protocol";
 import type { ModelList } from "./ModelMenu";
 
@@ -74,17 +75,7 @@ export function ModelChoice({ values, models, providers, onRequestModels, onSet 
           </span>
         </div>
         <div className="setting-control">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={auto}
-            aria-label="Preferred providers"
-            disabled={off}
-            className={`switch${auto ? " on" : ""}`}
-            onClick={() => onSet({ auto_model: !auto })}
-          >
-            <span className="switch-knob" aria-hidden />
-          </button>
+          <Switch checked={auto} label="Preferred providers" disabled={off} onChange={(on) => onSet({ auto_model: on })} />
         </div>
       </div>
       <div className="setting-row">
@@ -108,7 +99,7 @@ export function ModelChoice({ values, models, providers, onRequestModels, onSet 
           <label htmlFor="setting-offline-model">Local model</label>
           <span className="setting-help">
             {local.length === 0 && models !== null
-              ? "No local model is on. Add one on the Local Models page (Ollama or llama.cpp on this computer)."
+              ? "No local model is on. Add one on the Local models page (Ollama or llama.cpp on this computer)."
               : "The model when the default model cannot connect. It runs on this computer."}
           </span>
         </div>

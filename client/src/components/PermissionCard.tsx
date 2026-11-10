@@ -5,14 +5,11 @@ import type { Decision } from "../daemon/protocol";
 import { parseUnifiedDiff } from "../lib/diff";
 import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
 import { useCardKeys } from "../lib/cardKeys";
+import { DECIDED } from "../lib/decisions";
 import { DiffStats } from "./DiffStats";
 import { toolSummary } from "./ToolCard";
 
-export const DECIDED: Record<Decision, string> = {
-  allow_once: "Allowed once",
-  allow_always: "Always allowed",
-  deny: "Denied",
-};
+export { DECIDED }; // The answer texts: DiffReview and the tool rows use them too.
 
 // The buttons from left to right, as in Claude desktop (docs/UI_RULES.md M8). The keys 1, 2, and 3 select them.
 const CHOICES: Decision[] = ["deny", "allow_always", "allow_once"];

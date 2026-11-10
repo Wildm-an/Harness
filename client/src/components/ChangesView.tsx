@@ -9,6 +9,7 @@ import { fileRows, htmlRuns, mergeRuns, splitPath, type ChangeRow, type Run } fr
 import { loadPref, savePref } from "../lib/prefs";
 import { codeTheme, onThemeChange } from "../lib/theme";
 import { PaneActions, PaneHeader } from "../layout/Workspace";
+import { SkeletonRows } from "./Skeleton";
 
 const COLORIZE_LIMIT = 40_000; // Characters of a file. A longer file shows with no syntax colors.
 const LIST_PREF = "changes.fileList";
@@ -356,7 +357,11 @@ export function ChangesView({ diff, scope, onScope, onRefresh, onOpenFile, conne
       )}
       {!diff ? (
         error && connected ? null : (
-          <p className="pane-empty">{connected ? "Loading the changes…" : "Connect to a computer to see the changes."}</p>
+          connected ? (
+            <SkeletonRows count={4} className="changes-skeleton" label="Loading the changes" />
+          ) : (
+            <p className="pane-empty">Connect to a computer to see the changes.</p>
+          )
         )
       ) : !diff.repo ? (
         <p className="pane-empty">This folder is not a git repository. The Changes pane shows each change that the agent asks to make.</p>

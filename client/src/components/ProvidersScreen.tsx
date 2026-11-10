@@ -19,6 +19,7 @@ import { contextSourceText, formatTokens } from "../lib/context";
 import { isTauri } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { useConfirm } from "./ConfirmDialog";
+import { Switch } from "./Switch";
 
 /** Common OpenAI-compatible endpoints. The user can change each value. */
 export const PRESETS: { label: string; name: string; base_url: string; kind: ProviderKind; needsKey: boolean }[] = [
@@ -79,21 +80,7 @@ export function keyLabel(key: ProviderItem["key"]): { text: string; warn: boolea
   }
 }
 
-export function Switch({ checked, label, onChange }: { checked: boolean; label: string; onChange: (next: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={checked ? "On. Click to turn off." : "Off. Click to turn on."}
-      className={`switch${checked ? " on" : ""}`}
-      onClick={() => onChange(!checked)}
-    >
-      <span className="switch-knob" aria-hidden />
-    </button>
-  );
-}
+export { Switch }; // The one switch of the app (Switch.tsx).
 
 /** The tooltip of a model in the test result: the model, and its context length with the source. */
 export function modelTitle(spec: string, context: ModelContext | undefined, checked: boolean): string {
@@ -680,11 +667,13 @@ export function ProvidersScreen({
     }
   };
 
+  const Title = embedded ? "h2" : "h1";
   return (
     <div className={embedded ? "settings-embed" : "start-screen"}>
       <section className="panel connections providers" aria-labelledby="providers-title">
         <div className="panel-head">
-          <h1 id="providers-title">Providers</h1>
+          {/* In Settings the dialog has the h1 (audit C5). */}
+          <Title id="providers-title">Providers</Title>
           {!embedded && (
             <button type="button" className="btn btn-ghost" onClick={onReturn}>
               {hasSession ? "Back to the session" : "Back"}
@@ -752,7 +741,7 @@ export function ProvidersScreen({
                     <button type="button" className="icon-btn ghost" onClick={() => edit(item)} aria-label={`Settings of ${item.name}`} title="Settings">
                       <Settings size={16} aria-hidden />
                     </button>
-                    <Switch checked={item.enabled} label={`${item.name} is on`} onChange={(next) => onEnable(item.name, next)} />
+                    <Switch checked={item.enabled} label={item.name} onChange={(next) => onEnable(item.name, next)} />
                   </div>
                 </li>
               );

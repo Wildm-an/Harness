@@ -499,7 +499,7 @@ function HarnessRow({ id, name, description, localModels = false, badge, badgeTi
               {badge}
             </span>
             {localModels && (
-              <span className="harness-badge" title="It can use a local model server, for example the llama-server of the Local Models page.">
+              <span className="harness-badge" title="It can use a local model server, for example the llama-server of the Local models page.">
                 Local models
               </span>
             )}

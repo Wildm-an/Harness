@@ -4,13 +4,15 @@
 // providers", and "Export memory". Each project has its own memory (daemon memory.py).
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Check, ChevronRight, Copy, Download, LoaderCircle, NotebookPen, Plus, Trash2, Upload } from "lucide-react";
+import { Check, ChevronRight, Copy, Download, LoaderCircle, NotebookPen, Plus, Trash2, Upload } from "lucide-react";
+import { BackLink } from "./BackLink";
 import type { DaemonConnection } from "../daemon/connection";
 import type { MemoryFact, MemoryItem, MemoryType, ProjectItem, UserSettings } from "../daemon/protocol";
 import { saveBase64File } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { INSTRUCTION_FIELDS, Row, Switch, TextAreaField } from "./SettingsDialog";
+import { RowsPending } from "./Skeleton";
 
 export const MEMORY_TYPES: [MemoryType, string, string][] = [
   ["user", "User", "Who you are: your role, knowledge, and preferences."],
@@ -156,6 +158,7 @@ export function YourHarnessSettings({
   currentProject: string | null; // The project of the open session.
 }) {
   const off = !connected || values === null;
+  const loading = connected && values === null; // The values of the daemon have not arrived yet.
   const [view, setView] = useState<View>("main");
   const [status, setStatus] = useState<"" | "saving" | "saved">("");
   const set = (changes: Partial<UserSettings>) => {
@@ -218,11 +221,17 @@ export function YourHarnessSettings({
             {label}
           </label>
           <span className="setting-help">{help}</span>
-          <TextAreaField id={`setting-${key}`} value={values?.[key] ?? ""} placeholder={placeholder} disabled={off} onSave={(v) => set({ [key]: v || null })} />
+          {loading ? (
+            <span className="skeleton skeleton-textarea" aria-busy="true" aria-label="Loading" />
+          ) : (
+            <TextAreaField id={`setting-${key}`} value={values?.[key] ?? ""} placeholder={placeholder} disabled={off} onSave={(v) => set({ [key]: v || null })} />
+          )}
         </div>
       ))}
 
       <h3 className="settings-section">Memory</h3>
+      {/* The switches show gray bars until the values arrive (rule R8). */}
+      <RowsPending.Provider value={loading}>
       <Row label="Search and reference chats" help="Allow the agent to search for relevant details in the past sessions of the same project.">
         <Switch checked={values?.chat_search !== false} label="Search and reference chats" disabled={off} onChange={(on) => set({ chat_search: on })} />
       </Row>
@@ -241,6 +250,7 @@ export function YourHarnessSettings({
           onChange={(on) => set({ memory_sensitive: on })}
         />
       </Row>
+      </RowsPending.Provider>
       <Row label="Project" help="Each project has its own memory. The rows below apply to this project." htmlFor="setting-memory-project">
         <select id="setting-memory-project" value={cwd ?? ""} disabled={off || choices.length === 0} onChange={(e) => setProject(e.target.value)}>
           {choices.length === 0 && <option value="">No projects yet</option>}
@@ -339,10 +349,7 @@ function ManageMemory({ projectName, memory, onBack }: { projectName: string; me
 
   return (
     <div className="settings-page memory-view">
-      <button type="button" className="btn btn-small cap-back" onClick={onBack}>
-        <ArrowLeft size={14} aria-hidden />
-        Your Harness
-      </button>
+      <BackLink to="Your Harness" onClick={onBack} />
       <div className="cap-view-head">
         <h2>Your memory</h2>
         <span className="spacer" />
@@ -530,10 +537,7 @@ function ImportMemory({ projectName, memory, onBack }: { projectName: string; me
 
   return (
     <div className="settings-page memory-view">
-      <button type="button" className="btn btn-small cap-back" onClick={onBack}>
-        <ArrowLeft size={14} aria-hidden />
-        Your Harness
-      </button>
+      <BackLink to="Your Harness" onClick={onBack} />
       <div className="cap-view-head">
         <h2>Import memory</h2>
       </div>

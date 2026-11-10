@@ -808,7 +808,12 @@ export function EditorPane({
                 setLanguageChoice((m) => ({ ...m, [file.path]: id }));
               }}
             />
-            <span aria-live="polite">{file.saving ? "Saving" : file.dirty ? "Modified" : "Saved"}</span>
+            <span aria-live="polite">
+              {/* M14: the key makes each new text fade in. */}
+              <span key={file.saving ? "saving" : file.dirty ? "modified" : "saved"} className="save-status">
+                {file.saving ? "Saving" : file.dirty ? "Modified" : "Saved"}
+              </span>
+            </span>
             <span className="spacer" />
             <button
               type="button"

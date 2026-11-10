@@ -19,6 +19,7 @@ export type ChatItem =
       image?: string; // A data URL, for example a screenshot of preview_screenshot.
       agent?: string; // The forked skill that runs this tool in a subagent.
       ts?: number; // The end time of the call (epoch ms), for the step times of the task list.
+      approval?: Decision; // Display only (foldCards in MessageList): the answer to the permission card of the call.
     }
   | {
       kind: "permission";
@@ -35,9 +36,10 @@ export type ChatItem =
       agent?: string;
     }
   // ask_user_question (daemon tools/interact.py). answers: null when the user skipped.
-  | { kind: "question"; id: string; questions: AskQuestion[]; answers?: Record<string, string> | null; notes?: Record<string, string>; expired?: boolean }
+  // tool: the tool call that asks (its row folds into the card).
+  | { kind: "question"; id: string; questions: AskQuestion[]; answers?: Record<string, string> | null; notes?: Record<string, string>; expired?: boolean; tool?: string }
   // exit_plan_mode: the plan of the agent in plan mode.
-  | { kind: "plan"; id: string; plan: string; decision?: PlanDecision; mode?: PermissionMode; expired?: boolean }
+  | { kind: "plan"; id: string; plan: string; decision?: PlanDecision; mode?: PermissionMode; expired?: boolean; tool?: string }
   // count: the times that the same text came in a row (it shows one time). turn: the error of a
   // failed turn, which shows as an error card (rule M18).
   // undo: the line of a rewind, with "Undo rewind" until the next user message (rule M3).
@@ -124,8 +126,8 @@ function expirePermissions(items: ChatItem[]): ChatItem[] {
 
 /** The card of a request: a permission card, a question card, or a plan card. */
 export function requestCard(r: PermissionRequest): ChatItem {
-  if (r.kind === "question") return { kind: "question", id: r.request_id, questions: r.questions ?? [] };
-  if (r.kind === "plan") return { kind: "plan", id: r.request_id, plan: r.plan ?? "" };
+  if (r.kind === "question") return { kind: "question", id: r.request_id, questions: r.questions ?? [], tool: r.tool };
+  if (r.kind === "plan") return { kind: "plan", id: r.request_id, plan: r.plan ?? "", tool: r.tool };
   return {
     kind: "permission",
     id: r.request_id,

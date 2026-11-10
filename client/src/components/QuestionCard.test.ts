@@ -34,8 +34,8 @@ describe("the question card", () => {
 
   it("makes a card of each kind of request, and expires it at the end of the turn", () => {
     const base = { request_id: "q1", tool: "ask_user_question", input: {}, diff: null, rule: null };
-    expect(requestCard({ ...base, kind: "question", questions: QUESTIONS })).toEqual({ kind: "question", id: "q1", questions: QUESTIONS });
-    expect(requestCard({ ...base, request_id: "p1", kind: "plan", plan: "1. Do it." })).toEqual({ kind: "plan", id: "p1", plan: "1. Do it." });
+    expect(requestCard({ ...base, kind: "question", questions: QUESTIONS })).toEqual({ kind: "question", id: "q1", questions: QUESTIONS, tool: "ask_user_question" });
+    expect(requestCard({ ...base, request_id: "p1", kind: "plan", plan: "1. Do it." })).toEqual({ kind: "plan", id: "p1", plan: "1. Do it.", tool: "ask_user_question" });
     expect(requestCard({ ...base, tool: "edit" }).kind).toBe("permission");
     let s = chatReducer(emptyChat, { type: "daemon", msg: { type: "permission.request", ...base, kind: "question", questions: QUESTIONS } });
     s = chatReducer(s, { type: "answer", requestId: "q1", answers: { "Which database?": "SQLite" } });
@@ -46,7 +46,7 @@ describe("the question card", () => {
   });
 
   it("names the decision on a plan", () => {
-    expect(planOutcome({ kind: "plan", id: "p", plan: "", decision: "accept", mode: "acceptEdits" })).toBe("Accepted · Allow edits");
+    expect(planOutcome({ kind: "plan", id: "p", plan: "", decision: "accept", mode: "acceptEdits" })).toBe("Accepted · Accept edits");
     expect(planOutcome({ kind: "plan", id: "p", plan: "", decision: "revise" })).toBe("Changes asked");
     expect(planOutcome({ kind: "plan", id: "p", plan: "", expired: true })).toBe("No decision");
   });

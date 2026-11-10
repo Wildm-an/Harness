@@ -149,6 +149,7 @@ import { ContextRing } from "./components/ContextRing";
 import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
 import { clampSplit, MAIN_PROMPT_ID, SPLIT_DEFAULT } from "./lib/split";
+import { usePresence } from "./lib/motion";
 import { isLoopback, setVisualDaemon } from "./lib/visual";
 import { SessionSearch } from "./components/SessionSearch";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
@@ -327,6 +328,10 @@ export default function App() {
   const [startError, setStartError] = useState<string | null>(null);
   // The stored sessions of one folder (cwd), or of all folders (cwd null).
   const [recent, setRecent] = useState<SessionSummary[]>([]); // The sessions of all folders (the sidebar).
+  // The connection whose session list the sidebar has. null: no list yet (the sidebar shows skeleton rows).
+  const [recentOf, setRecentOf] = useState<string | null>(null);
+  const recentOfRef = useRef(recentOf); // For afterConnect, which keeps its first closure.
+  recentOfRef.current = recentOf;
   const [prStatus, setPrStatus] = useState<Map<string, PrStatus>>(() => new Map()); // By pathKey of the folder.
   // The changes of the session folder against its base branch, for the Changes section of the rail.
   const [gitChanges, setGitChanges] = useState<(GitChanges & { cwd: string }) | null>(null);
@@ -880,7 +885,10 @@ export default function App() {
           return;
         case "sessions":
           // A list with no folder is the sidebar list.
-          if (!msg.cwd) setRecent(msg.items);
+          if (!msg.cwd) {
+            setRecent(msg.items);
+            setRecentOf(currentRef.current?.id ?? null);
+          }
           return;
         case "turn.end":
           listRecent(); // The first turn gives the session a title.
@@ -1233,7 +1241,12 @@ export default function App() {
     setRoutines(null);
     conn.send({ type: "routines.list" }); // The red dot of the Routines nav item.
     conn.send({ type: "user_settings.get" }); // The effort level of the model menu on the start screen.
-    setRecent([]);
+    // A reconnect to the same computer keeps the list until the new list arrives (audit M16). Another computer
+    // starts empty: the sidebar shows skeleton rows.
+    if (recentOfRef.current !== currentRef.current?.id) {
+      setRecent([]);
+      setRecentOf(null);
+    }
     lastRunning.current = [];
     setRunningSessions([]);
     setBackgroundSessions([]);
@@ -3064,6 +3077,8 @@ export default function App() {
   // reveals under a still pointer, so the toggle in the sidebar keeps the hover look until the pointer moves off it.
   const [toggleHot, setToggleHot] = useState(false);
   const peekRef = useRef<HTMLDivElement>(null);
+  // M15: the peek fades out (120 ms) when the pointer leaves it. Ctrl+B removes it at once.
+  const peekShown = usePresence(peek, 120);
   const peekTimer = useRef<number | null>(null);
   const cancelPeek = () => {
     if (peekTimer.current !== null) window.clearTimeout(peekTimer.current);
@@ -3265,6 +3280,7 @@ export default function App() {
       screen={screen}
       status={status}
       projects={projects ?? []}
+      loading={status === "open" && (recentOf === null || projects === null)}
       onNewSession={fromSidebar(newSession)}
       onNewSessionIn={(group) => fromSidebar(() => void newSessionIn(group.projectId, group.name, group.path))()}
       onRemoveProject={deleteProject}
@@ -3326,8 +3342,8 @@ export default function App() {
         </>
       )}
       {/* The sidebar is hidden: the pointer on the sidebar toggle shows it over the view. */}
-      {!sidebarOpen && peek && (
-        <div className="sidebar-peek" ref={peekRef}>
+      {!sidebarOpen && peekShown.mounted && (
+        <div className={`sidebar-peek${peekShown.leaving ? " leaving" : ""}`} ref={peekRef}>
           {sidebarView}
         </div>
       )}
@@ -3340,7 +3356,7 @@ export default function App() {
               <>
                 <span className="topbar-name">
                   {/* The daemon gives the title after the first turn. The sidebar list has it. */}
-                  {session.title ?? recent.find((r) => r.id === session.id)?.title ?? "New session"}
+                  {session.title ?? recent.find((r) => r.id === session.id)?.title ?? "Untitled session"}
                 </span>
                 <FolderMenu
                   name={folder ?? session.cwd}
@@ -3589,6 +3605,7 @@ export default function App() {
         {searchOpen && (
           <SessionSearch
             sessions={recent}
+            projects={projects ?? []}
             activeId={session?.id ?? null}
             onOpen={(id) => resumeSession(id)}
             onClose={() => setSearchOpen(false)}

@@ -3,7 +3,6 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
   CalendarClock,
   Check,
   ChevronRight,
@@ -22,6 +21,7 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { BackLink } from "./BackLink";
 import type { PermissionMode, ProjectItem, RoutineFields, RoutineItem, RoutineRun, RoutineRunStatus } from "../daemon/protocol";
 import { ConfirmDialog, useConfirm } from "./ConfirmDialog";
 import { ModeMenu } from "./ModeMenu";
@@ -415,10 +415,7 @@ function RoutineForm({
 
   return (
     <div className="routine-view">
-      <button type="button" className="btn btn-small cap-back" onClick={onBack}>
-        <ArrowLeft size={14} aria-hidden />
-        All routines
-      </button>
+      <BackLink to="Routines" onClick={onBack} />
       <div className="cap-view-head">
         <h2>{item ? item.name : "New routine"}</h2>
         {item && <StatePills item={item} />}
@@ -521,7 +518,9 @@ function RoutineForm({
             {error}
           </p>
         )}
+        {/* Cancel and Save at the right, as in the other forms (audit C11). */}
         <div className="form-actions">
+          <span className="spacer" />
           <button type="button" className="btn" onClick={onBack}>
             Cancel
           </button>
@@ -709,7 +708,7 @@ function RoutineRow({ item, onOpen, onToggle }: { item: RoutineItem; onOpen: () 
         <StatePills item={item} />
         <ChevronRight size={14} aria-hidden className="cap-go" />
       </button>
-      <Switch checked={item.enabled} label={`The routine ${item.name} runs on its schedule`} onChange={onToggle} />
+      <Switch checked={item.enabled} label={`Run ${item.name} on the schedule`} onChange={onToggle} />
     </li>
   );
 }

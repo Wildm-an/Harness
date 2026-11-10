@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Check, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Plug, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { SecretInput } from "./SecretInput";
 import type { HostInfo } from "../daemon/protocol";
 import { describe, newConnectionId, validate, type Connection, type ConnectionKind } from "../lib/connections";
 import { isTauri } from "../lib/tauri";
@@ -217,10 +218,10 @@ function ConnectionForm({
               : "Without the desktop app, the token is kept only until this tab closes."
         }
       >
-        <input
+        <SecretInput
+          what="the token"
           id="cf-token"
           className="mono"
-          type="password"
           autoComplete="off"
           value={token}
           onChange={(e) => {
@@ -308,11 +309,13 @@ export function ConnectionsScreen({
   const startAdd = () =>
     setEditing({ connection: { id: newConnectionId(), name: "", kind: "direct", host: "", port: 8765 }, isNew: true });
 
+  const Title = embedded ? "h2" : "h1";
   return (
     <div className={embedded ? "settings-embed" : "start-screen"}>
       <section className="panel connections" aria-labelledby="connections-title">
         <div className="panel-head">
-          <h1 id="connections-title">Computers</h1>
+          {/* In Settings the dialog has the h1 (audit C5). */}
+          <Title id="connections-title">Computers</Title>
           {canReturn && !embedded && (
             <button type="button" className="btn btn-ghost" onClick={onReturn}>
               {hasSession ? "Back to the session" : "Back"}

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RefreshCw, RotateCcw, Split, TriangleAlert, Undo2 } from "lucide-react";
+import { Archive, ArrowDown, BellRing, Check, CircleAlert, Clock, Copy, Info, RefreshCw, RotateCcw, Split, TriangleAlert, Undo2 } from "lucide-react";
 import type { ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
@@ -17,6 +17,7 @@ import { WorkingLine } from "./WorkingLine";
 import { VisualBlock } from "./VisualBlock";
 import { FileCard } from "./FileCard";
 import { isVisualItem, visualOf } from "../lib/visual";
+import { useEnterMotion } from "../lib/motion";
 import type { TurnInfo } from "../chat/state";
 
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
@@ -29,6 +30,96 @@ type Shown = ChatItem | { kind: "tools"; id: string; items: ToolItem[] };
  * `previous`: the groups of the last render. A group with the same calls is the same object, so its
  * memoized row does not render again for each new text of the model.
  */
+// One copy of a tool item for each answer, so that a memoized row does not draw again.
+const approvalCopies = new WeakMap<ToolItem, ToolItem>();
+
+/**
+ * One request shows in one place (audit R1, R3). A card folds the row of the tool call that asks:
+ * - A permission card that waits: the row of its call does not show. The card says what the call does.
+ * - A permission card with an answer: the card goes, and the row of the call gets the answer as a
+ *   mark ("Allowed once", "Always allowed", "Denied"). A card that expired stays, with its row.
+ * - A question card or a plan card: the row of its call ("Asked 2 questions") does not show.
+ * The row of a call is the nearest tool item before the card, with the same tool (and for a permission,
+ * the same input), after the last message of the user. With no such row, nothing changes.
+ */
+export function foldCards(items: ChatItem[]): ChatItem[] {
+  const drop = new Set<string>();
+  const mark = new Map<string, Decision>();
+  const paired = new Set<string>();
+  const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+  items.forEach((card, i) => {
+    if (card.kind !== "permission" && card.kind !== "question" && card.kind !== "plan") return;
+    const name = card.kind === "permission" ? card.tool : (card.tool ?? (card.kind === "question" ? "ask_user_question" : "exit_plan_mode"));
+    for (let j = i - 1; j >= 0; j--) {
+      const t = items[j];
+      if (t.kind === "user") return;
+      if (t.kind !== "tool" || paired.has(t.id) || t.name !== name) continue;
+      if (card.kind === "permission" && !same(t.input, card.input)) continue;
+      paired.add(t.id);
+      if (card.kind !== "permission" || (card.decision === undefined && !card.expired)) drop.add(t.id);
+      else if (card.decision !== undefined) {
+        drop.add(card.id);
+        mark.set(t.id, card.decision);
+      }
+      return;
+    }
+  });
+  if (drop.size === 0 && mark.size === 0) return items;
+  return items.flatMap((item) => {
+    if (drop.has(item.id)) return [];
+    const label = item.kind === "tool" ? mark.get(item.id) : undefined;
+    if (item.kind !== "tool" || label === undefined) return [item];
+    let copy = approvalCopies.get(item);
+    if (!copy || copy.approval !== label) {
+      copy = { ...item, approval: label };
+      approvalCopies.set(item, copy);
+    }
+    return [copy];
+  });
+}
+
+/**
+ * The text of each finished reply, by the id of its last text item (audit U10). A reply is the text of
+ * the agent between two messages of the user. A reply of the running turn is not finished.
+ */
+export function replyTexts(items: ChatItem[], running: boolean): Map<string, string> {
+  const out = new Map<string, string>();
+  let parts: string[] = [];
+  let lastId: string | null = null;
+  const close = () => {
+    if (lastId && parts.length) out.set(lastId, parts.join("\n\n"));
+    parts = [];
+    lastId = null;
+  };
+  for (const item of items) {
+    if (item.kind === "user" && item.origin !== "task") close();
+    else if (item.kind === "assistant" && item.text.trim()) {
+      parts.push(item.text.trim());
+      lastId = item.id;
+    }
+  }
+  if (!running) close();
+  return out;
+}
+
+/** "Copy message" under a finished reply. It shows on hover and on keyboard focus, as the row of a user message. */
+function ReplyActions({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className="msg-actions msg-reply-actions">
+      <button type="button" className="icon-btn ghost msg-action" aria-label="Copy message" title={copied ? "Copied" : "Copy message"} onClick={copy}>
+        {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+      </button>
+    </div>
+  );
+}
+
 export function groupTools(items: ChatItem[], previous?: Map<string, ToolItem[]>): Shown[] {
   const out: Shown[] = [];
   for (const item of items) {
@@ -369,17 +460,30 @@ const UserMessage = memo(function UserMessage({ item, running, read, onRewind, o
 function QueuedMessage({ item, onSendNow, onRemove }: { item: QueuedItem; onSendNow: (id: string) => void; onRemove: (id: string) => void }) {
   const { text, chips } = splitAttachmentLines(item.label);
   return (
-    <div className="msg-user-wrap queued">
+    // A muted bubble with a dashed edge, a "Queued" label, and actions that always show (audit U11).
+    <div className={`msg-user-wrap queued${item.steering ? " steering" : ""}`}>
       <MessageAttachments images={item.submission.kind === "prompt" ? item.submission.images : undefined} chips={chips} />
       {text && <div className="msg-user">{text}</div>}
       <div className="msg-actions">
-        {item.steering && <span className="msg-time" title="The agent reads this message at its next step.">Steering</span>}
+        <span
+          className="msg-queued-label"
+          title={item.steering ? "The agent reads this message at its next step." : "Queued. The agent reads this message after the current turn."}
+        >
+          <Clock size={12} aria-hidden />
+          {item.steering ? "Steering" : "Queued"}
+        </span>
         {!item.steering && (
-          <button type="button" className="msg-text-btn" onClick={() => onRemove(item.id)}>
+          <button type="button" className="msg-text-btn" aria-label="Remove queued message" onClick={() => onRemove(item.id)}>
             Remove
           </button>
         )}
-        <button type="button" className="msg-text-btn" title="Interrupt the turn and send this message now" onClick={() => onSendNow(item.id)}>
+        <button
+          type="button"
+          className="msg-text-btn"
+          aria-label="Send queued message now"
+          title="Interrupt the turn and send this message now"
+          onClick={() => onSendNow(item.id)}
+        >
           Send now
         </button>
       </div>
@@ -487,6 +591,9 @@ export function MessageList({
   footer?: React.ReactNode; // A prompt at the end of the chat, for example "The model is not available".
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  // M3: a new chat item fades in and rises. A transcript that loads all at once does not move.
+  const column = useRef<HTMLDivElement>(null);
+  useEnterMotion(column);
   const follow = useRef(true);
   const lastTop = useRef(0);
   const groups = useRef<Map<string, ToolItem[]>>(new Map()); // The tool groups of the last render.
@@ -569,7 +676,7 @@ export function MessageList({
   // During a turn, the tool calls at the end of the chat go into the working line, as in Claude Code:
   // its caret shows them. When the turn ends, they are a group line again.
   // An answered permission card after the tools stays in the chat.
-  const shown = groupTools(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name))), groups.current);
+  const shown = groupTools(foldCards(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name)))), groups.current);
   groups.current = new Map(shown.flatMap((s) => (s.kind === "tools" ? [[s.id, s.items] as const] : [])));
   let at = shown.length - 1;
   while (at >= 0 && shown[at].kind === "permission") {
@@ -585,6 +692,7 @@ export function MessageList({
   const unread = unreadMessages(items, running);
   const retryId = onRetry ? retryTarget(items) : null;
   const undoId = onUndoRewind ? undoTarget(items) : null;
+  const replies = replyTexts(items, running);
   const planBlock = plan && (
     <PlanBlock
       steps={plan.steps}
@@ -618,7 +726,7 @@ export function MessageList({
       }}
       aria-live="polite"
     >
-      <div className="column">
+      <div className="column" ref={column}>
         {items.length === 0 && queued.length === 0 && <div className="empty-hint">{emptyHint}</div>}
         {shown.map((item) => {
           switch (item.kind) {
@@ -629,6 +737,7 @@ export function MessageList({
               return (
                 <div key={item.id} className={`msg-assistant${item.streaming ? " streaming" : ""}`}>
                   {item.streaming ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
+                  {replies.has(item.id) && <ReplyActions text={replies.get(item.id)!} />}
                 </div>
               );
             case "tools":
@@ -673,7 +782,7 @@ export function MessageList({
         {running && <WorkingLine turn={turn} items={items} model={model} tools={liveTools} reviewId={reviewId} onReview={onReview} />}
         {footer}
         {away && items.length > 0 && (
-          <div className="scroll-bottom-wrap">
+          <div className="scroll-bottom-wrap" data-no-enter>
             <button
               type="button"
               className={`scroll-bottom${running ? " active" : ""}`}

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   Check,
-  Boxes,
   Copy,
   Cpu,
   Download,
@@ -26,6 +24,8 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
+import { SecretInput } from "../components/SecretInput";
+import { BackLink } from "../components/BackLink";
 import type { DownloadItem, FitDetail, FitResult, HfDetail, HfFileGroup, InstalledRepo, ServeItem } from "../daemon/protocol";
 import { Markdown } from "../components/Markdown";
 import { loadPref, savePref } from "../lib/prefs";
@@ -295,10 +295,7 @@ function DetailView({ api, detail, onServe }: { api: CookbookApi; detail: HfDeta
 
   return (
     <div className="cb-detail">
-      <button type="button" className="btn btn-ghost" onClick={api.closeModel}>
-        <ArrowLeft size={14} aria-hidden />
-        Back to the results
-      </button>
+      <BackLink to="Search results" onClick={api.closeModel} />
       <div className="cb-detail-head">
         <h2>{detail.repo_id}</h2>
         <button type="button" className="btn btn-small" onClick={() => void openExternal(detail.url)}>
@@ -937,7 +934,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
           <label htmlFor="cb-token" className="sr-only">
             Hugging Face token
           </label>
-          <input id="cb-token" className="mono" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder={tokenSaved ? "A token is saved. Enter a new one to replace it." : "hf_..."} />
+          <SecretInput what="the token" id="cb-token" className="mono" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder={tokenSaved ? "A token is saved. Enter a new one to replace it." : "hf_..."} />
           <button type="submit" className="btn btn-primary" disabled={!token.trim()}>
             Save
           </button>
@@ -990,23 +987,13 @@ export function CookbookScreen({
     if (api.ready) setTab("served");
   }, [api.ready?.key]);
 
+  // The header has only the title, as on the other pages (audit C5). In Settings the dialog has the h1.
+  const Title = embedded ? "h2" : "h1";
   return (
     <div className={embedded ? "settings-embed cookbook-screen" : "start-screen cookbook-screen"}>
       <section className="panel cookbook" aria-labelledby="cookbook-title">
         <div className="panel-head">
-          <h1 id="cookbook-title">
-            <Boxes size={20} aria-hidden /> Local Models
-          </h1>
-          <label className="cb-host-select">
-            Host
-            <select value={api.host} onChange={(e) => api.setHost(e.target.value)}>
-              {(hostNames.length ? hostNames : ["local"]).map((n) => (
-                <option key={n} value={n}>
-                  {n === "local" ? "This computer (daemon)" : n}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Title id="cookbook-title">Local models</Title>
           <span className="spacer" />
           {!embedded && (
             <button type="button" className="btn btn-ghost" onClick={onReturn}>
@@ -1014,6 +1001,16 @@ export function CookbookScreen({
             </button>
           )}
         </div>
+        <label className="cb-host-select">
+          Host
+          <select value={api.host} onChange={(e) => api.setHost(e.target.value)}>
+            {(hostNames.length ? hostNames : ["local"]).map((n) => (
+              <option key={n} value={n}>
+                {n === "local" ? "This computer (daemon)" : n}
+              </option>
+            ))}
+          </select>
+        </label>
         <HardwareBar api={api} />
         <div className="cb-tabs" role="tablist" aria-label="Cookbook">
           {TABS.map((t) => (

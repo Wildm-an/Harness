@@ -79,13 +79,15 @@ export function MoreMenu({
         onClick={() => setOpen((v) => !v)}
       >
         <EllipsisVertical size={16} aria-hidden />
-        {runningTasks > 0 && <span className="toggle-alert" aria-hidden />}
+        {/* Tasks run: an accent dot. Red means a failure in the rest of the app (audit C8). */}
+        {runningTasks > 0 && <span className="toggle-alert busy" aria-hidden />}
       </button>
       {open && (
         <div className="menu more-dropdown" role="menu" aria-label="More" data-tauri-drag-region="false">
           <button type="button" role="menuitemcheckbox" aria-checked={sideChatOpen} onClick={() => run(onSideChat)}>
             <MessagesSquare size={15} aria-hidden />
             <span className="more-label">Side chat</span>
+            {sideChatOpen && <Check size={14} aria-hidden />}
             <span className="more-key">{sideChatKey}</span>
           </button>
           <button type="button" role="menuitemcheckbox" aria-checked={ideOpen} onClick={() => run(onIde)}>
@@ -102,6 +104,7 @@ export function MoreMenu({
           <button type="button" role="menuitemcheckbox" aria-checked={previewOpen} onClick={() => run(onPreview)}>
             <FileText size={15} aria-hidden />
             <span className="more-label">Preview</span>
+            {previewOpen && <Check size={14} aria-hidden />}
           </button>
           <div className="menu-sep" role="separator" />
           <button

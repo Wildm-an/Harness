@@ -9,13 +9,10 @@ import type { PlanItem } from "../chat/state";
 import { Markdown } from "./Markdown";
 import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
 import { useCardKeys } from "../lib/cardKeys";
+import { MODES } from "./ModeMenu";
 
-const MODE_NAMES: Partial<Record<PermissionMode, string>> = {
-  acceptEdits: "Allow edits",
-  default: "Ask permissions",
-  auto: "Auto mode",
-  bypassPermissions: "Bypass permissions",
-};
+// The names of the mode menu, so that the card and the menu use one word for one mode (audit C7).
+const MODE_NAMES: Partial<Record<PermissionMode, string>> = Object.fromEntries(MODES.map((m) => [m.mode, m.label]));
 
 /** The text of a decided plan card. */
 export function planOutcome(item: PlanItem): string {

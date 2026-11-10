@@ -18,7 +18,7 @@ describe("the working line", () => {
   it("tells what the agent does now", () => {
     const tool = (name: string, status: "running" | "done"): ChatItem => ({ kind: "tool", id: name, name, input: {}, status });
     expect(workingStatus([], "fake/test-model")).toEqual({ tasks: 0, text: "Waiting for test-model…" });
-    expect(workingStatus([tool("bash", "running")], "m")).toEqual({ tasks: 1, text: "Running Bash…" });
+    expect(workingStatus([tool("bash", "running")], "m")).toEqual({ tasks: 1, text: "Running a command…" }); // The words of the tool row.
     expect(workingStatus([tool("bash", "done"), { kind: "assistant", id: "a", text: "Hi", streaming: true }], "m"))
       .toEqual({ tasks: 0, text: "Writing…" });
     const ask: ChatItem = { kind: "permission", id: "r", tool: "edit", input: {}, diff: null, rule: "edit(a)" };

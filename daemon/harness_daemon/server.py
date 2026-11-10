@@ -111,7 +111,7 @@ BUILTIN_COMMANDS: dict[str, str] = {
     "model": "Show the model, or change it: /model <provider>/<model>.",
     "skills": "Open the Skills panel: the skills and their sources.",
     "local-models": "Open the Local Models screen: find, download, serve, and delete local models.",
-    "connections": "Open the Connections screen: the model endpoints and their API keys.",
+    "connections": "Open Settings > Providers: the model endpoints and their API keys.",
     "mcp": "Open the MCP panel: the MCP servers of the project and their tools.",
     "plugins": "Open the Plugins screen: install, turn on or off, and remove plugins.",
     "servers": "Show the dev servers in the Browser pane.",
@@ -1209,7 +1209,7 @@ class Connection:
         warnings = []
         if provider.key_missing:
             warnings.append(f"The provider {provider.name} has no API key. {provider.key_missing} "
-                            "Open the Connections screen to enter the key.")
+                            "Open Settings > Providers to enter the key.")
         if support is False:
             warnings.append(f"The model {model} does not support tool calls. "
                             "The agent cannot read files, edit files, or run commands.")

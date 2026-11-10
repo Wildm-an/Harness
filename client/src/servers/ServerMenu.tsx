@@ -76,7 +76,7 @@ export function ServerMenu({
                       onOpenInBrowser(item);
                     }}
                     aria-label={`Open ${item.name} in the browser`}
-                    title="Open in browser"
+                    title="Open in the Browser pane"
                   >
                     <ExternalLink size={13} aria-hidden />
                   </button>

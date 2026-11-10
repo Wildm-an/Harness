@@ -3,8 +3,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, MessageSquare, Search } from "lucide-react";
-import type { SessionSummary } from "../daemon/protocol";
+import type { ProjectItem, SessionSummary } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
+import { parentHints } from "../lib/projectLabels";
+import { groupByProject } from "./Sidebar";
 
 /** The search shows this many sessions. */
 const LIMIT = 50;
@@ -21,21 +23,38 @@ function age(seconds: number): string {
   return `${Math.floor(diff / 86400)} d`;
 }
 
-/** The sessions that match all words of the query, in the name or the folder. Newest first. */
-export function searchSessions(sessions: SessionSummary[], query: string): SessionSummary[] {
+/**
+ * The project name of each session, as the sidebar shows it: the name of a saved project ("Demo app"),
+ * with its parent folder when two projects have the same name ("Demo app · scratchpad"). A folder that
+ * is not a project shows its folder name (audit C7).
+ */
+export function projectLabels(sessions: SessionSummary[], projects: ProjectItem[]): Map<string, string> {
+  const groups = groupByProject(sessions, projects);
+  const hints = parentHints(groups);
+  const labels = new Map<string, string>();
+  for (const g of groups) {
+    const hint = hints.get(g.key);
+    for (const s of g.sessions) labels.set(s.id, hint ? `${g.name} · ${hint}` : g.name);
+  }
+  return labels;
+}
+
+/** The sessions that match all words of the query, in the name or the project. Newest first. */
+export function searchSessions(sessions: SessionSummary[], query: string, labels?: Map<string, string>): SessionSummary[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const sorted = [...sessions].sort((a, b) => b.updated_at - a.updated_at);
   const found = words.length
     ? sorted.filter((s) => {
-        const text = `${s.title ?? ""} ${folderName(s.cwd)}`.toLowerCase();
+        const text = `${s.title ?? ""} ${labels?.get(s.id) ?? folderName(s.cwd)}`.toLowerCase();
         return words.every((w) => text.includes(w));
       })
     : sorted;
   return found.slice(0, LIMIT);
 }
 
-export function SessionSearch({ sessions, activeId, onOpen, onClose }: {
+export function SessionSearch({ sessions, projects = [], activeId, onOpen, onClose }: {
   sessions: SessionSummary[];
+  projects?: ProjectItem[]; // The saved projects: the meta line uses their names, as the sidebar does.
   activeId: string | null;
   onOpen: (id: string) => void;
   onClose: () => void;
@@ -45,7 +64,8 @@ export function SessionSearch({ sessions, activeId, onOpen, onClose }: {
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
   useOverlay(true);
-  const found = useMemo(() => searchSessions(sessions, query), [sessions, query]);
+  const labels = useMemo(() => projectLabels(sessions, projects), [sessions, projects]);
+  const found = useMemo(() => searchSessions(sessions, query, labels), [sessions, query, labels]);
 
   useEffect(() => input.current?.focus(), []);
   useEffect(() => setIndex(0), [query]);
@@ -110,7 +130,7 @@ export function SessionSearch({ sessions, activeId, onOpen, onClose }: {
                 {s.archived ? <Archive size={14} aria-hidden /> : <MessageSquare size={14} aria-hidden />}
                 <span className="session-search-title">{s.title ?? "Untitled session"}</span>
                 <span className="session-search-meta">
-                  {folderName(s.cwd)} · {age(s.updated_at)}
+                  {labels.get(s.id) ?? folderName(s.cwd)} · {age(s.updated_at)}
                 </span>
               </li>
             ))}

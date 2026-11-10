@@ -7,6 +7,7 @@ import { InlineDiff } from "./InlineDiff";
 import { useOpenPath } from "../lib/openPath";
 import { shortTip } from "./Tooltips";
 import { CodeBlock } from "./CodeBlock";
+import { DECIDED } from "../lib/decisions";
 
 // The names that Claude Code shows for its tools.
 const LABELS: Record<string, string> = {
@@ -135,6 +136,8 @@ export const ToolCard = memo(function ToolCard({
           </span>
         )}
         {item.diff && <DiffStats diff={item.diff} />}
+        {/* The answer to the permission card of this call: the card folds into this row (audit R1). */}
+        {item.approval && <span className={`tool-approval${item.approval === "deny" ? " denied" : ""}`}>{DECIDED[item.approval]}</span>}
         <ChevronRight className="tool-chevron" size={14} aria-hidden />
       </button>
       {open && (
