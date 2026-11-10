@@ -95,11 +95,7 @@ def test_preview_tools_operate_the_app(project, harness_home, chromium):
             result = await nav.run({"url": "/"}, ctx)
             opened = result.output
             assert f"Opened http://127.0.0.1:{port}/ (HTTP 200)." in opened and "Title: Test app" in opened
-            # The chat shows a browser card. The headless browser has no tab of the Browser pane.
-            card = result.card or {}
-            assert {k: card.get(k) for k in ("type", "url", "title", "tab")} == {
-                "type": "browser", "url": f"http://127.0.0.1:{port}/", "title": "Test app", "tab": None}
-            assert card["image"].startswith("data:image/jpeg;base64,")
+            assert result.card is None  # The chat shows no browser card (the user asked for this).
             assert "an error at load" in opened
             frame = next(e for e in events if e["type"] == "preview.frame")
             assert frame["url"] == f"http://127.0.0.1:{port}/" and frame["image"].startswith("data:image/jpeg;base64,")

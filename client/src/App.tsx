@@ -131,15 +131,12 @@ import {
   browserTabsOf,
   clearBrowserData,
   closeTabById,
-  hasTab,
   hideRailBrowser,
   keepCookies,
   minimizeShownTab,
-  minimizeTab,
   onAgentBrowser,
   runAgentCall,
   showAgentTab,
-  showTab,
   showTabInRail,
 } from "./browser/BrowserPane";
 import { pendingServerApprovals } from "./browser/ServerBlock";
@@ -1951,6 +1948,7 @@ export default function App() {
       const item = list.find((i) => i.id === id);
       return item ? { ...q, [session.id]: [item, ...list.filter((i) => i.id !== id)] } : q;
     });
+    dispatch({ type: "sendNow" }); // The task list stays after this stop.
     interrupt();
   };
 
@@ -2473,29 +2471,7 @@ export default function App() {
     setLayout((l) => openPane(l, "browser"));
   }, []);
 
-  // The browser card of a page that the agent opened: "Open" shows its tab in the Browser pane.
-  const openTab = useCallback(
-    (tab: string | null, url: string) => {
-      if (tab && showTab(tab)) setLayout((l) => openPane(l, "browser"));
-      else showInBrowser(url);
-    },
-    [showInBrowser],
-  );
-  // "Open minimized": the session rail shows a small live view of the tab, as the Minimize button of the pane.
-  const minimizeCardTab = useMemo(
-    () =>
-      view === "code" && sessionId
-        ? (tab: string) => {
-            if (!minimizeTab(sessionId, tab)) return false;
-            hidePane("browser");
-            showRail(true);
-            return true;
-          }
-        : null,
-    [view, sessionId, hidePane, showRail],
-  );
-
-  // The cards of send_file, artifact, and preview_navigate: the Browser pane, and the files of a daemon on this computer.
+  // The cards of send_file and artifact: the Browser pane, and the files of a daemon on this computer.
   const cardActions = useMemo<CardActions>(() => {
     let local = false;
     try {
@@ -2503,8 +2479,8 @@ export default function App() {
     } catch {
       local = false;
     }
-    return { openInBrowser: showInBrowser, openTab, minimizeTab: minimizeCardTab, closeTab: closeTabById, hasTab, daemonBase: daemonHttp, local };
-  }, [showInBrowser, openTab, minimizeCardTab, daemonHttp]);
+    return { openInBrowser: showInBrowser, onError: showError, daemonBase: daemonHttp, local };
+  }, [showInBrowser, showError, daemonHttp]);
 
   // "Open links in built-in browser": the chat links open in the Browser pane.
   useEffect(() => {

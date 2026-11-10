@@ -1,14 +1,11 @@
-// What the chat cards of send_file, artifact, and preview_navigate (ShareCards.tsx) need from the app:
-// the Browser pane and its tabs, the HTTP address of the daemon, and whether the daemon runs on this computer.
+// What the chat cards of send_file and artifact (ShareCards.tsx) need from the app:
+// the Browser pane, the HTTP address of the daemon, and whether the daemon runs on this computer.
 
 import { createContext, useContext } from "react";
 
 export interface CardActions {
   openInBrowser: (url: string) => void; // Shows a URL in the Browser pane.
-  openTab: (tab: string | null, url: string) => void; // Shows a tab in the Browser pane. A closed tab: the URL opens in a new tab.
-  minimizeTab: ((tab: string) => boolean) | null; // Shows a tab in the session rail. null: no rail (the IDE view). false: the tab is closed.
-  closeTab: (tab: string) => void;
-  hasTab: (tab: string) => boolean;
+  onError: (text: string) => void; // An error popup, for example a file that did not open.
   daemonBase: string | null; // "http://127.0.0.1:47615", or null with no connection.
   local: boolean; // The daemon runs on this computer: its file paths open in the apps of this computer.
 }

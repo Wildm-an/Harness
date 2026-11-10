@@ -43,7 +43,7 @@ export type ChatItem =
   // count: the times that the same text came in a row (it shows one time). turn: the error of a
   // failed turn, which shows as an error card (rule M18).
   // undo: the line of a rewind, with "Undo rewind" until the next user message (rule M3).
-  | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string; count?: number; turn?: boolean; undo?: boolean }
+  | { kind: "notice"; id: string; level: "error" | "warning" | "info"; text: string; count?: number; turn?: boolean; undo?: boolean; sendNow?: boolean }
   // A new PDF or Word file of a tool call (daemon created.py): a card with "Open" for the Preview pane.
   | { kind: "file"; id: string; path: string; toolId: string }
   // send_file and artifact (daemon tools/share.py): the files that the agent sent, or an artifact card.
@@ -61,6 +61,7 @@ export interface TurnInfo {
   startedAt: number;
   tokens: number;
   thinking?: boolean; // The model thinks now: no text and no tool call since its reasoning started.
+  sendNow?: boolean; // "Send now" of a queued message stops the turn: the task list stays after it.
 }
 
 export interface ChatState {
@@ -97,6 +98,7 @@ export type ChatAction =
       turnTokens?: number;
       imageInput?: boolean | null;
     }
+  | { type: "sendNow" } // "Send now" stops the turn for a queued message.
   | { type: "clear" };
 
 let counter = 0;
@@ -274,7 +276,9 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         turn: null,
         usage: msg.usage,
         context: { ...state.context, tokens: msg.usage.context_tokens, length: msg.usage.context_length },
-        items: text ? [...items, { kind: "notice", id: nextId("notice"), level: "info", text }] : items,
+        items: text
+          ? [...items, { kind: "notice", id: nextId("notice"), level: "info", text, ...(msg.stop_reason === "interrupted" && state.turn?.sendNow ? { sendNow: true } : {}) }]
+          : items,
       };
     }
     case "context.compacted": {
@@ -393,6 +397,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         imageInput: action.imageInput ?? null,
       };
     }
+    case "sendNow":
+      return state.turn ? { ...state, turn: { ...state.turn, sendNow: true } } : state;
     case "clear":
       return emptyChat;
   }

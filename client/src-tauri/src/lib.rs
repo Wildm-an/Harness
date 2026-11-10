@@ -237,6 +237,31 @@ async fn browser_cdp(app: AppHandle, id: String, method: String, params: String,
         .map_err(|_| format!("The page did not answer {method} in time."))?
 }
 
+/// The types that Windows runs as a program or a script when it "opens" them. A file card never
+/// opens these: the agent made the file, and a click on "Open" must not run it.
+const RUN_TYPES: &[&str] = &[
+    "exe", "com", "bat", "cmd", "msi", "msp", "msc", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh",
+    "scr", "pif", "lnk", "url", "reg", "cpl", "hta", "jar", "py", "pyw", "appref-ms", "application", "gadget",
+    "inf", "scf", "sct", "chm", "dll", "sys",
+];
+
+/// "Open" of a file card in the chat (send_file): the file opens in the default app of the computer.
+/// The opener permission of the app page covers only the settings file, so this command checks the
+/// path: an absolute path of a file that exists, and not a program or a script.
+#[tauri::command]
+async fn open_file_in_app(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let file = std::path::Path::new(&path);
+    if !file.is_absolute() || !file.is_file() {
+        return Err(format!("The file is not on this computer: {path}"));
+    }
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if RUN_TYPES.contains(&ext.as_str()) {
+        return Err(format!("Harness does not open .{ext} files: they run as programs. Use \"Show in folder\"."));
+    }
+    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn browser_bounds(app: AppHandle, id: String, bounds: Bounds) -> Result<(), String> {
     browser::set_bounds(&app, &id, bounds)
@@ -414,6 +439,7 @@ pub fn run() {
             forward_close_all,
             browser_open,
             browser_bounds,
+            open_file_in_app,
             browser_visible,
             browser_navigate,
             browser_history,

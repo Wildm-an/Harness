@@ -96,6 +96,12 @@ export async function openLocalPath(path: string): Promise<void> {
   await openPath(path);
 }
 
+/** Opens a file that the agent sent (a file card) in its default app. Programs and scripts do not open. */
+export async function openFileInApp(path: string): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("open_file_in_app", { path });
+}
+
 /** The version of the desktop app. */
 export async function appVersionOf(): Promise<string> {
   const { getVersion } = await import("@tauri-apps/api/app");
@@ -173,6 +179,23 @@ export interface Bounds {
   height: number;
 }
 
+/**
+ * The bounds in physical pixels of the window. The page of the app gives CSS pixels. The scale of
+ * the page (devicePixelRatio) can differ from the scale that Tauri uses for logical pixels, for
+ * example after a move to a screen with another scale. Then logical bounds put the webview outside
+ * its pane, over the chat. Physical pixels always match the page of the app.
+ */
+export function physicalBounds(b: Bounds): Bounds & { physical: true } {
+  const scale = typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  return {
+    x: Math.round(b.x * scale),
+    y: Math.round(b.y * scale),
+    width: Math.max(1, Math.round(b.width * scale)),
+    height: Math.max(1, Math.round(b.height * scale)),
+    physical: true,
+  };
+}
+
 export interface BrowserEvent {
   id: string; // The tab.
   url: string;
@@ -202,7 +225,7 @@ export const browserView = {
   open(id: string, url: string, bounds: Bounds, fresh = false) {
     return inTabOrder(id, async () => {
       const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("browser_open", { id, url, bounds, fresh });
+      await invoke("browser_open", { id, url, bounds: physicalBounds(bounds), fresh });
     });
   },
   /** Saves a PNG screenshot of the visible part of a tab. */
@@ -219,7 +242,7 @@ export const browserView = {
   bounds(id: string, bounds: Bounds) {
     return inTabOrder(id, async () => {
       const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("browser_bounds", { id, bounds });
+      await invoke("browser_bounds", { id, bounds: physicalBounds(bounds) });
     });
   },
   visible(id: string, visible: boolean) {
