@@ -3953,8 +3953,7 @@ select {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
-.pane-tab-close,
-.file-tab-close {
+.pane-tab-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3969,8 +3968,7 @@ select {
   opacity: 0.7;
 }
 
-.pane-tab-close:hover,
-.file-tab-close:hover {
+.pane-tab-close:hover {
   background: var(--surface-2);
   color: var(--text);
   opacity: 1;
@@ -4543,11 +4541,16 @@ input.tree-rename-input[aria-invalid="true"] {
   min-height: 0;
 }
 
+/* The file tabs look as the tabs of the browser (.win-tab) and of the Claude app: a rounded tab
+   with no icon, and a fill on the open tab (the user asked for this). */
 .file-tabs {
   display: flex;
-  align-items: stretch;
-  height: 34px;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 6px;
   overflow-x: auto;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex: none;
@@ -4561,12 +4564,22 @@ input.tree-rename-input[aria-invalid="true"] {
 .file-tab {
   display: flex;
   align-items: center;
-  border-right: 1px solid var(--border);
+  flex: none;
+  gap: 2px;
+  height: 28px;
+  padding: 0 3px 0 10px;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.file-tab:hover {
+  color: var(--text);
 }
 
 .file-tab.active {
-  background: var(--surface-sunken);
-  box-shadow: inset 0 2px 0 var(--accent);
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .file-tab-name {
@@ -4574,17 +4587,64 @@ input.tree-rename-input[aria-invalid="true"] {
   align-items: center;
   gap: 6px;
   height: 100%;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 0;
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font: 12.5px var(--font-sans);
+  color: inherit;
+  font: 500 12.5px var(--font-sans);
   white-space: nowrap;
   cursor: pointer;
 }
 
-.file-tab.active .file-tab-name {
+/* An unpinned tab: the next file that opens takes its place. "Keep open" pins it. */
+.file-tab.unpinned .file-tab-name {
+  font-style: italic;
+}
+
+/* The pin and the close X, with the size of the close X of a browser tab. */
+.file-tab-pin,
+.file-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.file-tab-pin:hover,
+.file-tab-close:hover {
+  background: var(--border);
   color: var(--text);
+}
+
+/* A drag of a tab (lib/tabDrag.ts): the other tabs slide out of the way of the held tab. After
+   the drop, the held tab slides into its place. The time is SLIDE_MS. */
+.tab-dragging > [data-drag-tab] {
+  transition: transform 160ms ease;
+}
+
+.tab-dragging > [data-drag-tab="held"] {
+  transition: none;
+}
+
+.tab-dragging > [data-drag-tab="held"],
+.tab-dragging > [data-drag-tab="settling"] {
+  z-index: 1;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
+}
+
+.tab-dragging,
+.tab-dragging * {
+  cursor: grabbing !important;
 }
 
 .dirty-dot {
@@ -9998,43 +10058,116 @@ body.sorting * {
   flex: none;
 }
 
-/* The small live view of the page where the agent works. A click opens it in the Browser pane. */
+/* The small live view of the page where the agent works, as in the Claude app: a head with the page
+   title (a menu of the tabs), "Open in the Browser pane", and "Close tab", then the picture of the
+   page. A click on the picture opens it in the Browser pane. */
 .rail-browser {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
-  padding: 4px;
+  min-width: 0;
+  color: var(--text);
+  font: 13px var(--font-sans);
+}
+
+.rail-browser-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rail-browser-head .icon-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+
+.rail-browser-pick {
+  position: relative;
+  min-width: 0;
+}
+
+.rail-browser-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  font: 13px var(--font-sans);
-  text-align: left;
+  font: 500 13px var(--font-sans);
   cursor: pointer;
 }
 
-.rail-browser:hover {
+.rail-browser-title:hover:not(:disabled),
+.rail-browser-title[aria-expanded="true"] {
   background: var(--hover);
 }
 
-.rail-browser:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+.rail-browser-title:disabled {
+  cursor: default;
+}
+
+.rail-browser-title > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rail-browser-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu.rail-browser-menu {
+  left: 0;
+  right: auto;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.menu.rail-browser-menu > button > .rail-browser-name {
+  flex: 1;
 }
 
 .rail-browser-frame {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   aspect-ratio: 16 / 10;
+  padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--surface-sunken, var(--bg));
+  cursor: pointer;
+  transition: border-color var(--duration) ease, box-shadow var(--duration) ease;
+}
+
+.rail-browser-frame:hover {
+  border-color: var(--text-muted);
+}
+
+.rail-browser-frame:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The agent uses the page now: an outline in the accent color, as in the Claude app. */
+.rail-browser.agent .rail-browser-frame {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .rail-browser-frame img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -10042,25 +10175,6 @@ body.sorting * {
 }
 
 .rail-browser-empty {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.rail-browser-caption {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 0 2px;
-}
-
-.rail-browser-caption .rail-item-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.rail-browser-state {
-  flex: none;
   color: var(--text-muted);
   font-size: 12px;
 }

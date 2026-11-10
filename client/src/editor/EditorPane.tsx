@@ -15,6 +15,7 @@ import {
   FolderOpen,
   LoaderCircle,
   MessageSquarePlus,
+  Pin,
   RefreshCw,
   Save,
   Search,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import { languageFor, monaco, monacoTheme } from "../lib/monaco";
 import { codeFontFamily } from "../lib/theme";
+import { useTabDrag } from "../lib/tabDrag";
 import { AUTOCOMPLETE_DELAY, autocompleteOn, cursorContext, setAutocompleteOn, wantsCompletion } from "../lib/autocomplete";
 import { FileTree } from "./FileTree";
 import { isEditableFile, newEntryProblem, newEntryStart, selectionReference } from "./paths";
@@ -309,6 +311,12 @@ export function EditorPane({
     editor.focus();
   }, [api.reveal, api.active, ready, mounted]);
 
+  // A drag of a tab changes the order of the tabs. The held tab gets the focus.
+  const tabDrag = useTabDrag(api.moveFile, (index) => {
+    const path = api.files[index]?.path;
+    if (path) api.setActive(path);
+  });
+
   const requestClose = (path: string) => {
     const f = api.files.find((x) => x.path === path);
     if (f?.dirty) setConfirmClose(path);
@@ -487,6 +495,7 @@ export function EditorPane({
                       aria-disabled={blocked || undefined}
                       title={blocked ? "Binary file" : `${path}${state ? ` · ${GIT_LABEL[state]}` : ""}`}
                       onClick={() => !blocked && openFound(item)}
+                      onDoubleClick={() => !dir && !blocked && isEditableFile(item) && api.pinFile(path)}
                     >
                       {dir ? <Folder size={14} aria-hidden /> : isPreviewFile(item) ? <FileText size={14} aria-hidden /> : <File size={14} aria-hidden />}
                       <span className="tree-name">{name}</span>
@@ -509,6 +518,7 @@ export function EditorPane({
             active={api.active}
             onToggle={api.toggleDir}
             onOpen={(p) => api.openFile(p)}
+            onPin={api.pinFile}
             onPreview={onPreview}
             onDelete={setConfirmDelete}
             onRename={(entry, name) => api.renameEntry(entry.path, name)}
@@ -618,6 +628,7 @@ export function EditorPane({
                 active={api.active}
                 onToggle={api.toggleDir}
                 onOpen={(p) => api.openFile(p)}
+                onPin={api.pinFile}
                 onPreview={onPreview}
                 onDelete={setConfirmDelete}
                 onRename={(entry, name) => api.renameEntry(entry.path, name)}
@@ -635,24 +646,45 @@ export function EditorPane({
       <div className="editor-main">
         {/* The Code view shows no empty tab row: the editor shows "Open files appear here". */}
         {!(code && api.files.length === 0) && (
-        <div className="file-tabs" role="tablist" aria-label="Open files">
-          {api.files.map((f) => (
-            <div key={f.path} className={`file-tab${f.path === api.active ? " active" : ""}`} role="presentation">
+        <div className={`file-tabs${tabDrag.rowClass}`} role="tablist" aria-label="Open files">
+          {api.files.map((f, index) => (
+            // An unpinned tab has its name in italics: the next file that opens takes its place (V6k4).
+            // A drag changes the order of the tabs (V6k5).
+            <div
+              key={f.path}
+              className={`file-tab${f.path === api.active ? " active" : ""}${f.pinned ? "" : " unpinned"}`}
+              role="presentation"
+              {...tabDrag.tabProps(index)}
+            >
               <button
                 type="button"
                 role="tab"
                 aria-selected={f.path === api.active}
                 className="file-tab-name"
                 onClick={() => api.setActive(f.path)}
+                onDoubleClick={() => api.pinFile(f.path)}
                 onAuxClick={(e) => e.button === 1 && requestClose(f.path)}
                 title={f.path}
               >
-                {f.loading ? <LoaderCircle size={12} className="spin" aria-hidden /> : <FileCode size={12} aria-hidden />}
+                {/* As the tabs of the browser and of the Claude app: no file icon. */}
+                {f.loading && <LoaderCircle size={13} className="spin" aria-hidden />}
                 {baseName(f.path)}
                 {f.dirty && <span className="dirty-dot" aria-label="Modified" title="Modified" />}
               </button>
-              <button type="button" className="file-tab-close" onClick={() => requestClose(f.path)} aria-label={`Close ${f.path}`} title="Close">
-                <X size={12} aria-hidden />
+              {!f.pinned && (
+                <button
+                  type="button"
+                  className="file-tab-pin"
+                  data-no-drag
+                  onClick={() => api.pinFile(f.path)}
+                  aria-label={`Keep ${f.path} open`}
+                  title="Keep open"
+                >
+                  <Pin size={13} aria-hidden />
+                </button>
+              )}
+              <button type="button" className="file-tab-close" data-no-drag onClick={() => requestClose(f.path)} aria-label={`Close ${f.path}`} title="Close">
+                <X size={15} aria-hidden />
               </button>
             </div>
           ))}
