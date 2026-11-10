@@ -59,6 +59,11 @@ def harness_home(tmp_path, monkeypatch, fake_model_server):
     (home / "providers.json").write_text(json.dumps({
         "fake": {"base_url": fake_model_server.base_url, "api_key": "test", "kind": "ollama"},
     }))
+    # The ACP registry (acp_install.py): no network in the tests. Port 9 does not answer.
+    from harness_daemon import acp_install
+    monkeypatch.setenv("HARNESS_ACP_REGISTRY", "http://127.0.0.1:9/registry.json")
+    monkeypatch.setattr(acp_install, "_registry", None)
+    monkeypatch.setattr(acp_install, "_registry_time", 0.0)
     return home
 
 

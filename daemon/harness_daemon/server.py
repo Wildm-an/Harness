@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from . import __version__
 from .agent import Agent
-from . import acp_harnesses
+from . import acp_harnesses, acp_install
 from . import acp_mcp
 from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client
 from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
@@ -3742,8 +3742,65 @@ async def _send_harnesses(conn: Connection) -> None:
                      "path": str(harness_home() / "harnesses.json")})
 
 
+async def _refresh_harness_registry(conn: Connection) -> None:
+    """Read the ACP registry (the versions for "Update"), then send the list again if it changed."""
+    try:
+        if await acp_install.refresh_registry():
+            await _send_harnesses(conn)
+    except Exception:  # noqa: BLE001 - the connection closed.
+        log.debug("The harness list did not go to the client", exc_info=True)
+
+
 @handler("harnesses.list")
 async def on_harnesses_list(conn: Connection, msg: dict[str, Any]) -> None:
+    """The list. {"refresh": true} ("Check again") reads the ACP registry first. Else an old copy of the
+    registry is read in the background, and a new list follows when the versions changed."""
+    if msg.get("refresh") is True:
+        await acp_install.refresh_registry(force=True)
+    elif acp_install.registry_stale():
+        asyncio.create_task(_refresh_harness_registry(conn))
+    await _send_harnesses(conn)
+
+
+@handler("harnesses.install")
+async def on_harnesses_install(conn: Connection, msg: dict[str, Any]) -> None:
+    """Download a harness of the list, or download its update: {"id"}. The client gets harnesses.progress
+    while it runs, then the list (or an error with ref "harnesses.install")."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None or spec.custom:
+        raise ProtocolError(f"Harness cannot download this harness: {harness_id}.")
+    if acp_install.busy(harness_id):
+        raise ProtocolError(f"{spec.name} downloads now.")
+
+    async def progress(stage: str, received: int, total: int) -> None:
+        try:
+            await conn.send({"type": "harnesses.progress", "id": harness_id, "stage": stage,
+                             "received": received, "total": total})
+        except Exception:  # noqa: BLE001 - the window closed: the download goes on.
+            pass
+
+    async def run() -> None:
+        try:
+            await acp_install.install(spec, progress)
+        except acp_install.InstallError as e:
+            await conn.error(str(e), ref="harnesses.install")
+        except Exception as e:  # noqa: BLE001
+            log.exception("The download of %s failed", harness_id)
+            await conn.error(f"Could not download {spec.name}: {type(e).__name__}: {e}", ref="harnesses.install")
+        await _send_harnesses(conn)
+
+    asyncio.create_task(run())
+
+
+@handler("harnesses.uninstall")
+async def on_harnesses_uninstall(conn: Connection, msg: dict[str, Any]) -> None:
+    """Delete the download of a harness: {"id"}. The harness then starts from the PATH, npx, or uvx."""
+    harness_id = _text_arg(msg, "id")
+    try:
+        await asyncio.to_thread(acp_install.remove, harness_id)
+    except acp_install.InstallError as e:
+        raise ProtocolError(str(e)) from None
     await _send_harnesses(conn)
 
 

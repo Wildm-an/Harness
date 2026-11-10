@@ -138,12 +138,15 @@ Settings > Operating Harness chooses the harness that runs the agent loop of new
 
 | `type` | Fields | Function |
 |---|---|---|
-| `harnesses.list` | none | The reply is `harnesses`. It needs no session. |
+| `harnesses.list` | `refresh` (optional) | The reply is `harnesses`. It needs no session. `refresh: true` ("Check again") reads the ACP registry first. Else the daemon reads an old copy of the registry (older than 6 hours) in the background, and sends `harnesses` again when the versions changed. |
+| `harnesses.install` | `id` | Download a harness of the list, or its update, from the ACP registry (`acp_install.py`). The client gets `harnesses.progress` while it runs, then `harnesses`. A failure gives an `error` with the ref `harnesses.install`, then `harnesses`. |
+| `harnesses.uninstall` | `id` | Delete the download of a harness. The harness then starts from the PATH, npx, or uvx. The reply is `harnesses`. |
 | `harnesses.save` | `name`, `command`, `id` (optional) | Add a custom harness, or change the custom harness `id`. `command` starts it in ACP mode. The reply is `harnesses`. |
 | `harnesses.delete` | `id` | Delete a custom harness. If it is the operating harness, the setting goes back to the built-in loop (`user_settings` comes first). The reply is `harnesses`. |
 | `acp.model` | `model` | The model menu of an ACP session: a model id of the harness. The daemon sends `session/set_model`, or `session/set_config_option` when the harness gives the model as a config option. The reply is `acp.state`. |
 | `acp.state` (daemon to client) | `harness` | The state of the harness of an ACP session: `id`, `name`, `models` (`id`, `name`, `description`), `model`, and `commands` (`name`, `description`, `hint`). It comes when the harness starts (at the session open) and when its models or commands change. `session.ready` has the same object in `harness`. |
-| `harnesses` (daemon to client) | `items`, `current`, `path` | Each item has `id`, `name`, `description`, `website`, `license`, `command`, `status` (`installed`, `npx`, `uvx`, or `missing`), `detail`, `custom`, `recommended` (its place in the Recommended group, or null), `reason` (why it is recommended), and `local_models` (it can use a local model server). `current` is the operating harness id. `path` is the file of the custom harnesses. |
+| `harnesses.progress` (daemon to client) | `id`, `stage`, `received`, `total` | A download runs. `stage` is "Checking the registry", "Downloading", "Unpacking", "Installing with npm", or "Installing with uv". `received` and `total` are bytes. `total` 0: the size is not known. |
+| `harnesses` (daemon to client) | `items`, `current`, `path` | Each item has `id`, `name`, `description`, `website`, `license`, `command`, `status` (`downloaded`, `installed`, `npx`, `uvx`, or `missing`), `detail`, `custom`, `recommended` (its place in the Recommended group, or null), `reason` (why it is recommended), `local_models` (it can use a local model server), `download` (`version` and `kind` of the Harness download, or null), `latest` (the version in the ACP registry, or null), `update` (the registry has a newer version than the download), `can_download` (Harness can download it for the daemon computer), and `busy` (a running download: `stage`, `received`, `total`, or null). `current` is the operating harness id. `path` is the file of the custom harnesses. |
 
 An ACP session differs from a session of the built-in loop:
 
