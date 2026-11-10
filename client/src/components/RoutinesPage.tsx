@@ -196,13 +196,14 @@ export interface RoutineDraft {
 
 export type DraftErrors = Partial<Record<"name" | "prompt" | "cwd" | "schedule", string>>;
 
-export function newDraft(projects: ProjectItem[]): RoutineDraft {
+/** A new routine. ``mode``: the "Default permission mode" of Settings > General. */
+export function newDraft(projects: ProjectItem[], mode: PermissionMode = "default"): RoutineDraft {
   return {
     name: "",
     prompt: "",
     cwd: projects.find((p) => p.exists)?.path ?? "",
     model: "",
-    permission_mode: "default",
+    permission_mode: mode,
     schedule: cronToSchedule("0 9 * * 1-5"),
     enabled: true,
   };
@@ -711,6 +712,7 @@ export const RoutinesPage = memo(function RoutinesPage({
   newToken = null,
   onToken,
   onTokenDone,
+  defaultMode = "default",
 }: {
   routines: RoutineItem[] | null; // null: loading.
   folder: string | null; // The folder of the routine files on the daemon computer (~/.harness/routines).
@@ -732,6 +734,7 @@ export const RoutinesPage = memo(function RoutinesPage({
   newToken?: { id: string; token: string } | null; // A new API token, shown one time.
   onToken?: (id: string, action: "generate" | "delete") => void;
   onTokenDone?: () => void;
+  defaultMode?: PermissionMode; // "Default permission mode" of Settings > General: the mode of a new routine.
 }) {
   const [openId, setOpenId] = useState<string | null>(null); // "new": the form of a new routine.
   const [saving, setSaving] = useState(false);
@@ -767,7 +770,7 @@ export const RoutinesPage = memo(function RoutinesPage({
         key={openId}
         item={item}
         file={item && folder ? routineFile(folder, item.id) : null}
-        draft={item ? draftOf(item) : newDraft(projects)}
+        draft={item ? draftOf(item) : newDraft(projects, defaultMode)}
         runs={item && runs?.routine_id === item.id ? runs.items : null}
         projects={projects}
         models={models}

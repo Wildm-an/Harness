@@ -2097,6 +2097,9 @@ async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
         await asyncio.to_thread(worktrees.remove, worktree)
     conn.storage.delete_session(session_id)
     await conn.send({"type": "session.deleted", "id": session_id})
+    if row.get("routine_id") and ROUTINES.scheduler is not None:
+        # The runs of the session are gone: all windows get the new "last run" of the routines.
+        await ROUTINES.scheduler.send_items()
 
 
 @handler("git.branches")

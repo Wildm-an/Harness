@@ -830,6 +830,12 @@ export default function App() {
           });
           listRecent();
           return;
+          // The daemon deleted the routine runs of the session: remove them from the open run list too.
+          setRoutineRuns((r) =>
+            r && r.items.some((run) => run.session_id === msg.id)
+              ? { ...r, items: r.items.filter((run) => run.session_id !== msg.id) }
+              : r,
+          );
         case "steer.taken":
           // The message is in the history now. The chat shows it at this place.
           setQueues((q) => Object.fromEntries(Object.entries(q).map(([sid, list]) => [sid, list.filter((i) => i.id !== msg.id)])));
@@ -3395,6 +3401,7 @@ export default function App() {
             apiBase={daemonHttp}
             newToken={routineToken}
             onToken={(id, action) => {
+            defaultMode={userSettings?.permission_mode}
               setRoutineToken(null);
               sendSafely({ type: "routines.token", id, action });
             }}
