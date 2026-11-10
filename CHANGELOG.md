@@ -3,6 +3,31 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.62 (2026-11-09)
+
+### Chat
+
+- Press Esc two times to open the new "Rewind" dialog. It lists your messages in the session. Choose a
+  message, then choose what to restore: the code and the conversation, the conversation, or the code.
+  During a turn, Esc still stops the agent.
+- A new session gets its title before the reply starts. Harness waits up to 15 seconds for the title.
+
+### Routines
+
+- A routine does not stop to ask if a task goes to a new session. The task stays in the routine session.
+- When you delete a session, its runs go away from the run list of the routine.
+- A new routine starts in your "Default permission mode" of Settings > General.
+
+### Updates
+
+- The note "Harness updates when the agent is done" shows at the top of the window. It does not cover
+  the prompt box. The note "Harness quits when the agent is done" moved there too.
+
+### Connectors
+
+- In the installed app, the tools of the Outlook (classic) connector that read a date (messages and
+  calendar events) do not fail with "No module named 'win32timezone'" again.
+
 ## 0.1.61 (2026-11-09)
 
 ### Operating Harness
