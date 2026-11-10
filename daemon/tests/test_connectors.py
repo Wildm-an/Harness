@@ -141,7 +141,7 @@ def test_connector_messages(daemon, project, fake_model, fake_github):  # noqa: 
     c.new_session(project)
     c.send({"type": "connectors.list"})
     listing = c.until("connectors")[0]
-    assert [i["id"] for i in listing["items"]] == ["github", "outlook", "email"]
+    assert [i["id"] for i in listing["items"]] == ["github", "outlook", "outlook-classic", "email"]
     assert listing["items"][0]["installed"] is False
 
     c.send({"type": "connectors.connect", "id": "github", "source": "token", "token": "wrong"})

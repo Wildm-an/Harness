@@ -23,6 +23,8 @@ hiddenimports = [
     *collect_submodules("mcp", filter=lambda name: not name.startswith("mcp.cli")),
     # The terminal pane on Windows (ConPTY). terminal.py imports it in a function.
     *(["winpty"] if sys.platform == "win32" else []),
+    # The Outlook (classic) connector: COM through pywin32. outlook_server.py imports it in functions.
+    *(["win32com.client", "pythoncom", "pywintypes"] if sys.platform == "win32" else []),
 ]
 
 datas = [

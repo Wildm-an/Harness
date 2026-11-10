@@ -91,6 +91,12 @@ def main(argv: list[str] | None = None) -> None:
 
         mail_main()
         return
+    if argv[:2] == ["--mcp-server", "outlook"]:
+        # The built-in server of the Outlook (classic) connector, on stdio (outlook_server.py, connectors.py).
+        from .outlook_server import main as outlook_main
+
+        outlook_main(argv[2:])
+        return
     parser = argparse.ArgumentParser(prog="harness-daemon")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address. Default 127.0.0.1.")
     parser.add_argument("--port", type=int, default=0, help="Port. 0 selects a random free port.")

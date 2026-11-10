@@ -290,7 +290,7 @@ def test_the_retired_connectors(harness_home, project):
     assert any("no longer has the Gmail" in p for p in problems)
 
     items = asyncio.run(connectors.items())["items"]
-    assert [i["id"] for i in items] == ["github", "outlook", "email"]
+    assert [i["id"] for i in items] == ["github", "outlook", "outlook-classic", "email"]
     assert list(user_servers()) == ["mine"]
     assert not (harness_home / "connectors" / "gmail").exists()
     assert mcp_auth.read_record(connectors.record_key("gmail")) == {}

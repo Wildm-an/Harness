@@ -181,6 +181,7 @@ Each provider is an entry in `~/.harness/providers.json`:
   - GitHub: the token of the GitHub CLI (`gh auth token`) on the daemon computer, or a personal access token. The daemon checks the token with the GitHub API before it keeps it.
   - Microsoft Outlook: a local stdio server (`@softeria/ms-365-mcp-server`, with an exact version) that npx runs. The daemon runs it with `--login`, and the client shows the Microsoft device code. The server keeps and refreshes its own tokens. The user chooses a personal or a work account, and read-only. The user can add more than one account: the accounts of one type share one server and one token cache, and "Remove" signs out one account.
   - Email (IMAP): a mail server that is part of Harness (`mail_server.py`, the standard library only). The daemon runs itself with `--mcp-server mail`. Each account signs in with an app password; Harness checks the login first, and gives the passwords to the server in its environment, not in `mcp.json`.
+  - Outlook (classic): a server that is part of Harness (`outlook_server.py`, COM through pywin32, Windows only). The daemon runs itself with `--mcp-server outlook`. It uses the classic Outlook app on the daemon computer, with the accounts that are signed in to Outlook, so Harness keeps no secret. Connect runs the server with `--check`. The user chooses the tools: read only, also drafts (the default), or also send a draft.
 
 ### 5.8 Plugins
 

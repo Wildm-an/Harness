@@ -18,8 +18,9 @@ The MCP client asks ``token()`` for the token at each connection, and sends it a
 GitHub has no dynamic client registration, so the OAuth flow of mcp_auth.py does not work for it
 without a registered OAuth app. The ``oauth`` key in ``mcp.json`` is for that case.
 
-There is one more kind, described at its code: ``mail`` (Email, the IMAP and SMTP server that Harness has
-built in, mail_server.py, with an app password for each account).
+There are two more kinds, described at their code: ``mail`` (Email, the IMAP and SMTP server that Harness has
+built in, mail_server.py, with an app password for each account), and ``desktop`` (Outlook (classic), the
+built-in server outlook_server.py, that uses the classic Outlook app on the daemon computer through COM).
 
 ``device`` (Microsoft Outlook): a local stdio server from npm that signs in by itself::
 
@@ -59,8 +60,11 @@ from .config import ConfigError, harness_home, read_json, write_json
 GH_TIMEOUT = 10
 LOGIN_TIMEOUT = 900  # Seconds. A Microsoft device code expires after 15 minutes.
 LOGOUT_TIMEOUT = 120  # The first npx run can download the package.
-SOURCES = ("gh", "token", "device", "mail")
+CHECK_TIMEOUT = 120  # Seconds. The check of Outlook (classic) can start Outlook.
+SOURCES = ("gh", "token", "device", "mail", "desktop")
 ACCOUNTS = ("personal", "work")
+# The tools of Outlook (classic): read only, read and make drafts, or also send a draft (outlook_server.py).
+OUTLOOK_MODES = ("read", "draft", "send")
 
 OnCode = Callable[[str, str], Awaitable[None]]  # (url, code)
 
@@ -74,7 +78,7 @@ class Connector:
     id: str
     name: str
     description: str
-    kind: str = "token"  # "token" or "device"
+    kind: str = "token"  # "token", "device", "mail", or "desktop"
     # The kind "token":
     url: str = ""  # The MCP server.
     user_api: str = ""  # An API that returns the account of the token, to check the token.
@@ -116,7 +120,19 @@ EMAIL = Connector(
     kind="mail",
 )
 
-CONNECTORS: dict[str, Connector] = {GITHUB.id: GITHUB, OUTLOOK.id: OUTLOOK, EMAIL.id: EMAIL}
+OUTLOOK_CLASSIC = Connector(
+    id="outlook-classic",
+    name="Outlook (classic)",
+    description="Mail and calendar of the classic Outlook app on the daemon computer, with the accounts that are "
+                "signed in to Outlook. No sign-in in Harness. Windows only. Harness has the server built in.",
+    kind="desktop",
+)
+
+CONNECTORS: dict[str, Connector] = {GITHUB.id: GITHUB, OUTLOOK.id: OUTLOOK, OUTLOOK_CLASSIC.id: OUTLOOK_CLASSIC,
+                                    EMAIL.id: EMAIL}
+
+# The argument of --mcp-server for each kind of built-in server.
+BUILTIN_SERVERS = {"mail": "mail", "desktop": "outlook"}
 
 # Connectors that Harness had and removed. The Connectors tab removes their entries from ~/.harness/mcp.json
 # (Harness made them), and the MCP client shows a clear message for an entry that is still there.
@@ -126,6 +142,7 @@ RETIRED: dict[str, str] = {"chrome": "Chrome (Harness 0.1.44)", "gmail": "Gmail 
 GH: list[str] | None = None
 NPX: list[str] | None = None  # The command that runs a device server, instead of "npx -y <package>".
 MAIL_COMMAND: list[str] | None = None  # The command of the built-in mail server. Tests replace it.
+OUTLOOK_COMMAND: list[str] | None = None  # The command of the built-in Outlook server. Tests replace it.
 
 _LOGINS: dict[str, asyncio.subprocess.Process] = {}  # The --login processes that wait for the user.
 _CANCELLED: set[str] = set()  # The sign-ins that the user cancelled.
@@ -317,28 +334,7 @@ async def _run_command(connector: Connector, group: str, read_only: bool, extra:
     """Run the server of a group with a command flag. Return the exit code and the JSON lines of its output."""
     command, args, env = server_command(connector, group, read_only)
     argv = _exec_command(command, [*args, *extra])  # Only device servers have command flags.
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, env={**os.environ, **env}, **_own_group())
-    except OSError as e:
-        raise ConnectorError(f"Harness could not start {connector.package or command}: {e}") from None
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
-        _kill_tree(proc)
-        raise ConnectorError(f"The server of {connector.name} did not answer in {int(timeout)} seconds.") from None
-    lines = []
-    for line in out.decode("utf-8", "replace").splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                data = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(data, dict):
-                lines.append(data)
-    return proc.returncode, lines
+    return await _run_json(argv, env, timeout, connector.name)
 
 
 async def _list_accounts(connector: Connector, group: str, read_only: bool) -> list[str] | None:
@@ -539,18 +535,21 @@ MAIL_PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 
-def mail_command(connector_id: str) -> tuple[str, list[str]] | None:
-    """The command of a built-in server, that the MCP client runs in place of the command in mcp.json."""
+def builtin_command(connector_id: str) -> tuple[str, list[str]] | None:
+    """The command of a built-in server (Email, Outlook (classic)), that the MCP client runs in place of the
+    command in mcp.json: the daemon itself, wherever it is installed. None for the other connectors."""
     connector = CONNECTORS.get(connector_id)
-    if connector is None or connector.kind != "mail":
+    if connector is None or connector.kind not in BUILTIN_SERVERS:
         return None
-    if MAIL_COMMAND is not None:
-        return MAIL_COMMAND[0], MAIL_COMMAND[1:]
+    test = MAIL_COMMAND if connector.kind == "mail" else OUTLOOK_COMMAND
+    if test is not None:
+        return test[0], test[1:]
     from .frozen import is_frozen
 
+    flag = ["--mcp-server", BUILTIN_SERVERS[connector.kind]]
     if is_frozen():
-        return sys.executable, ["--mcp-server", "mail"]
-    return sys.executable, ["-m", "harness_daemon", "--mcp-server", "mail"]
+        return sys.executable, flag
+    return sys.executable, ["-m", "harness_daemon", *flag]
 
 
 def _mail_record(connector_id: str) -> dict[str, Any]:
@@ -626,13 +625,86 @@ async def add_mail_account(connector: Connector, options: Any) -> str:
 
 
 def server_env(connector_id: str) -> dict[str, str]:
-    """The secret environment of a connector server, that the MCP client adds at each start. mcp.json has none."""
+    """The environment of a built-in server, that the MCP client adds at each start. mcp.json has none of it:
+    the passwords of the Email connector, and the mode of Outlook (classic)."""
     connector = CONNECTORS.get(connector_id)
+    if connector is not None and connector.kind == "desktop":
+        return {"HARNESS_OUTLOOK_MODE": _desktop_record(connector_id)["mode"]}
     if connector is None or connector.kind != "mail":
         return {}
     data = _mail_record(connector_id)
     return {"HARNESS_MAIL_ACCOUNTS": json.dumps([_server_account(a) for a in data["accounts"]]),
             "HARNESS_MAIL_READ_ONLY": "1" if data["read_only"] else "0"}
+
+
+# -- the kind "desktop" (Outlook (classic)) -------------------------------------------------------------------
+#
+# The server is part of Harness (outlook_server.py): the daemon runs itself with --mcp-server outlook. It uses
+# the classic Outlook app on the daemon computer through COM, with the accounts that are signed in to Outlook,
+# so Harness keeps no secret. Connect runs the server with --check (it can start Outlook) and keeps the account
+# names and the mode. The record:
+#
+#     {"source": "desktop", "mode": "draft", "accounts": ["pat@example.com"]}
+
+
+def _desktop_record(connector_id: str) -> dict[str, Any]:
+    record = mcp_auth.read_record(record_key(connector_id))
+    mode = record.get("mode") if record.get("mode") in OUTLOOK_MODES else "draft"
+    accounts = [a for a in record.get("accounts") or [] if isinstance(a, str)]
+    return {"connected": record.get("source") == "desktop", "mode": mode, "accounts": accounts}
+
+
+async def _run_json(argv: list[str], env: dict[str, str], timeout: float,
+                    name: str) -> tuple[int | None, list[dict[str, Any]]]:
+    """Run a command. Return the exit code and the JSON objects in its output, one for each line."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, env={**os.environ, **env}, **_own_group())
+    except OSError as e:
+        raise ConnectorError(f"Harness could not start the server of {name}: {e}") from None
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        _kill_tree(proc)
+        raise ConnectorError(f"The server of {name} did not answer in {int(timeout)} seconds.") from None
+    lines = []
+    for line in out.decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                lines.append(data)
+    return proc.returncode, lines
+
+
+async def connect_desktop(connector: Connector, options: Any) -> str:
+    """Check that the server can open Outlook, and keep the accounts and the mode. Return the first account."""
+    raw = options if isinstance(options, dict) else {}
+    mode = raw.get("mode", "draft")
+    if mode not in OUTLOOK_MODES:
+        raise ConfigError(f"The mode must be one of: {', '.join(OUTLOOK_MODES)}.")
+    if sys.platform != "win32" and OUTLOOK_COMMAND is None:
+        raise ConnectorError(f"{connector.name} works only on Windows, and the daemon computer is not Windows. "
+                             "Use the Microsoft Outlook connector.")
+    _, servers = _user_file()
+    _check_free(servers, connector)
+    command, args = builtin_command(connector.id) or ("", [])
+    _, lines = await _run_json([command, *args, "--check"], {"HARNESS_OUTLOOK_MODE": mode}, CHECK_TIMEOUT,
+                               connector.name)
+    result = next((d for d in reversed(lines) if "ok" in d), None)
+    if result is None:
+        raise ConnectorError(f"The server of {connector.name} gave no result.")
+    if not result.get("ok"):
+        raise ConnectorError(str(result.get("error") or "Harness could not open Outlook.")[:300])
+    accounts = [a for a in result.get("accounts") or [] if isinstance(a, str) and a]
+    mcp_auth.clear_record(record_key(connector.id))
+    mcp_auth.update_record(record_key(connector.id), source="desktop", mode=mode, accounts=accounts)
+    install(connector)
+    return accounts[0] if accounts else "Outlook"
 
 
 def remove_retired() -> list[str]:
@@ -698,9 +770,10 @@ def _check_free(servers: dict[str, Any], connector: Connector, name: str | None 
 def install(connector: Connector, group: str | None = None, read_only: bool = False) -> None:
     """Add the server entry to ~/.harness/mcp.json, or update the entry of this connector (or of a group)."""
     data, servers = _user_file()
-    if connector.kind == "mail":
+    if connector.kind in BUILTIN_SERVERS:
+        # The MCP client runs the daemon itself in place of this command (builtin_command).
         name = connector.id
-        entry: dict[str, Any] = {"command": "harness-daemon", "args": ["--mcp-server", "mail"],
+        entry: dict[str, Any] = {"command": "harness-daemon", "args": ["--mcp-server", BUILTIN_SERVERS[connector.kind]],
                                  "connector": connector.id}
     elif connector.kind == "device":
         name = server_name(connector, group or "personal")
@@ -754,6 +827,14 @@ def _status(connector: Connector, gh: bool) -> dict[str, Any]:
                          {"id": key, "name": value["name"], "domains": value["domains"],
                           "imap": value["imap"], "smtp": value["smtp"], "password_url": value["password_url"],
                           "help": value["help"]} for key, value in MAIL_PROVIDERS.items()]})
+    elif connector.kind == "desktop":
+        desktop = _desktop_record(connector.id)
+        connected = desktop["connected"]
+        body.update({"source": "desktop" if connected else None,
+                     "login": (desktop["accounts"][0] if desktop["accounts"] else "Outlook") if connected else None,
+                     "accounts": [{"login": a, "type": "outlook", "read_only": desktop["mode"] == "read"}
+                                  for a in desktop["accounts"]] if connected else [],
+                     "mode": desktop["mode"], "url": "", "available": sys.platform == "win32"})
     elif connector.kind == "device":
         data = _device_record(connector.id)
         accounts = [{**a, "read_only": data["read_only"][a["type"]]} for a in data["accounts"]]
@@ -780,11 +861,13 @@ async def connect(connector_id: str, source: str, pasted: str | None = None, *,
     the source "device", the options, and ``on_code`` for the device code. It adds one more account.
     """
     connector = get(connector_id)
-    allowed = {"device": ("device",), "mail": ("mail",)}.get(connector.kind, ("gh", "token"))
+    allowed = {"device": ("device",), "mail": ("mail",), "desktop": ("desktop",)}.get(connector.kind, ("gh", "token"))
     if source not in allowed:
         raise ConfigError(f"The token source of {connector.name} must be one of: {', '.join(allowed)}.")
     if connector.kind == "mail":
         return await add_mail_account(connector, options)
+    if connector.kind == "desktop":
+        return await connect_desktop(connector, options)
     if connector.kind == "device":
         async def no_code(url: str, code: str) -> None:
             return None

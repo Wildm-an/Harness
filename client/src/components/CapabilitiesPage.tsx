@@ -26,7 +26,7 @@ import { SlashIcon } from "./SlashIcon";
 import { Markdown } from "./Markdown";
 import { openExternal } from "../lib/tauri";
 import { ConnectorLogo, hasConnectorLogo } from "./ConnectorLogo";
-import type { CommandItem, ConnectorItem, ConnectorOptions, MailConnectOptions, MailProvider, MailSecurity, McpServerItem, McpState, McpStatus, PluginsStatus, SkillDetail } from "../daemon/protocol";
+import type { CommandItem, ConnectorItem, ConnectorOptions, DesktopConnectOptions, MailConnectOptions, MailProvider, MailSecurity, McpServerItem, McpState, McpStatus, OutlookMode, PluginsStatus, SkillDetail } from "../daemon/protocol";
 
 export type CapabilityStatus =
   | "connected"
@@ -402,6 +402,7 @@ export type ConnectorAction =
   | { kind: "connect"; id: string; source: "token"; token: string }
   | { kind: "connect"; id: string; source: "device"; options: ConnectorOptions }
   | { kind: "connect"; id: string; source: "mail"; options: MailConnectOptions }
+  | { kind: "connect"; id: string; source: "desktop"; options: DesktopConnectOptions }
   | { kind: "cancel"; id: string }
   | { kind: "remove_account"; id: string; login: string }
   | { kind: "disconnect"; id: string };
@@ -428,6 +429,10 @@ function accountName(type: string, item?: ConnectorItem): string {
 /** The short description of a connector: the account and the token source, or what it gives. */
 export function connectorSummary(item: ConnectorItem): string {
   if (!item.source) return item.description;
+  if (item.source === "desktop") {
+    const logins = (item.accounts ?? []).map((a) => a.login);
+    return [logins.length > 0 ? logins.join(", ") : "Outlook", OUTLOOK_MODES[item.mode ?? "draft"].short].join(" · ");
+  }
   if (item.source === "device" || item.source === "mail") {
     const accounts = item.accounts ?? [];
     if (accounts.length > 1) return `${accounts.length} accounts · ${accounts.map((a) => a.login).join(", ")}`;
@@ -603,6 +608,55 @@ function DeviceConnect({
       <p className="help">
         Harness runs <code>{item.package}</code> with npx on the daemon computer, so the daemon computer needs Node.js. The server keeps its own
         sign-in in its encrypted cache there.
+      </p>
+    </div>
+  );
+}
+
+/** The modes of Outlook (classic): the label of the choice, and the short name for the summary line. */
+const OUTLOOK_MODES: Record<OutlookMode, { label: string; short: string }> = {
+  read: { label: "Read-only: the agent can read mail and events", short: "read-only" },
+  draft: { label: "Drafts: the agent can also make drafts and replies, and you send them from Outlook", short: "drafts" },
+  send: { label: "Send: the agent can also send a draft", short: "can send" },
+};
+
+/** The connection of a "desktop" connector (Outlook (classic)): the mode, then "Connect". */
+function DesktopConnect({ item, busy, onAction }: { item: ConnectorItem; busy: boolean; onAction: (action: ConnectorAction) => void }) {
+  const [mode, setMode] = useState<OutlookMode>(item.mode ?? "draft");
+  if (busy) {
+    return (
+      <div className="mcp-signin">
+        <p className="help">
+          <LoaderCircle size={13} className="spin" aria-hidden /> Opening Outlook and reading its accounts. Outlook can show a window.
+        </p>
+      </div>
+    );
+  }
+  if (item.available === false) {
+    return (
+      <div className="mcp-signin">
+        <p className="help">The classic Outlook app is only on Windows, and the daemon computer is not Windows. Use Microsoft Outlook.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="mcp-signin">
+      <div className="mcp-signin-stack" role="radiogroup" aria-label="Outlook tools">
+        {(Object.keys(OUTLOOK_MODES) as OutlookMode[]).map((value) => (
+          <label key={value} className="checkbox">
+            <input type="radio" name={`${item.id}-mode`} checked={mode === value} onChange={() => setMode(value)} />
+            {OUTLOOK_MODES[value].label}
+          </label>
+        ))}
+      </div>
+      <div className="mcp-signin-actions">
+        <button type="button" className="btn btn-small btn-primary" onClick={() => onAction({ kind: "connect", id: item.id, source: "desktop", options: { mode } })}>
+          Connect
+        </button>
+      </div>
+      <p className="help">
+        Harness uses the classic Outlook app on the daemon computer, with the accounts that are signed in to Outlook. It needs no sign-in and
+        keeps no password. The new Outlook app does not work. The server is part of Harness.
       </p>
     </div>
   );
@@ -871,6 +925,9 @@ function ConnectorRow({
             <DeviceAccounts item={item} busy={busy} code={code} onAction={onAction} />
           ) : connected && !busy ? (
             <>
+              {item.kind === "desktop" && (
+                <p className="help">{OUTLOOK_MODES[item.mode ?? "draft"].label}. To change this, disconnect and connect again.</p>
+              )}
               <p className="help">
                 The MCP server "{item.id}" is in your mcp.json, for all your projects. Each tool call needs approval, unless a rule
                 allows it, for example <code>mcp__{item.id}__*</code>.
@@ -885,6 +942,8 @@ function ConnectorRow({
             <DeviceConnect item={item} busy={busy} code={code} onAction={onAction} />
           ) : item.kind === "mail" ? (
             <MailConnect item={item} busy={busy} onAction={onAction} />
+          ) : item.kind === "desktop" ? (
+            <DesktopConnect item={item} busy={busy} onAction={onAction} />
           ) : (
             <TokenConnect item={item} busy={busy} onAction={onAction} />
           )}

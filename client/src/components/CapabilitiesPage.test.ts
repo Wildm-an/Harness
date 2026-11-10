@@ -108,6 +108,16 @@ describe("connectorSummary", () => {
     expect(connectorSummary({ ...outlook, accounts: [jo] })).toBe("jo@contoso.com · Work or school account · read-only");
     expect(connectorSummary({ ...outlook, accounts: [jo, pat] })).toBe("2 accounts · jo@contoso.com, pat@outlook.com");
   });
+
+  it("shows the accounts and the mode of Outlook (classic)", () => {
+    const classic = github({ id: "outlook-classic", kind: "desktop", source: "desktop", login: "pat@example.com", mode: "draft" });
+    const pat = { login: "pat@example.com", type: "outlook", read_only: false };
+    expect(connectorSummary({ ...classic, accounts: [pat] })).toBe("pat@example.com · drafts");
+    expect(connectorSummary({ ...classic, accounts: [], mode: "read" })).toBe("Outlook · read-only");
+    expect(connectorSummary({ ...classic, accounts: [pat, { ...pat, login: "jo@contoso.com" }], mode: "send" })).toBe(
+      "pat@example.com, jo@contoso.com · can send",
+    );
+  });
 });
 
 describe("the Email connector", () => {

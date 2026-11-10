@@ -141,7 +141,7 @@ def _parse_server(name: str, raw: Any, scope: str, project: Path | None) -> tupl
                               f"Open the Connectors tab to remove the entry, or remove '{name}' from mcp.json.")
         if known is None:
             raise ConfigError(f"MCP server {name}: unknown connector {connector!r}.")
-        local = known.kind in ("device", "mail")
+        local = known.kind in ("device", "mail", "desktop")
         if local != (kind == "stdio"):
             raise ConfigError(f"MCP server {name}: the connector {connector} needs a "
                               f"{'stdio' if local else 'http'} server.")
@@ -448,10 +448,10 @@ class McpManager:
                     from mcp.client.stdio import stdio_client
 
                     errlog = stack.enter_context(open(s.log_path, "w", encoding="utf-8"))  # type: ignore[arg-type]
-                    # A connector adds its secrets here (the passwords of the Email connector), not in mcp.json.
+                    # A connector adds its environment here (the passwords of the Email connector), not in mcp.json.
                     secret = await asyncio.to_thread(connectors.server_env, c.connector) if c.connector else {}
-                    # A built-in server (the Email connector) runs the daemon itself, wherever it is installed.
-                    command, args = (connectors.mail_command(c.connector) if c.connector else None) or (c.command, c.args)
+                    # A built-in server (Email, Outlook (classic)) runs the daemon itself, wherever it is installed.
+                    command, args = (connectors.builtin_command(c.connector) if c.connector else None) or (c.command, c.args)
                     params = StdioServerParameters(command=command, args=args,
                                                    env={**os.environ, **c.env, **secret}, cwd=c.cwd)
                     read, write = await stack.enter_async_context(stdio_client(params, errlog=errlog))
