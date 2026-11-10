@@ -3,7 +3,7 @@
 // window the rail covers the workspace, and Esc or a click outside closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, ChevronRight, Coffee, Folder, GitBranch, Globe, GripVertical, KeyRound, Monitor } from "lucide-react";
+import { Archive, Check, ChevronDown, ChevronRight, Coffee, Folder, GitBranch, Globe, GripVertical, KeyRound, Maximize2, Monitor, X } from "lucide-react";
 import { useSortable } from "../lib/useSortable";
 import type { GitChanges } from "../daemon/protocol";
 import { RailChanges, RailPrList } from "./RailChanges";
@@ -42,6 +42,12 @@ export interface RailEnvironment {
   path: string;
   branch: string | null; // The git branch of the folder. null: not a git repository, or not known yet.
   worktree: SessionWorktree | null;
+  worktreeOption: boolean; // The "Worktree" box of the start screen is on for the project of the session.
+}
+
+/** The "Worktree" row shows for a session in a worktree, or when the worktree option of its project is on. */
+export function showWorktreeRow(environment: Pick<RailEnvironment, "worktree" | "worktreeOption">): boolean {
+  return environment.worktree !== null || environment.worktreeOption;
 }
 
 /** The page where the agent works: its tab of the Browser pane, or the headless agent browser. */
@@ -50,7 +56,15 @@ export interface RailBrowser {
   image: string | null; // The last frame of the headless browser.
   url: string;
   title: string;
-  live: boolean; // The agent works in it now.
+  live: boolean; // The picture is live: the agent used the page a short time ago, or the user minimized it.
+  agent: boolean; // The agent uses the page now: the picture has an outline.
+}
+
+/** A tab of the session, for the tab menu of the Browser section. */
+export interface RailBrowserTab {
+  id: string;
+  label: string;
+  rail: boolean; // The section shows this tab now.
 }
 
 // ms between two pictures of the agent tab. Each picture is a full-size PNG: a small view needs no more.
@@ -63,6 +77,9 @@ export function SessionRail({
   onOpenChanges,
   browser,
   onShowBrowser,
+  browserTabs,
+  onPickBrowserTab,
+  onCloseBrowser,
   environment,
   context,
   usage,
@@ -89,6 +106,9 @@ export function SessionRail({
   onOpenChanges?: () => void; // Open the Changes pane (the diff of the session), as a click on the counts in the Claude app.
   browser: RailBrowser | null;
   onShowBrowser: () => void; // Open the Browser pane on the page of the agent.
+  browserTabs: () => RailBrowserTab[]; // The tabs of the session, read when the tab menu opens.
+  onPickBrowserTab: (id: string) => void; // The tab menu: the section shows this tab.
+  onCloseBrowser: (() => void) | null; // "Close tab". null: the headless browser has no tab.
   environment: RailEnvironment;
   context: { tokens: number; length: number } | null;
   usage: ContextUsage | null; // The last context breakdown (context.usage).
@@ -147,7 +167,7 @@ export function SessionRail({
   const PlaceIcon = PLACE_ICONS[environment.placeKind];
   const share = context ? contextShare(context.tokens, context.length) : 0;
   const level = share >= 0.8 ? "high" : share >= 0.6 ? "mid" : "low";
-  // All the running tasks (commands, monitors, agents, wakeups), then the newest ended tasks.
+  // Only the running tasks (commands, monitors, agents, wakeups). An ended task goes away from the rail.
   const shownTasks = railTasks(tasks);
   // The time of a wakeup counts down.
   const [now, setNow] = useState(() => Date.now());
@@ -190,7 +210,9 @@ export function SessionRail({
   );
 
   const body: Record<RailSection, ReactNode | null> = {
-    browser: browser ? <RailBrowserView browser={browser} onShow={onShowBrowser} /> : null,
+    browser: browser ? (
+      <RailBrowserView browser={browser} onShow={onShowBrowser} tabs={browserTabs} onPick={onPickBrowserTab} onClose={onCloseBrowser} />
+    ) : null,
     // The pull request of the branch, the work in three parts (uncommitted, not pushed, pushed),
     // and the git button ("Create PR", "Commit", "Push"), as in the Claude app.
     changes: changes?.repo ? (
@@ -213,16 +235,18 @@ export function SessionRail({
             <span className="rail-value-text mono">{branch}</span>
           </RailRow>
         )}
-        <RailRow
-          label="Worktree"
-          title={
-            environment.worktree
-              ? `${environment.worktree.path}${environment.worktree.base ? `. Started from ${environment.worktree.base}.` : ""}`
-              : "This session works in the project folder."
-          }
-        >
-          <span className="rail-value-text">{environment.worktree ? "On" : "Off"}</span>
-        </RailRow>
+        {showWorktreeRow(environment) && (
+          <RailRow
+            label="Worktree"
+            title={
+              environment.worktree
+                ? `${environment.worktree.path}${environment.worktree.base ? `. Started from ${environment.worktree.base}.` : ""}`
+                : "This session works in the project folder."
+            }
+          >
+            <span className="rail-value-text">{environment.worktree ? "On" : "Off"}</span>
+          </RailRow>
+        )}
       </dl>
       {awake}
       </>
@@ -279,9 +303,9 @@ export function SessionRail({
         </ul>
       ) : null,
     backgroundTasks:
-      tasks.length > 0 ? (
+      shownTasks.length > 0 ? (
         <>
-          <p className="rail-empty">{taskSummary(tasks)}</p>
+          <p className="rail-empty">{taskSummary(shownTasks)}</p>
           <ul className="rail-list">
             {shownTasks.map((t) => (
               <li key={t.id}>
@@ -365,12 +389,38 @@ export function SessionRail({
 }
 
 /**
- * A small live view of the page where the agent works. A click opens it in the Browser pane, where
- * the user can use the same page. The pictures of the agent tab come from the tab itself.
+ * A small live view of the page where the agent works, as the small browser view of the Claude app:
+ * a head with the page title (a menu of the tabs) and the buttons, then the picture of the page.
+ * A click on the picture opens it in the Browser pane, where the user can use the same page. While
+ * the agent uses the page, the picture has an outline in the accent color. The pictures of the
+ * agent tab come from the tab itself.
  */
-function RailBrowserView({ browser, onShow }: { browser: RailBrowser; onShow: () => void }) {
+function RailBrowserView({
+  browser,
+  onShow,
+  tabs,
+  onPick,
+  onClose,
+}: {
+  browser: RailBrowser;
+  onShow: () => void;
+  tabs: () => RailBrowserTab[];
+  onPick: (id: string) => void;
+  onClose: (() => void) | null;
+}) {
   const [picture, setPicture] = useState<string | null>(null);
   const { tab, live } = browser;
+  // The tab menu. It reads the tabs when it opens.
+  const [menu, setMenu] = useState<RailBrowserTab[] | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(null);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [menu !== null]);
   useEffect(() => {
     setPicture(null);
   }, [tab]);
@@ -400,17 +450,71 @@ function RailBrowserView({ browser, onShow }: { browser: RailBrowser; onShow: ()
   }, [tab, live]);
   const image = tab ? picture : browser.image;
   const label = browser.title.trim() || browser.url;
+  const name = label || "Agent browser";
   return (
-    <button type="button" className="rail-browser" onClick={onShow} title="Open in the Browser pane">
-      <span className="rail-browser-frame">
-        {image ? <img src={image} alt={`The page where the agent works: ${label}`} /> : <span className="rail-browser-empty">Opening the page…</span>}
-      </span>
-      <span className="rail-browser-caption">
-        <span className={`rail-dot ${live ? "running" : "stopped"}`} aria-hidden />
-        <span className="rail-item-title">{label || "Agent browser"}</span>
-        <span className="rail-browser-state">{live ? "Live" : "Idle"}</span>
-      </span>
-    </button>
+    <div className={`rail-browser${browser.agent ? " agent" : ""}`}>
+      <div className="rail-browser-head">
+        <div className="rail-browser-pick" ref={menuRef}>
+          {/* The headless browser has one page: no tab menu. */}
+          <button
+            type="button"
+            className="rail-browser-title"
+            disabled={!tab}
+            aria-haspopup={tab ? "menu" : undefined}
+            aria-expanded={tab ? menu !== null : undefined}
+            onClick={() => setMenu((m) => (m ? null : tabs()))}
+            title={tab ? "Choose a tab" : undefined}
+          >
+            <Globe size={14} aria-hidden />
+            <span className="rail-browser-name">{name}</span>
+            {tab && <ChevronDown size={13} aria-hidden />}
+          </button>
+          {menu && (
+            <div
+              className="menu rail-browser-menu"
+              role="menu"
+              aria-label="Browser tabs"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  setMenu(null);
+                }
+              }}
+            >
+              {menu.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={t.rail}
+                  onClick={() => {
+                    setMenu(null);
+                    if (!t.rail) onPick(t.id);
+                  }}
+                >
+                  <Globe size={14} aria-hidden />
+                  <span className="rail-browser-name">{t.label}</span>
+                  {t.rail && <Check size={14} aria-hidden />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <span className="spacer" />
+        <button type="button" className="icon-btn ghost" onClick={onShow} aria-label="Open in the Browser pane" title="Open in the Browser pane">
+          <Maximize2 size={14} aria-hidden />
+        </button>
+        {onClose && (
+          <button type="button" className="icon-btn ghost" onClick={onClose} aria-label="Close tab" title="Close tab">
+            <X size={15} aria-hidden />
+          </button>
+        )}
+      </div>
+      <button type="button" className="rail-browser-frame" onClick={onShow} title="Open in the Browser pane">
+        {image ? <img src={image} alt={`The page: ${name}`} /> : <span className="rail-browser-empty">Opening the page…</span>}
+      </button>
+      {browser.agent && <span className="sr-only">The agent uses this page now.</span>}
+    </div>
   );
 }
 

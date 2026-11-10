@@ -374,6 +374,7 @@ const SHORTCUTS: [string, string][] = [
   ["New browser tab", "Ctrl+T"],
   ["New terminal tab", "Ctrl+Shift+T"],
   ["Stop the agent", "Esc"],
+  ["Rewind the session", "Esc Esc"],
 ];
 
 /** A row of large choice buttons, for the theme and the density. */

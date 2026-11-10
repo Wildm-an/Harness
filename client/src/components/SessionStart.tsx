@@ -16,21 +16,15 @@ import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
 import { loadPref, savePref } from "../lib/prefs";
+import { rememberModel, startModel } from "../lib/modelAvailability";
+import { noImageNote } from "../lib/images";
+import { modelName } from "../lib/modelName";
 import { PromptBox, type Submission } from "./PromptBox";
 import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
-import { WorktreeMenu, type WorktreeChoice } from "./WorktreeMenu";
+import { WorktreeMenu, loadWorktreeChoice, worktreeKey as projectWorktreeKey, type WorktreeChoice } from "./WorktreeMenu";
 import { FolderChooser, folderName } from "./RecentFolders";
 import type { ViewMode } from "../lib/viewMode";
-
-function loadWorktreeChoice(key: string): WorktreeChoice {
-  try {
-    const v = JSON.parse(loadPref(key, "{}"));
-    return { on: v?.on === true, base: typeof v?.base === "string" ? v.base : null };
-  } catch {
-    return { on: false, base: null };
-  }
-}
 
 /** The folder that holds a path. */
 interface ProjectDraft {
@@ -343,9 +337,13 @@ export function SessionStart({
   useEffect(() => {
     setModel(loadPref(modelKey(selected?.id), loadPref(`model.${prefScope}`, "")));
   }, [selected?.id]);
+  // A saved model that no provider gives now shows as "Default model". The saved choice stays while
+  // the model list loads: the chip does not change only because a provider is slow.
+  const shownModel = startModel(model.trim(), models);
+  const newModel = shownModel || models?.default || ""; // The model of the new session: "provider/model".
 
   // Each project remembers its worktree choice. The chip shows only for a folder in a git repository.
-  const worktreeKey = `worktree.${prefScope}.${selected?.id ?? ""}`;
+  const worktreeKey = projectWorktreeKey(prefScope, selected?.id);
   const [worktree, setWorktree] = useState<WorktreeChoice>(() => loadWorktreeChoice(worktreeKey));
   useEffect(() => {
     setWorktree(loadWorktreeChoice(worktreeKey));
@@ -387,11 +385,10 @@ export function SessionStart({
   /** Start a session. It returns false: the box keeps the text, for a new try after an error. */
   const start = (s: Submission): boolean => {
     if (!canStart) return false;
-    savePref(modelKey(selected.id), model.trim());
-    savePref(`model.${prefScope}`, model.trim());
+    rememberModel(prefScope, selected.id, shownModel);
     saveLastMode(prefScope, mode);
     const base = worktree.base && branchInfo?.branches.includes(worktree.base) ? worktree.base : null;
-    onStart(selected.path, model.trim(), s.kind === "prompt" && !s.text.trim() ? null : s, mode,
+    onStart(selected.path, shownModel, s.kind === "prompt" && !s.text.trim() ? null : s, mode,
       worktree.on && branchInfo?.repo ? { base } : null);
     return false;
   };
@@ -506,6 +503,7 @@ export function SessionStart({
             onSubmit={start}
             onInterrupt={() => {}}
             onCycleMode={() => setMode(nextMode(mode))} // Shift+Tab changes the mode, as in a session.
+            imageNote={!harness && newModel && models?.noImages?.includes(newModel) ? noImageNote(modelName(newModel)) : null}
             below={
               <>
                 <div className="prompt-below-left">
@@ -548,7 +546,7 @@ export function SessionStart({
                   </button>
                 ) : (
                 <ModelMenu
-                  value={model}
+                  value={shownModel}
                   models={models}
                   allowDefault
                   alignRight

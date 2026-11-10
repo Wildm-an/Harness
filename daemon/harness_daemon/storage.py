@@ -285,10 +285,12 @@ class Storage:
             seen.add(current)
 
     def delete_session(self, session_id: str) -> None:
-        """Delete a session and its messages. It cannot be undone. Its nested sessions stay, with no parent."""
+        """Delete a session, its messages, and its routine runs. It cannot be undone. Its nested sessions stay,
+        with no parent."""
         self.db.execute("UPDATE sessions SET parent_id = NULL WHERE parent_id = ?", (session_id,))
         self.db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         self.db.execute("DELETE FROM checkpoints WHERE session_id = ?", (session_id,))
+        self.db.execute("DELETE FROM routine_runs WHERE session_id = ?", (session_id,))
         self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self.db.commit()
 
@@ -573,8 +575,10 @@ class Storage:
         return dict(row) if row else None
 
     def list_runs(self, routine_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        """The runs of a routine, the newest first."""
-        rows = self.db.execute("SELECT * FROM routine_runs WHERE routine_id = ? ORDER BY started_at DESC, rowid DESC "
+        """The runs of a routine, the newest first. A run whose session is gone (an old daemon did not delete
+        the run with the session) is not in the list. A skipped run has no session and stays."""
+        rows = self.db.execute("SELECT * FROM routine_runs WHERE routine_id = ? AND (session_id IS NULL OR "
+                               "session_id IN (SELECT id FROM sessions)) ORDER BY started_at DESC, rowid DESC "
                                "LIMIT ?", (routine_id, limit))
         return [dict(r) for r in rows]
 

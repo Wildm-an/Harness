@@ -9,6 +9,8 @@ import type { DaemonConnection } from "../daemon/connection";
 import type { DaemonMessage, GitFileState } from "../daemon/protocol";
 import { languageFor, monaco } from "../lib/monaco";
 import { absolutePath, normalizePath, renamedPath } from "./paths";
+import { withOpened } from "./tabs";
+import { withMoved } from "../lib/tabDrag";
 
 export type Notice =
   | { kind: "external"; hash: string | null; by: "agent" | "external" } // The file changed on disk. The tab has changes.
@@ -21,6 +23,7 @@ export interface OpenFile {
   dirty: boolean;
   loading: boolean;
   saving: boolean;
+  pinned: boolean; // false: the next file that opens takes the place of this tab (tabs.ts).
   error?: string; // The file did not open: the editor has no text to show.
   saveError?: string; // A save failed: the editor keeps the text, and the bar offers "Try again".
   notice?: Notice;
@@ -81,8 +84,9 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
 
   const models = useRef(new Map<string, ModelEntry>());
   const reads = useRef<{ path: string; purpose: ReadPurpose }[]>([]); // The daemon replies in order.
+  // The open files, current at once. All changes go through updateFiles: two changes in one tick
+  // (a rename closes and opens tabs) each see the result of the change before.
   const filesRef = useRef(files);
-  filesRef.current = files;
   const treeRef = useRef(tree);
   treeRef.current = tree;
   const activeRef = useRef(active);
@@ -90,16 +94,27 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   const expandedRef = useRef(expanded);
   expandedRef.current = expanded;
   const revealKey = useRef(0);
+  const applying = useRef(false); // true while setModelContent puts the disk content in a model.
   const [createError, setCreateError] = useState<string | null>(null); // New file or New folder failed.
-  const openFileRef = useRef<(path: string) => void>(() => {});
+  const openFileRef = useRef<(path: string, line?: number, pin?: boolean) => void>(() => {});
   const closeFileRef = useRef<(path: string) => void>(() => {});
   // The editor autocomplete request that waits for the daemon. A new request ends the old one.
   const completion = useRef<{ id: string; resolve: (text: string | null) => void } | null>(null);
   const completionCount = useRef(0);
 
-  const patchFile = useCallback((path: string, patch: Partial<OpenFile>) => {
-    setFiles((list) => list.map((f) => (f.path === path ? { ...f, ...patch } : f)));
+  const updateFiles = useCallback((change: (list: OpenFile[]) => OpenFile[]) => {
+    const next = change(filesRef.current);
+    if (next === filesRef.current) return;
+    filesRef.current = next;
+    setFiles(next);
   }, []);
+
+  const patchFile = useCallback(
+    (path: string, patch: Partial<OpenFile>) => {
+      updateFiles((list) => (list.some((f) => f.path === path) ? list.map((f) => (f.path === path ? { ...f, ...patch } : f)) : list));
+    },
+    [updateFiles],
+  );
 
   const send = useCallback(
     (msg: Parameters<DaemonConnection["send"]>[0]): boolean => {
@@ -147,7 +162,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
   useEffect(() => {
     disposeAll();
     reads.current = [];
-    setFiles([]);
+    updateFiles(() => []);
     setActive(null);
     setTree({});
     setExpanded(new Set());
@@ -161,7 +176,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
       requestGitStatus();
     }
     return disposeAll;
-  }, [sessionKey, cwd, disposeAll, listDir, requestGitStatus]);
+  }, [sessionKey, cwd, disposeAll, listDir, requestGitStatus, updateFiles]);
 
   // Changes by other programs (a commit in a terminal, for example) show after a short time.
   useEffect(() => {
@@ -179,20 +194,27 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
         const model = monaco.editor.createModel(content, languageFor(path), modelUri(sessionKey ?? "", path));
         const listener = model.onDidChangeContent(() => {
           const e = models.current.get(path);
-          if (!e) return;
+          if (!e || applying.current) return; // Content from the disk is not a change by the user.
           const dirty = model.getAlternativeVersionId() !== e.savedVersion;
-          if (filesRef.current.find((f) => f.path === path)?.dirty !== dirty) patchFile(path, { dirty });
+          // A change in an unpinned tab pins it: the next file must not take the place of the changes.
+          if (filesRef.current.find((f) => f.path === path)?.dirty !== dirty) patchFile(path, dirty ? { dirty, pinned: true } : { dirty });
         });
         entry = { model, savedVersion: model.getAlternativeVersionId(), savingVersion: null, listener };
         models.current.set(path, entry);
         return;
       }
       if (entry.model.getValue() !== content) {
-        if (keepUndo) {
-          // An edit operation keeps the undo history: the user can undo an agent change.
-          entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text: content }], () => null);
-        } else {
-          entry.model.setValue(content);
+        // The callers set the modified mark after this. The listener must not pin the tab here.
+        applying.current = true;
+        try {
+          if (keepUndo) {
+            // An edit operation keeps the undo history: the user can undo an agent change.
+            entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text: content }], () => null);
+          } else {
+            entry.model.setValue(content);
+          }
+        } finally {
+          applying.current = false;
         }
       }
       entry.savedVersion = entry.model.getAlternativeVersionId();
@@ -231,6 +253,8 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             setCompare({ path: msg.path, disk: msg.content, diskHash: msg.hash });
             return;
           }
+          // The tab closed, or another file took its place, before the content came.
+          if (!filesRef.current.some((f) => f.path === msg.path)) return;
           setModelContent(msg.path, msg.content, purpose === "reload");
           patchFile(msg.path, { hash: msg.hash, loading: false, dirty: false, notice: undefined, error: undefined });
           return;
@@ -254,7 +278,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           setExpanded((set) => new Set([...set, ...dirs]));
           for (const dir of [".", ...dirs]) listDir(dir);
           setCreateError(null);
-          if (msg.kind === "file") openFileRef.current(msg.path);
+          if (msg.kind === "file") openFileRef.current(msg.path, undefined, true); // The user made it: its tab stays.
           requestGitStatus();
           return;
         }
@@ -273,10 +297,10 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           // Open the tabs again at the new paths (renameEntry allows no unsaved changes in them),
           // keep the open folders open, and list the folder of the item again.
           const moved = (p: string) => renamedPath(p, msg.path, msg.new_path);
-          const open = filesRef.current.filter((f) => moved(f.path) !== null).map((f) => f.path);
+          const open = filesRef.current.filter((f) => moved(f.path) !== null);
           const wasActive = activeRef.current;
-          for (const p of open) closeFileRef.current(p);
-          for (const p of open) openFileRef.current(moved(p)!);
+          for (const f of open) closeFileRef.current(f.path);
+          for (const f of open) openFileRef.current(moved(f.path)!, undefined, f.pinned);
           if (wasActive !== null) setActive(moved(wasActive) ?? wasActive);
           setTree((t) => Object.fromEntries(Object.entries(t).filter(([dir]) => moved(dir) === null)));
           setExpanded((set) => new Set([...set].map((dir) => moved(dir) ?? dir)));
@@ -315,7 +339,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             const failed = reads.current.shift();
             if (failed?.purpose === "open") patchFile(failed.path, { loading: false, error: msg.message });
           } else if (msg.ref === "fs.write") {
-            setFiles((list) => list.map((f) => (f.saving ? { ...f, saving: false, saveError: msg.message } : f)));
+            updateFiles((list) => list.map((f) => (f.saving ? { ...f, saving: false, saveError: msg.message } : f)));
           } else if (msg.ref === "fs.search") {
             setSearch((s) => ({ ...s, busy: false, error: msg.message }));
           } else if (msg.ref === "fs.create" || msg.ref === "fs.delete" || msg.ref === "fs.rename") {
@@ -326,22 +350,49 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
           return;
       }
     });
-  }, [conn, patchFile, read, listDir, setModelContent]);
+  }, [conn, patchFile, updateFiles, read, listDir, setModelContent]);
 
+  /** Forget the Monaco model of a file, and stop the watch of the file. */
+  const release = useCallback(
+    (path: string) => {
+      const entry = models.current.get(path);
+      if (entry) {
+        entry.listener.dispose();
+        entry.model.dispose();
+        models.current.delete(path);
+      }
+      send({ type: "fs.unwatch", path });
+    },
+    [send],
+  );
+
+  /**
+   * Open a file in a tab. The tab is unpinned (the name is in italics) unless ``pin`` is true: the
+   * next file that opens takes the place of an unpinned tab. A file that is open only gets the focus.
+   */
   const openFile = useCallback(
-    (rawPath: string, line?: number) => {
+    (rawPath: string, line?: number, pin = false) => {
       const path = normalizePath(rawPath, cwd);
       if (!path) return;
       setActive(path);
       setCompare(null);
       if (line) setReveal({ path, line, key: ++revealKey.current });
-      if (filesRef.current.some((f) => f.path === path)) return;
-      setFiles((list) => [...list, { path, hash: null, dirty: false, loading: true, saving: false }]);
-      read(path, "open");
+      const isOpen = filesRef.current.some((f) => f.path === path);
+      const entry: OpenFile = { path, hash: null, dirty: false, loading: true, saving: false, pinned: pin };
+      const { list, replaced } = withOpened(filesRef.current, entry);
+      if (replaced !== null) release(replaced);
+      updateFiles(() => list);
+      if (!isOpen) read(path, "open");
     },
-    [cwd, read],
+    [cwd, read, release, updateFiles],
   );
   openFileRef.current = openFile;
+
+  /** "Keep open": the tab stays when the next file opens. */
+  const pinFile = useCallback((path: string) => patchFile(path, { pinned: true }), [patchFile]);
+
+  /** A drag of a tab: the tab at the index ``from`` goes to the index ``to``. */
+  const moveFile = useCallback((from: number, to: number) => updateFiles((list) => withMoved(list, from, to)), [updateFiles]);
 
   /** New file or New folder: the daemon makes it, and fs.created shows it. */
   const createEntry = useCallback(
@@ -354,22 +405,14 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
 
   const closeFile = useCallback(
     (path: string) => {
-      const entry = models.current.get(path);
-      if (entry) {
-        entry.listener.dispose();
-        entry.model.dispose();
-        models.current.delete(path);
-      }
-      send({ type: "fs.unwatch", path });
-      setFiles((list) => {
-        const index = list.findIndex((f) => f.path === path);
-        const next = list.filter((f) => f.path !== path);
-        setActive((a) => (a === path ? (next[Math.max(0, index - 1)]?.path ?? null) : a));
-        return next;
-      });
+      release(path);
+      const index = filesRef.current.findIndex((f) => f.path === path);
+      const next = filesRef.current.filter((f) => f.path !== path);
+      updateFiles(() => next);
+      setActive((a) => (a === path ? (next[Math.max(0, index - 1)]?.path ?? null) : a));
       setCompare((c) => (c?.path === path ? null : c));
     },
-    [send],
+    [release, updateFiles],
   );
 
   closeFileRef.current = closeFile;
@@ -546,6 +589,8 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
     reveal,
     models,
     openFile,
+    pinFile,
+    moveFile,
     closeFile,
     save,
     resolveNotice,

@@ -13,6 +13,11 @@ export function fitSize(width: number, height: number, max = MAX_SIDE): { width:
   return { width: Math.round(width * k), height: Math.round(height * k) };
 }
 
+/** The note at an image attachment for a model with no image input. */
+export function noImageNote(model: string): string {
+  return `${model} cannot read images. The agent gets a note in place of each image.`;
+}
+
 /** The image files of a paste or a drop. */
 export function imageFiles(list: DataTransfer | null): File[] {
   if (!list) return [];

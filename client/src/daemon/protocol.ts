@@ -1042,7 +1042,9 @@ export type DaemonMessage =
       worktree?: SessionWorktree | null; // The session works in this git worktree. cwd is in it.
       auto_verify: boolean; // The agent checks the app after each UI change.
       permission_mode?: PermissionMode;
-      image_input: boolean; // The model accepts images: the agent has preview_screenshot.
+      // The model accepts images: the agent has preview_screenshot. null: not known. The agent then sends the
+      // images of the user, and a note in place of them if the endpoint rejects them.
+      image_input: boolean | null;
       keep_awake?: boolean; // The "Keep computer awake" switch of this session.
       // A return to a session with a running turn: the reply text that streams now,
       // and the permission requests that wait for a decision.
@@ -1085,7 +1087,9 @@ export type DaemonMessage =
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
   // default: the model that a new session with no model uses now, or null. An older daemon does not send it.
-  | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[]; default?: string | null }
+  // image_input: the daemon knows it with no request (the settings, providers.json, or the last checks).
+  // providers: the names of the providers that are on. An older daemon does not send it.
+  | { type: "models"; items: { provider: string; model: string; image_input?: boolean }[]; errors: { provider: string; message: string }[]; default?: string | null; providers?: string[] }
   | ({ type: "mcp" } & McpStatus)
   | { type: "mcp.init"; path: string; created: boolean }
   | { type: "mcp.auth_url"; name: string; url: string }
@@ -1184,7 +1188,7 @@ export type DaemonMessage =
   | { type: "pong" }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string } // For example, a plugin added a message.
   // The checks of the model endpoint after a session open: the context length, the image input, and new warnings.
-  | { type: "session.model_info"; context_length: number; context_source?: string; image_input: boolean; warnings: string[] }
+  | { type: "session.model_info"; context_length: number; context_source?: string; image_input: boolean | null; warnings: string[] }
   // The token counts of the turn so far, after each model reply.
   | { type: "turn.usage"; prompt_tokens: number; completion_tokens: number; last_prompt_tokens: number }
   | { type: "fs.changed"; path: string; hash: string | null; by: "agent" | "external" }
@@ -1196,7 +1200,7 @@ export type DaemonMessage =
       warnings?: string[];
       context_length?: number;
       context_source?: string;
-      image_input?: boolean; // After /model: the new model accepts images.
+      image_input?: boolean | null; // After /model: the new model accepts images. null: not known.
       items?: CommandItem[];
       server?: string; // /preview: the default server.
       url?: string | null;

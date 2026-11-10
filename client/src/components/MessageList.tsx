@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import { Archive, ArrowDown, BellRing, Check, CircleAlert, Clock, Copy, Info, RefreshCw, RotateCcw, Split, TriangleAlert, Undo2 } from "lucide-react";
 import type { ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
-import { useOverlay } from "../lib/overlay";
 import { errorKind } from "../lib/errorRoute";
 import { splitAttachmentLines, type Submission } from "./PromptBox";
 import { Markdown, StreamingMarkdown } from "./Markdown";
@@ -283,8 +282,6 @@ export function reconcileQueue(list: QueuedItem[], historyIds: ReadonlySet<strin
   return changed ? next : list;
 }
 
-export type RewindOptions = { conversation: boolean; code: boolean };
-
 type UserItem = Extract<ChatItem, { kind: "user" }>;
 
 function relativeTime(ms: number): string {
@@ -295,71 +292,8 @@ function relativeTime(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
-const REWIND_CHOICES: { label: string; options: RewindOptions }[] = [
-  { label: "Restore the code and the conversation", options: { conversation: true, code: true } },
-  { label: "Restore the conversation", options: { conversation: true, code: false } },
-  { label: "Restore the code", options: { conversation: false, code: true } },
-];
-
-/** The rewind button and its menu, as in Claude. */
-function RewindMenu({ disabled, onRewind, onOpen }: { disabled: boolean; onRewind: (o: RewindOptions) => void; onOpen: (open: boolean) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useOverlay(open);
-  useEffect(() => onOpen(open), [open]);
-  useEffect(() => {
-    if (!open) return;
-    ref.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true });
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [open]);
-  return (
-    <div
-      className="rewind-menu"
-      ref={ref}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && open) {
-          e.stopPropagation();
-          setOpen(false);
-        }
-      }}
-    >
-      <button
-        type="button"
-        className="icon-btn ghost msg-action"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Rewind"
-        title={disabled ? "Rewind: wait for the turn to end" : "Rewind"}
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <RotateCcw size={14} aria-hidden />
-      </button>
-      {open && (
-        <div className="menu rewind-dropdown" role="menu" aria-label="Rewind">
-          <p className="menu-note">Go back to the time before this message. Changes of commands are not restored.</p>
-          {REWIND_CHOICES.map((c) => (
-            <button
-              key={c.label}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                onRewind(c.options);
-              }}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+/** The tip of the rewind button. A rewind always restores the code and the conversation (the user asked for this). */
+export const REWIND_TIP = "Rewind: restore the code and the conversation to the time before this message. Changes of commands are not restored.";
 
 /** The notes of background tasks that the agent got: a line, not a message of the user. */
 const TaskNote = memo(function TaskNote({ item }: { item: UserItem }) {
@@ -405,11 +339,10 @@ const UserMessage = memo(function UserMessage({ item, running, read, onRewind, o
   item: UserItem;
   running: boolean;
   read: boolean; // The agent read the message (unreadMessages).
-  onRewind: (messageId: string, options: RewindOptions) => void;
+  onRewind: (messageId: string) => void;
   onFork: (messageId: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const copy = () => {
     void navigator.clipboard.writeText(item.text).then(() => {
       setCopied(true);
@@ -419,7 +352,7 @@ const UserMessage = memo(function UserMessage({ item, running, read, onRewind, o
   const messageId = item.messageId;
   const { text, chips } = splitAttachmentLines(item.text);
   return (
-    <div className={`msg-user-wrap${menuOpen ? " menu-open" : ""}`}>
+    <div className="msg-user-wrap">
       <MessageAttachments images={item.images} chips={chips} />
       {text && <div className="msg-user">{text}</div>}
       <div className="msg-actions">
@@ -439,7 +372,18 @@ const UserMessage = memo(function UserMessage({ item, running, read, onRewind, o
         <button type="button" className="icon-btn ghost msg-action" aria-label="Copy" title={copied ? "Copied" : "Copy"} onClick={copy}>
           {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
         </button>
-        {messageId && <RewindMenu disabled={running} onRewind={(o) => onRewind(messageId, o)} onOpen={setMenuOpen} />}
+        {messageId && (
+          <button
+            type="button"
+            className="icon-btn ghost msg-action"
+            aria-label="Rewind to here"
+            title={running ? "Rewind: wait for the turn to end" : REWIND_TIP}
+            disabled={running}
+            onClick={() => onRewind(messageId)}
+          >
+            <RotateCcw size={14} aria-hidden />
+          </button>
+        )}
         {messageId && (
           <button
             type="button"
@@ -580,7 +524,7 @@ export function MessageList({
   onPlan?: (requestId: string, decision: PlanDecision, mode?: PermissionMode, feedback?: string) => void; // A plan card.
   onSendNow?: (id: string) => void;
   onRemoveQueued?: (id: string) => void;
-  onRewind?: (messageId: string, options: RewindOptions) => void;
+  onRewind?: (messageId: string) => void;
   onFork?: (messageId: string) => void;
   onRetry?: () => void; // "Try again" on the error card of a failed turn. Not given: no button.
   onUndoRewind?: () => void; // "Undo rewind" on the line of the last rewind. Not given: no button.

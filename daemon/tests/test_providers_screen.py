@@ -166,6 +166,7 @@ def test_providers_through_the_protocol(daemon, harness_home, project, fake_mode
     models = c.until("models")[0]
     assert {"provider": "fake", "model": "test-model"} in models["items"] and models["errors"] == []
     assert "default" in models  # The model of a new session with no model, or None.
+    assert "fake" in models["providers"]  # The providers that are on: the client finds a gone provider.
     c.send({"type": "user_settings.set", "values": {"auto_model": True, "online_model": "fake/test-model"}})
     c.until("user_settings")
     c.send({"type": "models.list"})

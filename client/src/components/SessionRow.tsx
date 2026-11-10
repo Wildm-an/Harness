@@ -88,21 +88,22 @@ export function splitItem(actions: Pick<SessionActions, "onOpenSplit">, active: 
 const MENU_WIDTH = 210;
 const SUB_WIDTH = 160;
 
-type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split" | "pr";
+export type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split" | "pr";
 const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete", g: "pr" };
 
-function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onClose }: {
-  session: SessionSummary;
+/** The session menu: of a sidebar row, and of the caret button at the right of the title in the top bar. */
+export function SessionMenu({ session, unread, prItem, split, anchor, at, align = "right", onAction, onClose }: {
+  session: Pick<SessionSummary, "title" | "pinned" | "archived">;
   unread: boolean;
   prItem: boolean; // "Open PR": the branch of the session has a pull request.
   split: "on" | "off" | null; // "Open in" > "Split view": "off" when the main view shows the session. null: no item.
   anchor: HTMLElement;
   at: { x: number; y: number } | null; // A right click: the menu opens at the mouse, not under the ⋮ button.
+  align?: "left" | "right"; // The menu edge that lines up with the same edge of the anchor.
   onAction: (action: MenuAction) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [confirm, setConfirm] = useState(false); // Delete asks one more time: it cannot be undone.
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   // The "Open in" submenu: its place in the window, at the right of the menu (at the left when there is no room).
   const [sub, setSub] = useState<{ top: number; left: number } | null>(null);
@@ -120,18 +121,18 @@ function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onC
     }
     const r = anchor.getBoundingClientRect();
     const top = r.bottom + 4 + height > window.innerHeight ? Math.max(8, r.top - 4 - height) : r.bottom + 4;
-    setPos({ top, left: Math.max(8, Math.min(r.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)) });
-  }, [anchor, at, confirm]);
+    const left = align === "left" ? r.left : r.right - MENU_WIDTH;
+    setPos({ top, left: Math.max(8, Math.min(left, window.innerWidth - MENU_WIDTH - 8)) });
+  }, [anchor, at, align]);
 
   const close = useRef(onClose);
   close.current = onClose;
 
   // The focus goes into the menu when it is visible: a hidden button cannot take the focus.
-  // The delete confirm focuses Delete, so Enter deletes the session (the user asked for this).
   const placed = pos !== null;
   useEffect(() => {
-    if (placed) ref.current?.querySelector<HTMLButtonElement>(confirm ? "button.btn-danger" : "button")?.focus({ preventScroll: true });
-  }, [confirm, placed]);
+    if (placed) ref.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+  }, [placed]);
 
   const showSub = (focus: boolean) => {
     const item = openInRef.current?.getBoundingClientRect();
@@ -168,8 +169,7 @@ function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onC
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      if (confirm) setConfirm(false);
-      else onClose();
+      onClose();
       return;
     }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -177,16 +177,15 @@ function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onC
       // The arrow keys move in the submenu while it has the focus, else in the menu.
       const items = inSub
         ? [...(subRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])]
-        : [...(ref.current?.querySelectorAll<HTMLButtonElement>(":scope > button, :scope > .session-menu-confirm button") ?? [])];
+        : [...(ref.current?.querySelectorAll<HTMLButtonElement>(":scope > button") ?? [])];
       const at = items.indexOf(document.activeElement as HTMLButtonElement);
       items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus({ preventScroll: true });
       return;
     }
-    const action = !confirm && !e.ctrlKey && !e.metaKey && !e.altKey ? KEYS[e.key.toLowerCase()] : undefined;
+    const action = !e.ctrlKey && !e.metaKey && !e.altKey ? KEYS[e.key.toLowerCase()] : undefined;
     if (action && (action !== "pr" || prItem)) {
       e.preventDefault();
-      if (action === "delete") setConfirm(true);
-      else onAction(action);
+      onAction(action);
     }
   };
 
@@ -196,7 +195,7 @@ function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onC
       role="menuitem"
       className={danger ? "danger" : undefined}
       aria-keyshortcuts={key}
-      onClick={() => (action === "delete" ? setConfirm(true) : onAction(action))}
+      onClick={() => onAction(action)}
     >
       <Icon size={14} aria-hidden />
       <span className="session-menu-label">{label}</span>
@@ -213,77 +212,58 @@ function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onC
       style={pos ? { top: pos.top, left: pos.left, width: MENU_WIDTH } : { visibility: "hidden", width: MENU_WIDTH }}
       onKeyDown={onKeyDown}
     >
-      {confirm ? (
-        <div className="session-menu-confirm">
-          <p>
-            Delete this session? Its messages are deleted. This cannot be undone.
-            {session.branch && ` The worktree folder is removed. The branch ${session.branch} stays.`}
-          </p>
-          <div className="session-menu-confirm-actions">
-            <button type="button" className="btn btn-small" onClick={() => setConfirm(false)}>
-              Cancel
-            </button>
-            <button type="button" className="btn btn-small btn-danger" onClick={() => onAction("delete")}>
-              Delete
-            </button>
-          </div>
-        </div>
-      ) : (
+      {prItem && (
         <>
-          {prItem && (
-            <>
-              {item("pr", "Open PR", "G", GitPullRequest)}
-              {!split && <div className="menu-sep" role="separator" />}
-            </>
-          )}
-          {split && (
-            <>
-              <button
-                ref={openInRef}
-                type="button"
-                role="menuitem"
-                aria-haspopup="menu"
-                aria-expanded={sub !== null}
-                className={sub ? "sub-open" : undefined}
-                onClick={() => (sub ? setSub(null) : showSub(true))}
-                onMouseEnter={() => showSub(false)}
-              >
-                <SquareArrowOutUpRight size={14} aria-hidden />
-                <span className="session-menu-label">Open in</span>
-                <ChevronRight size={14} className="session-menu-sub" aria-hidden />
-              </button>
-              {sub && (
-                <div
-                  ref={subRef}
-                  className="menu session-menu session-submenu"
-                  role="menu"
-                  aria-label="Open in"
-                  style={{ top: sub.top, left: sub.left, width: SUB_WIDTH }}
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={split === "off"}
-                    title={split === "off" ? "The main view shows this session" : undefined}
-                    onClick={() => onAction("split")}
-                  >
-                    <Columns2 size={14} aria-hidden />
-                    <span className="session-menu-label">Split view</span>
-                  </button>
-                </div>
-              )}
-              <div className="menu-sep" role="separator" />
-            </>
-          )}
-          {item("pin", session.pinned ? "Unpin" : "Pin", "P", session.pinned ? PinOff : Pin)}
-          {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
-          <div className="menu-sep" role="separator" />
-          {item("rename", "Rename", "R", Pencil)}
-          {item("archive", session.archived ? "Unarchive" : "Archive", "A", session.archived ? ArchiveRestore : Archive)}
-          <div className="menu-sep" role="separator" />
-          {item("delete", "Delete", "D", Trash2, true)}
+          {item("pr", "Open PR", "G", GitPullRequest)}
+          {!split && <div className="menu-sep" role="separator" />}
         </>
       )}
+      {split && (
+        <>
+          <button
+            ref={openInRef}
+            type="button"
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={sub !== null}
+            className={sub ? "sub-open" : undefined}
+            onClick={() => (sub ? setSub(null) : showSub(true))}
+            onMouseEnter={() => showSub(false)}
+          >
+            <SquareArrowOutUpRight size={14} aria-hidden />
+            <span className="session-menu-label">Open in</span>
+            <ChevronRight size={14} className="session-menu-sub" aria-hidden />
+          </button>
+          {sub && (
+            <div
+              ref={subRef}
+              className="menu session-menu session-submenu"
+              role="menu"
+              aria-label="Open in"
+              style={{ top: sub.top, left: sub.left, width: SUB_WIDTH }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={split === "off"}
+                title={split === "off" ? "The main view shows this session" : undefined}
+                onClick={() => onAction("split")}
+              >
+                <Columns2 size={14} aria-hidden />
+                <span className="session-menu-label">Split view</span>
+              </button>
+            </div>
+          )}
+          <div className="menu-sep" role="separator" />
+        </>
+      )}
+      {item("pin", session.pinned ? "Unpin" : "Pin", "P", session.pinned ? PinOff : Pin)}
+      {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
+      <div className="menu-sep" role="separator" />
+      {item("rename", "Rename", "R", Pencil)}
+      {item("archive", session.archived ? "Unarchive" : "Archive", "A", session.archived ? ArchiveRestore : Archive)}
+      <div className="menu-sep" role="separator" />
+      {item("delete", "Delete", "D", Trash2, true)}
     </div>
   );
 }

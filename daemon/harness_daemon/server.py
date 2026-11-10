@@ -58,6 +58,7 @@ from .providers import (
     image_input,
     load_providers,
     model_capabilities,
+    openai_image_input,
     resolve_context_length,
     resolve_model,
     stored_model,
@@ -91,6 +92,9 @@ from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
 from .titles import MAX_TITLE_TRIES, summarize_title
+
+# The first turn waits this many seconds for the model title (wait_title). A slow model does not stop the chat.
+TITLE_WAIT = 15
 from .agents import agent_folders, discover_agents
 from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
@@ -209,10 +213,11 @@ def note_message(notes: list[tuple[str, str]]) -> tuple[str, str]:
     shown = list(dict.fromkeys(short for _, short in notes))
     return f"{NOTE_LEAD}\n\n" + "\n\n".join(parts), " · ".join(shown)
 # The model checks of a session start: (provider, URL, kind, model, context_length setting) ->
-# (the time, the capabilities, the context length). A change to the providers clears it. The same
+# (the time, the capabilities, the context length, the image input from the model list of an
+# OpenAI-compatible server or None). A change to the providers clears it. The same
 # result is also under ("last", provider, URL, model, context_length setting): a session open uses it at
 # once, with no request to the endpoint (Connection.quick_model_info).
-MODEL_CHECKS: dict[tuple[Any, ...], tuple[float, list[str] | None, ContextInfo]] = {}
+MODEL_CHECKS: dict[tuple[Any, ...], tuple[float, list[str] | None, ContextInfo, bool | None]] = {}
 MODEL_CHECKS_TTL = 600
 MODEL_CHECK_WAIT = 20  # Seconds that the first turn waits for the model checks of the open.
 MODEL_RECHECK_EVERY = 60  # Seconds between two checks of a session that has the default context length.
@@ -788,6 +793,7 @@ class LiveSession:
             return
         if self.session is not session or agent.client is not client:
             return  # The session closed, or the user switched the model.
+        images = agent.known_image_input(images)  # The endpoint can have rejected the images of the user.
         changed = (context.length, context.source, images) != (agent.context_length, agent.context_source, agent.image_input)
         if changed:
             agent.set_client(client, context.length, images, context.source)
@@ -1187,15 +1193,15 @@ class Connection:
         return agent, warnings
 
     @staticmethod
-    def quick_model_info(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], ContextInfo, bool, bool]:
+    def quick_model_info(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], ContextInfo, bool | None, bool]:
         """The model info with no request: the last checks of the model, or defaults.
 
-        Return the warnings, the context length, the image input flag, and ``fresh``: the checks are
+        Return the warnings, the context length, the image input (None: unknown), and ``fresh``: the checks are
         newer than MODEL_CHECKS_TTL. A result that is not fresh needs Connection.model_checks.
         """
         saved = MODEL_CHECKS.get(("last", provider.name, provider.base_url, model, settings.get("context_length")))
         if saved is not None:
-            warnings, context, images = Connection._model_info(provider, model, settings, saved[1], saved[2])
+            warnings, context, images = Connection._model_info(provider, model, settings, saved[1], saved[2], saved[3])
             return warnings, context, images, time.monotonic() - saved[0] < MODEL_CHECKS_TTL
         configured = settings.get("context_length") or provider.context_length
         context = ContextInfo(int(configured), "settings") if configured else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default")
@@ -1204,7 +1210,7 @@ class Connection:
 
     @staticmethod
     def _model_info(provider, model: str, settings: dict[str, Any], caps: list[str] | None,
-                    context: ContextInfo) -> tuple[list[str], ContextInfo, bool]:
+                    context: ContextInfo, listed: bool | None = None) -> tuple[list[str], ContextInfo, bool | None]:
         support = None if caps is None else "tools" in caps
         warnings = []
         if provider.key_missing:
@@ -1216,13 +1222,13 @@ class Connection:
         if context.warning:
             warnings.append(context.warning)
         # "provider" (not "reachable"): the models of providers.json use the configured name.
-        return warnings, context, image_input(provider, model, settings, caps)
+        return warnings, context, image_input(provider, model, settings, caps, listed)
 
     @staticmethod
-    async def model_checks(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], ContextInfo, bool]:
+    async def model_checks(provider, model: str, settings: dict[str, Any]) -> tuple[list[str], ContextInfo, bool | None]:
         """Check tool support, find the context length, and find if the model accepts images.
 
-        Return the warnings, the context length with its source, and the image input flag.
+        Return the warnings, the context length with its source, and the image input (None: unknown).
         """
         try:
             reachable = await endpoint(provider)  # Opens the SSH tunnel of the provider, if it has one.
@@ -1234,22 +1240,23 @@ class Connection:
         key = (provider.name, reachable.base_url, reachable.kind, model, settings.get("context_length"))
         saved = MODEL_CHECKS.get(key)
         if saved is not None and time.monotonic() - saved[0] < MODEL_CHECKS_TTL:
-            caps, context = saved[1], saved[2]
+            caps, context, listed = saved[1], saved[2], saved[3]
         else:
             # Two sessions that open at the same time share one check.
             running = CHECKS_RUNNING.get(key)
             if running is None:
                 running = asyncio.ensure_future(asyncio.gather(
-                    model_capabilities(reachable, model), resolve_context_length(reachable, model, settings)))
+                    model_capabilities(reachable, model), resolve_context_length(reachable, model, settings),
+                    _listed_image_input(reachable, model)))
                 CHECKS_RUNNING[key] = running
                 running.add_done_callback(lambda _: CHECKS_RUNNING.pop(key, None))
-            caps, context = await asyncio.shield(running)
+            caps, context, listed = await asyncio.shield(running)
             # No context length from the endpoint (a timeout, for example): do not keep the default. The next
             # check asks again, and a good result of an earlier check stays.
             if context.source != "default":
-                MODEL_CHECKS[key] = (time.monotonic(), caps, context)
-                MODEL_CHECKS[("last", provider.name, provider.base_url, model, settings.get("context_length"))] = (time.monotonic(), caps, context)
-        return Connection._model_info(provider, model, settings, caps, context)
+                MODEL_CHECKS[key] = (time.monotonic(), caps, context, listed)
+                MODEL_CHECKS[("last", provider.name, provider.base_url, model, settings.get("context_length"))] = (time.monotonic(), caps, context, listed)
+        return Connection._model_info(provider, model, settings, caps, context, listed)
 
     async def send_ready(self, warnings: list[str]) -> None:
         """Send the current session to the client. Build the message before the first await:
@@ -1301,7 +1308,8 @@ class Connection:
         shows a session reference with its name, and sends it with its id."""
         session = live.session
         assert session is not None
-        if session.set_title_from(display or text):
+        first = session.set_title_from(display or text)
+        if first:
             live.title_prompt, live.title_tries = display or text, 0
         self.start_title(live)
         # "@" references: add the files, lines, and sessions to the prompt. Load the referenced
@@ -1328,6 +1336,8 @@ class Connection:
             block, allow = await asyncio.to_thread(skill_block)
             if block:
                 expanded = f"{expanded}\n\n{block}"
+        if first:
+            await self.wait_title(live)
         try:
             shown = display or text
             stop = await session.agent.run_turn(expanded, display=shown if expanded != shown else None, allow=allow,
@@ -1401,6 +1411,13 @@ class Connection:
             await live.conn.send({"type": "session.title", "id": session.id, "title": title})
 
         live.title_task = asyncio.create_task(work())
+
+    async def wait_title(self, live: LiveSession) -> None:
+        """Before the first turn: wait for the model title, so that the title is there before the chat starts.
+        After TITLE_WAIT seconds the turn starts, and the title request continues next to it."""
+        task = live.title_task
+        if task is not None and not task.done():
+            await asyncio.wait({task}, timeout=TITLE_WAIT)
 
     def start_suggestion(self, live: LiveSession) -> None:
         """After a turn, ask the model for the next prompt of the user. The client shows it in the
@@ -1528,11 +1545,14 @@ class Connection:
         session = live.session
         assert session is not None
         command = f"/{skill.name} {args}".strip()
-        if session.set_title_from(command):
+        first = session.set_title_from(command)
+        if first:
             # The skill description tells the model what the command does.
             live.title_prompt, live.title_tries = f"{command}\n\nThe skill /{skill.name}: {skill.description}", 0
         self.start_title(live)
         await live.wait_for_mcp()
+        if first:
+            await self.wait_title(live)
         try:
             await session.agent.run_skill(skill, args)
         finally:
@@ -1632,6 +1652,7 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
     session.agent.settings["permission_mode"] = routine["permission_mode"]
     session.title = routine["name"]
     headless.storage.update_session(session.id, title=routine["name"], routine_id=routine["id"])
+    session.disable_offer()  # No user watches the run: the task stays in the routine session.
     live.on_waiting = lambda waiting: report("waiting" if waiting else "running")
     live.routine_id = routine["id"]
     headless.live[session.id] = live
@@ -1797,6 +1818,14 @@ def _acp_id(provider_name: str | None, model: str | None) -> str | None:
     if model and model.startswith(ACP_PROVIDER + "/") and not provider_name:
         return model[len(ACP_PROVIDER) + 1:] or None
     return None
+
+
+async def _listed_image_input(provider, model: str) -> bool | None:
+    """The image input from the model list of an OpenAI-compatible server. Ollama and OpenRouter
+    tell it in their capabilities (model_capabilities)."""
+    if provider.kind in ("ollama", "openrouter"):
+        return None
+    return await openai_image_input(provider, model)
 
 
 def _aux_client(settings: dict[str, Any]) -> ModelClient | None:
@@ -1968,6 +1997,8 @@ async def _load_stored(conn: Connection, session_id: str) -> tuple[LiveSession, 
         conn.storage.update_session(session_id, provider=agent.client.provider.name, model=agent.client.model)
     conn.storage.touch_project(str(cwd))
     live.session = Session(conn.storage, session_id, agent, title=row["title"], project_dir=cwd, worktree=worktree)
+    if row.get("routine_id"):  # A session that a routine started.
+        live.session.disable_offer()
     return live, warnings
 
 
@@ -2080,6 +2111,9 @@ async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
         await asyncio.to_thread(worktrees.remove, worktree)
     conn.storage.delete_session(session_id)
     await conn.send({"type": "session.deleted", "id": session_id})
+    if row.get("routine_id") and ROUTINES.scheduler is not None:
+        # The runs of the session are gone: all windows get the new "last run" of the routines.
+        await ROUTINES.scheduler.send_items()
 
 
 @handler("git.branches")
@@ -3536,13 +3570,38 @@ async def on_providers_test(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_models_list(conn: Connection, msg: dict[str, Any]) -> None:
     """The models of each provider that is on, for the model field of the client. "default" is the
     model that a new session with no model uses now (the user settings), or null: the start screen
-    shows its name on the "Default model" chip."""
+    shows its name on the "Default model" chip. "providers" has the names of the providers that are on,
+    also those that did not answer or give no list: a saved model of another provider cannot work."""
     async def run() -> None:
+        settings = load_settings(None)
         models, (default, _) = await asyncio.gather(provider_config.all_models(),
-                                                    default_model_for_network(load_settings(None)))
-        await conn.send({"type": "models", **models, "default": default})
+                                                    default_model_for_network(settings))
+        _add_image_input(models.get("items") or [], settings)
+        try:
+            names: list[str] | None = sorted(load_providers())
+        except ConfigError:
+            names = None  # A damaged providers.json: the client cannot tell which providers are gone.
+        await conn.send({"type": "models", **models, "default": default,
+                         **({"providers": names} if names is not None else {})})
 
     asyncio.create_task(run())
+
+
+def _add_image_input(items: list[dict[str, Any]], settings: dict[str, Any]) -> None:
+    """Add "image_input" to each model that the daemon knows with no request: the settings,
+    providers.json, or the last checks of the model. The start screen shows a notice at an image
+    attachment for a model with no image input."""
+    try:
+        providers = load_providers()
+    except ConfigError:
+        return
+    for item in items:
+        provider = providers.get(str(item.get("provider")))
+        if provider is None or not item.get("model"):
+            continue
+        images = Connection.quick_model_info(provider, str(item["model"]), settings)[2]
+        if images is not None:
+            item["image_input"] = images
 
 
 async def _send_settings(conn: Connection, session: Session) -> None:

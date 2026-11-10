@@ -277,7 +277,11 @@ def test_image_input_order():
     assert image_input(provider, "llava", {"image_input": False}, None) is False
     assert image_input(provider, "qwen", {}, ["completion", "tools", "vision"]) is True
     assert image_input(provider, "qwen", {}, ["completion", "tools"]) is False
-    assert image_input(provider, "qwen", {}, None) is False
+    # No setting and no capabilities: the model list of an OpenAI-compatible server, else unknown.
+    assert image_input(provider, "qwen", {}, None, True) is True
+    assert image_input(provider, "qwen", {}, None, False) is False
+    assert image_input(provider, "qwen", {}, None) is None
+    assert image_input(provider, "llava", {}, None, False) is True  # providers.json wins.
 
 
 # -- through the protocol ----------------------------------------------------------------------------
@@ -294,7 +298,8 @@ def test_agent_starts_and_opens_the_app_through_the_protocol(daemon, project, fa
     )
     c = Client(daemon)
     ready = c.new_session(project)
-    assert ready["auto_verify"] is False and ready["image_input"] is False
+    # The open does not wait for the model checks: the image input is not known yet (None).
+    assert ready["auto_verify"] is False and not ready["image_input"]
     c.send({"type": "prompt", "text": "check the app"})
     request = c.until("permission.request")[0]
     assert request["tool"] == "preview_start" and request["rule"] == f"server({app_command(port)})"

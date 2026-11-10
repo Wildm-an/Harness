@@ -5,19 +5,21 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useOverlay } from "../lib/overlay";
 
-export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCancel }: {
+export function ConfirmDialog({ title, children, confirmLabel, focusConfirm, onConfirm, onCancel }: {
   title: string; // A question, for example "Delete app.py?".
   children: ReactNode; // What happens, and what stays.
   confirmLabel: string; // A verb, for example "Delete".
+  focusConfirm?: boolean; // The focus starts on the confirm button, so Enter confirms (UI_RULES S8).
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const id = useId();
   const cancel = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
   const opener = useRef<Element | null>(document.activeElement);
   useOverlay(true);
   useEffect(() => {
-    cancel.current?.focus();
+    (focusConfirm ? confirm : cancel).current?.focus();
     const back = opener.current;
     return () => {
       // After the dialog leaves the page. A dialog that set the focus itself keeps it.
@@ -26,6 +28,7 @@ export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCanc
         if (back instanceof HTMLElement && back.isConnected && (active === null || active === document.body)) back.focus({ preventScroll: true });
       }, 0);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- The focus moves one time, when the dialog opens.
   }, []);
 
   return (
@@ -53,7 +56,7 @@ export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCanc
           <button ref={cancel} type="button" className="btn btn-small" onClick={onCancel}>
             Cancel
           </button>
-          <button type="button" className="btn btn-small btn-danger" onClick={onConfirm}>
+          <button ref={confirm} type="button" className="btn btn-small btn-danger" onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>

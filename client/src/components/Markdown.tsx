@@ -1,7 +1,11 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
+import { normalizeMath } from "../lib/math";
 import { openLink } from "../lib/openLink";
 import { parsePathRef, useOpenPath } from "../lib/openPath";
 import { prInfoStore, prUrlRef, usePrInfo } from "../lib/pr";
@@ -109,13 +113,23 @@ const components: Components = {
   a: ({ href, children }) => <Link href={href}>{children}</Link>,
   code: ({ className, children }) => <Code className={className}>{children}</Code>,
   pre: ({ children }) => <Pre>{children}</Pre>,
+  // A table that is wider than the chat scrolls in its own box. The chat does not scroll sideways.
+  table: ({ children }) => (
+    <div className="md-table">
+      <table>{children}</table>
+    </div>
+  ),
 };
+
+const remarkPlugins: Options["remarkPlugins"] = [remarkGfm, remarkMath];
+// Equations show with KaTeX. An equation with an error shows its LaTeX source in muted text.
+const rehypePlugins: Options["rehypePlugins"] = [[rehypeKatex, { errorColor: "var(--text-muted)" }]];
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {text}
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
+        {normalizeMath(text)}
       </ReactMarkdown>
     </div>
   );
@@ -151,7 +165,7 @@ export function streamBlocks(text: string): string[] {
  * for each new text, not the whole reply. The full reply is parsed one time when the stream ends.
  */
 export function StreamingMarkdown({ text }: { text: string }) {
-  const blocks = streamBlocks(text);
+  const blocks = streamBlocks(normalizeMath(text));
   return (
     <div className="markdown markdown-stream">
       {blocks.map((block, i) => (
@@ -161,9 +175,10 @@ export function StreamingMarkdown({ text }: { text: string }) {
   );
 }
 
+/** One block of the stream. `normalizeMath` ran on the full text before the split. */
 const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
       {text}
     </ReactMarkdown>
   );

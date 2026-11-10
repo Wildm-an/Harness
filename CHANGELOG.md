@@ -3,6 +3,94 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.65 (2026-11-10)
+
+### Chat
+
+- Rewind does not ask what to restore. It always restores the code and the conversation. In the
+  "Rewind" dialog (Esc two times), a click or Enter on a message rewinds to it. The rewind button
+  on a message rewinds with one click.
+
+### Sessions
+
+- The "Worktree" row of the Environment section shows only for a session in a worktree, or when the
+  "Worktree" box of the start screen is on for the project of the session.
+- The Background tasks section of the session rail shows only the running tasks. A task that ends
+  goes away from the rail.
+- In the Background tasks pane, the tasks that ended go into a "Finished" group under the running
+  tasks. The group starts folded. Click its heading to open it.
+
+## 0.1.64 (2026-11-10)
+
+### Chat
+
+- Tables in the chat look as in the Claude app: the full width, a line below each row, no vertical
+  lines, and a bold header at the left. A table that is wider than the chat scrolls in its own box.
+- The chat shows equations. Write LaTeX as `$...$` or `\(...\)` in a line, and as `$$...$$` or
+  `\[...\]` for a display equation. A dollar amount such as "$5" stays text.
+- The agent writes equations in LaTeX.
+
+### Sessions
+
+- "Delete" in the session menu opens a "Delete session?" dialog. The focus starts on "Delete", so
+  Enter deletes the session. Esc cancels.
+- The confirm button of each confirm dialog has a danger-color outline.
+
+## 0.1.63 (2026-11-09)
+
+### Models
+
+- The model chip on the new session screen shows the model that you chose last. A model change in a
+  session counts too. Before, an old model came back after each start and each update.
+- A saved model that no provider gives now shows as "Default model". While the model list loads, the
+  saved model stays.
+- Images that you attach go to the models of OpenAI-compatible servers. Harness reads image input from
+  the model list of the server. A model with no image input shows a warning in the chat and a note
+  under the image.
+
+### Chat
+
+- When a turn ends with open steps in the task list, the agent gets one reminder to close the list.
+
+### Files and Browser
+
+- A file opens in an unpinned tab (an italic name). The next file takes its place. A pin, a
+  double-click, or an edit keeps the tab open.
+- Drag a file tab or a browser tab to move it.
+- The Browser section of the session rail has a new card: the page title, a tab menu, "Open in the
+  Browser pane", "Close tab", and the page picture.
+- A click on a browser card opens the Browser pane in its place. The browser does not cover the chat.
+
+### Window
+
+- The new session screen has no line under the title bar.
+- After a click on "Hide sidebar", the sidebar stays hidden. It does not show again under the pointer.
+
+## 0.1.62 (2026-11-09)
+
+### Chat
+
+- Press Esc two times to open the new "Rewind" dialog. It lists your messages in the session. Choose a
+  message, then choose what to restore: the code and the conversation, the conversation, or the code.
+  During a turn, Esc still stops the agent.
+- A new session gets its title before the reply starts. Harness waits up to 15 seconds for the title.
+
+### Routines
+
+- A routine does not stop to ask if a task goes to a new session. The task stays in the routine session.
+- When you delete a session, its runs go away from the run list of the routine.
+- A new routine starts in your "Default permission mode" of Settings > General.
+
+### Updates
+
+- The note "Harness updates when the agent is done" shows at the top of the window. It does not cover
+  the prompt box. The note "Harness quits when the agent is done" moved there too.
+
+### Connectors
+
+- In the installed app, the tools of the Outlook (classic) connector that read a date (messages and
+  calendar events) do not fail with "No module named 'win32timezone'" again.
+
 ## 0.1.61 (2026-11-09)
 
 ### Operating Harness

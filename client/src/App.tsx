@@ -124,7 +124,24 @@ import { overlayOpen } from "./lib/overlay";
 import { addErrorToast, addUndoToast, errorRoute, type ErrorToastItem } from "./lib/errorRoute";
 import { waitingCardHint } from "./lib/cardKeys";
 import { ErrorToasts } from "./components/ErrorToasts";
-import { BrowserPane, agentBrowserOf, clearBrowserData, closeTabById, hasTab, keepCookies, minimizeShownTab, minimizeTab, onAgentBrowser, runAgentCall, showAgentTab, showTab } from "./browser/BrowserPane";
+import { canStartPeek, peekGate } from "./lib/sidebarPeek";
+import {
+  BrowserPane,
+  agentBrowserOf,
+  browserTabsOf,
+  clearBrowserData,
+  closeTabById,
+  hasTab,
+  hideRailBrowser,
+  keepCookies,
+  minimizeShownTab,
+  minimizeTab,
+  onAgentBrowser,
+  runAgentCall,
+  showAgentTab,
+  showTab,
+  showTabInRail,
+} from "./browser/BrowserPane";
 import { pendingServerApprovals } from "./browser/ServerBlock";
 import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
 import { AllowedSites } from "./components/AllowedSites";
@@ -134,6 +151,7 @@ import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } fro
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
+import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
@@ -146,12 +164,13 @@ import { normalizePath, openFolderBlocked } from "./editor/paths";
 import { loadPref, savePref } from "./lib/prefs";
 import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
-import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
+import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
 import { clampSplit, MAIN_PROMPT_ID, SPLIT_DEFAULT } from "./lib/split";
 import { usePresence } from "./lib/motion";
 import { isLoopback, setVisualDaemon } from "./lib/visual";
 import { SessionSearch } from "./components/SessionSearch";
+import { DOUBLE_ESC_MS, RewindDialog, rewindTargets } from "./components/RewindDialog";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
 import { compareVersions } from "./lib/version";
 import { ChangelogPage } from "./components/ChangelogPage";
@@ -160,10 +179,11 @@ import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
 import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
+import { DeleteSessionConfirm } from "./components/DeleteSessionConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { ModelUnavailable } from "./components/ModelUnavailable";
-import { isModelUnavailable, networkModel, proposedModel } from "./lib/modelAvailability";
+import { isModelUnavailable, networkModel, proposedModel, rememberModel } from "./lib/modelAvailability";
 import { ModelChoice, isLocalProvider } from "./components/ModelChoice";
 import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
@@ -182,8 +202,11 @@ import {
 } from "./lib/connections";
 import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openExternal, openLocalPath, pickFiles, pickFolder, revealInExplorer } from "./lib/tauri";
 import { filesPromptText } from "./lib/fileRefs";
+import { noImageNote } from "./lib/images";
+import { modelName } from "./lib/modelName";
 import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore, sessionPrUrls } from "./lib/pr";
 import { FolderMenu } from "./components/FolderMenu";
+import { SessionTitle } from "./components/SessionTitle";
 import type { SessionActions } from "./components/SessionRow";
 
 type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines";
@@ -340,6 +363,7 @@ export default function App() {
   const [diffError, setDiffError] = useState<string | null>(null); // The last git.diff request failed.
   const [diffScope, setDiffScope] = useState<GitDiffScope>("branch");
   const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
+  const [rewindOpen, setRewindOpen] = useState(false); // The Rewind dialog (Esc two times).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
   // The sessions with no window that work or wait: routine runs and nested sessions (start_session).
   const [backgroundSessions, setBackgroundSessions] = useState<RunningSession[]>([]);
@@ -377,6 +401,7 @@ export default function App() {
   const [session, setSession] = useState<ActiveSession | null>(null);
   const [branches, setBranches] = useState<(GitBranches & { cwd: string }) | null>(null); // For the worktree chip.
   const [archiveAsk, setArchiveAsk] = useState<{ id: string; branch: string } | null>(null); // A worktree with changes.
+  const [deleteAsk, setDeleteAsk] = useState<string | null>(null); // The id of the session that "Delete session?" asks about.
   // The next prompt that the model predicts after a turn, for the session that got it.
   const [suggestion, setSuggestion] = useState<{ sessionId: string; text: string } | null>(null);
   // "Not now" on the unavailable model prompt, by "session id model". The prompt shows again after a restart.
@@ -762,6 +787,7 @@ export default function App() {
             requests: msg.requests,
             turnStartedAt: msg.turn_started_at,
             turnTokens: msg.turn_tokens,
+            imageInput: msg.image_input ?? null,
           });
           // A return to a turn that waits for approval of a change: show the change for review.
           const change = msg.running ? msg.requests?.find((r) => r.diff) : undefined;
@@ -863,6 +889,12 @@ export default function App() {
             const { [msg.id]: _gone, ...rest } = q;
             return rest;
           });
+          // The daemon deleted the routine runs of the session: remove them from the open run list too.
+          setRoutineRuns((r) =>
+            r && r.items.some((run) => run.session_id === msg.id)
+              ? { ...r, items: r.items.filter((run) => run.session_id !== msg.id) }
+              : r,
+          );
           listRecent();
           return;
         case "steer.taken":
@@ -987,7 +1019,13 @@ export default function App() {
           return;
         }
         case "models":
-          setModels({ items: msg.items.map((i) => `${i.provider}/${i.model}`), errors: msg.errors, default: msg.default ?? null });
+          setModels({
+            items: msg.items.map((i) => `${i.provider}/${i.model}`),
+            errors: msg.errors,
+            default: msg.default ?? null,
+            noImages: msg.items.filter((i) => i.image_input === false).map((i) => `${i.provider}/${i.model}`),
+            providers: msg.providers,
+          });
           return;
         case "preview.frame": {
           const { type: _type, ...frame } = msg;
@@ -1693,6 +1731,18 @@ export default function App() {
     sendSafely({ type: "command", name: "model", args: spec });
   };
 
+  /** The saved project of a session: the project with the session folder, else the project with its name. */
+  const sessionProject = (s: { cwd: string; project?: string | null }) =>
+    projects?.find((p) => samePath(p.path, s.cwd)) ?? projects?.find((p) => p.name === s.project);
+
+  /** The user chose a model for the session: the start screen shows it the next time (the model used last). */
+  const chooseModel = (spec: string) => {
+    switchModel(spec);
+    const s = sessionRef.current;
+    const project = s ? sessionProject(s) : undefined;
+    rememberModel(currentRef.current?.id ?? "local", project?.id, spec);
+  };
+
   // No provider gives the model of the session. With "Preferred providers" on, the model by
   // network replaces it with no question. Else the chat asks the user (ModelUnavailable).
   // An ACP session has no model of the providers: its harness chooses the model.
@@ -1792,10 +1842,11 @@ export default function App() {
   const selectProviderModel = (spec: string) => {
     setSettingsPage(null);
     if (sessionRef.current) {
-      switchModel(spec);
+      chooseModel(spec);
       setScreen("chat");
     } else {
-      savePref(`model.${currentRef.current?.id ?? "local"}`, spec);
+      const scope = currentRef.current?.id ?? "local";
+      rememberModel(scope, loadPref(`project.${scope}`, ""), spec); // The project of the start screen.
       setScreen("start");
     }
   };
@@ -1977,6 +2028,33 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [chat.running]);
+
+  // Esc two times opens the Rewind dialog, as in Claude. Not during a turn: then Esc stops the agent.
+  // The prompt box counts, but not another text field, the terminal, the editor, or the split pane.
+  const lastEsc = useRef(0);
+  const runningRef = useRef(chat.running);
+  runningRef.current = chat.running;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const target = e.target instanceof Element ? e.target : null;
+      const field = target?.closest('input, textarea, select, [contenteditable="true"], .xterm, .monaco-editor, [role="dialog"], [role="menu"], [role="listbox"], .split-pane');
+      if (e.defaultPrevented || runningRef.current || !sessionRef.current || overlayOpen() || (field && !field.closest(".prompt-anchor"))) {
+        lastEsc.current = 0;
+        return;
+      }
+      const now = performance.now();
+      if (lastEsc.current && now - lastEsc.current < DOUBLE_ESC_MS) {
+        lastEsc.current = 0;
+        e.preventDefault();
+        setRewindOpen(true);
+      } else {
+        lastEsc.current = now;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const openRules = () => {
     setLayout((l) => openPane(l, "rules"));
@@ -2207,7 +2285,8 @@ export default function App() {
 
   // Stable callbacks: each user message in the chat is memoized, and a new function renders all of them again.
   const rewind = useCallback(
-    (messageId: string, options: RewindOptions) => void sendSafely({ type: "session.rewind", id: messageId, ...options }),
+    // A rewind always restores the code and the conversation (the user asked for this).
+    (messageId: string) => void sendSafely({ type: "session.rewind", id: messageId, conversation: true, code: true }),
     [sendSafely],
   );
   const undoRewind = useCallback(() => void sendSafely({ type: "session.rewind_undo" }), [sendSafely]);
@@ -2703,7 +2782,7 @@ export default function App() {
               proposed={proposedModel(models, [loadPref(`model.${currentRef.current?.id ?? "local"}`, "")])}
               disabled={status !== "open"}
               onRequestModels={requestModels}
-              onSwitch={switchModel}
+              onSwitch={chooseModel}
               onDismiss={() => setModelAskDismissed((d) => new Set(d).add(`${session.id} ${session.model}`))}
               onManage={showProviders}
             />
@@ -2753,6 +2832,7 @@ export default function App() {
             onCycleMode={() => changeMode(nextMode(permissionMode))}
             suggestion={!chat.running && session && suggestion?.sessionId === session.id ? suggestion.text : null}
             onDismissSuggestion={() => setSuggestion(null)}
+            imageNote={session && !session.harness && chat.imageInput === false ? noImageNote(modelName(session.model)) : null}
             below={
               session && (
                 <>
@@ -2775,7 +2855,7 @@ export default function App() {
                   localProviders={localProviders}
                   effort={effortControl}
                   onOpen={requestModels}
-                  onSelect={switchModel}
+                  onSelect={chooseModel}
                   onManage={showProviders}
                 />
                 )}
@@ -2951,6 +3031,13 @@ export default function App() {
               showRail(true);
             }
           : undefined,
+      // The X: the session rail stops its view of the agent page (the user asked for this). The next
+      // agent call in the browser shows it again.
+      onClose: () => {
+        if (session) hideRailBrowser(session.id);
+        setAgentFrame(null);
+        setFrameLive(false);
+      },
       render: () => (
         <BrowserPane
           session={session?.id ?? null}
@@ -3015,10 +3102,7 @@ export default function App() {
         return next;
       }),
     onRename: (id, title) => void sendSafely({ type: "session.update", session_id: id, title }),
-    onDelete: (id) => {
-      if (id === split) setSplit(null);
-      sendSafely({ type: "session.delete", session_id: id });
-    },
+    onDelete: (id) => setDeleteAsk(id), // Delete always asks first (UI_RULES S8).
   };
 
   /** "Open in" > "Split view", or a drop on the main view: the session opens at the right of the shown session. */
@@ -3084,8 +3168,19 @@ export default function App() {
     if (peekTimer.current !== null) window.clearTimeout(peekTimer.current);
     peekTimer.current = null;
   };
+  // A click on "Hide sidebar" blocks the peek until the pointer leaves the toggle (see sidebarPeek.ts).
+  const peekBlocked = useRef(false);
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!peekBlocked.current) return;
+      const overToggle = e.target instanceof Element && e.target.closest(".sidebar-toggle") !== null;
+      peekBlocked.current = peekGate(peekBlocked.current, { type: "pointer", overToggle });
+    };
+    document.addEventListener("pointermove", onMove);
+    return () => document.removeEventListener("pointermove", onMove);
+  }, []);
   const startPeek = (e: React.MouseEvent) => {
-    if (e.buttons !== 0) return; // Not during a drag.
+    if (!canStartPeek(peekBlocked.current, e.buttons)) return;
     cancelPeek();
     peekTimer.current = window.setTimeout(() => {
       peekTimer.current = null;
@@ -3200,10 +3295,16 @@ export default function App() {
       <button
         type="button"
         className={`icon-btn ghost sidebar-toggle${peek && toggleHot ? " hot" : ""}`}
-        onClick={() => showSidebar(!sidebarOpen)}
+        onClick={() => {
+          if (sidebarOpen) peekBlocked.current = peekGate(peekBlocked.current, { type: "hide-click" });
+          showSidebar(!sidebarOpen);
+        }}
         // While the sidebar is hidden, the pointer on this button shows the sidebar over the view.
         onMouseEnter={sidebarOpen ? undefined : startPeek}
-        onMouseLeave={cancelPeek}
+        onMouseLeave={() => {
+          cancelPeek();
+          peekBlocked.current = peekGate(peekBlocked.current, { type: "leave" });
+        }}
         aria-label={sidebarOpen ? "Hide the sidebar" : "Show the sidebar"}
         title={`${sidebarOpen ? "Hide sidebar" : "Show sidebar"} (${SIDEBAR_SHORTCUT})`}
       >
@@ -3348,16 +3449,12 @@ export default function App() {
         </div>
       )}
       <div className="shell">
-        <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">
+        <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}${screen === "start" ? " no-line" : ""}`} data-tauri-drag-region="deep">
           {/* With the sidebar hidden, the title bar has the switch only in the IDE view (the user asked for this). */}
           {!sidebarOpen && titleNav()}
           <div className="topbar-title">
             {screen === "chat" && session && (
               <>
-                <span className="topbar-name">
-                  {/* The daemon gives the title after the first turn. The sidebar list has it. */}
-                  {session.title ?? recent.find((r) => r.id === session.id)?.title ?? "Untitled session"}
-                </span>
                 <FolderMenu
                   name={folder ?? session.cwd}
                   path={session.cwd}
@@ -3366,6 +3463,16 @@ export default function App() {
                   onReveal={() => void revealInExplorer(session.cwd).catch((e) => dispatch({ type: "notice", level: "error", text: errorText(e) }))}
                   onChange={() => void changeFolder()}
                   onOpenTerminal={() => showPane("terminal")}
+                />
+                <span className="topbar-divider" aria-hidden>|</span>
+                <SessionTitle
+                  id={session.id}
+                  // The daemon gives the title after the first turn. The sidebar list has it.
+                  title={session.title ?? recent.find((r) => r.id === session.id)?.title ?? "Untitled session"}
+                  summary={recent.find((r) => r.id === session.id)}
+                  unread={unreadSessions.has(session.id)}
+                  pr={session.worktree ? (prStatus.get(pathKey(session.cwd))?.pr ?? null) : null}
+                  actions={sessionActions}
                 />
                 {session.worktree && (
                   <span
@@ -3485,6 +3592,7 @@ export default function App() {
             folder={routinesFolder}
             runs={routineRuns}
             projects={projects ?? []}
+            defaultMode={userSettings?.permission_mode}
             models={models}
             error={routineError}
             saved={routineSaved}
@@ -3611,6 +3719,9 @@ export default function App() {
             onClose={() => setSearchOpen(false)}
           />
         )}
+        {rewindOpen && session && (
+          <RewindDialog targets={rewindTargets(chat.items)} onRewind={rewind} onClose={() => setRewindOpen(false)} />
+        )}
         {/* The popups at the bottom right: the app update, the daemon version, and the daemon update. */}
         <ToastStack>
           <ErrorToasts items={errorToasts} onClose={(id) => setErrorToasts((l) => l.filter((t) => t.id !== id))} />
@@ -3651,6 +3762,18 @@ export default function App() {
             onArchive={() => {
               sendSafely({ type: "session.update", session_id: archiveAsk.id, archived: true, force: true });
               setArchiveAsk(null);
+            }}
+          />
+        )}
+        {deleteAsk && (
+          <DeleteSessionConfirm
+            title={recent.find((r) => r.id === deleteAsk)?.title ?? "Untitled session"}
+            branch={recent.find((r) => r.id === deleteAsk)?.branch}
+            onCancel={() => setDeleteAsk(null)}
+            onDelete={() => {
+              if (deleteAsk === split) setSplit(null);
+              sendSafely({ type: "session.delete", session_id: deleteAsk });
+              setDeleteAsk(null);
             }}
           />
         )}
@@ -3807,6 +3930,7 @@ export default function App() {
                     path: session.cwd,
                     branch: prStatus.get(pathKey(session.cwd))?.branch ?? null,
                     worktree: session.worktree,
+                    worktreeOption: loadWorktreeChoice(worktreeKey(current?.id ?? "local", sessionProject(session)?.id)).on,
                   }}
                   context={chat.context ? { tokens: chat.context.tokens, length: chat.context.length } : null}
                   usage={contextUsage}
@@ -3821,12 +3945,15 @@ export default function App() {
                   onShowServers={() => setLayout((l) => openPane(l, "browser"))}
                   browser={
                     agentTab
-                      ? { tab: agentTab.tab, image: null, url: agentTab.url, title: agentTab.title, live: agentTab.live }
+                      ? { tab: agentTab.tab, image: null, url: agentTab.url, title: agentTab.title, live: agentTab.live, agent: agentTab.agent }
                       : agentFrame
-                        ? { tab: null, image: agentFrame.image, url: agentFrame.url, title: agentFrame.title, live: frameLive }
+                        ? { tab: null, image: agentFrame.image, url: agentFrame.url, title: agentFrame.title, live: frameLive, agent: frameLive }
                         : null
                   }
                   onShowBrowser={showAgentBrowser}
+                  browserTabs={() => (sessionId ? browserTabsOf(sessionId) : [])}
+                  onPickBrowserTab={(id) => sessionId && showTabInRail(sessionId, id)}
+                  onCloseBrowser={agentTab ? () => closeTabById(agentTab.tab) : null}
                   changes={gitChanges && samePath(gitChanges.cwd, session.cwd) ? gitChanges : null}
                   onOpenChanges={() => {
                     setReviewId(null); // The pane shows all the changes of the branch, not an old single change.

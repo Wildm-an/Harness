@@ -33,6 +33,8 @@ export interface PaneSpec {
   // A double-click on the divider next to the window minimizes the pane, for example the browser to the
   // session rail (the user asked for this). No value: the double-click does nothing.
   onMinimize?: () => void;
+  // The X of the window header closes the pane. This runs first. Other ways to close the pane do not run it.
+  onClose?: () => void;
 }
 
 /** The pane that a double-click on a divider minimizes: the active pane of a window next to it that can
@@ -184,7 +186,10 @@ function GroupView({
             <button
               type="button"
               className="icon-btn ghost win-btn"
-              onClick={() => onChange(closePane(root, group.active))}
+              onClick={() => {
+                spec.onClose?.();
+                onChange(closePane(root, group.active));
+              }}
               aria-label={`Close the ${spec.title} pane`}
               title="Close"
             >

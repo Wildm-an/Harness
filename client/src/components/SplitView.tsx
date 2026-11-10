@@ -10,6 +10,7 @@ import type { CommandItem, Decision, PermissionMode, PlanDecision, RunningSessio
 import { chatReducer, emptyChat } from "../chat/state";
 import type { ContextUsage } from "../lib/context";
 import { modelName } from "../lib/modelName";
+import { noImageNote } from "../lib/images";
 import {
   adoptOnMain,
   clampSplit,
@@ -121,6 +122,7 @@ export function SplitPane({ sessionId, target, main, focusKey, onClose, onState,
             requests: msg.requests,
             turnStartedAt: msg.turn_started_at,
             turnTokens: msg.turn_tokens,
+            imageInput: msg.image_input ?? null,
           });
           return;
         }
@@ -302,7 +304,7 @@ export function SplitPane({ sessionId, target, main, focusKey, onClose, onState,
             interrupt();
           }}
           onRemoveQueued={(id) => setQueue((q) => q.filter((i) => i.id !== id))}
-          onRewind={(messageId, options) => void send({ type: "session.rewind", id: messageId, ...options })}
+          onRewind={(messageId) => void send({ type: "session.rewind", id: messageId, conversation: true, code: true })}
           onUndoRewind={() => void send({ type: "session.rewind_undo" })}
           onAction={(message) => submitOrQueue({ kind: "prompt", text: message })}
           turn={chat.turn}
@@ -331,6 +333,7 @@ export function SplitPane({ sessionId, target, main, focusKey, onClose, onState,
               onRequestCommands={() => void send({ type: "skills.list" })}
               onCycleMode={() => changeMode(nextMode(mode))}
               focusKey={focusKey}
+              imageNote={shown && chat.imageInput === false ? noImageNote(modelName(shown.model)) : null}
               below={
                 shown && (
                   <>

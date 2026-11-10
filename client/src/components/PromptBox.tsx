@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { CornerDownLeft, FileText, Folder, LoaderCircle, MessageSquare, Square, X } from "lucide-react";
+import { CornerDownLeft, FileText, Folder, LoaderCircle, MessageSquare, Square, TriangleAlert, X } from "lucide-react";
 import type { CommandItem } from "../daemon/protocol";
 import { isAddFilesShortcut } from "../lib/fileRefs";
 import { busySend, type BusySend } from "./SettingsDialog";
@@ -133,6 +133,12 @@ export function draftOf(key: string): string {
   return drafts.get(key) ?? "";
 }
 
+/** Keep the unsent attachments of a prompt box key. The box of that key shows them. */
+export function saveDraftAttachments(key: string, list: PromptAttachment[]): void {
+  if (list.length) draftAttachments.set(key, list);
+  else draftAttachments.delete(key);
+}
+
 export function PromptBox({
   running,
   disabled,
@@ -162,6 +168,7 @@ export function PromptBox({
   draftKey = null,
   attach = null,
   answerHint = null,
+  imageNote = null,
 }: {
   // A card waits for the user: the keys that answer it (lib/cardKeys.ts). The empty box shows this text.
   answerHint?: string | null;
@@ -170,6 +177,8 @@ export function PromptBox({
   draftKey?: string | null;
   // A block of context to add, for example a browser annotation. Each new object adds one chip.
   attach?: { item: PromptAttachment; key: number } | null;
+  // The model cannot read images: the box shows this note under the image thumbnails. null: no note.
+  imageNote?: string | null;
   // The start screen uses the same box as a session. These props change it for the start screen.
   inputId?: string;
   label?: string; // The label for a screen reader.
@@ -212,9 +221,7 @@ export function PromptBox({
     if (shownKey !== null) saveDraft(shownKey, text);
   }, [text, shownKey]);
   useEffect(() => {
-    if (shownKey === null) return;
-    if (attachments.length) draftAttachments.set(shownKey, attachments);
-    else draftAttachments.delete(shownKey);
+    if (shownKey !== null) saveDraftAttachments(shownKey, attachments);
   }, [attachments, shownKey]);
   // Each attach object adds one chip, one time (a box that mounts again does not add it again).
   useEffect(() => {
@@ -490,7 +497,7 @@ export function PromptBox({
         return;
       }
       if (e.key === "Escape") {
-        e.preventDefault();
+        // No preventDefault: this Esc is also the first of the two that open the Rewind dialog (App.tsx).
         onDismissSuggestion?.();
         return;
       }
@@ -653,6 +660,11 @@ export function PromptBox({
                 </li>
               ))}
             </ul>
+          )}
+          {imageNote && attachments.some((a) => a.image) && (
+            <p className="prompt-attachment-note" role="note">
+              <TriangleAlert size={12} aria-hidden /> {imageNote}
+            </p>
           )}
           <textarea
             id={inputId}

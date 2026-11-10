@@ -65,6 +65,11 @@ describe("the form", () => {
     expect(newDraft(projects).cwd).toBe("C:/app");
   });
 
+  it("starts a new routine in the default permission mode of the settings", () => {
+    expect(newDraft(projects).permission_mode).toBe("default");
+    expect(newDraft(projects, "acceptEdits").permission_mode).toBe("acceptEdits");
+  });
+
   it("finds the errors", () => {
     const d = { ...newDraft([]), schedule: { kind: "custom" as const, minute: 0, hour: 9, day: 1, cron: "0 9 *" } };
     expect(checkDraft(d)).toEqual({

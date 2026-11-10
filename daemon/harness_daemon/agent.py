@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -81,6 +82,16 @@ CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origi
 # A user message with images, for a model with no image input.
 NO_IMAGE_NOTE = ("[The user attached {count} image(s). This model cannot read images, so you cannot see them. "
                  "Tell the user, if the images are important for the task.]")
+# The chat notice for the same case: the user must know that the model did not get the images.
+NO_IMAGE_NOTICE = ("{model} cannot read images. The agent did not get the {count} attached image(s), only a note. "
+                   "Use a model with image input, or describe the image in text. If the model can read images, "
+                   "set \"image_input\": true for it in providers.json.")
+# The endpoint rejected a request with images, for a model with an unknown image input.
+REJECTED_IMAGE_NOTICE = ("The model endpoint rejected the attached image(s), so {model} cannot read images. "
+                         "The agent got a note in place of each image.")
+# The HTTP errors that do not come from the content of a request: no retry without the images.
+NOT_CONTENT_ERRORS = {401, 403, 404, 408, 429}
+_KEEP = object()  # set_client: keep the image input.
 
 # Called before the first change of a file in the turn of a user message: (message id, path, content or None).
 OnCheckpoint = Callable[[str, str, "bytes | None"], None]
@@ -97,6 +108,16 @@ FORK_REPORT_REQUEST = (
     "You run in a separate context for this skill. When the task is complete, write a short report "
     "of the result. The report is the only text that goes back to the main conversation."
 )
+
+
+def _content_error(error: ModelError) -> bool:
+    """True if the endpoint rejected the content of the request (HTTP 400, 413, 422, 500, ...), not
+    the key, the rate, or the address."""
+    text = str(error)
+    if text.startswith("The model endpoint rejected the request"):
+        return True
+    m = re.match(r"The model endpoint returned HTTP (\d+)", text)
+    return m is not None and int(m.group(1)) not in NOT_CONTENT_ERRORS
 
 
 class Agent:
@@ -116,7 +137,7 @@ class Agent:
         skills: dict[str, Skill] | None = None,
         session_allow: list[str] | None = None,
         read_roots: tuple[Path, ...] | None = None,
-        image_input: bool = False,
+        image_input: bool | None = False,
         context_source: str = "default",
         plugins: PluginHost | None = None,
         user_facing: bool = True,
@@ -135,14 +156,17 @@ class Agent:
         self.session_context: Callable[[], str | None] | None = None
         self._told_sessions: str | None = None  # The last session list note in the conversation.
         self.client = client
-        self.image_input = image_input  # The model accepts images, for example screenshots.
+        # True: the model accepts images, for example screenshots. False: it does not. None: unknown. Then
+        # the images that the user attaches go to the model, but the agent has no image tools.
+        self.image_input = image_input
+        self._images_rejected: set[str] = set()  # The models whose endpoint rejected the user images.
         self.emit = emit
         self.settings = settings if settings is not None else load_settings(self.cwd)
         self.skills: dict[str, Skill] = dict(skills or {})
         if read_roots is None:
             read_roots = tuple(s.dir for s in self.skills.values())
         self.ctx = ToolContext(cwd=self.cwd, settings=self.settings, shell=detect_shell(self.settings.get("shell")),
-                               read_roots=read_roots, image_input=image_input)
+                               read_roots=read_roots, image_input=image_input is True)
         self.ctx.model = lambda: self.client.label  # The model can change during the session.
         self.command_hooks = CommandHooks(self.cwd, self.ctx.shell)
         tool_list = list(tools if tools is not None else default_tools())
@@ -202,6 +226,7 @@ class Agent:
         self._harness_notes: list[str] = []  # Notes for the next step of a turn.
         self._turn_start = 0  # The history index of the user message of the turn.
         self._plan_nudged = False  # The turn got the reminder to show a task list.
+        self._plan_close_nudged = False  # The turn got the reminder to close its task list (PLAN_CLOSE_NOTE).
         self._stale_nudges = (-1, 0)  # (history index of the last plan, reminders sent for it): PLAN_STALE_NOTE.
         self._rebuild_prompt()
 
@@ -220,14 +245,15 @@ class Agent:
         self._known_tokens = None
 
     def set_client(self, client: ModelClient, context_length: int | None = None,
-                   image_input: bool | None = None, context_source: str | None = None) -> None:
+                   image_input: Any = _KEEP, context_source: str | None = None) -> None:
+        """``image_input``: True, False, or None (unknown). Leave it out to keep the current value."""
         self.client = client
         if context_length:
             self.context_length = context_length
             self.context_source = context_source or "default"
-        if image_input is not None:
-            self.image_input = image_input
-            self.ctx.image_input = image_input
+        if image_input is not _KEEP:
+            self.image_input = self.known_image_input(image_input)
+            self.ctx.image_input = self.image_input is True
             self._sync_preview_tools()
         self._sync_tool_search()  # The context length decides it ("auto").
         self._rebuild_prompt()
@@ -316,6 +342,11 @@ class Agent:
         start = self.tools.get("start_session")
         self.tools[OfferSessionTool.name] = OfferSessionTool(getattr(start, "start", None), send, find)
         self._known_tokens = None
+
+    def disable_offer(self) -> None:
+        """Remove offer_session: in a routine session, no user chooses a new session."""
+        if self.tools.pop("offer_session", None) is not None:
+            self._known_tokens = None
 
     def _session_note(self) -> str | None:
         """The session list note, when the list changed since the last note in the conversation."""
@@ -571,10 +602,15 @@ class Agent:
                 image_at = None
         return [{"role": "system", "content": self.system_prompt}, *history]
 
+    def known_image_input(self, value: bool | None) -> bool | None:
+        """The image input of the current model. An unknown value is False after the endpoint rejected images."""
+        return False if value is None and self.client.label in self._images_rejected else value
+
     def _with_images(self, message: dict[str, Any], images: list[str]) -> dict[str, Any]:
-        """A user message with the images that the user pasted, for the model."""
+        """A user message with the images that the user pasted, for the model. An unknown image input
+        (None) sends the images too: _stream_with_retries sends the note if the endpoint rejects them."""
         text = message.get("content") or ""
-        if not self.image_input:
+        if self.image_input is False:
             note = NO_IMAGE_NOTE.format(count=len(images))
             return {**message, "content": f"{text}\n\n{note}" if text else note}
         parts: list[dict[str, Any]] = [{"type": "text", "text": text or "(The user sent images.)"}]
@@ -647,9 +683,13 @@ class Agent:
         if images:
             message["images"] = list(images)
         self.history.append(message)
+        if images and self.image_input is False and self.user_facing:
+            await self.emit({"type": "notice", "level": "warning",
+                             "text": NO_IMAGE_NOTICE.format(model=self.client.model, count=len(images))})
         self.message_id = message["id"]
         self._turn_start = len(self.history) - 1  # The plan reminders look at the calls of this turn.
         self._plan_nudged = False
+        self._plan_close_nudged = False
         self.gate.turn_allow = list(allow)
         self.turn_number += 1
         turn = self.turn_number
@@ -730,6 +770,11 @@ class Agent:
                         stall_nudges += 1
                         new_messages = [self._add_harness_note(STALL_NUDGE)]
                         await self.emit({"type": "notice", "level": "info", "text": STALL_NOTICE})
+                        continue
+                    # The task list of the turn has open steps: one more step for the closing update_plan.
+                    close_note = self._plan_close_note(origin, ended=True)
+                    if close_note:
+                        new_messages = [self._add_harness_note(close_note)]
                         continue
                     # turn.stopping handlers can add messages: then the turn continues.
                     if self.hooks.has("turn.stopping") and continuations < MAX_STEER_CONTINUATIONS:
@@ -957,6 +1002,10 @@ class Agent:
         """
         if not self.user_facing or "update_plan" not in self.tools or origin == "task":
             return None
+        if self._last_call_is("wrap_up"):
+            close = self._plan_close_note(origin, ended=False)
+            if close:
+                return close
         plans = self._plan_calls()
         last = plans[-1] if plans else None
         open_steps = [str(i.get("content") or "") for i in last or [] if i.get("status") != "completed"]
@@ -973,6 +1022,32 @@ class Agent:
             if stale:
                 return stale
         return None
+
+    def _last_call_is(self, name: str) -> bool:
+        """True if the newest assistant message calls the tool ``name``."""
+        for m in reversed(self.history):
+            if m.get("role") == "assistant":
+                return any((c.get("function") or {}).get("name") == name for c in m.get("tool_calls") or [])
+        return False
+
+    def _plan_close_note(self, origin: str | None, *, ended: bool) -> str | None:
+        """A reminder to close the task list of this turn with update_plan, one time in a turn.
+
+        It comes after a wrap_up call (``ended`` False), or when the model ends the turn (``ended`` True),
+        while the newest update_plan of the turn has steps that are not completed.
+        """
+        if (not self.user_facing or "update_plan" not in self.tools or origin == "task"
+                or self._plan_close_nudged):
+            return None
+        plans = self._plan_calls(self._turn_start)
+        if not plans:
+            return None
+        open_steps = [str(i.get("content") or "") for i in plans[-1] if i.get("status") != "completed"]
+        if not open_steps:
+            return None
+        self._plan_close_nudged = True
+        note = PLAN_CLOSE_END_NOTE if ended else PLAN_CLOSE_NOTE
+        return note.format(steps="; ".join(open_steps[:6]))
 
     def _stale_plan_note(self) -> str | None:
         """PLAN_STALE_NOTE after each PLAN_STALE_CALLS tool calls in the turn since the last update_plan."""
@@ -1044,6 +1119,8 @@ class Agent:
                 return await client.stream(self.messages(), self.tool_schemas(), on_text, options=options,
                                            on_reasoning=lambda: self.emit({"type": "thinking"}))
             except ModelError as e:
+                if self.image_input is None and self._sends_user_images() and _content_error(e):
+                    return await self._stream_without_images(client, options, on_text, e)
                 attempt += 1
                 if not self.hooks.has("request.error") or attempt > MAX_REQUEST_RETRIES:
                     raise
@@ -1052,6 +1129,29 @@ class Agent:
                 if not event.retry:
                     raise
                 streamed.clear()
+
+    def _sends_user_images(self) -> bool:
+        return any(m.get("role") == "user" and m.get("images") for m in self.history)
+
+    async def _stream_without_images(self, client: ModelClient, options: dict[str, Any], on_text: Any,
+                                     error: ModelError) -> Any:
+        """The endpoint rejected a request with user images, and the image input of the model is unknown.
+        Send the request again with a note in place of each image. If it works, the model has no image
+        input: tell the user. If it fails too, the images were not the cause: raise the first error."""
+        self.image_input = False
+        try:
+            reply = await client.stream(self.messages(), self.tool_schemas(), on_text, options=options,
+                                        on_reasoning=lambda: self.emit({"type": "thinking"}))
+        except ModelError:
+            self.image_input = None
+            raise error from None
+        log.info("%s rejected the user images: %s", self.client.label, error)
+        self._images_rejected.add(self.client.label)
+        if self.user_facing:
+            await self.emit({"type": "session.model_info", "context_length": self.context_length,
+                             "context_source": self.context_source, "image_input": False,
+                             "warnings": [REJECTED_IMAGE_NOTICE.format(model=self.client.model)]})
+        return reply
 
     def _usage(self, usage: dict[str, int]) -> dict[str, int]:
         return {**usage, "context_tokens": self.context_tokens(), "context_length": self.context_length}
@@ -1418,6 +1518,14 @@ PLAN_STALE_CALLS = 8
 PLAN_STALE_NOTE = ("[Harness: You made {calls} tool calls since your last update_plan. When a step finishes, call "
                    "update_plan at once with that step completed and the next step in_progress. Do not wait to "
                    "mark many steps completed at the end. If the current step is still in progress, continue.]")
+# The task list of the turn has open steps at the end of the turn.
+PLAN_CLOSE_NOTE = ("[Harness: Your task list still has steps that are not completed: {steps}. Before your final "
+                   "answer, call update_plan with the whole list: mark each finished step completed. A step that "
+                   "is not done stays pending, and your final answer says why.]")
+PLAN_CLOSE_END_NOTE = ("[Harness: You ended the turn, but your task list still has steps that are not completed: "
+                       "{steps}. Call update_plan now with the whole list: mark each finished step completed. A step "
+                       "that is not done stays pending. The user already sees your answer, so do not write it "
+                       "again. After update_plan, end the turn with no text.]")
 PLAN_OFF_NOTE = "[Harness: Plan mode is off. You can change files again. Stay in the scope of the request.]"
 MEMORY_NOTE = ("[Harness: The user changed the memory in Settings. This memory replaces the memory in the "
                "system prompt.]\n\n{memory}")

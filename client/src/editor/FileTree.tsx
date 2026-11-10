@@ -131,6 +131,7 @@ export const FileTree = memo(function FileTree({
   active,
   onToggle,
   onOpen,
+  onPin,
   onPreview,
   onDelete,
   onRename,
@@ -142,6 +143,7 @@ export const FileTree = memo(function FileTree({
   active: string | null;
   onToggle: (dir: string) => void;
   onOpen: (path: string) => void;
+  onPin?: (path: string) => void; // A double-click: the tab of the file stays open.
   onPreview?: (path: string) => void; // A PDF or Word file: the Preview pane.
   onDelete: (entry: TreeEntry) => void; // Ask, then delete the file or the folder.
   onRename: (entry: TreeEntry, name: string) => void; // A new name in the same folder.
@@ -223,6 +225,7 @@ export const FileTree = memo(function FileTree({
                 else if (preview) onPreview?.(entry.path);
                 else if (!blocked) onOpen(entry.path);
               }}
+              onDoubleClick={() => entry.type === "file" && !preview && !blocked && onPin?.(entry.path)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setMenu({ entry, x: e.clientX, y: e.clientY });

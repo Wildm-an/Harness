@@ -1044,6 +1044,11 @@ textarea:focus-visible {
   box-sizing: border-box;
 }
 
+/* The new session screen has no line under the title bar (the user asked for this). */
+.topbar.no-line {
+  border-bottom-color: transparent;
+}
+
 /* The top bar is the title bar of the window. Its height and icons match the Claude app. */
 .topbar .icon-btn,
 .side-head .icon-btn {
@@ -1123,10 +1128,52 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+/* The session title: a click renames it in place. The caret at its right opens the session menu. */
+.topbar-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .topbar-name {
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  transition: background var(--duration) var(--ease-out);
+}
+
+.topbar-name:hover {
+  background: var(--hover);
+}
+
+.topbar-rename {
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+}
+
+/* The line between the folder name and the session title. */
+.topbar-divider {
+  flex: none;
+  margin: 0 -4px;
+  color: var(--text-muted);
+  user-select: none;
 }
 
 /* The branch of a worktree session, after the folder chip. */
@@ -1631,6 +1678,11 @@ textarea:focus-visible {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* The confirm button has a danger-color outline, as in the Claude app. */
+.confirm-actions .btn-danger {
+  border-color: var(--danger);
 }
 
 .menu .mode-item {
@@ -3989,8 +4041,7 @@ select {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
-.pane-tab-close,
-.file-tab-close {
+.pane-tab-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4005,8 +4056,7 @@ select {
   opacity: 0.7;
 }
 
-.pane-tab-close:hover,
-.file-tab-close:hover {
+.pane-tab-close:hover {
   background: var(--surface-2);
   color: var(--text);
   opacity: 1;
@@ -4579,11 +4629,16 @@ input.tree-rename-input[aria-invalid="true"] {
   min-height: 0;
 }
 
+/* The file tabs look as the tabs of the browser (.win-tab) and of the Claude app: a rounded tab
+   with no icon, and a fill on the open tab (the user asked for this). */
 .file-tabs {
   display: flex;
-  align-items: stretch;
-  height: 34px;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 6px;
   overflow-x: auto;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex: none;
@@ -4597,12 +4652,22 @@ input.tree-rename-input[aria-invalid="true"] {
 .file-tab {
   display: flex;
   align-items: center;
-  border-right: 1px solid var(--border);
+  flex: none;
+  gap: 2px;
+  height: 28px;
+  padding: 0 3px 0 10px;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.file-tab:hover {
+  color: var(--text);
 }
 
 .file-tab.active {
-  background: var(--surface-sunken);
-  box-shadow: inset 0 2px 0 var(--accent);
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .file-tab-name {
@@ -4610,17 +4675,64 @@ input.tree-rename-input[aria-invalid="true"] {
   align-items: center;
   gap: 6px;
   height: 100%;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 0;
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font: 12.5px var(--font-sans);
+  color: inherit;
+  font: 500 12.5px var(--font-sans);
   white-space: nowrap;
   cursor: pointer;
 }
 
-.file-tab.active .file-tab-name {
+/* An unpinned tab: the next file that opens takes its place. "Keep open" pins it. */
+.file-tab.unpinned .file-tab-name {
+  font-style: italic;
+}
+
+/* The pin and the close X, with the size of the close X of a browser tab. */
+.file-tab-pin,
+.file-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.file-tab-pin:hover,
+.file-tab-close:hover {
+  background: var(--border);
   color: var(--text);
+}
+
+/* A drag of a tab (lib/tabDrag.ts): the other tabs slide out of the way of the held tab. After
+   the drop, the held tab slides into its place. The time is SLIDE_MS. */
+.tab-dragging > [data-drag-tab] {
+  transition: transform 160ms ease;
+}
+
+.tab-dragging > [data-drag-tab="held"] {
+  transition: none;
+}
+
+.tab-dragging > [data-drag-tab="held"],
+.tab-dragging > [data-drag-tab="settling"] {
+  z-index: 1;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
+}
+
+.tab-dragging,
+.tab-dragging * {
+  cursor: grabbing !important;
 }
 
 .dirty-dot {
@@ -5744,7 +5856,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 /* A long chat: the browser does not lay out or paint the messages outside the view. Not the user
-   messages: their Rewind menu goes outside the box, and the containment would cut it. */
+   messages: their toolbar goes outside the box, and the containment would cut it. */
 .msg-assistant:not(.streaming),
 .tool-group {
   content-visibility: auto;
@@ -5824,15 +5936,50 @@ input.tree-rename-input[aria-invalid="true"] {
   line-height: 1.5;
 }
 
-.markdown table {
-  border-collapse: collapse;
+/* Tables, as in the Claude app: the full width, a line below each row, and no vertical lines. */
+.markdown .md-table {
   margin: 0 0 10px;
+  overflow-x: auto;
 }
 
+.markdown > .md-table:last-child {
+  margin-bottom: 0;
+}
+
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* A cell keeps each word whole: "anywhere" of .markdown lets a column shrink to one letter. */
 .markdown th,
 .markdown td {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
+  padding: 12px 16px 12px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: break-word;
+}
+
+.markdown th:last-child,
+.markdown td:last-child {
+  padding-right: 0;
+}
+
+.markdown th {
+  font-weight: 600;
+}
+
+.markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Equations (KaTeX). A display equation that is wider than the chat scrolls in its own box. */
+.markdown .katex-display {
+  margin: 0 0 10px;
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .markdown blockquote {
@@ -7206,6 +7353,23 @@ input.tree-rename-input[aria-invalid="true"] {
   color: var(--text);
 }
 
+/* The session model cannot read images: a note under the thumbnails. */
+.prompt-attachment-note {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.prompt-attachment-note svg {
+  flex: none;
+  color: var(--warning);
+}
+
 /* The x shows on hover or focus, at the top right of the chip. */
 .prompt-attachment-remove {
   position: absolute;
@@ -8261,28 +8425,6 @@ mark.word-del {
   background: var(--hover);
 }
 
-.session-menu-confirm {
-  padding: 8px 8px 4px;
-}
-
-.session-menu-confirm p {
-  margin: 0 0 10px;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.session-menu-confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.menu .session-menu-confirm-actions button {
-  width: auto;
-  justify-content: center;
-}
-
 .side-pinned {
   margin: 0;
   padding: 0;
@@ -8296,16 +8438,26 @@ mark.word-del {
   min-width: 0;
 }
 
-.folder-chip {
+/* The folder name at the left of the session title: plain text. A click opens the folder menu. */
+.folder-name {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
-  transition: color var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out);
+  transition: color var(--duration) var(--ease-out), background var(--duration) var(--ease-out);
 }
 
-.folder-chip:hover,
-.folder-chip.active {
-  border-color: var(--border-strong);
+.folder-name:hover,
+.folder-name.active {
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -8386,10 +8538,9 @@ mark.word-del {
   transition: opacity var(--duration) var(--ease-out);
 }
 
-/* The row shows on hover, on keyboard focus, and while the rewind menu is open. */
+/* The row shows on hover and on keyboard focus. */
 .msg-user-wrap:hover .msg-actions,
-.msg-user-wrap:focus-within .msg-actions,
-.msg-user-wrap.menu-open .msg-actions {
+.msg-user-wrap:focus-within .msg-actions {
   opacity: 1;
 }
 
@@ -8441,14 +8592,6 @@ mark.word-del {
 .msg-text-btn:hover,
 .msg-text-btn:focus-visible {
   color: var(--text);
-}
-
-.rewind-menu {
-  position: relative;
-}
-
-.menu.rewind-dropdown {
-  min-width: 270px;
 }
 
 /* A text character as an icon, for example the "/" of skills. */
@@ -8665,6 +8808,49 @@ mark.word-del {
   overflow-y: auto;
   list-style: none;
   border-bottom: 1px solid var(--border);
+}
+
+.tasks-group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The heading of the "Finished" group: a fold button, as a tool group in the chat. */
+.tasks-finished-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tasks-finished-head:hover,
+.tasks-finished-head:focus-visible {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.tasks-finished-chevron {
+  flex: none;
+  transition: transform var(--duration) var(--ease-out);
+}
+
+.tasks-finished-head.open .tasks-finished-chevron {
+  transform: rotate(90deg);
+}
+
+.tasks-finished-count {
+  font-variant-numeric: tabular-nums;
 }
 
 .task-row {
@@ -9520,6 +9706,73 @@ textarea.setting-textarea:disabled {
   font-size: 13px;
 }
 
+/* ---------- the Rewind dialog (Esc two times) ---------- */
+
+.modal.rewind-dialog {
+  max-width: 640px;
+  max-height: 70vh;
+}
+
+.rewind-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 14px 0 20px;
+}
+
+.rewind-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.rewind-help {
+  display: -webkit-box;
+  margin: 0;
+  padding: 8px 20px 10px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3; /* A long message in the second step. */
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.rewind-quote {
+  color: var(--text);
+}
+
+.rewind-list {
+  margin: 0;
+  padding: 0 12px 14px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.rewind-item {
+  min-height: 36px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.rewind-item.selected {
+  background: var(--surface-2);
+}
+
+.rewind-empty {
+  margin: 0;
+  padding: 0 20px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* The parent folder after a project name that another project also has: "app · work". */
 .side-project-hint,
 .project-hint {
@@ -10045,43 +10298,116 @@ body.sorting * {
   flex: none;
 }
 
-/* The small live view of the page where the agent works. A click opens it in the Browser pane. */
+/* The small live view of the page where the agent works, as in the Claude app: a head with the page
+   title (a menu of the tabs), "Open in the Browser pane", and "Close tab", then the picture of the
+   page. A click on the picture opens it in the Browser pane. */
 .rail-browser {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
-  padding: 4px;
+  min-width: 0;
+  color: var(--text);
+  font: 13px var(--font-sans);
+}
+
+.rail-browser-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rail-browser-head .icon-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+
+.rail-browser-pick {
+  position: relative;
+  min-width: 0;
+}
+
+.rail-browser-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  font: 13px var(--font-sans);
-  text-align: left;
+  font: 500 13px var(--font-sans);
   cursor: pointer;
 }
 
-.rail-browser:hover {
+.rail-browser-title:hover:not(:disabled),
+.rail-browser-title[aria-expanded="true"] {
   background: var(--hover);
 }
 
-.rail-browser:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+.rail-browser-title:disabled {
+  cursor: default;
+}
+
+.rail-browser-title > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rail-browser-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu.rail-browser-menu {
+  left: 0;
+  right: auto;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.menu.rail-browser-menu > button > .rail-browser-name {
+  flex: 1;
 }
 
 .rail-browser-frame {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   aspect-ratio: 16 / 10;
+  padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--surface-sunken, var(--bg));
+  cursor: pointer;
+  transition: border-color var(--duration) ease, box-shadow var(--duration) ease;
+}
+
+.rail-browser-frame:hover {
+  border-color: var(--text-muted);
+}
+
+.rail-browser-frame:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The agent uses the page now: an outline in the accent color, as in the Claude app. */
+.rail-browser.agent .rail-browser-frame {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .rail-browser-frame img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -10089,25 +10415,6 @@ body.sorting * {
 }
 
 .rail-browser-empty {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.rail-browser-caption {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 0 2px;
-}
-
-.rail-browser-caption .rail-item-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.rail-browser-state {
-  flex: none;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -11052,9 +11359,10 @@ body.sorting * {
 
 /* "Wait for the agent": a note at the bottom of the window until the work ends. */
 .quit-wait {
+  /* At the top of the window, under the title bar: it does not cover the prompt box (the user asked for this). */
   position: fixed;
   left: 50%;
-  bottom: 20px;
+  top: calc(var(--titlebar-height) + 12px);
   z-index: var(--z-toast, 60);
   display: flex;
   align-items: center;

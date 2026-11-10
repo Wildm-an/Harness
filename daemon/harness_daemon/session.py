@@ -40,6 +40,7 @@ class Session:
         # then the agent works in the worktree (worktrees.py).
         self.project_dir = Path(project_dir) if project_dir is not None else Path(agent.cwd)
         self.worktree = worktree
+        self.offers = True  # False for a routine session: the agent has no offer_session (disable_offer).
         self._saved = len(agent.history)  # The number of history messages in storage.
         # The state before the last rewind, for "Undo rewind". A new turn, /clear, or a summary removes it.
         self.rewind_undo: dict[str, Any] | None = None
@@ -83,10 +84,15 @@ class Session:
             relation = (" (a nested session of this session)" if r.get("parent_id") == self.id
                         else " (the parent of this session)" if r["id"] == parent else "")
             lines.append(f"- {r['id'][:8]}: {r['title'] or 'Untitled session'}{relation}")
+        offer = (" When the user asks for a task that is not part of the work of this session, or that fits one "
+                 "of these sessions better, call offer_session before you start the task.") if self.offers else ""
         return ("[Harness: The other sessions of this project, the newest first. The user can work in them "
-                "too. Use session_read to see the conversation of one. When the user asks for a task that is not "
-                "part of the work of this session, or that fits one of these sessions better, call offer_session "
-                "before you start the task.]\n" + "\n".join(lines))
+                f"too. Use session_read to see the conversation of one.{offer}]\n" + "\n".join(lines))
+
+    def disable_offer(self) -> None:
+        """A routine session: no offer_session. A routine runs with no user to choose, so the task stays here."""
+        self.offers = False
+        self.agent.disable_offer()
 
     def find_other(self, ref: str) -> dict[str, Any] | None:
         """A session of the project by its id or the first characters of the id (8 or more)."""
