@@ -321,6 +321,22 @@ def test_run_now_starts_a_session_and_all_clients_see_it(daemon, project, fake_m
     b.close()
 
 
+def test_a_run_has_no_offer_session(daemon, project, fake_model):  # noqa: F811
+    """A routine runs with no user to choose a new session: the agent gets no offer_session."""
+    c = Client(daemon)
+    c.new_session(project)  # Another session of the project: the run gets the session list note.
+    fake_model.script({"text": "Done."})
+    item = _save(c, project)
+    c.send({"type": "routines.run", "id": item["id"]})
+    _until_run(c, "done")
+    request = next(r for r in fake_model.requests
+                   if any("Say hello" in str(m.get("content")) for m in r["messages"]))
+    names = {t["function"]["name"] for t in request.get("tools") or []}
+    assert names and "offer_session" not in names and "session_read" in names
+    assert not any("offer_session" in str(m.get("content")) for m in request["messages"])
+    c.close()
+
+
 def test_a_window_answers_a_permission_request_of_a_run(daemon, project, fake_model):  # noqa: F811
     c = Client(daemon)
     c.until("auth.ok")

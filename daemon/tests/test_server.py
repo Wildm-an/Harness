@@ -984,14 +984,25 @@ def _wait(check, timeout: float = 5) -> None:
         time.sleep(0.05)
 
 
+def test_the_title_comes_before_the_reply(daemon, project, fake_model):
+    fake_model.script({"text": "Hello."})
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "Say hello"})
+    _, seen = c.until("turn.end")
+    types = [m["type"] for m in seen]
+    assert "session.title" in types and types.index("session.title") < types.index("token")
+    c.close()
+
+
 def test_title_tries_again_on_the_next_prompt(daemon, project, fake_model):
-    fake_model.title_fail = 1
+    fake_model.title_fail = 2  # The request and the one retry of the model client fail.
     fake_model.script({"text": "One."}, {"text": "Two."})
     c = Client(daemon)
     ready = c.new_session(project)
     c.send({"type": "prompt", "text": "First task"})
     _, seen = c.until("turn.end")
-    _wait(lambda: len(fake_model.title_requests) == 1)
+    _wait(lambda: len(fake_model.title_requests) == 2)
     time.sleep(0.3)  # The failed title request ends.
     assert not any(m["type"] == "session.title" for m in seen)
     c.send({"type": "prompt", "text": "Second task"})
@@ -999,7 +1010,7 @@ def test_title_tries_again_on_the_next_prompt(daemon, project, fake_model):
     title = next((m for m in seen if m["type"] == "session.title"), None) or c.until("session.title")[0]
     assert title == {"type": "session.title", "id": ready["session_id"], "title": "Fake session title"}
     # The second try names the first prompt, not the second prompt.
-    assert "First task" in fake_model.title_requests[1]["messages"][-1]["content"]
+    assert "First task" in fake_model.title_requests[2]["messages"][-1]["content"]
     c.close()
 
 

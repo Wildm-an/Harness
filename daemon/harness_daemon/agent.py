@@ -317,6 +317,11 @@ class Agent:
         self.tools[OfferSessionTool.name] = OfferSessionTool(getattr(start, "start", None), send, find)
         self._known_tokens = None
 
+    def disable_offer(self) -> None:
+        """Remove offer_session: in a routine session, no user chooses a new session."""
+        if self.tools.pop("offer_session", None) is not None:
+            self._known_tokens = None
+
     def _session_note(self) -> str | None:
         """The session list note, when the list changed since the last note in the conversation."""
         if self.session_context is None:
