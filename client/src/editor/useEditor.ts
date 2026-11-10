@@ -21,7 +21,8 @@ export interface OpenFile {
   dirty: boolean;
   loading: boolean;
   saving: boolean;
-  error?: string;
+  error?: string; // The file did not open: the editor has no text to show.
+  saveError?: string; // A save failed: the editor keeps the text, and the bar offers "Try again".
   notice?: Notice;
 }
 
@@ -241,7 +242,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             entry.savingVersion = null;
           }
           const dirty = entry ? entry.model.getAlternativeVersionId() !== entry.savedVersion : false;
-          patchFile(msg.path, { hash: msg.hash, saving: false, dirty, notice: undefined });
+          patchFile(msg.path, { hash: msg.hash, saving: false, dirty, notice: undefined, saveError: undefined });
           requestGitStatus();
           return;
         }
@@ -314,7 +315,7 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
             const failed = reads.current.shift();
             if (failed?.purpose === "open") patchFile(failed.path, { loading: false, error: msg.message });
           } else if (msg.ref === "fs.write") {
-            setFiles((list) => list.map((f) => (f.saving ? { ...f, saving: false, error: msg.message } : f)));
+            setFiles((list) => list.map((f) => (f.saving ? { ...f, saving: false, saveError: msg.message } : f)));
           } else if (msg.ref === "fs.search") {
             setSearch((s) => ({ ...s, busy: false, error: msg.message }));
           } else if (msg.ref === "fs.create" || msg.ref === "fs.delete" || msg.ref === "fs.rename") {
@@ -409,10 +410,10 @@ export function useEditor(conn: DaemonConnection, sessionKey: string | null, cwd
       const file = filesRef.current.find((f) => f.path === path);
       if (!entry || !file || file.loading) return;
       entry.savingVersion = entry.model.getAlternativeVersionId();
-      patchFile(path, { saving: true, error: undefined });
+      patchFile(path, { saving: true, saveError: undefined });
       const base = baseHash === undefined ? file.hash : baseHash;
       if (!send({ type: "fs.write", path, content: entry.model.getValue(), base_hash: base })) {
-        patchFile(path, { saving: false, error: "The connection to the daemon is closed." });
+        patchFile(path, { saving: false, saveError: "The connection to the daemon is closed." });
       }
     },
     [patchFile, send],

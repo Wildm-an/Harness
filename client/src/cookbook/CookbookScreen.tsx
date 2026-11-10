@@ -30,6 +30,8 @@ import type { DownloadItem, FitDetail, FitResult, HfDetail, HfFileGroup, Install
 import { Markdown } from "../components/Markdown";
 import { loadPref, savePref } from "../lib/prefs";
 import { isTauri, openExternal } from "../lib/tauri";
+import { useFormIntoView } from "../lib/formFocus";
+import { useConfirm } from "../components/ConfirmDialog";
 import { formatBytes, formatCount, formatParams, formatTokens, type CookbookApi } from "./useCookbook";
 
 type Tab = "models" | "downloads" | "installed" | "served" | "hosts";
@@ -491,7 +493,7 @@ function ServeForm({ file, onStart, onCancel }: { file: string; onStart: (contex
       <button type="submit" className="btn btn-small btn-primary">
         <Play size={12} aria-hidden /> Start
       </button>
-      <button type="button" className="btn btn-small btn-ghost" onClick={onCancel}>
+      <button type="button" className="btn btn-small btn-ghost" onClick={onCancel} data-form-cancel>
         Cancel
       </button>
     </form>
@@ -695,6 +697,7 @@ function InstalledTab({ api, serveTarget, setServeTarget }: {
 
 function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSession: boolean; onUseModel: (model: string) => void }) {
   const [logFor, setLogFor] = useState<string | null>(null);
+  const confirm = useConfirm();
   useEffect(() => {
     api.loadServes();
   }, [api.host]);
@@ -738,7 +741,18 @@ function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSessi
                 <button type="button" className="btn btn-small" onClick={() => setLogFor(logFor === s.name ? null : s.name)} aria-pressed={logFor === s.name}>
                   <ScrollText size={12} aria-hidden /> Log
                 </button>
-                <button type="button" className="btn btn-small btn-ghost" onClick={() => api.stopServe(s.name)}>
+                <button
+                  type="button"
+                  className="btn btn-small btn-ghost"
+                  onClick={() =>
+                    confirm.ask({
+                      title: `Stop ${s.name}?`,
+                      text: `The model server stops. Sessions that use ${s.provider}/${s.alias} cannot get replies until you serve the model again.`,
+                      confirmLabel: "Stop",
+                      onConfirm: () => api.stopServe(s.name),
+                    })
+                  }
+                >
                   <Square size={12} aria-hidden /> Stop
                 </button>
               </div>
@@ -751,6 +765,7 @@ function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSessi
           ))}
         </ul>
       )}
+      {confirm.dialog}
       <p className="help">
         A served model continues after the app closes. It runs in tmux when the host has tmux. The Cookbook adds it to the providers when it is ready.
       </p>
@@ -762,6 +777,8 @@ function ServedTab({ api, hasSession, onUseModel }: { api: CookbookApi; hasSessi
 
 function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSaved: boolean; onSaveToken: (token: string | null) => void }) {
   const [editing, setEditing] = useState<{ previous?: string; name: string; ssh: string; python: string; llama_server: string } | null>(null);
+  const hostFormRef = useFormIntoView();
+  const confirm = useConfirm();
   const [token, setToken] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -793,7 +810,16 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
                   <Pencil size={14} aria-hidden />
                 </button>
                 {h.remote && (
-                  <button type="button" className="icon-btn ghost" aria-label={`Delete ${h.name}`} title="Delete" onClick={() => api.deleteHost(h.name)}>
+                  <button type="button" className="icon-btn ghost" aria-label={`Delete ${h.name}`} title="Delete"
+                    onClick={() =>
+                      confirm.ask({
+                        title: `Delete the host ${h.name}?`,
+                        text: "Harness forgets the host and its settings. The files and the models on the host stay.",
+                        confirmLabel: "Delete",
+                        onConfirm: () => api.deleteHost(h.name),
+                      })
+                    }
+                  >
                     <Trash2 size={14} aria-hidden />
                   </button>
                 )}
@@ -803,6 +829,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
         </ul>
         {editing && (
           <form
+            ref={hostFormRef}
             className="project-form"
             onSubmit={(e) => {
               e.preventDefault();
@@ -842,7 +869,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
             </div>
             <div className="form-actions">
               <span className="spacer" />
-              <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>
+              <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)} data-form-cancel>
                 Cancel
               </button>
               <button type="submit" className="btn btn-primary">
@@ -853,6 +880,7 @@ function HostsTab({ api, tokenSaved, onSaveToken }: { api: CookbookApi; tokenSav
         )}
       </section>
 
+      {confirm.dialog}
       <section aria-labelledby="cb-key-title">
         <h3 id="cb-key-title" className="cb-h3">
           <KeyRound size={15} aria-hidden /> SSH key

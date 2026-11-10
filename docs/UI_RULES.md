@@ -172,7 +172,7 @@ Harness has no "+" button now. Add it.
 - **C5.** The placeholder in a session is "Type / for commands".
 - **C6.** Enter sends. Shift+Enter adds a new line.
 - **C7.** While Claude works:
-  - Stop replaces Send. Its tooltip is "Stop" with the key Esc.
+  - Stop replaces Send. Its tooltip is "Stop" with the key Esc. Harness shows Stop during the whole turn: when the box has text, Send shows to the right of Stop, so the user can stop the agent and queue a message (the user asked for this). While a card waits, the Stop tooltip has no key, because Esc answers the card (M10a).
   - Enter sends the message now. Ctrl+Enter queues it ("Queue for later"). The Send tooltip lists both keys.
   - A queued message shows "Queued. Claude will read this after the current turn." with "Send queued message" and "Remove queued message".
   - A sent message that waits (queued or steering) shows above the task list, and the working line is under the task list, as in the Claude app (the user asked for this).
@@ -222,6 +222,9 @@ Harness has no "+" button now. Add it.
 - **M1c.** A click that opens a dropdown in the chat (a tool row, a tool group, the working line, the task list, a visual, or a menu such as Rewind or the ⋯ of a card) scrolls the chat down so the opened part is in view, with 12px of room (the user asked for this). The chat scrolls only as far as needed, never up, and the clicked row stays in view (`revealScroll` in `MessageList.tsx`).
 - **M2.** Right-click on a message gives "Copy message", "Copy message as Markdown", "Rewind to here", "Fork from here".
 - **M3.** "Rewind to here" asks "Rewind to this message?" with "Code and conversation", "Conversation only", "Code only". After a rewind, show "Undo rewind".
+  - Harness shows one info line after a rewind, for example "Rewound the code. 1 file restored. Changes of commands are not restored." The line has the button "Undo rewind" (daemon message `rewind.done`).
+  - "Undo rewind" brings back the removed messages and the files as they were before the rewind (`session.rewind_undo`). The line "The rewind is undone." follows. When the prompt box still has the text that the rewind put there, the box becomes empty.
+  - There is one undo, for the last rewind. The button shows only on the last rewind line, while no turn runs, and until the next message of the user. A new turn, /clear, or a summary of the context ends the undo.
 - **M4.** "Fork from here" tooltip: "Starts a new session from this point. This one stays as it is."
 
 ### 6.2 Tool rows
@@ -259,6 +262,11 @@ Harness has no "+" button now. Add it.
   3. "Allow once" (Ctrl+Enter). This is the primary button.
 - **M9.** A note says where an "Always allow" rule goes: "Applies to this session only", "Saves to project settings", or "Saves to user settings (all projects)".
 - **M10.** The card shows above the prompt box. Number keys also pick the buttons.
+- **M10a.** The keys of a waiting card work also from the prompt box, so the user does not have to click the card first (`lib/cardKeys.ts`, the user asked for this). This applies to the permission card, the question card, the plan card, and the diff review pane of a request.
+  - Esc answers the oldest waiting card: "Deny" on a permission card, "Skip" on a question card, "Revise…" on a plan card. It works from the prompt box (also with text in the box) and from any place with no keys of its own. A text field, an open menu (also the / and @ menus of the prompt box), a dialog, the terminal, and the editor keep their Esc. While a card waits, Esc does not stop the turn: the Stop button does.
+  - The number keys answer the oldest waiting card from the same places, but from the prompt box only while the box is empty. A number in a message stays text.
+  - While a card waits, the empty prompt box names the keys: "Press 1, 2, or 3 to answer the request, or Esc to deny it." ("1 or 2" with no "Always allow"), "Press a number to choose an answer, or Esc to skip the questions.", or "Press Ctrl+Enter to accept the plan, or Esc to revise it."
+  - The "Skip" button of the question card shows the key Esc.
 
   Harness now uses the Claude Code CLI form ("Do you want to proceed?" with 1 Yes / 2 Yes, and do not ask again / 3 No). Change it to the desktop form.
 
@@ -283,7 +291,17 @@ Harness has no "+" button now. Add it.
 
 ### 6.7 Error cards
 
-- **M18.** Use these titles: "Service is busy", "Rate limited", "Your context window is full", "Turn failed". Use these buttons: "Try again", "Copy details".
+- **M18.** Use these titles: "Service is busy", "Rate limited", "Your context window is full", "Turn failed". Use these buttons: "Try again", "Copy details". Harness shows the card for the error of a failed turn (`ErrorCard` in `MessageList.tsx`): the title comes from the text of the daemon (`errorKind` in `lib/errorRoute.ts`), then the text, then the buttons. A failed context summary has the title "Compaction failed" (M17). "Try again" sends the last prompt of the session again. It shows only on the last error, when no message of the user came after it, when no turn runs, and when the same prompt can get a reply (not for a full context window, a failed summary, or a prompt that a hook blocked). The app keeps the last prompt only while it runs: after a restart the card has only "Copy details".
+- **M18a.** Only an error of the conversation goes into the chat (`errorRoute` in `lib/errorRoute.ts`). The daemon puts the type of the failed request in `ref`. An error with no `ref` is the error of a turn. An error of a chat request (`prompt`, `command`, `steer`, `interrupt`, a card reply, `session.rewind`, `session.rewind_undo`, `session.fork`) is a line in the chat. All other errors stay out of the chat, so an error never goes into the middle of a reply:
+  - The view that sent the request shows the error next to its control, with "Try again" when a new request can help. The Changes pane shows a red line under its header ("Couldn't load the changes. {text}", "Try again"), and it does not stay on "Loading the changes…". Settings > Operating Harness shows "Couldn't load the list of harnesses." with "Try again" in place of the skeleton rows.
+  - A request that repeats with no action of the user (`git.status`, `git.changes`, `git.pr_info`, `context.get`, `tasks.list`, and the typing helpers) shows nothing: the next request tries again. The text goes to the console.
+  - Each other error shows in an error popup at the bottom right (`ErrorToasts.tsx`, in the toast stack of V8a): a failed sidebar command, a failed request of a page, a closed connection, or an error of the Browser pane. The popup has the text and the X of V8b, and no action. It goes away after 8 seconds, and the time stops while the pointer or the focus is on it. At most 3 popups show.
+  - The same text does not show two times: a chat line and a popup get a count ("×3"). The line "The connection to the daemon closed." shows one time for all failed reconnects.
+  - A new request type needs no entry: with no entry, its error is a popup. Add it to `errorRoute.ts` only when a view shows its error, or when it repeats.
+- **M18b.** An error never takes away the text of the user (audit U5, U6):
+  - A failed save keeps the editor and its text. A red bar above the editor says "Couldn't save {file}. {text}" and has "Try again". A file that did not open shows the red bar with no editor.
+  - A session start with a closed connection does not lock the start screen. The prompt box keeps its text, the error shows above it, and the error goes away when the connection opens again.
+  - The banner "The connection to the daemon closed." with "Reconnect" shows on the start screen, the Routines page, the Capabilities page, and in the chat. It stays during an automatic retry ("Reconnecting…", "Reconnect now"). "Reconnect" is off only while a connection attempt runs.
 
 ## 7. Panes and status
 
@@ -355,7 +373,7 @@ Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 - **V6m.** The Files sidebar head has "New file…" and "New folder…". A name field opens at the top of the tree, with the folder of the open file as the start. Enter makes the item (the daemon message `fs.create`), and a new file opens in the editor. Esc closes the field. The edge on the right of the sidebar changes its width. A double-click sets the automatic width.
 - **V6n.** The language of the open file is a menu in the editor status bar, with a filter. The choice changes the colors and the editor features of that file. The file on disk does not change.
 - **V6o.** The Files sidebar head shows its action buttons when they fit. A narrow sidebar (236px or less) shows one "⋯" menu with the same actions and their names. The sidebar is at least 120px wide: the Files and Search switch and "⋯" stay in view.
-- **V6p0.** Esc stops the agent from anywhere in the window, not only in the prompt box (the user asked for this). An open menu or dialog closes first. A text field, the terminal, the editor, and the split pane keep their own Esc.
+- **V6p0.** Esc stops the agent from anywhere in the window, not only in the prompt box (the user asked for this). An open menu or dialog closes first. A waiting card takes Esc before the agent stop (M10a). A text field, the terminal, the editor, and the split pane keep their own Esc.
 - **V6p.** The agent shows a task list and an end-of-turn box, as Claude Code does (daemon tools `update_plan` and `wrap_up`). The chat draws the latest plan under the messages: a check mark for a completed step, a spinner for the step in progress, and a dashed circle for a pending step. At the end of a turn it draws a box with the recap, a question, and one or two answer buttons. A button sends its message as the next prompt. The chat does not show these two tools as tool rows. An unfinished plan of an older turn stays under the messages with no spinner, until the agent sends a new plan. The plan of an interrupted turn does not show after the next prompt. When the user writes during a turn (a queued or steered message), or after the turn, the plan shows the muted heading "Plan from before your last message" at once, and its step in progress shows a "⋯" circle in place of the spinner, as in Claude Code (the user asked for this). A finished plan (all steps completed, or a `wrap_up` after it) folds into one line, "Plan finished · {n} steps", with a chevron (the user asked for this). A click opens the steps, and "Plan finished" at the top folds them again. The caret stays at the far right in both states: it points right on the folded line and down on the open list (the user asked for this). Each completed step shows its time at the right, in muted text ("8s", "1m 11s"), and the folded line and "Plan finished" show the total time of the plan (the user asked for this). The daemon puts the end time (`ts`) on each tool result, so the times stay after a reload. A step starts at the first `update_plan` that shows it in progress (or else at the call before the one that completes it), and ends at the first call that completes it. A step in progress at a `wrap_up` ends at the `wrap_up`. The total is the time from the first `update_plan` of the turn to the end of the plan. An old session with no times shows no times. When the turn has an end-of-turn box, the finished plan line is at the top of the box, over a line, so the plan and the recap are one card (the user asked for this). The recap is 300 characters or less (about 40 words), and the question 100 characters or less, as in the Claude app: `wrap_up` gives an error for a longer text, and the agent writes it again.
 - **V6q.** The agent must keep the task list current (the user asked for this). The system prompt has a "Task list" rule: a plan in the first reply of a task of more than one step, one step in progress, an `update_plan` as soon as each step finishes, a new whole list after each new message of the user, and `wrap_up` at the end. The daemon adds harness notes (`agent.py` `_plan_note`): after 3 tool calls in a turn with no plan (one time in the turn), after each 8 tool calls with no `update_plan` while the plan has open steps (the user asked for this: some models mark all steps completed at the end, so the step times are wrong), after a message of the user during the turn when a plan exists, and at a new prompt when the last plan has steps that are not completed (the note names them).
 - **V6k2.** The Files pane of the Code view, as in the Claude app (the user asked for this): the editor at the left, and the file tree at the right. With no open file, the editor shows a folder icon, "Open files appear here", and "Pick a file in the tree, or click a file path in the conversation." The top of the tree has the field "Filter, or ? to search in files": text finds files and folders by name, and text after "?" searches in the files (Enter). The window header has, from left to right: search ("Search in the files": the filter gets "?"), "Collapse all folders", the file tree switch ("Hide the file tree" / "Show the file tree"), and "⋯" (New file, New folder, Open folder, Refresh), then the window buttons. When no folder is open, the collapse button is dim, and its tip says "There are no open folders to collapse." The Files pane of the IDE view has "Collapse all folders" too, as the first button of its head.
@@ -441,6 +459,13 @@ Notes:
 
 ### 9.2 Settings layout
 
+- **G0.** Settings keeps the text that the user types in a form (`SettingsDialog.tsx`, audit U9):
+  - A form that opens on a click (for example "Add a provider") scrolls into view, and its first field gets the focus (`lib/formFocus.ts`).
+  - Esc closes the open form first, with its "Cancel" button (`data-form-cancel`). The next Esc closes Settings. A field or a menu that uses Esc keeps it.
+  - When the form has typed text, Esc asks "Discard the changes in the form?". A close of Settings (Esc, the X, a click outside, Ctrl+,) asks "Close the settings?", and another page asks "Leave this page?". The buttons are "Cancel" and "Discard". "Cancel" puts the focus back in the field.
+  - Esc in a setting field outside a form saves the field first (it saves when the focus leaves it).
+  - When a form closes, the focus goes to the current page in the nav, so Esc still works.
+
 - **G1.** Settings is a page with a left nav in groups and a search field. Claude groups: "Account", "Customize" (Plugins, Skills, Connectors), "Products" (Claude Code), "This computer" (System, Extensions, Developer).
 - **G2.** Harness groups, in this order:
   1. "Claude Code": the page with sections in G3.
@@ -525,6 +550,11 @@ These change the current session only. They are in the session menu (S7) or the 
 - **R5.** A locked row is disabled and its tooltip gives the reason ("Managed by your organization", "Available when Local sandbox is on").
 - **R6.** A row that inherits a default shows "Default: {value}" and a reset button.
 - **R7.** A destructive action asks first in a dialog with a question title ("Delete SSH connection?") and a danger-color confirm button.
+  - Harness uses one dialog for this (`ConfirmDialog`, with the hook `useConfirm` for a component with several actions). The text says what goes and what stays. The focus starts on "Cancel", and Esc cancels. When the dialog closes, the focus goes back to the control that opened it.
+  - The dialog asks before an action that removes a sign-in, a token, a host, or a connection, or that stops a program: "Clear authentication" of an MCP server, "Remove" of a connector account, "Disconnect" and "Disconnect all" of a connector, "Regenerate" and "Delete token" of a routine, "Clear browsing data" and "Stop all servers" in the Browser pane, "Stop" of a served model and "Delete" of a host in Local Models, and "Delete" of a provider and of a computer.
+  - A terminal tab asks before it closes only when a program runs in its shell ("Close Terminal 2?" "The terminal runs PING.EXE. …"). The daemon gives the programs (`term.running`). A tab at its prompt closes at once. The X, a middle click, and Ctrl+Shift+W all ask.
+  - Exception: "Delete" in the session menu asks in the menu, with the focus on "Delete", so Enter deletes (the user asked for this).
+- **R7a.** An action that is easy to undo does not ask first. It shows a popup at the bottom right with the result and "Undo" (`ErrorToasts.tsx`, the stack of V8a): "Archived 3 sessions." after "Archive all", and "Cleared the side chat." after "Clear" of the side chat. The popup goes away after 8 seconds, as an error popup. Only the last action can be undone.
 - **R8.** Show skeleton rows while the data loads.
 
 ## 11. Visual tokens

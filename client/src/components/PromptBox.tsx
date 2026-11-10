@@ -161,7 +161,10 @@ export function PromptBox({
   focusKey,
   draftKey = null,
   attach = null,
+  answerHint = null,
 }: {
+  // A card waits for the user: the keys that answer it (lib/cardKeys.ts). The empty box shows this text.
+  answerHint?: string | null;
   // The unsent text stays with this key, for example the session id. A change of the key keeps the
   // text for the old key, and shows the text of the new key. null: the text is not kept.
   draftKey?: string | null;
@@ -658,8 +661,10 @@ export function PromptBox({
             value={text}
             disabled={disabled}
             placeholder={
-              running
-                ? `${BUSY_HINTS[busySend()]} Esc interrupts the agent.`
+              answerHint
+                ? answerHint
+                : running
+                ? `${BUSY_HINTS[busySend()]} Esc stops the agent.`
                 : suggestion
                   ? suggestion
                   : (placeholder ?? "Type / for commands and skills, @ for files.")
@@ -690,12 +695,21 @@ export function PromptBox({
               <kbd>Tab</kbd>
             </span>
           )}
-          {/* In line with the text. When the text grows, the button stays at the bottom right. */}
-          {running && !canSend ? (
-            <button type="button" className="icon-btn stop" onClick={onInterrupt} aria-label="Interrupt (Esc)" title="Interrupt (Esc)">
+          {/* In line with the text. When the text grows, the buttons stay at the bottom right. During a turn
+              Stop always shows (rule C7). With text, Send shows next to it: Enter queues the message. While a card
+              waits, Esc answers the card, so the tip of Stop has no key. */}
+          {running && (
+            <button
+              type="button"
+              className="icon-btn stop"
+              onClick={onInterrupt}
+              aria-label={answerHint ? "Stop" : "Stop (Esc)"}
+              title={answerHint ? "Stop" : "Stop (Esc)"}
+            >
               <Square size={12} fill="currentColor" aria-hidden />
             </button>
-          ) : (
+          )}
+          {(!running || canSend) && (
             <button
               type="button"
               className="icon-btn send"

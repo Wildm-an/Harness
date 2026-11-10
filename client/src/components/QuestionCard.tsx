@@ -9,6 +9,7 @@ import type { AskQuestion } from "../daemon/protocol";
 import type { QuestionItem } from "../chat/state";
 import { Markdown } from "./Markdown";
 import { usePromptInputId } from "../lib/split";
+import { useCardKeys } from "../lib/cardKeys";
 
 /** The answer text of one question: the picked labels, then the text of "Something else". */
 export function answerText(picked: string[], other: string): string {
@@ -115,6 +116,19 @@ export const QuestionCard = memo(function QuestionCard({
     if (!q.multiSelect) setPicks({ ...picks, [q.question]: [] });
   };
 
+  // The number keys pick an option, the next number opens "Something else", and Esc skips. They work also
+  // from the prompt box (lib/cardKeys.ts).
+  useCardKeys(!done, {
+    digit: (n) => {
+      if (!q) return false;
+      if (n <= q.options.length) pick(q.options[n - 1].label);
+      else if (n === q.options.length + 1) openOther();
+      else return false;
+      return true;
+    },
+    escape: () => finish(null),
+  });
+
   if (done) {
     return (
       <section className="permission-card decided question-card" aria-label="Questions">
@@ -159,17 +173,11 @@ export const QuestionCard = memo(function QuestionCard({
   const hasPreview = q.options.some((o) => o.preview);
   const shown = hasPreview ? previewOption(q.options, looking, chosen) : undefined;
 
+  // Enter goes on when the question has an answer. The number keys and Esc are in useCardKeys.
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const tag = (e.target as HTMLElement).tagName;
     if (e.ctrlKey || e.metaKey || e.altKey || tag === "INPUT" || tag === "TEXTAREA") return;
-    const n = Number(e.key);
-    if (Number.isInteger(n) && n >= 1 && n <= q.options.length) {
-      e.preventDefault();
-      pick(q.options[n - 1].label);
-    } else if (Number.isInteger(n) && n === q.options.length + 1) {
-      e.preventDefault();
-      openOther();
-    } else if (e.key === "Enter" && hasAnswer) {
+    if (e.key === "Enter" && hasAnswer) {
       e.preventDefault();
       next();
     }
@@ -283,8 +291,8 @@ export const QuestionCard = memo(function QuestionCard({
                 Back
               </button>
             )}
-            <button type="button" className="btn" onClick={() => finish(null)}>
-              Skip
+            <button type="button" className="btn" onClick={() => finish(null)} title="Skip the questions (Esc)">
+              Skip <kbd>Esc</kbd>
             </button>
             <button type="button" className="btn btn-primary" disabled={!hasAnswer} onClick={() => next()}>
               {at < total - 1 ? "Next" : "Submit"}

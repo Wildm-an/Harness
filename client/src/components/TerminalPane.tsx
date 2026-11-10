@@ -14,6 +14,7 @@ import type { ClientMessage } from "../daemon/protocol";
 import { PaneHeader } from "../layout/Workspace";
 import { WindowTabs } from "../layout/WindowTabs";
 import { codeFontFamily, onThemeChange } from "../lib/theme";
+import { useConfirm } from "./ConfirmDialog";
 
 const MAX_TABS = 8; // The daemon allows 8 shells for each session.
 
@@ -119,6 +120,31 @@ export function forgetSessionTerminals(sessionKey: string): void {
   kept.delete(sessionKey);
 }
 
+/**
+ * The programs that run in a shell now (daemon `term.running`). An older daemon has no answer: after
+ * an error or 1.5 seconds the list is empty, and the tab closes with no question.
+ */
+export function runningIn(conn: DaemonConnection, id: string, wait = 1500): Promise<string[]> {
+  return new Promise((resolve) => {
+    let off = () => {};
+    const done = (names: string[]) => {
+      off();
+      clearTimeout(timer);
+      resolve(names);
+    };
+    const timer = setTimeout(() => done([]), wait);
+    off = conn.onMessage((msg) => {
+      if (msg.type === "term.running" && msg.id === id) done(msg.names);
+      else if (msg.type === "error" && msg.ref === "term.running") done([]);
+    });
+    try {
+      conn.send({ type: "term.running", id });
+    } catch {
+      done([]);
+    }
+  });
+}
+
 export function TerminalPane({
   conn,
   sessionKey,
@@ -135,6 +161,7 @@ export function TerminalPane({
   const [, setVersion] = useState(0);
   const redraw = () => setVersion((v) => v + 1);
   const tabs = sessionKey && connected ? sessionTabs(sessionKey) : null;
+  const confirm = useConfirm();
 
   useEffect(() => {
     if (!connected) forgetAll();
@@ -298,6 +325,22 @@ export function TerminalPane({
     redraw();
   };
 
+  /** A close of a tab (X, middle click, Ctrl+Shift+W) asks first when a program runs in its shell (rule R7). */
+  const requestClose = (key: string) => {
+    const k = tabs?.tabs.find((t) => t.key === key);
+    if (!k) return;
+    if (!k.id || k.stopped) return closeTab(key);
+    void runningIn(conn, k.id).then((names) => {
+      if (names.length === 0) return closeTab(key);
+      confirm.ask({
+        title: `Close ${k.label}?`,
+        text: `The terminal runs ${names.join(", ")}. The program stops when the tab closes.`,
+        confirmLabel: "Close",
+        onConfirm: () => closeTab(key),
+      });
+    });
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     // Ctrl+Shift+T and Ctrl+Shift+W: Ctrl+T and Ctrl+W go to the shell.
     if (!(e.ctrlKey && e.shiftKey) || e.altKey || !tabs) return;
@@ -306,7 +349,7 @@ export function TerminalPane({
       addTab();
     } else if (e.key === "W") {
       e.preventDefault();
-      closeTab(tabs.active);
+      requestClose(tabs.active);
     }
   };
 
@@ -322,13 +365,14 @@ export function TerminalPane({
               tabs.active = key;
               redraw();
             }}
-            onClose={closeTab}
+            onClose={requestClose}
             onAdd={addTab}
             addLabel={tabs.tabs.length >= MAX_TABS ? `At most ${MAX_TABS} terminals` : "New terminal (Ctrl+Shift+T)"}
           />
         </PaneHeader>
       )}
       <div className="terminal-pane" ref={hostRef} onKeyDown={onKeyDown} />
+      {confirm.dialog}
     </>
   );
 }

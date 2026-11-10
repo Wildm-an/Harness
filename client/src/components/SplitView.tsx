@@ -3,6 +3,7 @@
 // the daemon sends the events of one session to each connection.
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { waitingCardHint } from "../lib/cardKeys";
 import { RefreshCw, X } from "lucide-react";
 import { DaemonConnection, type ConnectionStatus } from "../daemon/connection";
 import type { CommandItem, Decision, PermissionMode, PlanDecision, RunningSession } from "../daemon/protocol";
@@ -302,6 +303,7 @@ export function SplitPane({ sessionId, target, main, focusKey, onClose, onState,
           }}
           onRemoveQueued={(id) => setQueue((q) => q.filter((i) => i.id !== id))}
           onRewind={(messageId, options) => void send({ type: "session.rewind", id: messageId, ...options })}
+          onUndoRewind={() => void send({ type: "session.rewind_undo" })}
           onAction={(message) => submitOrQueue({ kind: "prompt", text: message })}
           turn={chat.turn}
           model={shown?.model ?? ""}
@@ -321,6 +323,7 @@ export function SplitPane({ sessionId, target, main, focusKey, onClose, onState,
               inputId={SPLIT_PROMPT_ID}
               draftKey={shown?.id ?? null}
               running={chat.running}
+              answerHint={waitingCardHint(chat.items)}
               disabled={!open}
               onSubmit={submitOrQueue}
               onInterrupt={interrupt}

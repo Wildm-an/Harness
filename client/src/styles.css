@@ -1599,10 +1599,14 @@ textarea:focus-visible {
   gap: 12px;
 }
 
-.confirm-title {
+/* Two classes: a dialog inside a panel does not take the style of `.panel h2`. */
+.confirm-dialog .confirm-title {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .confirm-text {
@@ -6465,6 +6469,52 @@ input.tree-rename-input[aria-invalid="true"] {
   color: var(--danger);
 }
 
+/* The same text came more than one time: it shows one time, with the count. */
+.notice-count {
+  flex: none;
+  margin-left: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* "Undo rewind" at the end of the rewind line (rule M3). */
+.notice-action {
+  flex: none;
+  margin: -3px 0 -3px auto;
+  white-space: nowrap;
+}
+
+/* The error of a failed turn (rule M18): a title, the text, "Try again", and "Copy details". */
+.error-card {
+  padding: 12px;
+}
+
+.error-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.error-card-title {
+  font-weight: 600;
+}
+
+.error-card-body {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.error-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 /* context summary */
 
 .summary-card {
@@ -9120,6 +9170,18 @@ textarea.setting-textarea:disabled {
   flex: none;
   margin-top: 1px;
   color: var(--accent);
+}
+
+/* The error popups (ErrorToasts.tsx): an error that is not part of the conversation. */
+.error-toast .update-toast-icon {
+  color: var(--danger);
+}
+
+.error-toast .error-toast-body {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 .update-toast-text {

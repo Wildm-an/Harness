@@ -121,6 +121,9 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { overlayOpen } from "./lib/overlay";
+import { addErrorToast, addUndoToast, errorRoute, type ErrorToastItem } from "./lib/errorRoute";
+import { waitingCardHint } from "./lib/cardKeys";
+import { ErrorToasts } from "./components/ErrorToasts";
 import { BrowserPane, agentBrowserOf, clearBrowserData, closeTabById, hasTab, keepCookies, minimizeShownTab, minimizeTab, onAgentBrowser, runAgentCall, showAgentTab, showTab } from "./browser/BrowserPane";
 import { pendingServerApprovals } from "./browser/ServerBlock";
 import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
@@ -145,7 +148,7 @@ import type { ContextUsage } from "./lib/context";
 import { ContextRing } from "./components/ContextRing";
 import { MessageList, NO_QUEUE, reconcileQueue, type QueuedItem, type RewindOptions } from "./components/MessageList";
 import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/SplitView";
-import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
+import { clampSplit, MAIN_PROMPT_ID, SPLIT_DEFAULT } from "./lib/split";
 import { isLoopback, setVisualDaemon } from "./lib/visual";
 import { SessionSearch } from "./components/SessionSearch";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
@@ -329,6 +332,7 @@ export default function App() {
   const [gitChanges, setGitChanges] = useState<(GitChanges & { cwd: string }) | null>(null);
   // The full change of the session folder, for the Changes pane when no single change is in review.
   const [gitDiff, setGitDiff] = useState<(GitDiff & { cwd: string }) | null>(null);
+  const [diffError, setDiffError] = useState<string | null>(null); // The last git.diff request failed.
   const [diffScope, setDiffScope] = useState<GitDiffScope>("branch");
   const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
@@ -373,6 +377,19 @@ export default function App() {
   // "Not now" on the unavailable model prompt, by "session id model". The prompt shows again after a restart.
   const [modelAskDismissed, setModelAskDismissed] = useState<Set<string>>(() => new Set());
   const [chat, dispatchNow] = useReducer(chatReducer, emptyChat);
+  // The error popups at the bottom of the window: the errors that are not part of the conversation and
+  // that no view shows itself (lib/errorRoute.ts, rule M18a).
+  const [errorToasts, setErrorToasts] = useState<ErrorToastItem[]>([]);
+  const errorToastId = useRef(0);
+  const showError = useCallback((text: string) => setErrorToasts((l) => addErrorToast(l, text, ++errorToastId.current)), []);
+  // The "Undo" popup of an action that does not ask first (rule R7a).
+  const showUndo = useCallback(
+    (text: string, undo: () => void) => setErrorToasts((l) => addUndoToast(l, text, undo, ++errorToastId.current)),
+    [],
+  );
+  // The last submission that started a turn, for each session: "Try again" on an error card sends it again.
+  const lastSubmission = useRef(new Map<string, Submission>());
+  const filledText = useRef<string | null>(null); // The text of the last prompt.fill (a rewind or a fork).
   // The model streams many small "token" messages. The chat collects their text and renders it once a frame,
   // not once a message: each render of the chat is a render of the whole app.
   const pendingTokens = useRef("");
@@ -605,14 +622,15 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  // Ctrl+, opens the Settings dialog on any screen, and closes it.
+  // Ctrl+, opens the Settings dialog on any screen, and closes it. The dialog asks first when a form has typed text.
+  const settingsClose = useRef<(() => void) | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isSettingsShortcut(e)) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
-      if (settingsPage) setSettingsPage(null);
+      if (settingsPage) (settingsClose.current ?? (() => setSettingsPage(null)))();
       else openSettings("general");
     };
     window.addEventListener("keydown", onKey, true);
@@ -756,6 +774,7 @@ export default function App() {
           listRecent();
           if (firstPrompt.current) {
             const first = submissionMessage(firstPrompt.current);
+            if (first.startsTurn) lastSubmission.current.set(msg.session_id, firstPrompt.current);
             firstPrompt.current = null;
             conn.send(first.message);
             dispatch({ type: "user", text: first.shown, startsTurn: first.startsTurn, messageId: first.messageId, images: first.images });
@@ -772,7 +791,17 @@ export default function App() {
         case "prompt.fill":
           // A rewind or a fork: the message goes back to the prompt box, so the user can change it.
           setPromptInsert((p) => ({ text: msg.text, key: (p?.key ?? 0) + 1, replace: true }));
+          filledText.current = msg.text;
           return;
+        case "rewind.undone": {
+          // The message is in the conversation again: the copy in the prompt box goes, if the user did not change it.
+          const box = document.getElementById(MAIN_PROMPT_ID) as HTMLTextAreaElement | null;
+          if (box && filledText.current !== null && box.value === filledText.current) {
+            setPromptInsert((p) => ({ text: "", key: (p?.key ?? 0) + 1, replace: true }));
+          }
+          filledText.current = null;
+          break; // The chat shows the line.
+        }
         case "prompt.suggestion": {
           const id = sessionRef.current?.id;
           if (id) setSuggestion({ sessionId: id, text: msg.text });
@@ -785,6 +814,7 @@ export default function App() {
         case "git.diff": {
           const { type: _type, ...diff } = msg;
           if (sessionRef.current && samePath(diff.cwd, sessionRef.current.cwd)) setGitDiff(diff);
+          setDiffError(null);
           return;
         }
         case "git.changes": {
@@ -1120,6 +1150,21 @@ export default function App() {
           if (msg.ref === "fs.dirs") {
             setPicker((p) => (p ? { ...p, error: msg.message } : p));
             return;
+          }
+          if (msg.ref === "git.diff") setDiffError(msg.message); // The Changes pane shows it, with "Try again".
+          // Only an error of the conversation goes into the chat. An error of another request must not
+          // go into the middle of a reply: its view shows it, or a popup does (lib/errorRoute.ts).
+          switch (errorRoute(msg.ref)) {
+            case "chat":
+              break;
+            case "toast":
+              showError(msg.message);
+              return;
+            case "quiet":
+              console.warn(`${msg.ref}: ${msg.message}`);
+              return;
+            default:
+              return;
           }
           break;
         case "command.result":
@@ -1521,7 +1566,7 @@ export default function App() {
     ideStarting.current = false;
     railAuto.current = false;
     setRail(true); // Each new session opens with the session rail. The saved preference does not change.
-    conn.send({ type: "session.new", cwd, model, permission_mode: mode, ...(worktree ? { worktree } : {}) });
+    sendStart({ type: "session.new", cwd, model, permission_mode: mode, ...(worktree ? { worktree } : {}) });
   };
 
   const resumeSession = (id: string) => {
@@ -1530,8 +1575,33 @@ export default function App() {
     setBusy(true);
     setStartError(null);
     codeStartNext.current = false; // An old session opens with its saved layout.
-    conn.send({ type: "session.resume", session_id: id });
+    sendStart({ type: "session.resume", session_id: id });
   };
+
+  /** Sends a session start. With a closed connection the start screen unlocks and shows why (audit U5).
+   *  The prompt box keeps its text, so the user can try again after a reconnect. */
+  const startSendFailed = useRef(false);
+  const sendStart = (msg: Parameters<DaemonConnection["send"]>[0]) => {
+    try {
+      conn.send(msg);
+    } catch (e) {
+      startSendFailed.current = true;
+      firstPrompt.current = null;
+      setBusy(false);
+      setStartError(errorText(e));
+      if (screen !== "start") showError(errorText(e));
+    }
+  };
+
+  // The connection closed: no reply can come, so a start in progress stops. When it opens again, the
+  // error of a start with no connection is old.
+  useEffect(() => {
+    if (status === "closed" && connectingId === null) setBusy(false);
+    if (status === "open" && startSendFailed.current) {
+      startSendFailed.current = false;
+      setStartError(null);
+    }
+  }, [status, connectingId]);
 
   // A click on a Windows notification: the desktop app shows the window, and the app opens the session.
   const openFromNotice = useRef<(id: string) => void>(() => undefined);
@@ -1764,12 +1834,19 @@ export default function App() {
     try {
       const { message, shown, startsTurn, messageId, images } = submissionMessage(s);
       conn.send(message);
+      if (startsTurn && session) lastSubmission.current.set(session.id, s);
       dispatch({ type: "user", text: shown, startsTurn, messageId, images });
       return true;
     } catch (e) {
       dispatch({ type: "notice", level: "error", text: errorText(e) });
       return false;
     }
+  };
+
+  /** "Try again" on the error card of a failed turn: the last prompt goes to the agent again. */
+  const retryLast = () => {
+    const last = session && lastSubmission.current.get(session.id);
+    if (last && !chat.running) submit(last);
   };
 
   /** A message during a turn waits in the queue. Else it goes to the agent now. */
@@ -1950,6 +2027,11 @@ export default function App() {
 
   // The side chat (Ctrl+;): it floats over the chat, or it is a window of the workspace.
   const side = useSideChat(conn, session?.id ?? null);
+  // Clear asks nothing: the popup has "Undo" (rule R7a).
+  const clearSide = () => {
+    const undo = side.clear();
+    if (undo) showUndo("Cleared the side chat.", undo);
+  };
   // The background tasks of the session, and the "Keep computer awake" switch (the ⋮ menu).
   const [tasks, setTasks] = useState<TaskItem[] | null>(null);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
@@ -2098,11 +2180,11 @@ export default function App() {
         conn.send(msg);
         return true;
       } catch (e) {
-        dispatch({ type: "notice", level: "error", text: errorText(e) });
+        showError(errorText(e)); // Many callers are not in the chat: the sidebar, a page, a pane.
         return false;
       }
     },
-    [conn, dispatch],
+    [conn, showError],
   );
 
   // The pull request links of the chat ask the daemon for their pull request (the hover card).
@@ -2115,6 +2197,7 @@ export default function App() {
     (messageId: string, options: RewindOptions) => void sendSafely({ type: "session.rewind", id: messageId, ...options }),
     [sendSafely],
   );
+  const undoRewind = useCallback(() => void sendSafely({ type: "session.rewind_undo" }), [sendSafely]);
   const fork = useCallback((messageId: string) => void sendSafely({ type: "session.fork", id: messageId }), [sendSafely]);
 
   // The model menus: the providers on the computer of the daemon ("Local models"), and the effort level
@@ -2346,7 +2429,8 @@ export default function App() {
     if (!sendSafely({ type: "permissions.get" })) setRulesBusy(false);
   };
 
-  const browserError = useCallback((message: string) => dispatch({ type: "notice", level: "error", text: message }), []);
+  // The Browser pane is not the chat: its errors show in a popup, which stays clear of the page.
+  const browserError = showError;
 
   /** A server URL for the Browser pane. A server on a remote daemon goes through a local forward port. */
   const openServer = useCallback(
@@ -2529,6 +2613,8 @@ export default function App() {
   useEffect(() => {
     if (diffShown) requestDiff();
   }, [diffShown, requestDiff, chat.running, session?.id]);
+  // An error of another session or another scope is not the error of this view.
+  useEffect(() => setDiffError(null), [session?.id, diffScope]);
 
   // A Rules tab from the saved layout has no data yet: load it when the tab shows.
   const rulesShown = session !== null && status === "open" && paneVisible("rules");
@@ -2551,6 +2637,18 @@ export default function App() {
     [recent, session?.id, session?.cwd],
   );
 
+  // The closed connection shows on each screen that needs the daemon, not only in the chat (audit U5).
+  // Reconnect is off only while a connection attempt runs. The banner stays during an automatic retry (no blink).
+  const disconnectBanner = current !== null && (status === "closed" || (reconnecting && status !== "open")) && (
+    <div className="banner" role="alert">
+      <span>{reconnecting ? "The connection to the daemon closed. Reconnecting…" : "The connection to the daemon closed."}</span>
+      <button type="button" className="btn" onClick={reconnect} disabled={connectingId !== null}>
+        <RefreshCw size={14} aria-hidden />
+        {reconnecting ? "Reconnect now" : "Reconnect"}
+      </button>
+    </div>
+  );
+
   const chatPane = (
     <div className="chat">
       {sideFloating && !sideDocked && session && (
@@ -2559,7 +2657,7 @@ export default function App() {
           running={side.running}
           onAsk={side.ask}
           onStop={side.stop}
-          onClear={side.clear}
+          onClear={clearSide}
           onClose={() => setSideFloating(false)}
           onPopOut={() => {
             setSideFloating(false);
@@ -2568,15 +2666,7 @@ export default function App() {
           focusKey={sideFocus}
         />
       )}
-      {status === "closed" && (
-        <div className="banner" role="alert">
-          <span>{reconnecting ? "The connection to the daemon closed. Reconnecting…" : "The connection to the daemon closed."}</span>
-          <button type="button" className="btn" onClick={reconnect} disabled={busy}>
-            <RefreshCw size={14} aria-hidden />
-            {reconnecting ? "Reconnect now" : "Reconnect"}
-          </button>
-        </div>
-      )}
+      {disconnectBanner}
       <MessageList
         items={chat.items}
         queued={queue}
@@ -2584,6 +2674,7 @@ export default function App() {
         reviewId={paneVisible("diff") ? reviewId : null}
         onDecide={decide}
         onAnswer={answerQuestion}
+        onRetry={session && status === "open" && lastSubmission.current.has(session.id) ? retryLast : undefined}
         turn={chat.turn}
         model={session?.harness?.name ?? session?.model ?? ""}
         footer={
@@ -2610,6 +2701,7 @@ export default function App() {
         onSendNow={sendNow}
         onRemoveQueued={removeQueued}
         onRewind={rewind}
+        onUndoRewind={undoRewind}
         onFork={fork}
         onAction={(message) => submitOrQueue({ kind: "prompt", text: message })}
         emptyHint={
@@ -2633,6 +2725,7 @@ export default function App() {
           <PromptBox
             draftKey={session?.id ?? null}
             running={chat.running}
+            answerHint={waitingCardHint(chat.items)}
             disabled={status !== "open"}
             onSubmit={submitOrQueue}
             onInterrupt={interrupt}
@@ -2733,7 +2826,7 @@ export default function App() {
             running={side.running}
             onAsk={side.ask}
             onStop={side.stop}
-            onClear={side.clear}
+            onClear={clearSide}
             onDock={() => {
               hidePane("side");
               setSideFloating(true);
@@ -2806,6 +2899,7 @@ export default function App() {
             scope={diffScope}
             onScope={setDiffScope}
             onRefresh={requestDiff}
+            error={diffError}
             onOpenFile={(path, line) => openPath(path, line)}
             connected={status === "open"}
           />
@@ -2893,6 +2987,13 @@ export default function App() {
     onOpenPr: (url) => openLink(url),
     onPin: (id, pinned) => void sendSafely({ type: "session.update", session_id: id, pinned }),
     onArchive: (id, archived) => void sendSafely({ type: "session.update", session_id: id, archived }),
+    // No question first: the popup has "Undo" (rule R7a). A session with uncommitted changes in a worktree still asks.
+    onArchiveAll: (ids) => {
+      if (!ids.every((id) => sendSafely({ type: "session.update", session_id: id, archived: true }))) return;
+      showUndo(ids.length === 1 ? "Archived 1 session." : `Archived ${ids.length} sessions.`, () =>
+        ids.forEach((id) => sendSafely({ type: "session.update", session_id: id, archived: false })),
+      );
+    },
     onMarkUnread: (id, on) =>
       setUnreadSessions((u) => {
         const next = new Set(u);
@@ -3338,6 +3439,8 @@ export default function App() {
         />
 
       <main className="main">
+        {/* The chat has its own banner, in the chat column. The Computers screen shows the state of each connection. */}
+        {(screen === "start" || screen === "routines" || screen === "capabilities") && disconnectBanner}
         {screen === "starting" && (
           <div className="center-status" role="status">
             <LoaderCircle size={20} className="spin" aria-hidden />
@@ -3493,6 +3596,7 @@ export default function App() {
         )}
         {/* The popups at the bottom right: the app update, the daemon version, and the daemon update. */}
         <ToastStack>
+          <ErrorToasts items={errorToasts} onClose={(id) => setErrorToasts((l) => l.filter((t) => t.id !== id))} />
           {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("general")} />}
           {/* The X hides the warning for this daemon and these versions. It shows again for another daemon or another version. */}
           {appVersion &&
@@ -3538,6 +3642,7 @@ export default function App() {
             page={settingsPage}
             onPage={openSettings}
             onClose={() => setSettingsPage(null)}
+            closeRef={settingsClose}
             configPath={userSettingsInfo?.path ?? null}
             onOpenConfig={
               userSettingsInfo && isTauri() && current?.kind === "local"

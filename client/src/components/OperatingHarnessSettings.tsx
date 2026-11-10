@@ -93,6 +93,7 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
   const [path, setPath] = useState("");
   const [filter, setFilter] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+  const [listFailed, setListFailed] = useState(false); // The list request failed: no skeleton rows, and "Try again".
   const [draft, setDraft] = useState<Draft | null>(null);
   const [confirm, setConfirm] = useState<HarnessItem | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<HarnessItem | null>(null);
@@ -111,6 +112,7 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
           setItems(msg.items);
           setPath(msg.path);
           setChecking(false);
+          setListFailed(false);
           setProgress({});
           if (saving.current) {
             saving.current = false;
@@ -125,6 +127,7 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
           saving.current = false;
           setChecking(false);
           setProblem(msg.message);
+          if (msg.ref === "harnesses.list") setListFailed(true);
         }
       }),
     [conn],
@@ -271,7 +274,23 @@ export function OperatingHarnessSettings({ conn, connected, values, error, onSet
           onChange={(e) => setFilter(e.target.value)}
         />
       </div>
-      {items === null ? (
+      {items === null && listFailed ? (
+        <p className="harness-empty">
+          Couldn't load the list of harnesses.{" "}
+          <button
+            type="button"
+            className="btn btn-small"
+            disabled={!connected}
+            onClick={() => {
+              setListFailed(false);
+              setProblem(null);
+              send({ type: "harnesses.list" });
+            }}
+          >
+            <RefreshCw size={13} aria-hidden /> Try again
+          </button>
+        </p>
+      ) : items === null ? (
         connected && (
           <div className="harness-list" aria-busy="true">
             {[0, 1, 2].map((i) => (

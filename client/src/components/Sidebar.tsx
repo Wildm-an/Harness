@@ -356,7 +356,10 @@ function ProjectSection({ group, hint, pr, open, activeId, running, unread, disa
             { label: "Sort A to Z", onClick: onSort },
             {
               label: `Archive all (${toArchive.length})`,
-              onClick: () => toArchive.forEach((s) => actions.onArchive(s.id, true)),
+              onClick: () =>
+                actions.onArchiveAll
+                  ? actions.onArchiveAll(toArchive.map((s) => s.id))
+                  : toArchive.forEach((s) => actions.onArchive(s.id, true)),
               disabled: disabled || toArchive.length === 0,
               separatorBefore: true,
             },

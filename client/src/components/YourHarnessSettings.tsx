@@ -8,6 +8,7 @@ import { ArrowLeft, Check, ChevronRight, Copy, Download, LoaderCircle, NotebookP
 import type { DaemonConnection } from "../daemon/connection";
 import type { MemoryFact, MemoryItem, MemoryType, ProjectItem, UserSettings } from "../daemon/protocol";
 import { saveBase64File } from "../lib/tauri";
+import { useFormIntoView } from "../lib/formFocus";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { INSTRUCTION_FIELDS, Row, Switch, TextAreaField } from "./SettingsDialog";
 
@@ -416,8 +417,10 @@ function MemoryEditor({ draft, isNew, problem, busy, onChange, onCancel, onSave,
   onDelete: () => void;
 }) {
   const typeHelp = MEMORY_TYPES.find(([t]) => t === draft.type)?.[2];
+  const intoView = useFormIntoView();
   return (
     <form
+      ref={intoView}
       className="memory-editor"
       noValidate
       autoComplete="off"
@@ -490,7 +493,7 @@ function MemoryEditor({ draft, isNew, problem, busy, onChange, onCancel, onSave,
           </button>
         )}
         <span className="spacer" />
-        <button type="button" className="btn btn-small" onClick={onCancel}>
+        <button type="button" className="btn btn-small" onClick={onCancel} data-form-cancel>
           Cancel
         </button>
         <button type="submit" className="btn btn-small btn-primary" disabled={busy}>

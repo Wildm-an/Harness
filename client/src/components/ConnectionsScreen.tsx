@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Check, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Plug, Plus, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Plug, Plus, Trash2, TriangleAlert } from "lucide-react";
 import type { HostInfo } from "../daemon/protocol";
 import { describe, newConnectionId, validate, type Connection, type ConnectionKind } from "../lib/connections";
 import { isTauri } from "../lib/tauri";
+import { useFormIntoView } from "../lib/formFocus";
+import { useConfirm } from "./ConfirmDialog";
 
 const ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
 
@@ -94,9 +96,10 @@ function ConnectionForm({
   };
 
   const describedBy = (field: string) => (errors[field] ? `cf-${field}-error` : undefined);
+  const intoView = useFormIntoView();
 
   return (
-    <form className="panel connection-form" onSubmit={submit} noValidate autoComplete="off">
+    <form ref={intoView} className="panel connection-form" onSubmit={submit} noValidate autoComplete="off">
       <h2 className="form-title">{isNew ? "Add a remote daemon" : `Edit ${initial.name}`}</h2>
 
       <Field id="cf-name" label="Name" error={errors.name}>
@@ -258,7 +261,7 @@ function ConnectionForm({
           Test
         </button>
         <span className="spacer" />
-        <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={saving}>
+        <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={saving} data-form-cancel>
           Cancel
         </button>
         <button type="submit" className="btn btn-primary" disabled={saving}>
@@ -300,7 +303,7 @@ export function ConnectionsScreen({
   onReturn: () => void;
 }) {
   const [editing, setEditing] = useState<{ connection: Connection; isNew: boolean } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const confirm = useConfirm(); // Delete asks first in a dialog (rule R7).
 
   const startAdd = () =>
     setEditing({ connection: { id: newConnectionId(), name: "", kind: "direct", host: "", port: 8765 }, isNew: true });
@@ -340,24 +343,7 @@ export function ConnectionsScreen({
                   )}
                 </div>
                 <div className="connection-actions">
-                  {c.kind !== "local" &&
-                    (confirmDelete === c.id ? (
-                      <>
-                        <button type="button" className="btn btn-danger btn-small" onClick={() => onDelete(c)}>
-                          <Trash2 size={14} aria-hidden />
-                          Delete
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn ghost"
-                          onClick={() => setConfirmDelete(null)}
-                          aria-label="Keep the connection"
-                          title="Keep"
-                        >
-                          <X size={14} aria-hidden />
-                        </button>
-                      </>
-                    ) : (
+                  {c.kind !== "local" && (
                       <>
                         <button
                           type="button"
@@ -371,14 +357,21 @@ export function ConnectionsScreen({
                         <button
                           type="button"
                           className="icon-btn ghost"
-                          onClick={() => setConfirmDelete(c.id)}
+                          onClick={() =>
+                            confirm.ask({
+                              title: `Delete the connection ${c.name}?`,
+                              text: "Harness forgets this computer and its saved token. The daemon on the computer does not change.",
+                              confirmLabel: "Delete",
+                              onConfirm: () => onDelete(c),
+                            })
+                          }
                           aria-label={`Delete ${c.name}`}
                           title="Delete"
                         >
                           <Trash2 size={14} aria-hidden />
                         </button>
                       </>
-                    ))}
+                    )}
                   <button
                     type="button"
                     className={`btn btn-small${current ? "" : " btn-primary"}`}
@@ -432,6 +425,7 @@ export function ConnectionsScreen({
           </li>
         </ol>
       </section>
+      {confirm.dialog}
     </div>
   );
 }

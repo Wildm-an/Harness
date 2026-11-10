@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RotateCcw, Split, TriangleAlert } from "lucide-react";
+import { Archive, ArrowDown, BellRing, Check, CircleAlert, Copy, Info, RefreshCw, RotateCcw, Split, TriangleAlert, Undo2 } from "lucide-react";
 import type { ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
+import { errorKind } from "../lib/errorRoute";
 import { splitAttachmentLines, type Submission } from "./PromptBox";
 import { Markdown, StreamingMarkdown } from "./Markdown";
 import { PermissionCard } from "./PermissionCard";
@@ -51,12 +52,85 @@ const fullTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeS
 
 const NOTICE_ICONS = { error: CircleAlert, warning: TriangleAlert, info: Info };
 
-const Notice = memo(function Notice({ item }: { item: NoticeItem }) {
+const Notice = memo(function Notice({ item, onUndo }: { item: NoticeItem; onUndo?: () => void }) {
   const Icon = NOTICE_ICONS[item.level];
   return (
     <div className={`notice notice-${item.level}`} role={item.level === "error" ? "alert" : "status"}>
       <Icon size={15} aria-hidden />
       <span>{item.text}</span>
+      {(item.count ?? 1) > 1 && (
+        <span className="notice-count" aria-label={`${item.count} times`} title={`This message came ${item.count} times`}>
+          ×{item.count}
+        </span>
+      )}
+      {onUndo && (
+        <button type="button" className="btn btn-small notice-action" onClick={onUndo} title="Bring back the messages and the files">
+          <Undo2 size={13} aria-hidden />
+          Undo rewind
+        </button>
+      )}
+    </div>
+  );
+});
+
+/** The rewind line that can get "Undo rewind" (rule M3): the last one, with no message of the user after it. */
+export function undoTarget(items: ChatItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "user") return null;
+    if (item.kind === "notice" && item.undo) return item.id;
+  }
+  return null;
+}
+
+/** The id of the turn error that can get "Try again": the last one, with no message of the user after it. */
+export function retryTarget(items: ChatItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "user" && item.origin !== "task") return null;
+    if (item.kind === "notice" && item.turn) return errorKind(item.text).retry ? item.id : null;
+  }
+  return null;
+}
+
+/** The error of a failed turn (rule M18): a title, the text of the daemon, "Try again", and "Copy details". */
+const ErrorCard = memo(function ErrorCard({ item, onRetry }: { item: NoticeItem; onRetry?: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const { title } = errorKind(item.text);
+  const copy = () => {
+    void navigator.clipboard
+      .writeText(`${title}
+${item.text}`)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  };
+  return (
+    <div className="notice notice-error error-card" role="alert">
+      <CircleAlert size={15} aria-hidden />
+      <div className="error-card-text">
+        <span className="error-card-title">
+          {title}
+          {(item.count ?? 1) > 1 && (
+            <span className="notice-count" aria-label={`${item.count} times`}>
+              ×{item.count}
+            </span>
+          )}
+        </span>
+        <span className="error-card-body">{item.text}</span>
+        <div className="error-card-actions">
+          {onRetry && (
+            <button type="button" className="btn btn-small" onClick={onRetry} title="Send the last prompt again">
+              <RefreshCw size={13} aria-hidden /> Try again
+            </button>
+          )}
+          <button type="button" className="btn btn-small btn-ghost" onClick={copy}>
+            {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />} {copied ? "Copied" : "Copy details"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 });
@@ -384,6 +458,8 @@ export function MessageList({
   onRemoveQueued = () => {},
   onRewind = () => {},
   onFork = () => {},
+  onRetry,
+  onUndoRewind,
   onAction,
   emptyHint,
   turn = null,
@@ -402,6 +478,8 @@ export function MessageList({
   onRemoveQueued?: (id: string) => void;
   onRewind?: (messageId: string, options: RewindOptions) => void;
   onFork?: (messageId: string) => void;
+  onRetry?: () => void; // "Try again" on the error card of a failed turn. Not given: no button.
+  onUndoRewind?: () => void; // "Undo rewind" on the line of the last rewind. Not given: no button.
   onAction?: (message: string) => void; // A button of the end-of-turn box: the message is the next prompt.
   emptyHint: React.ReactNode;
   turn?: TurnInfo | null; // The running turn: the working line at the bottom shows its time.
@@ -505,6 +583,8 @@ export function MessageList({
 
   const showWrap = !!wrap && !running && !!onAction;
   const unread = unreadMessages(items, running);
+  const retryId = onRetry ? retryTarget(items) : null;
+  const undoId = onUndoRewind ? undoTarget(items) : null;
   const planBlock = plan && (
     <PlanBlock
       steps={plan.steps}
@@ -573,7 +653,8 @@ export function MessageList({
             case "plan":
               return <PlanCard key={item.id} item={item} onDecide={onPlan} />;
             case "notice":
-              return <Notice key={item.id} item={item} />;
+              if (item.turn) return <ErrorCard key={item.id} item={item} onRetry={!running && item.id === retryId ? onRetry : undefined} />;
+              return <Notice key={item.id} item={item} onUndo={!running && item.id === undoId ? onUndoRewind : undefined} />;
             case "summary":
               return <SummaryCard key={item.id} item={item} />;
             case "file":

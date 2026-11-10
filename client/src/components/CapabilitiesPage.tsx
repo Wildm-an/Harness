@@ -26,6 +26,7 @@ import { SlashIcon } from "./SlashIcon";
 import { Markdown } from "./Markdown";
 import { openExternal } from "../lib/tauri";
 import { ConnectorLogo, hasConnectorLogo } from "./ConnectorLogo";
+import { useConfirm } from "./ConfirmDialog";
 import type { CommandItem, ConnectorItem, ConnectorOptions, DesktopConnectOptions, MailConnectOptions, MailProvider, MailSecurity, McpServerItem, McpState, McpStatus, OutlookMode, PluginsStatus, SkillDetail } from "../daemon/protocol";
 
 export type CapabilityStatus =
@@ -317,6 +318,7 @@ function McpRow({
   useEffect(() => {
     if (item.state === "authenticating") setOpen(true);
   }, [item.state]);
+  const confirm = useConfirm();
   const status = MCP_STATUS[item.state];
   return (
     <li className={`cap-item${open ? " open" : ""}`}>
@@ -373,7 +375,18 @@ function McpRow({
               <button type="button" className="btn btn-small" onClick={() => onAuth({ kind: "auth", name: item.name })}>
                 Re-authenticate
               </button>
-              <button type="button" className="btn btn-small btn-ghost" onClick={() => onAuth({ kind: "logout", name: item.name })}>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                onClick={() =>
+                  confirm.ask({
+                    title: `Clear the sign-in of ${item.name}?`,
+                    text: `Harness deletes the saved tokens of ${item.name}. Its tools stop until you authenticate again.`,
+                    confirmLabel: "Clear",
+                    onConfirm: () => onAuth({ kind: "logout", name: item.name }),
+                  })
+                }
+              >
                 Clear authentication
               </button>
             </div>
@@ -392,6 +405,7 @@ function McpRow({
           )}
         </div>
       )}
+      {confirm.dialog}
     </li>
   );
 }
@@ -825,6 +839,7 @@ function DeviceAccounts({
   onAction: (action: ConnectorAction) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const confirm = useConfirm();
   const accounts = item.accounts ?? [];
   useEffect(() => {
     if (!busy && !item.signing_in) setAdding(false);
@@ -849,7 +864,14 @@ function DeviceAccounts({
             <button
               type="button"
               className="btn btn-small btn-ghost"
-              onClick={() => onAction({ kind: "remove_account", id: item.id, login: a.login })}
+              onClick={() =>
+                confirm.ask({
+                  title: `Remove ${a.login}?`,
+                  text: `The agent can no longer use this account in ${item.name}. The other accounts stay.`,
+                  confirmLabel: "Remove",
+                  onConfirm: () => onAction({ kind: "remove_account", id: item.id, login: a.login }),
+                })
+              }
               aria-label={`Remove ${a.login}`}
             >
               Remove
@@ -867,10 +889,22 @@ function DeviceAccounts({
         <button type="button" className="btn btn-small" onClick={() => setAdding(true)}>
           Add account
         </button>
-        <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
+        <button
+          type="button"
+          className="btn btn-small btn-ghost"
+          onClick={() =>
+            confirm.ask({
+              title: accounts.length > 1 ? `Disconnect all ${accounts.length} accounts of ${item.name}?` : `Disconnect ${item.name}?`,
+              text: `Harness signs out and removes the MCP server "${item.id}" from your mcp.json. To use ${item.name} again, connect again.`,
+              confirmLabel: "Disconnect",
+              onConfirm: () => onAction({ kind: "disconnect", id: item.id }),
+            })
+          }
+        >
           {accounts.length > 1 ? "Disconnect all" : "Disconnect"}
         </button>
       </div>
+      {confirm.dialog}
     </>
   );
 }
@@ -891,6 +925,7 @@ function ConnectorRow({
   const connected = item.source !== null;
   // All rows start collapsed (the user asked for this). A device code opens its row.
   const [open, setOpen] = useState(false);
+  const confirm = useConfirm();
   useEffect(() => {
     if (code) setOpen(true);
   }, [code]);
@@ -933,7 +968,18 @@ function ConnectorRow({
                 allows it, for example <code>mcp__{item.id}__*</code>.
               </p>
               <div className="mcp-signin-actions">
-                <button type="button" className="btn btn-small btn-ghost" onClick={() => onAction({ kind: "disconnect", id: item.id })}>
+                <button
+                  type="button"
+                  className="btn btn-small btn-ghost"
+                  onClick={() =>
+                    confirm.ask({
+                      title: `Disconnect ${item.name}?`,
+                      text: `Harness removes the MCP server "${item.id}" from your mcp.json. To use ${item.name} again, connect again.`,
+                      confirmLabel: "Disconnect",
+                      onConfirm: () => onAction({ kind: "disconnect", id: item.id }),
+                    })
+                  }
+                >
                   Disconnect
                 </button>
               </div>
@@ -949,6 +995,7 @@ function ConnectorRow({
           )}
         </div>
       )}
+      {confirm.dialog}
     </li>
   );
 }

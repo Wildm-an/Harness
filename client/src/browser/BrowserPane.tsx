@@ -29,6 +29,7 @@ import type { ServersApi } from "../servers/useServers";
 import { ServerBlock, type ServerApproval } from "./ServerBlock";
 import { COLORS, SHAPES, WIDTHS, annotateCall, annotateScript, pageMessage, parseAnnotation, type AnnotateMethod, type AnnotateTool, type Annotation, type ShapeTool } from "./annotate";
 import { AnnotateBar } from "./AnnotateBar";
+import { useConfirm } from "../components/ConfirmDialog";
 import { imageToDataUrl } from "../lib/images";
 
 type Device = "desktop" | "tablet" | "phone";
@@ -560,6 +561,7 @@ export function BrowserPane({
   const [inPane, setInPane] = useLinksInPane(); // The same preference as Settings > General > "Open links in".
   const [sub, setSub] = useState<"viewport" | "cookies" | null>(null); // The open list of the More menu.
   const overlay = useOverlayOpen();
+  const confirm = useConfirm();
   const nativeOwner = useId(); // The key of this pane for the place of its webview (setNativeRect).
   const lastSync = useRef(new Map<string, string>()); // The last bounds and visibility of each webview.
   const selectOnFocus = useRef(false);
@@ -1025,7 +1027,15 @@ export function BrowserPane({
           <button
             type="button"
             className="icon-btn ghost"
-            onClick={() => serverApi.stopAll()}
+            onClick={() => {
+              const running = serverApi.items.filter((i) => i.state === "running" || i.state === "starting");
+              confirm.ask({
+                title: running.length === 1 ? `Stop ${running[0].name}?` : `Stop all ${running.length} servers?`,
+                text: "The servers of this project stop. Pages that use them stop working until you start the servers again.",
+                confirmLabel: "Stop",
+                onConfirm: () => serverApi.stopAll(),
+              });
+            }}
             aria-label="Stop all servers"
             title={`Stop all servers (${serverApi.items.filter((i) => i.state === "running" || i.state === "starting").length} running)`}
           >
@@ -1138,7 +1148,16 @@ export function BrowserPane({
                     setSub(null);
                   }}
                 />
-                <button type="button" role="menuitem" className="danger" disabled={!live} onMouseEnter={() => setSub(null)} onClick={() => run(() => browserView.clearData(active.id))}>
+                <button type="button" role="menuitem" className="danger" disabled={!live} onMouseEnter={() => setSub(null)} onClick={() => {
+                    close();
+                    setSub(null);
+                    confirm.ask({
+                      title: "Clear the browsing data?",
+                      text: "Harness deletes the cookies, the storage, and the cache of the built-in browser. Sites that you signed in to sign you out.",
+                      confirmLabel: "Clear",
+                      onConfirm: () => void browserView.clearData(active.id).catch((e) => onError(e instanceof Error ? e.message : String(e))),
+                    });
+                  }}>
                   Clear browsing data
                 </button>
                 <div className="menu-sep" role="separator" />
@@ -1166,6 +1185,7 @@ export function BrowserPane({
           </button>
         )}
       </PaneActions>
+      {confirm.dialog}
       <form
         className="browser-bar"
         onSubmit={(e) => {

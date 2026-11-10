@@ -843,6 +843,7 @@ export type ClientMessage =
   // ref: the tab, which comes back in term.opened.
   | { type: "term.open"; cols: number; rows: number; id?: string; since?: number; new?: boolean; ref?: string }
   | { type: "term.close"; id: string } // The user closed the tab: the daemon stops its shell.
+  | { type: "term.running"; id: string } // Before a close: the programs that run in the shell.
   // The side chat (Ctrl+;): a quick question that sees the session. Nothing is added to the session.
   // history: the earlier questions and answers of the side chat.
   | { type: "side.ask"; id: string; question: string; history?: { role: "user" | "assistant"; content: string }[] }
@@ -890,6 +891,7 @@ export type ClientMessage =
   | { type: "prompt"; text: string; display?: string; id?: string; images?: string[] } // display: the text that the user sees. id: for rewind and fork. images: data URLs.
   // Go back to the time before a user message: remove it and all after it, and/or restore the files that the agent changed.
   | { type: "session.rewind"; id: string; conversation: boolean; code: boolean }
+  | { type: "session.rewind_undo" } // Undo the last rewind. Only before the next turn.
   // A new session with the conversation before a user message.
   | { type: "session.fork"; id: string }
   | { type: "command"; name: string; args: string }
@@ -1070,6 +1072,7 @@ export type DaemonMessage =
   | { type: "term.opened"; id: string; new: boolean; replay: string; seq: number; reset: boolean; ref?: string }
   | { type: "term.output"; id: string; data: string; seq: number }
   | { type: "term.exit"; id: string; code: number | null }
+  | { type: "term.running"; id: string; names: string[] } // Empty: the shell waits at its prompt.
   | { type: "side.token"; id: string; text: string; session_id?: string } // A part of a side chat answer.
   | { type: "side.done"; id: string; text: string; session_id?: string }
   | { type: "side.error"; id: string; message: string; session_id?: string }
@@ -1175,6 +1178,9 @@ export type DaemonMessage =
   | { type: "prompt.suggestion"; text: string }
   // After a rewind or a fork: the text of the user message. It replaces the text in the prompt box.
   | { type: "prompt.fill"; text: string }
+  // A rewind is done: the chat shows the text with "Undo rewind". After session.rewind_undo: rewind.undone.
+  | { type: "rewind.done"; text: string }
+  | { type: "rewind.undone"; text: string }
   | { type: "pong" }
   | { type: "notice"; level: "error" | "warning" | "info"; text: string } // For example, a plugin added a message.
   // The checks of the model endpoint after a session open: the context length, the image input, and new warnings.

@@ -404,6 +404,17 @@ class Storage:
             first.setdefault(path, content)
         return first
 
+    def checkpoint_rows(self, session_id: str, message_ids: list[str]) -> list[tuple[str, str, bytes | None]]:
+        """All checkpoints of these messages, in order: (message_id, path, content). For "Undo rewind"."""
+        if not message_ids:
+            return []
+        marks = ",".join("?" * len(message_ids))
+        rows = self.db.execute(
+            f"SELECT message_id, path, content FROM checkpoints WHERE session_id = ? AND message_id IN ({marks}) ORDER BY rowid",
+            (session_id, *message_ids),
+        )
+        return [(m, p, c) for m, p, c in rows]
+
     def delete_checkpoints(self, session_id: str, message_ids: list[str]) -> None:
         if not message_ids:
             return

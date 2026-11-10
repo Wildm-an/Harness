@@ -5,6 +5,7 @@ import type { Decision } from "../daemon/protocol";
 import { parseUnifiedDiff, toSplitRows, wordSegments, type DiffLine, type Hunk, type Segment } from "../lib/diff";
 import { loadPref, savePref } from "../lib/prefs";
 import { DECIDED, PermissionButtons, PermissionTitle, ScopeNote, choiceForKey, permissionChoices, usePermissionShortcuts } from "./PermissionCard";
+import { useCardKeys } from "../lib/cardKeys";
 
 type Mode = "split" | "unified";
 
@@ -101,22 +102,23 @@ export const DiffReview = memo(function DiffReview({
     savePref("diffMode", next);
   };
 
-  // Ctrl+Enter and Ctrl+Shift+Enter work from any place. The number keys and Esc work only when the pane has
-  // focus, so that text typed in the prompt box never approves a change. They select the buttons as on the card.
+  // Ctrl+Enter and Ctrl+Shift+Enter work from any place. The number keys and Esc work as on the card: from
+  // this pane, from the prompt box, and from any place with no keys of its own (lib/cardKeys.ts). The card in
+  // the chat added its listener first, so it takes the key: the request gets one answer.
   usePermissionShortcuts(permission, (decision) => permission && onDecide(permission.id, decision));
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!pending || e.ctrlKey || e.metaKey || e.altKey) return;
-    if ((e.target as HTMLElement).closest("input, textarea")) return;
-    const decision = e.key === "Escape" ? "deny" : choiceForKey(permissionChoices(permission), e.key);
-    if (decision) {
-      e.preventDefault();
-      e.stopPropagation();
-      onDecide(permission.id, decision);
-    }
-  };
+  useCardKeys(pending, {
+    digit: (n) => {
+      const decision = permission ? choiceForKey(permissionChoices(permission), String(n)) : null;
+      if (permission && decision) onDecide(permission.id, decision);
+      return decision !== null;
+    },
+    escape: () => {
+      if (permission) onDecide(permission.id, "deny");
+    },
+  });
 
   return (
-    <section className="side-pane diff-review" aria-label="Diff review" tabIndex={-1} onKeyDown={onKeyDown}>
+    <section className="side-pane diff-review" aria-label="Diff review" tabIndex={-1}>
       <header className="pane-head">
         <FileDiff size={16} aria-hidden className="pane-icon" />
         <span className="pane-title mono" title={parsed.path}>
@@ -195,7 +197,6 @@ export const DiffReview = memo(function DiffReview({
                   <PermissionButtons item={permission} onDecide={(decision) => onDecide(permission.id, decision)} />
                 </div>
               </div>
-              <p className="help">Click this pane to use the number keys and Esc.</p>
             </>
           ) : (
             <div className={`pane-foot-status ${permission.decision === "deny" ? "denied" : permission.decision ? "allowed" : ""}`}>

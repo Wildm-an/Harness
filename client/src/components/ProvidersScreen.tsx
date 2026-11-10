@@ -13,11 +13,12 @@ import {
   Settings,
   Trash2,
   TriangleAlert,
-  X,
 } from "lucide-react";
 import type { KeyMode, ModelContext, ProviderFields, ProviderItem, ProviderKind, ProviderTestResult } from "../daemon/protocol";
 import { contextSourceText, formatTokens } from "../lib/context";
 import { isTauri } from "../lib/tauri";
+import { useFormIntoView } from "../lib/formFocus";
+import { useConfirm } from "./ConfirmDialog";
 
 /** Common OpenAI-compatible endpoints. The user can change each value. */
 export const PRESETS: { label: string; name: string; base_url: string; kind: ProviderKind; needsKey: boolean }[] = [
@@ -221,7 +222,7 @@ function ProviderForm({
   };
   const [env, setEnv] = useState(initial?.key.env ?? "");
   const [problems, setProblems] = useState<Record<string, string>>({});
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const confirm = useConfirm(); // Delete asks first in a dialog (rule R7).
   const [advanced, setAdvanced] = useState(!!(initial?.context_length || initial?.ssh));
 
   const fields = (): ProviderFields => ({
@@ -263,6 +264,7 @@ function ProviderForm({
   };
 
   const describedBy = (field: string) => (problems[field] ? `pf-${field}-error` : undefined);
+  const intoView = useFormIntoView();
   const fieldError = (field: string) =>
     problems[field] && (
       <p id={`pf-${field}-error`} className="field-error" role="alert">
@@ -273,7 +275,9 @@ function ProviderForm({
   const plainText = initial?.key.source === "file";
 
   return (
-    <form className="panel connection-form provider-form" onSubmit={submit} noValidate autoComplete="off">
+    <>
+    {/* The dialog is outside the form: the form styles its h2. */}
+    <form ref={intoView} className="panel connection-form provider-form" onSubmit={submit} noValidate autoComplete="off">
       <h2 className="form-title">{initial ? `Edit ${initial.name}` : "Add a provider"}</h2>
 
       {!initial && (
@@ -514,25 +518,26 @@ function ProviderForm({
           <Plug size={14} aria-hidden />
           Test
         </button>
-        {initial &&
-          (confirmDelete ? (
-            <>
-              <button type="button" className="btn btn-danger btn-small" onClick={() => onDelete(initial.name)} disabled={busy}>
-                <Trash2 size={14} aria-hidden />
-                Delete {initial.name}
-              </button>
-              <button type="button" className="icon-btn ghost" onClick={() => setConfirmDelete(false)} aria-label="Keep the provider" title="Keep">
-                <X size={14} aria-hidden />
-              </button>
-            </>
-          ) : (
-            <button type="button" className="btn btn-ghost" onClick={() => setConfirmDelete(true)} disabled={busy}>
-              <Trash2 size={14} aria-hidden />
-              Delete
-            </button>
-          ))}
+        {initial && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={busy}
+            onClick={() =>
+              confirm.ask({
+                title: `Delete the provider ${initial.name}?`,
+                text: "Harness removes it from providers.json. A session that uses one of its models must change to another model.",
+                confirmLabel: "Delete",
+                onConfirm: () => onDelete(initial.name),
+              })
+            }
+          >
+            <Trash2 size={14} aria-hidden />
+            Delete
+          </button>
+        )}
         <span className="spacer" />
-        <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
+        <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy} data-form-cancel>
           Cancel
         </button>
         <button type="submit" className="btn btn-primary" disabled={busy}>
@@ -541,6 +546,8 @@ function ProviderForm({
         </button>
       </div>
     </form>
+    {confirm.dialog}
+    </>
   );
 }
 

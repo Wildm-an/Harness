@@ -133,6 +133,66 @@ class _Pty:
             pass
 
 
+# Processes that a console shell can have with no command of the user.
+IDLE_CHILDREN = {"conhost.exe", "openconsole.exe"}
+
+
+def _children_windows(pid: int) -> list[str]:
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_wchar * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, wintypes.HANDLE(-1).value):
+        return []
+    names: list[str] = []
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(ProcessEntry)
+        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ok:
+            if entry.th32ParentProcessID == pid and entry.th32ProcessID != pid:
+                names.append(entry.szExeFile)
+            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return names
+
+
+def _children_posix(pid: int) -> list[str]:
+    import subprocess
+
+    try:
+        out = subprocess.run(["ps", "-A", "-o", "ppid=,comm="], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0] == str(pid):
+            names.append(os.path.basename(parts[1]))
+    return names
+
+
+def child_processes(pid: int) -> list[str]:
+    """The names of the programs that a shell runs now (its child processes). Empty: the shell waits at its prompt."""
+    try:
+        names = _children_windows(pid) if os.name == "nt" else _children_posix(pid)
+    except Exception:  # noqa: BLE001 - an unknown state counts as idle: the close does not ask.
+        log.debug("Could not list the child processes of %s", pid, exc_info=True)
+        return []
+    return [n for n in names if n.lower() not in IDLE_CHILDREN]
+
+
 class Terminal:
     def __init__(self, pty: _Pty, emit: Emit, loop: asyncio.AbstractEventLoop,
                  on_exit: Callable[[Terminal], None]):
@@ -221,6 +281,10 @@ class Terminal:
         self.alive = False
         asyncio.ensure_future(self._emit({"type": "term.exit", "id": self.id, "code": code}))
         self._on_exit(self)
+
+    def running(self) -> list[str]:
+        """The programs that run in the shell now, for the question before a close of its tab."""
+        return child_processes(self._pty.pid) if self.alive else []
 
     def write(self, data: str) -> None:
         if self.alive:

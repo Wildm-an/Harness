@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   MessageSquarePlus,
   RefreshCw,
+  RotateCw,
   Save,
   Search,
   Sparkles,
@@ -680,6 +681,18 @@ export function EditorPane({
           <div className="notice-bar bad" role="alert">
             <CircleAlert size={15} aria-hidden />
             <span>{file.error}</span>
+          </div>
+        )}
+        {/* A failed save keeps the editor and the text (rule M18): the user can try again or copy the text. */}
+        {file?.saveError && !file.error && (
+          <div className="notice-bar bad" role="alert">
+            <CircleAlert size={15} aria-hidden />
+            <span>Couldn't save {baseName(file.path)}. {file.saveError}</span>
+            <span className="spacer" />
+            <button type="button" className="btn btn-small" onClick={() => api.save(file.path)} disabled={file.saving}>
+              <RotateCw size={13} aria-hidden />
+              Try again
+            </button>
           </div>
         )}
 
