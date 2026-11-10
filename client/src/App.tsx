@@ -201,6 +201,7 @@ import { noImageNote } from "./lib/images";
 import { modelName } from "./lib/modelName";
 import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore, sessionPrUrls } from "./lib/pr";
 import { FolderMenu } from "./components/FolderMenu";
+import { SessionTitle } from "./components/SessionTitle";
 import type { SessionActions } from "./components/SessionRow";
 
 type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines";
@@ -3329,10 +3330,6 @@ export default function App() {
           <div className="topbar-title">
             {screen === "chat" && session && (
               <>
-                <span className="topbar-name">
-                  {/* The daemon gives the title after the first turn. The sidebar list has it. */}
-                  {session.title ?? recent.find((r) => r.id === session.id)?.title ?? "New session"}
-                </span>
                 <FolderMenu
                   name={folder ?? session.cwd}
                   path={session.cwd}
@@ -3341,6 +3338,16 @@ export default function App() {
                   onReveal={() => void revealInExplorer(session.cwd).catch((e) => dispatch({ type: "notice", level: "error", text: errorText(e) }))}
                   onChange={() => void changeFolder()}
                   onOpenTerminal={() => showPane("terminal")}
+                />
+                <span className="topbar-divider" aria-hidden>|</span>
+                <SessionTitle
+                  id={session.id}
+                  // The daemon gives the title after the first turn. The sidebar list has it.
+                  title={session.title ?? recent.find((r) => r.id === session.id)?.title ?? "New session"}
+                  summary={recent.find((r) => r.id === session.id)}
+                  unread={unreadSessions.has(session.id)}
+                  pr={session.worktree ? (prStatus.get(pathKey(session.cwd))?.pr ?? null) : null}
+                  actions={sessionActions}
                 />
                 {session.worktree && (
                   <span
