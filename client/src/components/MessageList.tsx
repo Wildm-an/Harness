@@ -130,7 +130,7 @@ function relativeTime(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
-const REWIND_CHOICES: { label: string; options: RewindOptions }[] = [
+export const REWIND_CHOICES: { label: string; options: RewindOptions }[] = [
   { label: "Restore the code and the conversation", options: { conversation: true, code: true } },
   { label: "Restore the conversation", options: { conversation: true, code: false } },
   { label: "Restore the code", options: { conversation: false, code: true } },

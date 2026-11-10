@@ -72,6 +72,24 @@ def test_routine_storage(tmp_path, project):
     storage.close()
 
 
+def test_a_deleted_session_deletes_its_runs(tmp_path, project):
+    storage = Storage(tmp_path / "h.db")
+    rid = _routine(storage, project)
+    kept = storage.create_session(str(project), "fake", "test-model")
+    gone = storage.create_session(str(project), "fake", "test-model")
+    storage.add_run(rid, 100.0, "done", session_id=kept)
+    gone_run = storage.add_run(rid, 200.0, "done", session_id=gone)
+    storage.add_run(rid, 300.0, "skipped")  # A skipped run has no session.
+    storage.delete_session(gone)
+    assert storage.get_run(gone_run) is None
+    assert [r["fire_at"] for r in storage.list_runs(rid)] == [300.0, 100.0]
+    # A run of a session that an old daemon deleted (the run stayed) is not in the list.
+    storage.db.execute("DELETE FROM sessions WHERE id = ?", (kept,))
+    storage.db.commit()
+    assert [r["fire_at"] for r in storage.list_runs(rid)] == [300.0]
+    storage.close()
+
+
 def test_a_file_that_the_user_writes_is_a_routine(tmp_path, project):
     storage = Storage(tmp_path / "h.db")
     folder = tmp_path / "routines"
@@ -148,7 +166,8 @@ def test_the_routines_of_version_0_1_45_move_to_files(tmp_path, project):
     routine = storage.get_routine("morning-summary")
     assert routine["prompt"] == "Sum it up" and routine["permission_mode"] == "auto" and routine["enabled"] is False
     assert routine["created_at"] == 5 and routine["last_fire_at"] == 7 and routine["model"] == "fake/m"
-    assert [r["id"] for r in storage.list_runs("morning-summary")] == ["r1"]
+    run = storage.get_run("r1")  # Not in list_runs: the session s1 is not in this database.
+    assert run["routine_id"] == "morning-summary" and run["session_id"] == "s1"
     tables = {r[0] for r in storage.db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "routines" not in tables and "routine_runs_old" not in tables
     storage.add_run("morning-summary", 10.0, "running")  # No foreign key to the old table.
@@ -188,7 +207,7 @@ def test_scheduler_fires_due_routines_once(tmp_path, project):
 
         async def run_fn(routine, report):
             runs.append(routine["id"])
-            report("running", session_id="s-" + str(len(runs)))
+            report("running", session_id=storage.create_session(str(project), "fake", "test-model"))
 
         async def broadcast(message):
             events.append(message)
@@ -317,6 +336,14 @@ def test_run_now_starts_a_session_and_all_clients_see_it(daemon, project, fake_m
     b.send({"type": "routines.runs", "id": item["id"]})
     runs = b.until("routine.runs")[0]["items"]
     assert [r["status"] for r in runs] == ["done"]
+
+    # Delete the session of the run: the run goes too, and all windows get the new "last run".
+    a.send({"type": "session.delete", "session_id": done["session_id"]})
+    a.until("session.deleted")
+    item_b = next(i for i in b.until("routines")[0]["items"] if i["id"] == item["id"])
+    assert item_b["last_run"] is None
+    b.send({"type": "routines.runs", "id": item["id"]})
+    assert b.until("routine.runs")[0]["items"] == []
     a.close()
     b.close()
 
