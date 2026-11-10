@@ -9406,6 +9406,73 @@ textarea.setting-textarea:disabled {
   font-size: 13px;
 }
 
+/* ---------- the Rewind dialog (Esc two times) ---------- */
+
+.modal.rewind-dialog {
+  max-width: 640px;
+  max-height: 70vh;
+}
+
+.rewind-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 14px 0 20px;
+}
+
+.rewind-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.rewind-help {
+  display: -webkit-box;
+  margin: 0;
+  padding: 8px 20px 10px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3; /* A long message in the second step. */
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.rewind-quote {
+  color: var(--text);
+}
+
+.rewind-list {
+  margin: 0;
+  padding: 0 12px 14px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.rewind-item {
+  min-height: 36px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.rewind-item.selected {
+  background: var(--surface-2);
+}
+
+.rewind-empty {
+  margin: 0;
+  padding: 0 20px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* The parent folder after a project name that another project also has: "app · work". */
 .side-project-hint,
 .project-hint {
@@ -10938,9 +11005,10 @@ body.sorting * {
 
 /* "Wait for the agent": a note at the bottom of the window until the work ends. */
 .quit-wait {
+  /* At the top of the window, under the title bar: it does not cover the prompt box (the user asked for this). */
   position: fixed;
   left: 50%;
-  bottom: 20px;
+  top: calc(var(--titlebar-height) + 12px);
   z-index: var(--z-toast, 60);
   display: flex;
   align-items: center;

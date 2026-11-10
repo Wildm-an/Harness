@@ -148,6 +148,7 @@ import { SplitDropZone, SplitEdge, SplitPane, useSplitDrop } from "./components/
 import { clampSplit, SPLIT_DEFAULT } from "./lib/split";
 import { isLoopback, setVisualDaemon } from "./lib/visual";
 import { SessionSearch } from "./components/SessionSearch";
+import { DOUBLE_ESC_MS, RewindDialog, rewindTargets } from "./components/RewindDialog";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
 import { compareVersions } from "./lib/version";
 import { ChangelogPage } from "./components/ChangelogPage";
@@ -331,6 +332,7 @@ export default function App() {
   const [gitDiff, setGitDiff] = useState<(GitDiff & { cwd: string }) | null>(null);
   const [diffScope, setDiffScope] = useState<GitDiffScope>("branch");
   const [searchOpen, setSearchOpen] = useState(false); // The session search (Ctrl+K).
+  const [rewindOpen, setRewindOpen] = useState(false); // The Rewind dialog (Esc two times).
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]); // The sessions with a running turn.
   // The sessions with no window that work or wait: routine runs and nested sessions (start_session).
   const [backgroundSessions, setBackgroundSessions] = useState<RunningSession[]>([]);
@@ -828,14 +830,14 @@ export default function App() {
             const { [msg.id]: _gone, ...rest } = q;
             return rest;
           });
-          listRecent();
-          return;
           // The daemon deleted the routine runs of the session: remove them from the open run list too.
           setRoutineRuns((r) =>
             r && r.items.some((run) => run.session_id === msg.id)
               ? { ...r, items: r.items.filter((run) => run.session_id !== msg.id) }
               : r,
           );
+          listRecent();
+          return;
         case "steer.taken":
           // The message is in the history now. The chat shows it at this place.
           setQueues((q) => Object.fromEntries(Object.entries(q).map(([sid, list]) => [sid, list.filter((i) => i.id !== msg.id)])));
@@ -1893,6 +1895,33 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [chat.running]);
+
+  // Esc two times opens the Rewind dialog, as in Claude. Not during a turn: then Esc stops the agent.
+  // The prompt box counts, but not another text field, the terminal, the editor, or the split pane.
+  const lastEsc = useRef(0);
+  const runningRef = useRef(chat.running);
+  runningRef.current = chat.running;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const target = e.target instanceof Element ? e.target : null;
+      const field = target?.closest('input, textarea, select, [contenteditable="true"], .xterm, .monaco-editor, [role="dialog"], [role="menu"], [role="listbox"], .split-pane');
+      if (e.defaultPrevented || runningRef.current || !sessionRef.current || overlayOpen() || (field && !field.closest(".prompt-anchor"))) {
+        lastEsc.current = 0;
+        return;
+      }
+      const now = performance.now();
+      if (lastEsc.current && now - lastEsc.current < DOUBLE_ESC_MS) {
+        lastEsc.current = 0;
+        e.preventDefault();
+        setRewindOpen(true);
+      } else {
+        lastEsc.current = now;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const openRules = () => {
     setLayout((l) => openPane(l, "rules"));
@@ -3372,6 +3401,7 @@ export default function App() {
             folder={routinesFolder}
             runs={routineRuns}
             projects={projects ?? []}
+            defaultMode={userSettings?.permission_mode}
             models={models}
             error={routineError}
             saved={routineSaved}
@@ -3401,7 +3431,6 @@ export default function App() {
             apiBase={daemonHttp}
             newToken={routineToken}
             onToken={(id, action) => {
-            defaultMode={userSettings?.permission_mode}
               setRoutineToken(null);
               sendSafely({ type: "routines.token", id, action });
             }}
@@ -3497,6 +3526,9 @@ export default function App() {
             onOpen={(id) => resumeSession(id)}
             onClose={() => setSearchOpen(false)}
           />
+        )}
+        {rewindOpen && session && (
+          <RewindDialog targets={rewindTargets(chat.items)} onRewind={rewind} onClose={() => setRewindOpen(false)} />
         )}
         {/* The popups at the bottom right: the app update, the daemon version, and the daemon update. */}
         <ToastStack>

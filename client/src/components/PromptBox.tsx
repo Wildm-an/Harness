@@ -487,7 +487,7 @@ export function PromptBox({
         return;
       }
       if (e.key === "Escape") {
-        e.preventDefault();
+        // No preventDefault: this Esc is also the first of the two that open the Rewind dialog (App.tsx).
         onDismissSuggestion?.();
         return;
       }

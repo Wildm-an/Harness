@@ -1,4 +1,4 @@
-// The note at the bottom of the window while Harness waits for the agent to finish, before a quit
+// The note at the top of the window while Harness waits for the agent to finish, before a quit
 // or an update. It moves to the left of the Browser pane webview (useClearOfNative), so it always
 // shows. The X at the right closes the note and stops the wait, as "Cancel" does.
 
