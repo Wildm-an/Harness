@@ -81,7 +81,8 @@ class WrapUpTool(Tool):
         "or two answer buttons in 'actions': the first is your "
         "recommendation. A button has a label of 1 to 3 words, and a message that it sends as the "
         "user's next prompt. Call it once, as the last tool call of the turn, then write your final "
-        "answer. Do not use it for a short answer to a question."
+        "answer. Before wrap_up, call update_plan with each finished step completed. Do not use it for a "
+        "short answer to a question."
     )
     parameters = {
         "type": "object",

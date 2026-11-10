@@ -9,8 +9,9 @@ Each provider is an entry in ``~/.harness/providers.json``::
 Optional provider fields:
 
 - ``api_key_env``: read the API key from this environment variable.
-- ``kind``: ``"ollama"``, ``"openrouter"``, or ``"openai"``. The daemon checks tool and image
-  support only for Ollama (``/api/show``) and OpenRouter (the model list). The default is
+- ``kind``: ``"ollama"``, ``"openrouter"``, or ``"openai"``. The daemon checks tool support only for
+  Ollama (``/api/show``) and OpenRouter (the model list). It checks image support for each kind:
+  ``"openai"`` servers tell it in some model lists (see openai_image_input). The default is
   ``"ollama"`` for port 11434, ``"openrouter"`` for openrouter.ai, and ``"openai"`` for other URLs.
 - ``context_length``: the context size of the models on this provider.
 - ``models``: settings for each model, for example
@@ -249,16 +250,84 @@ async def check_tool_support(provider: Provider, model: str) -> bool | None:
     return None if caps is None else "tools" in caps
 
 
-def image_input(provider: Provider, model: str, settings: dict[str, Any], caps: list[str] | None) -> bool:
-    """True if the model accepts images, for example the screenshots of preview_screenshot.
+def image_input(provider: Provider, model: str, settings: dict[str, Any], caps: list[str] | None,
+                listed: bool | None = None) -> bool | None:
+    """True if the model accepts images, False if it does not, None if the daemon cannot tell.
 
     The order: ``image_input`` in the settings, ``image_input`` of the model in providers.json,
-    then the Ollama capability "vision". The default is False: most local models have no image input.
+    the capability "vision" of Ollama or OpenRouter (``caps``), then the model list of an
+    OpenAI-compatible server (``listed``, see openai_image_input).
+
+    Only True gives the agent the image tools (preview_screenshot). With None, the agent sends the
+    images that the user attached, and sends a note in place of them if the endpoint rejects them.
     """
     for value in (settings.get("image_input"), (provider.models.get(model) or {}).get("image_input")):
         if isinstance(value, bool):
             return value
-    return caps is not None and "vision" in caps
+    if caps is not None:
+        return "vision" in caps
+    return listed
+
+
+def _image_modalities(value: Any) -> bool | None:
+    """True if a list of input modalities has "image". ``value`` can be {"input": [...]}."""
+    if isinstance(value, dict):
+        value = value.get("input")
+    if isinstance(value, list):
+        return any(str(m).lower() in ("image", "images", "vision") for m in value)
+    return None
+
+
+def image_input_from_entry(entry: dict[str, Any]) -> bool | None:
+    """The image input in one entry of GET /models, or None if the entry does not tell.
+
+    Servers use different fields: ``architecture.input_modalities`` (OpenRouter and the servers that
+    copy its format), ``input_modalities``, ``modalities``, ``capabilities`` (a list or a dict), and
+    ``supports_vision`` (LiteLLM).
+    """
+    architecture = entry.get("architecture") if isinstance(entry.get("architecture"), dict) else {}
+    for value in (architecture.get("input_modalities"), entry.get("input_modalities"), entry.get("modalities")):
+        found = _image_modalities(value)
+        if found is not None:
+            return found
+    caps = entry.get("capabilities")
+    if isinstance(caps, list):
+        return any(str(c).lower() in ("vision", "image", "image_input") for c in caps)
+    if isinstance(caps, dict):
+        for key in ("vision", "image_input"):
+            if isinstance(caps.get(key), bool):
+                return caps[key]
+    info = entry.get("model_info") if isinstance(entry.get("model_info"), dict) else {}
+    for value in (entry.get("supports_vision"), info.get("supports_vision")):
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+async def openai_image_input(provider: Provider, model: str) -> bool | None:
+    """The image input of a model on an OpenAI-compatible server, or None if the server does not tell.
+
+    The sources: the entry of the model in GET /models, the model type of LM Studio ("vlm"), and the
+    modalities of llama-server (GET /props).
+    """
+    headers = _auth_headers(provider)
+    async with async_client(timeout=PROBE_TIMEOUT) as client:
+        listed, lmstudio, props = await asyncio.gather(
+            _json(client, "GET", f"{provider.base_url}/models", headers=headers),
+            _json(client, "GET", f"{provider.root_url}/api/v0/models", headers=headers),
+            _json(client, "GET", f"{provider.root_url}/props", headers=headers),
+        )
+    entry = next((m for m in _entries(listed) if str(m.get("id")) == model), None)
+    found = image_input_from_entry(entry) if entry else None
+    if found is not None:
+        return found
+    studio = next((m for m in _entries(lmstudio) if str(m.get("id")) == model), None)
+    if studio and studio.get("type") in ("vlm", "llm"):
+        return studio["type"] == "vlm"
+    modalities = props.get("modalities") if isinstance(props, dict) else None
+    if isinstance(modalities, dict) and isinstance(modalities.get("vision"), bool):
+        return modalities["vision"]
+    return None
 
 
 DEFAULT_CONTEXT_LENGTH = 8192

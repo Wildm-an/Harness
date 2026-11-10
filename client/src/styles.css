@@ -7175,6 +7175,23 @@ input.tree-rename-input[aria-invalid="true"] {
   color: var(--text);
 }
 
+/* The session model cannot read images: a note under the thumbnails. */
+.prompt-attachment-note {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.prompt-attachment-note svg {
+  flex: none;
+  color: var(--warning);
+}
+
 /* The x shows on hover or focus, at the top right of the chip. */
 .prompt-attachment-remove {
   position: absolute;
