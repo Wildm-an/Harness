@@ -238,20 +238,6 @@ export async function captureAgentTab(tab: string): Promise<string> {
   return `data:image/jpeg;base64,${String(result.data ?? "")}`;
 }
 
-/** The tab is open in the Browser pane (or in the saved tabs of a closed pane). */
-export function hasTab(id: string): boolean {
-  return tabExists(id);
-}
-
-/** Show a tab in its session. The app opens the pane. false: the tab is closed. */
-export function showTab(id: string): boolean {
-  const tab = allTabs().tabs.find((t) => t.id === id);
-  if (!tab) return false;
-  if (paneHooks) paneHooks.activate(id);
-  else if (kept) kept = { ...kept, active: { ...kept.active, [ownerOf(tab)]: id } };
-  return true;
-}
-
 /** Close a tab, as its close button does. With no pane, the saved tabs lose it. */
 export function closeTabById(id: string): void {
   if (paneHooks?.has(id)) {
@@ -976,7 +962,8 @@ export function BrowserPane({
           if (minimized.delete(tab.id)) agentChanged(); // The pane shows the minimized tab again.
         }
         const live = (!!tab.agent || minimized.has(tab.id)) && agentLive(tab.id);
-        const key = JSON.stringify([show ? bounds : null, show, opened.has(tab.id), live]);
+        // The scale is in the key: after a move to a screen with another scale, the webview moves too.
+        const key = JSON.stringify([show ? bounds : null, show, opened.has(tab.id), live, window.devicePixelRatio]);
         if (lastSync.current.get(tab.id) === key) continue;
         lastSync.current.set(tab.id, key);
         // While the agent works, its tab stays out of sight but visible (parked): the page keeps drawing.

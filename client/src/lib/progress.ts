@@ -137,7 +137,10 @@ export function latestPlan(items: ChatItem[]): ShownPlan | null {
       return { steps, current: true, finished, ...stepTimes(items, i, turnStart, finished) };
     }
     if (steps.every((s) => s.status === "completed")) return null;
-    if (items.slice(i + 1, turnStart).some(isInterrupt)) return null;
+    // An interrupt hides the plan. "Send now" of a queued message also stops the turn, but the plan
+    // stays: the user only sent the message sooner (the user asked for this).
+    const between = items.slice(i + 1, turnStart);
+    if (between.some(isInterrupt) && !between.some((t) => t.kind === "notice" && t.sendNow)) return null;
     let planTurn = i - 1;
     while (planTurn >= 0 && items[planTurn].kind !== "user") planTurn--;
     return { steps, current: false, finished: false, ...stepTimes(items, i, planTurn, false) };

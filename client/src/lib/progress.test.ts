@@ -34,6 +34,14 @@ describe("latestPlan", () => {
     expect(latestPlan([user("u1"), plan("p1", ["in_progress", "pending"]), notice, user("u2")])).toBeNull();
   });
 
+  it("keeps the plan after a stop by Send now of a queued message", () => {
+    const notice: ChatItem = { kind: "notice", id: "n1", level: "info", text: "The turn was interrupted.", sendNow: true };
+    const stopped = bash("b1", "The user interrupted the turn. The tool did not complete.", "error");
+    const shown = latestPlan([user("u1"), plan("p1", ["in_progress", "pending"]), stopped, notice, user("u2")]);
+    expect(shown?.current).toBe(false);
+    expect(shown?.steps).toHaveLength(2);
+  });
+
   it("finds the interrupt in a stopped tool call after a reload", () => {
     const stopped = bash("b1", "The user interrupted the turn. The tool did not complete.", "error");
     expect(latestPlan([user("u1"), plan("p1", ["in_progress"]), stopped, user("u2")])).toBeNull();

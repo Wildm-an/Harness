@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size, Url, WebviewUrl};
 
 const LABEL_PREFIX: &str = "browser-";
 /// The host of the address that the annotation script opens to send a note (annotate.ts).
@@ -32,6 +32,28 @@ pub struct Bounds {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    /// true: physical pixels of the window (the app sends these). false: logical pixels.
+    #[serde(default)]
+    pub physical: bool,
+}
+
+impl Bounds {
+    fn position(&self) -> Position {
+        if self.physical {
+            PhysicalPosition::new(self.x.round() as i32, self.y.round() as i32).into()
+        } else {
+            LogicalPosition::new(self.x, self.y).into()
+        }
+    }
+
+    fn size(&self) -> Size {
+        let (w, h) = (self.width.max(1.0), self.height.max(1.0));
+        if self.physical {
+            PhysicalSize::new(w.round() as u32, h.round() as u32).into()
+        } else {
+            LogicalSize::new(w, h).into()
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -132,11 +154,7 @@ pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds, fresh: bool) -
         builder = builder.data_directory(dir.join("browser-profile"));
     }
     let view = window
-        .add_child(
-            builder,
-            LogicalPosition::new(bounds.x, bounds.y),
-            LogicalSize::new(bounds.width.max(1.0), bounds.height.max(1.0)),
-        )
+        .add_child(builder, bounds.position(), bounds.size())
         .map_err(|e| format!("Cannot open the browser: {e}"))?;
     if fresh {
         view.clear_all_browsing_data().map_err(|e| e.to_string())?;
@@ -242,9 +260,8 @@ pub fn screenshot(_app: &AppHandle, _id: &str) -> Result<std::sync::mpsc::Receiv
 
 pub fn set_bounds(app: &AppHandle, id: &str, bounds: Bounds) -> Result<(), String> {
     let Some(view) = webview(app, id)? else { return Ok(()) };
-    view.set_position(LogicalPosition::new(bounds.x, bounds.y)).map_err(|e| e.to_string())?;
-    view.set_size(LogicalSize::new(bounds.width.max(1.0), bounds.height.max(1.0)))
-        .map_err(|e| e.to_string())
+    view.set_position(bounds.position()).map_err(|e| e.to_string())?;
+    view.set_size(bounds.size()).map_err(|e| e.to_string())
 }
 
 pub fn set_visible(app: &AppHandle, id: &str, visible: bool) -> Result<(), String> {
