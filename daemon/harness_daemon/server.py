@@ -91,6 +91,9 @@ from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
 from .titles import MAX_TITLE_TRIES, summarize_title
+
+# The first turn waits this many seconds for the model title (wait_title). A slow model does not stop the chat.
+TITLE_WAIT = 15
 from .agents import agent_folders, discover_agents
 from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
@@ -1301,7 +1304,8 @@ class Connection:
         shows a session reference with its name, and sends it with its id."""
         session = live.session
         assert session is not None
-        if session.set_title_from(display or text):
+        first = session.set_title_from(display or text)
+        if first:
             live.title_prompt, live.title_tries = display or text, 0
         self.start_title(live)
         # "@" references: add the files, lines, and sessions to the prompt. Load the referenced
@@ -1328,6 +1332,8 @@ class Connection:
             block, allow = await asyncio.to_thread(skill_block)
             if block:
                 expanded = f"{expanded}\n\n{block}"
+        if first:
+            await self.wait_title(live)
         try:
             shown = display or text
             stop = await session.agent.run_turn(expanded, display=shown if expanded != shown else None, allow=allow,
@@ -1399,6 +1405,13 @@ class Connection:
             await live.conn.send({"type": "session.title", "id": session.id, "title": title})
 
         live.title_task = asyncio.create_task(work())
+
+    async def wait_title(self, live: LiveSession) -> None:
+        """Before the first turn: wait for the model title, so that the title is there before the chat starts.
+        After TITLE_WAIT seconds the turn starts, and the title request continues next to it."""
+        task = live.title_task
+        if task is not None and not task.done():
+            await asyncio.wait({task}, timeout=TITLE_WAIT)
 
     def start_suggestion(self, live: LiveSession) -> None:
         """After a turn, ask the model for the next prompt of the user. The client shows it in the
@@ -1526,11 +1539,14 @@ class Connection:
         session = live.session
         assert session is not None
         command = f"/{skill.name} {args}".strip()
-        if session.set_title_from(command):
+        first = session.set_title_from(command)
+        if first:
             # The skill description tells the model what the command does.
             live.title_prompt, live.title_tries = f"{command}\n\nThe skill /{skill.name}: {skill.description}", 0
         self.start_title(live)
         await live.wait_for_mcp()
+        if first:
+            await self.wait_title(live)
         try:
             await session.agent.run_skill(skill, args)
         finally:
@@ -1630,6 +1646,7 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
     session.agent.settings["permission_mode"] = routine["permission_mode"]
     session.title = routine["name"]
     headless.storage.update_session(session.id, title=routine["name"], routine_id=routine["id"])
+    session.disable_offer()  # No user watches the run: the task stays in the routine session.
     live.on_waiting = lambda waiting: report("waiting" if waiting else "running")
     live.routine_id = routine["id"]
     headless.live[session.id] = live
@@ -1966,6 +1983,8 @@ async def _load_stored(conn: Connection, session_id: str) -> tuple[LiveSession, 
         conn.storage.update_session(session_id, provider=agent.client.provider.name, model=agent.client.model)
     conn.storage.touch_project(str(cwd))
     live.session = Session(conn.storage, session_id, agent, title=row["title"], project_dir=cwd, worktree=worktree)
+    if row.get("routine_id"):  # A session that a routine started.
+        live.session.disable_offer()
     return live, warnings
 
 
