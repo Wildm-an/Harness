@@ -161,7 +161,7 @@ export function SessionRail({
   const PlaceIcon = PLACE_ICONS[environment.placeKind];
   const share = context ? contextShare(context.tokens, context.length) : 0;
   const level = share >= 0.8 ? "high" : share >= 0.6 ? "mid" : "low";
-  // All the running tasks (commands, monitors, agents, wakeups), then the newest ended tasks.
+  // Only the running tasks (commands, monitors, agents, wakeups). An ended task goes away from the rail.
   const shownTasks = railTasks(tasks);
   // The time of a wakeup counts down.
   const [now, setNow] = useState(() => Date.now());
@@ -295,9 +295,9 @@ export function SessionRail({
         </ul>
       ) : null,
     backgroundTasks:
-      tasks.length > 0 ? (
+      shownTasks.length > 0 ? (
         <>
-          <p className="rail-empty">{taskSummary(tasks)}</p>
+          <p className="rail-empty">{taskSummary(shownTasks)}</p>
           <ul className="rail-list">
             {shownTasks.map((t) => (
               <li key={t.id}>

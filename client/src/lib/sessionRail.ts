@@ -167,13 +167,17 @@ export function sortTasks(tasks: TaskItem[]): TaskItem[] {
   });
 }
 
-const MAX_ENDED_IN_RAIL = 3; // The rail shows all running tasks, then this many ended tasks.
-
-/** The tasks of the rail: all the running tasks, then the newest ended tasks. */
+/** The tasks of the rail: only the running tasks, the newest first (the user asked for this). A task
+ *  that ends goes away from the rail. The Background tasks pane keeps it under "Finished". */
 export function railTasks(tasks: TaskItem[]): TaskItem[] {
+  return sortTasks(tasks).filter((t) => t.status === "running");
+}
+
+/** The two groups of the Background tasks pane: the running tasks, and the ended tasks under
+ *  "Finished". Each group has the newest task first. */
+export function splitTasks(tasks: TaskItem[]): { active: TaskItem[]; finished: TaskItem[] } {
   const sorted = sortTasks(tasks);
-  const running = sorted.filter((t) => t.status === "running");
-  return [...running, ...sorted.filter((t) => t.status !== "running").slice(0, MAX_ENDED_IN_RAIL)];
+  return { active: sorted.filter((t) => t.status === "running"), finished: sorted.filter((t) => t.status !== "running") };
 }
 
 const KIND_NAMES: Record<NonNullable<TaskItem["kind"]>, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup", cron: "Scheduled" };

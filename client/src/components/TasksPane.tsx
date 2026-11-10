@@ -2,8 +2,9 @@
 // with run_in_background), monitors, background agents, and wakeups. The user can stop a task.
 
 import { useEffect, useRef, useState } from "react";
-import { CircleCheck, CircleSlash, CircleX, LoaderCircle, Square } from "lucide-react";
+import { ChevronRight, CircleCheck, CircleSlash, CircleX, LoaderCircle, Square } from "lucide-react";
 import type { TaskDetail, TaskItem, TaskKind } from "../daemon/protocol";
+import { splitTasks } from "../lib/sessionRail";
 
 const TASK_KINDS: Record<TaskKind, string> = { shell: "Command", monitor: "Monitor", agent: "Agent", wakeup: "Wakeup", cron: "Scheduled" };
 
@@ -35,6 +36,7 @@ export function TasksPane({
   onStop: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [finishedOpen, setFinishedOpen] = useState(false); // The "Finished" group starts folded.
   const [now, setNow] = useState(() => Date.now());
   const output = useRef<HTMLPreElement>(null);
   const shown = items?.find((t) => t.id === selected) ?? null;
@@ -43,9 +45,11 @@ export function TasksPane({
     if (items === null) onRequest();
   }, [items === null]);
 
-  // The newest task shows when the user did not select one.
+  // The newest running task shows when the user did not select one. With no running task: the newest task.
   useEffect(() => {
-    if (items && items.length && !items.some((t) => t.id === selected)) setSelected(items[items.length - 1].id);
+    if (!items || !items.length || items.some((t) => t.id === selected)) return;
+    const { active, finished } = splitTasks(items);
+    setSelected((active[0] ?? finished[0]).id);
   }, [items]);
 
   // The output of the selected task. A running task gets new output each second.
@@ -82,43 +86,70 @@ export function TasksPane({
   }
 
   const text = detail && detail.id === shown?.id ? detail : null;
+  const { active, finished } = splitTasks(items);
+  const row = (t: TaskItem) => (
+    <li
+      key={t.id}
+      role="option"
+      aria-selected={t.id === selected}
+      className={`task-row${t.id === selected ? " active" : ""}`}
+      onClick={() => setSelected(t.id)}
+    >
+      <StatusIcon status={t.status} />
+      <span className="task-text">
+        <span className="task-title">{t.description || t.command}</span>
+        <span className="task-command">
+          {TASK_KINDS[t.kind ?? "shell"]}
+          {t.description && <span className="mono"> · {t.command.split("\n")[0]}</span>}
+        </span>
+      </span>
+      <span className="task-time">{elapsed(t, now)}</span>
+      {t.status === "running" && (
+        <button
+          type="button"
+          className="icon-btn ghost task-stop"
+          onClick={(e) => {
+            e.stopPropagation();
+            onStop(t.id);
+          }}
+          aria-label={`Stop ${t.description || t.command}`}
+          title="Stop"
+        >
+          <Square size={11} fill="currentColor" aria-hidden />
+        </button>
+      )}
+    </li>
+  );
   return (
     <div className="tasks-pane">
-      <ul className="tasks-list" role="listbox" aria-label="Background tasks">
-        {[...items].reverse().map((t) => (
-          <li
-            key={t.id}
-            role="option"
-            aria-selected={t.id === selected}
-            className={`task-row${t.id === selected ? " active" : ""}`}
-            onClick={() => setSelected(t.id)}
-          >
-            <StatusIcon status={t.status} />
-            <span className="task-text">
-              <span className="task-title">{t.description || t.command}</span>
-              <span className="task-command">
-                {TASK_KINDS[t.kind ?? "shell"]}
-                {t.description && <span className="mono"> · {t.command.split("\n")[0]}</span>}
-              </span>
-            </span>
-            <span className="task-time">{elapsed(t, now)}</span>
-            {t.status === "running" && (
-              <button
-                type="button"
-                className="icon-btn ghost task-stop"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onStop(t.id);
-                }}
-                aria-label={`Stop ${t.description || t.command}`}
-                title="Stop"
-              >
-                <Square size={11} fill="currentColor" aria-hidden />
-              </button>
+      <div className="tasks-list">
+        {active.length > 0 && (
+          <ul className="tasks-group" role="listbox" aria-label="Active background tasks">
+            {active.map(row)}
+          </ul>
+        )}
+        {/* A task that ends goes into the "Finished" group. The group starts folded (the user asked for this). */}
+        {finished.length > 0 && (
+          <>
+            <button
+              type="button"
+              className={`tasks-finished-head${finishedOpen ? " open" : ""}`}
+              aria-expanded={finishedOpen}
+              aria-controls="tasks-finished"
+              onClick={() => setFinishedOpen((v) => !v)}
+            >
+              <ChevronRight size={14} aria-hidden className="tasks-finished-chevron" />
+              <span>Finished</span>
+              <span className="tasks-finished-count">{finished.length}</span>
+            </button>
+            {finishedOpen && (
+              <ul id="tasks-finished" className="tasks-group" role="listbox" aria-label="Finished background tasks">
+                {finished.map(row)}
+              </ul>
             )}
-          </li>
-        ))}
-      </ul>
+          </>
+        )}
+      </div>
       {shown && (
         <div className="task-output-wrap">
           <div className="task-output-head">
