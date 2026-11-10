@@ -225,3 +225,20 @@ def test_the_server_over_mcp(fake_server, project):
             await manager.close()
 
     asyncio.run(main())
+
+
+def test_the_sidecar_has_the_pywin32_modules_that_load_at_run_time():
+    """pywintypes imports win32timezone only when it converts a COM date. PyInstaller does not see that import,
+    so the spec must name it. Without it, every tool that reads a date fails in the installed daemon."""
+    spec = (Path(outlook_server.__file__).resolve().parents[1] / "packaging" / "harness-daemon.spec").read_text(
+        encoding="utf-8")
+    for module in ("win32com.client", "pythoncom", "pywintypes", "win32timezone"):
+        assert f'"{module}"' in spec
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="pywin32 is only on Windows")
+def test_pywin32_converts_a_com_date():
+    import pywintypes
+
+    value = pywintypes.Time(1700000000)
+    assert outlook_server._fmt_dt(value) is not None

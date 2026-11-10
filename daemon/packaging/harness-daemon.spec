@@ -24,7 +24,8 @@ hiddenimports = [
     # The terminal pane on Windows (ConPTY). terminal.py imports it in a function.
     *(["winpty"] if sys.platform == "win32" else []),
     # The Outlook (classic) connector: COM through pywin32. outlook_server.py imports it in functions.
-    *(["win32com.client", "pythoncom", "pywintypes"] if sys.platform == "win32" else []),
+    # pywintypes imports win32timezone at run time, when it converts a COM date (ReceivedTime, Start).
+    *(["win32com.client", "pythoncom", "pywintypes", "win32timezone"] if sys.platform == "win32" else []),
 ]
 
 datas = [
