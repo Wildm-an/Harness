@@ -12,6 +12,7 @@ export interface ModelList {
   items: string[]; // "provider/model", from the connections that are on.
   errors: { provider: string; message: string }[];
   default?: string | null; // The model of "Default model" now ("provider/model"). null or absent: not known.
+  providers?: string[]; // The names of the providers that are on. Absent: not known (an older daemon).
   noImages?: string[]; // The models ("provider/model") that the daemon knows have no image input.
 }
 

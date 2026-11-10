@@ -16,6 +16,7 @@ import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
 import { loadPref, savePref } from "../lib/prefs";
+import { rememberModel, startModel } from "../lib/modelAvailability";
 import { noImageNote } from "../lib/images";
 import { modelName } from "../lib/modelName";
 import { PromptBox, type Submission } from "./PromptBox";
@@ -335,7 +336,6 @@ export function SessionStart({
   const selected = projects?.find((p) => p.id === selectedId) ?? projects?.[0] ?? null;
   const modelKey = (id: string | undefined) => (id ? `model.${prefScope}.${id}` : `model.${prefScope}`);
   const [model, setModel] = useState("");
-  const startModel = model.trim() || models?.default || ""; // The model of the new session: "provider/model".
   const [mode, setMode] = useState<PermissionMode>(() => lastMode(prefScope)); // The mode of the last session.
   const noProjects = projects !== null && projects.length === 0;
   // With no project, the form to add one is open: a session needs a project.
@@ -345,6 +345,10 @@ export function SessionStart({
   useEffect(() => {
     setModel(loadPref(modelKey(selected?.id), loadPref(`model.${prefScope}`, "")));
   }, [selected?.id]);
+  // A saved model that no provider gives now shows as "Default model". The saved choice stays while
+  // the model list loads: the chip does not change only because a provider is slow.
+  const shownModel = startModel(model.trim(), models);
+  const newModel = shownModel || models?.default || ""; // The model of the new session: "provider/model".
 
   // Each project remembers its worktree choice. The chip shows only for a folder in a git repository.
   const worktreeKey = `worktree.${prefScope}.${selected?.id ?? ""}`;
@@ -389,11 +393,10 @@ export function SessionStart({
   /** Start a session. It returns false: the box keeps the text, for a new try after an error. */
   const start = (s: Submission): boolean => {
     if (!canStart) return false;
-    savePref(modelKey(selected.id), model.trim());
-    savePref(`model.${prefScope}`, model.trim());
+    rememberModel(prefScope, selected.id, shownModel);
     saveLastMode(prefScope, mode);
     const base = worktree.base && branchInfo?.branches.includes(worktree.base) ? worktree.base : null;
-    onStart(selected.path, model.trim(), s.kind === "prompt" && !s.text.trim() ? null : s, mode,
+    onStart(selected.path, shownModel, s.kind === "prompt" && !s.text.trim() ? null : s, mode,
       worktree.on && branchInfo?.repo ? { base } : null);
     return false;
   };
@@ -508,7 +511,7 @@ export function SessionStart({
             onSubmit={start}
             onInterrupt={() => {}}
             onCycleMode={() => setMode(nextMode(mode))} // Shift+Tab changes the mode, as in a session.
-            imageNote={!harness && startModel && models?.noImages?.includes(startModel) ? noImageNote(modelName(startModel)) : null}
+            imageNote={!harness && newModel && models?.noImages?.includes(newModel) ? noImageNote(modelName(newModel)) : null}
             below={
               <>
                 <div className="prompt-below-left">
@@ -551,7 +554,7 @@ export function SessionStart({
                   </button>
                 ) : (
                 <ModelMenu
-                  value={model}
+                  value={shownModel}
                   models={models}
                   allowDefault
                   alignRight

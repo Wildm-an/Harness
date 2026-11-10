@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isModelUnavailable, listedModel, networkModel, proposedModel, providerOf } from "./modelAvailability";
+import { isModelUnavailable, listedModel, networkModel, proposedModel, providerOf, rememberModel, startModel } from "./modelAvailability";
 
 const models = {
   items: ["demo/scripted", "demo/other", "ollama/qwen2.5:latest"],
@@ -55,5 +55,44 @@ describe("modelAvailability", () => {
     expect(proposedModel(models, ["", "demo/gone"])).toBe("demo/scripted");
     expect(proposedModel({ items: [], errors: [] }, ["demo/other"])).toBe("");
     expect(proposedModel(null, ["demo/other"])).toBe("");
+  });
+
+  describe("startModel", () => {
+    const withProviders = { ...models, providers: ["demo", "ollama", "lmstudio", "plugin"] };
+
+    it("keeps the saved model while the list loads", () => {
+      expect(startModel("local-llama-8081/sharp", null)).toBe("local-llama-8081/sharp");
+      expect(startModel("", null)).toBe("");
+    });
+
+    it("gives the listed form of a saved model", () => {
+      expect(startModel("ollama/qwen2.5", withProviders)).toBe("ollama/qwen2.5:latest");
+    });
+
+    it("gives Default model for a model of a provider that is gone", () => {
+      // A served local model (Local models > Use): its provider goes away when the server stops.
+      expect(startModel("local-llama-8081/sharp", withProviders)).toBe("");
+    });
+
+    it("keeps a model of a provider that did not answer or gives no list", () => {
+      expect(startModel("lmstudio/some", withProviders)).toBe("lmstudio/some");
+      expect(startModel("plugin/model", withProviders)).toBe("plugin/model");
+    });
+
+    it("gives Default model for a model that its provider does not list now", () => {
+      expect(startModel("demo/deleted", withProviders)).toBe("");
+    });
+
+    it("keeps an unknown provider when an older daemon sends no provider names", () => {
+      expect(startModel("local-llama-8081/sharp", models)).toBe("local-llama-8081/sharp");
+    });
+  });
+
+  it("saves a chosen model for the connection and for the project", () => {
+    const saved: Record<string, string> = {};
+    const save = (key: string, value: string) => void (saved[key] = value);
+    rememberModel("local", "p1", "BugsAI/glm-5.3-flash", save);
+    rememberModel("local", null, "demo/other", save);
+    expect(saved).toEqual({ "model.local": "demo/other", "model.local.p1": "BugsAI/glm-5.3-flash" });
   });
 });

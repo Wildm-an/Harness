@@ -176,7 +176,7 @@ import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
 import { ModelMenu, type ModelList } from "./components/ModelMenu";
 import { ModelUnavailable } from "./components/ModelUnavailable";
-import { isModelUnavailable, networkModel, proposedModel } from "./lib/modelAvailability";
+import { isModelUnavailable, networkModel, proposedModel, rememberModel } from "./lib/modelAvailability";
 import { ModelChoice, isLocalProvider } from "./components/ModelChoice";
 import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
@@ -981,6 +981,7 @@ export default function App() {
             errors: msg.errors,
             default: msg.default ?? null,
             noImages: msg.items.filter((i) => i.image_input === false).map((i) => `${i.provider}/${i.model}`),
+            providers: msg.providers,
           });
           return;
         case "preview.frame": {
@@ -1642,6 +1643,14 @@ export default function App() {
     sendSafely({ type: "command", name: "model", args: spec });
   };
 
+  /** The user chose a model for the session: the start screen shows it the next time (the model used last). */
+  const chooseModel = (spec: string) => {
+    switchModel(spec);
+    const s = sessionRef.current;
+    const project = s ? (projects?.find((p) => samePath(p.path, s.cwd)) ?? projects?.find((p) => p.name === s.project)) : undefined;
+    rememberModel(currentRef.current?.id ?? "local", project?.id, spec);
+  };
+
   // No provider gives the model of the session. With "Preferred providers" on, the model by
   // network replaces it with no question. Else the chat asks the user (ModelUnavailable).
   // An ACP session has no model of the providers: its harness chooses the model.
@@ -1741,10 +1750,11 @@ export default function App() {
   const selectProviderModel = (spec: string) => {
     setSettingsPage(null);
     if (sessionRef.current) {
-      switchModel(spec);
+      chooseModel(spec);
       setScreen("chat");
     } else {
-      savePref(`model.${currentRef.current?.id ?? "local"}`, spec);
+      const scope = currentRef.current?.id ?? "local";
+      rememberModel(scope, loadPref(`project.${scope}`, ""), spec); // The project of the start screen.
       setScreen("start");
     }
   };
@@ -2658,7 +2668,7 @@ export default function App() {
               proposed={proposedModel(models, [loadPref(`model.${currentRef.current?.id ?? "local"}`, "")])}
               disabled={status !== "open"}
               onRequestModels={requestModels}
-              onSwitch={switchModel}
+              onSwitch={chooseModel}
               onDismiss={() => setModelAskDismissed((d) => new Set(d).add(`${session.id} ${session.model}`))}
               onManage={showProviders}
             />
@@ -2729,7 +2739,7 @@ export default function App() {
                   localProviders={localProviders}
                   effort={effortControl}
                   onOpen={requestModels}
-                  onSelect={switchModel}
+                  onSelect={chooseModel}
                   onManage={showProviders}
                 />
                 )}
@@ -3308,7 +3318,7 @@ export default function App() {
         </div>
       )}
       <div className="shell">
-        <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}`} data-tauri-drag-region="deep">
+        <header className={`topbar${hasWindowControls() ? " has-window-controls" : ""}${screen === "start" ? " no-line" : ""}`} data-tauri-drag-region="deep">
           {/* With the sidebar hidden, the title bar has the switch only in the IDE view (the user asked for this). */}
           {!sidebarOpen && titleNav()}
           <div className="topbar-title">
