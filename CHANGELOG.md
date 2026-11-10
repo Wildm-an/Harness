@@ -3,7 +3,7 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
-## Unreleased
+## 0.1.60 (2026-11-09)
 
 ### Connectors
 
