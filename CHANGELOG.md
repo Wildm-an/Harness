@@ -3,6 +3,22 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.64 (2026-11-10)
+
+### Chat
+
+- Tables in the chat look as in the Claude app: the full width, a line below each row, no vertical
+  lines, and a bold header at the left. A table that is wider than the chat scrolls in its own box.
+- The chat shows equations. Write LaTeX as `$...$` or `\(...\)` in a line, and as `$$...$$` or
+  `\[...\]` for a display equation. A dollar amount such as "$5" stays text.
+- The agent writes equations in LaTeX.
+
+### Sessions
+
+- "Delete" in the session menu opens a "Delete session?" dialog. The focus starts on "Delete", so
+  Enter deletes the session. Esc cancels.
+- The confirm button of each confirm dialog has a danger-color outline.
+
 ## 0.1.63 (2026-11-09)
 
 ### Models
