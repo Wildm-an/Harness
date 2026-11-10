@@ -4100,10 +4100,12 @@ select {
 }
 
 /* The width is set, because a size container has no content width: with no width, each tab
-   gets only its 36px minimum and loses its title. The tabs shrink from 160px when room is short. */
+   gets only its 36px minimum and loses its title. The tabs share the room of the header, up to
+   240px each (the user asked for this), and get smaller when room is short. */
 .win-tabs > .win-tab {
-  flex: 0 1 160px;
-  width: 160px;
+  flex: 0 1 240px;
+  width: 240px;
+  max-width: 240px;
   min-width: 36px;
   container-type: inline-size;
 }
@@ -4249,9 +4251,11 @@ select {
   color: var(--text);
 }
 
-/* A tab is a row: the button that selects it, and its close button. */
+/* A tab is a row: the button that selects it, and its close button. The button fills the tab, so the
+   close X is at the right edge of the tab, not next to the title (the user asked for this). */
 .win-tab-main {
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 6px;
   min-width: 0;

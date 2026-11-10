@@ -21,6 +21,7 @@ the harness supports them:
   gets a checkpoint (rewind), the deny rules and plan mode apply, and the editor tabs update.
 - ``terminal/*``: Harness runs the commands (acp_terminal.py). The tool rows show their output.
 - The MCP server "harness" (acp_mcp.py): the Harness tools and the MCP servers of the user.
+- A model of a Harness provider (acp_models.py), when the user chose one for the harness.
 - ``available_commands_update``: the commands of the harness are in the / menu.
 - The models (``models`` or a ``configOptions`` entry of the category "model"): the model menu.
 - ``usage_update``: the context ring.
@@ -45,10 +46,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from . import __version__, acp_mcp
+from . import __version__, acp_mcp, acp_models
 from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
 from .acp_terminal import TerminalError, TerminalHost
 from .agent import INTERRUPTED, Agent, user_message
+from .config import load_settings
 from .created import before_call, created_files
 from .files import file_hash, relpath
 from .permissions import PLAN_BLOCK
@@ -450,6 +452,7 @@ class AcpAgent(Agent):
         self.acp_model: str | None = None
         self._model_option: str | None = None  # The configOptions id of the model, when the harness uses one.
         self._usage_known: tuple[int, int] | None = None  # usage_update: (used tokens, context size).
+        self._provider_model: str | None = None  # The model id of a Harness provider in the harness (acp_models.py).
 
     # -- the harness process -------------------------------------------------------------------------------
 
@@ -472,6 +475,7 @@ class AcpAgent(Agent):
                 argv, env = launch_argv(self.harness)
             except HarnessError as e:
                 raise AcpError(str(e)) from None
+            argv, env = await self._provider_model_options(argv, env)
             conn = AcpConnection(argv, env, self.cwd, self.harness.name, self._on_notification, self._on_request)
             await conn.start()
             try:
@@ -528,8 +532,35 @@ class AcpAgent(Agent):
         # The conversation before this ACP session: in a turn, the last message is the prompt of the turn.
         prior = self.history[:-1] if self.in_turn else self.history
         self._needs_recap = any(m.get("role") in ("user", "assistant") for m in prior)
+        await self._select_provider_model(conn)
         await self._send_state()
         return conn, self._needs_recap
+
+    async def _provider_model_options(self, argv: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+        """The command and the environment with the model of a Harness provider, when the user chose one in
+        Settings > Operating Harness (only the user settings: a project cannot change it)."""
+        self._provider_model = None
+        spec = None if self.harness.custom else acp_models.choice(load_settings(None), self.harness.id)
+        if spec is None:
+            return argv, env
+        try:
+            target = await acp_models.resolve(spec)
+        except acp_models.ModelChoiceError as e:
+            raise AcpError(f"{e} Change the model of {self.harness.name} in Settings > Operating Harness.") from None
+        extra_args, extra_env = acp_models.launch_options(self.harness.id, target)
+        self._provider_model = acp_models.session_model_id(self.harness.id, target)
+        return [*argv, *extra_args], {**env, **extra_env}
+
+    async def _select_provider_model(self, conn: AcpConnection) -> None:
+        """A new ACP session starts on the model of the Harness provider, when the harness lists it. (An agent
+        setting of the harness can else choose another model.) A failure leaves the model of the harness."""
+        wanted = self._provider_model
+        if not wanted or wanted == self.acp_model or wanted not in {m["id"] for m in self.acp_models}:
+            return
+        try:
+            await self._change_model(conn, wanted)
+        except AcpError as e:
+            log.info("%s did not change to the model %s: %s", self.harness.name, wanted, e)
 
     def _auth_text(self, error: str) -> str:
         names = [str(m.get("name") or m.get("id")) for m in self._auth_methods]
@@ -597,6 +628,10 @@ class AcpAgent(Agent):
         if model_id not in {m["id"] for m in self.acp_models}:
             raise AcpError(f"{self.harness.name} has no model {model_id}.")
         conn, _ = await self._ensure_session()
+        await self._change_model(conn, model_id)
+        await self._send_state()
+
+    async def _change_model(self, conn: AcpConnection, model_id: str) -> None:
         if self._model_option is not None:
             result = await conn.request("session/set_config_option", {
                 "sessionId": self.acp_session, "configId": self._model_option, "value": model_id})
@@ -607,7 +642,6 @@ class AcpAgent(Agent):
         else:
             await conn.request("session/set_model", {"sessionId": self.acp_session, "modelId": model_id})
             self.acp_model = model_id
-        await self._send_state()
 
     def _read_modes(self, result: Any) -> None:
         modes = result.get("modes") if isinstance(result, dict) else None

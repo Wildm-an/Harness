@@ -352,6 +352,22 @@ export function endHidden(view: { top: number; bottom: number }, line: { top: nu
   return gap > BOTTOM_SLACK;
 }
 
+// The room, in pixels, between an opened dropdown and the edge of the chat.
+const REVEAL_MARGIN = 12;
+
+/**
+ * The scroll position that shows an opened dropdown of the chat (the user asked for this): a tool row, a
+ * tool group, the working line, the task list, or a menu. The chat scrolls down only as far as needed for
+ * the bottom of the dropdown, and never so far that its top (the clicked row) leaves the view. null: no
+ * scroll. All values are in the coordinates of the scroll content.
+ */
+export function revealScroll(scrollTop: number, viewHeight: number, top: number, bottom: number, margin = REVEAL_MARGIN): number | null {
+  const viewBottom = scrollTop + viewHeight;
+  if (bottom + margin <= viewBottom) return null;
+  const next = Math.min(bottom + margin - viewHeight, top - margin);
+  return next > scrollTop ? next : null;
+}
+
 /** The empty queue: one array, so the scroll effect does not run for each render. */
 export const NO_QUEUE: QueuedItem[] = [];
 
@@ -438,6 +454,28 @@ export function MessageList({
     return () => observer.disconnect();
   }, [checkAway]);
 
+  // A click that opens a dropdown (a button with aria-expanded): after the render, scroll the opened part
+  // into view. The opened part is the menu of a popup button, else the space from the top of the button to
+  // its old bottom plus the growth of the chat (this also works when the button is replaced, as the folded plan).
+  const revealOnOpen = (e: React.MouseEvent) => {
+    const el = scroller.current;
+    const button = (e.target as HTMLElement).closest<HTMLElement>("button[aria-expanded]");
+    if (!el || !button || button.getAttribute("aria-expanded") === "true" || !el.contains(button)) return;
+    const origin = el.getBoundingClientRect().top - el.scrollTop;
+    const rect = button.getBoundingClientRect();
+    const top = rect.top - origin;
+    const bottom = rect.bottom - origin;
+    const height = el.scrollHeight;
+    requestAnimationFrame(() => {
+      const menu = button.isConnected && button.getAttribute("aria-haspopup") ? button.parentElement?.querySelector("[role=menu]") : null;
+      const end = menu ? menu.getBoundingClientRect().bottom - (el.getBoundingClientRect().top - el.scrollTop) : bottom + (el.scrollHeight - height);
+      const next = revealScroll(el.scrollTop, el.clientHeight, top, end);
+      if (next === null) return;
+      const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      el.scrollTo({ top: next, behavior: smooth ? "smooth" : "auto" });
+    });
+  };
+
   const toBottom = () => {
     const el = scroller.current;
     if (!el) return;
@@ -493,6 +531,7 @@ export function MessageList({
       className="messages"
       ref={scroller}
       onScroll={onScroll}
+      onClickCapture={revealOnOpen}
       // The wheel event comes before the scroll event: the follow stops before the next output can pull the list down.
       onWheel={(e) => {
         if (e.deltaY < 0 && follow.current) setFollow(false);

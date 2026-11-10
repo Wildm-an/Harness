@@ -121,7 +121,7 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { overlayOpen } from "./lib/overlay";
-import { BrowserPane, agentBrowserOf, clearBrowserData, closeTabById, hasTab, keepCookies, minimizeTab, onAgentBrowser, runAgentCall, showAgentTab, showTab } from "./browser/BrowserPane";
+import { BrowserPane, agentBrowserOf, clearBrowserData, closeTabById, hasTab, keepCookies, minimizeShownTab, minimizeTab, onAgentBrowser, runAgentCall, showAgentTab, showTab } from "./browser/BrowserPane";
 import { pendingServerApprovals } from "./browser/ServerBlock";
 import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
 import { AllowedSites } from "./components/AllowedSites";
@@ -2835,6 +2835,15 @@ export default function App() {
       icon: GlobeIcon,
       closable: true,
       ownHeader: true, // Its tabs are in the window header.
+      // A double-click on the divider next to the browser minimizes it to the session rail (only the Code view has the rail).
+      onMinimize:
+        view === "code" && session
+          ? () => {
+              minimizeShownTab(session.id);
+              hidePane("browser");
+              showRail(true);
+            }
+          : undefined,
       render: () => (
         <BrowserPane
           session={session?.id ?? null}

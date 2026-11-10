@@ -3,6 +3,26 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Operating Harness
+
+- A harness can use a model of your providers: choose it in the new "Model" row of Settings >
+  Operating Harness. Harness gives the harness the server address, the key, and the model when it starts
+  the harness. It does not change the config files of the harness. This works for Qwen Code, goose, Codex,
+  and OpenCode. Codex needs a server with the OpenAI Responses API, for example Ollama.
+
+### Window tabs
+
+- The close X of a browser or terminal tab is at the right edge of the tab.
+- A tab is up to 240px wide. The tabs get smaller to share the room of the header.
+- A double-click on the divider next to the Browser pane minimizes the browser to the session rail.
+
+### Chat
+
+- When you open a dropdown in the chat, for example a tool row or the Rewind menu, the chat scrolls so
+  you can see it. Before, an opened dropdown at the bottom of the chat stayed out of view.
+
 ## 0.1.60 (2026-11-09)
 
 ### Connectors

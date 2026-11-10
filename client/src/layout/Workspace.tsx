@@ -30,6 +30,20 @@ export interface PaneSpec {
   // The pane puts its own content in the window header with <PaneHeader>, for example its tabs.
   // The header then shows no title.
   ownHeader?: boolean;
+  // A double-click on the divider next to the window minimizes the pane, for example the browser to the
+  // session rail (the user asked for this). No value: the double-click does nothing.
+  onMinimize?: () => void;
+}
+
+/** The pane that a double-click on a divider minimizes: the active pane of a window next to it that can
+ * minimize. The window after the divider comes first. */
+export function minimizeTarget(sides: (LayoutNode | undefined)[], panes: Record<PaneId, PaneSpec>): (() => void) | null {
+  for (const side of sides) {
+    if (side?.type !== "group") continue;
+    const minimize = panes[side.active]?.onMinimize;
+    if (minimize) return minimize;
+  }
+  return null;
 }
 
 const DRAG_TYPE = "application/x-harness-pane";
@@ -282,6 +296,7 @@ function SplitView(props: {
               aria-valuemax={100}
               tabIndex={0}
               onPointerDown={startDrag(i)}
+              onDoubleClick={() => minimizeTarget([node.children[i + 1], node.children[i]], props.panes)?.()}
               onKeyDown={(e) => {
                 const back = row ? "ArrowLeft" : "ArrowUp";
                 const forward = row ? "ArrowRight" : "ArrowDown";

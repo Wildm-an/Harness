@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatItem } from "../chat/state";
-import { endHidden, groupTools, nextFollow, reconcileQueue, unreadMessages, type QueuedItem } from "./MessageList";
+import { endHidden, groupTools, nextFollow, reconcileQueue, revealScroll, unreadMessages, type QueuedItem } from "./MessageList";
 
 describe("groupTools", () => {
   const tool = (id: string): ChatItem => ({ kind: "tool", id, name: "bash", input: {}, status: "done" });
@@ -81,5 +81,21 @@ describe("unreadMessages", () => {
     expect(unreadMessages([user("u1"), reply], true).size).toBe(0);
     // No turn runs: the agent read all messages.
     expect(unreadMessages([user("u1"), user("u2")], false).size).toBe(0);
+  });
+});
+
+describe("an opened dropdown of the chat", () => {
+  // The view shows 1000 to 1500 of the scroll content.
+  it("scrolls down to show the bottom of the dropdown", () => {
+    expect(revealScroll(1000, 500, 1400, 1700)).toBe(1212);
+  });
+
+  it("keeps the clicked row in view when the dropdown is taller than the view", () => {
+    expect(revealScroll(1000, 500, 1400, 2400)).toBe(1388);
+  });
+
+  it("does not scroll when the dropdown is in view, or up", () => {
+    expect(revealScroll(1000, 500, 1100, 1300)).toBeNull();
+    expect(revealScroll(1000, 500, 1005, 1600)).toBeNull(); // The row is at the top already.
   });
 });
