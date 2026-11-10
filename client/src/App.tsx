@@ -121,7 +121,22 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { overlayOpen } from "./lib/overlay";
-import { BrowserPane, agentBrowserOf, clearBrowserData, closeTabById, hasTab, keepCookies, minimizeShownTab, minimizeTab, onAgentBrowser, runAgentCall, showAgentTab, showTab } from "./browser/BrowserPane";
+import {
+  BrowserPane,
+  agentBrowserOf,
+  browserTabsOf,
+  clearBrowserData,
+  closeTabById,
+  hasTab,
+  keepCookies,
+  minimizeShownTab,
+  minimizeTab,
+  onAgentBrowser,
+  runAgentCall,
+  showAgentTab,
+  showTab,
+  showTabInRail,
+} from "./browser/BrowserPane";
 import { pendingServerApprovals } from "./browser/ServerBlock";
 import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
 import { AllowedSites } from "./components/AllowedSites";
@@ -3738,12 +3753,15 @@ export default function App() {
                   onShowServers={() => setLayout((l) => openPane(l, "browser"))}
                   browser={
                     agentTab
-                      ? { tab: agentTab.tab, image: null, url: agentTab.url, title: agentTab.title, live: agentTab.live }
+                      ? { tab: agentTab.tab, image: null, url: agentTab.url, title: agentTab.title, live: agentTab.live, agent: agentTab.agent }
                       : agentFrame
-                        ? { tab: null, image: agentFrame.image, url: agentFrame.url, title: agentFrame.title, live: frameLive }
+                        ? { tab: null, image: agentFrame.image, url: agentFrame.url, title: agentFrame.title, live: frameLive, agent: frameLive }
                         : null
                   }
                   onShowBrowser={showAgentBrowser}
+                  browserTabs={() => (sessionId ? browserTabsOf(sessionId) : [])}
+                  onPickBrowserTab={(id) => sessionId && showTabInRail(sessionId, id)}
+                  onCloseBrowser={agentTab ? () => closeTabById(agentTab.tab) : null}
                   changes={gitChanges && samePath(gitChanges.cwd, session.cwd) ? gitChanges : null}
                   onOpenChanges={() => {
                     setReviewId(null); // The pane shows all the changes of the branch, not an old single change.

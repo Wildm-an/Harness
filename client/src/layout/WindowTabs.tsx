@@ -4,6 +4,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Plus, X, type LucideIcon } from "lucide-react";
+import { useTabDrag } from "../lib/tabDrag";
 
 export interface WindowTab {
   id: string;
@@ -34,6 +35,7 @@ export function WindowTabs({
   onSelect,
   onClose,
   onAdd,
+  onMove,
   addLabel,
   kind,
 }: {
@@ -42,6 +44,7 @@ export function WindowTabs({
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onAdd: () => void;
+  onMove?: (id: string, toId: string) => void; // A drag: the tab ``id`` goes to the place of the tab ``toId``.
   addLabel: string; // For example "New tab (Ctrl+T)".
   kind: string; // For the screen reader: "Browser" or "Terminal".
 }) {
@@ -82,14 +85,21 @@ export function WindowTabs({
     if (hidden.length === 0) setListOpen(false);
   }, [hidden.length]);
 
+  // A drag changes the order of the tabs, when the pane permits it. The held tab gets the focus.
+  // One tab only: a drag of the tab moves the pane, as a drag of the header does.
+  const tabDrag = useTabDrag(
+    (from, to) => shown[from] && shown[to] && onMove?.(shown[from].id, shown[to].id),
+    (index) => shown[index] && onSelect(shown[index].id),
+  );
+
   return (
     <>
-      <div ref={strip} className="win-tabs" role="tablist" aria-label={`${kind} tabs`}>
-        {shown.map((tab) => {
+      <div ref={strip} className={`win-tabs${tabDrag.rowClass}`} role="tablist" aria-label={`${kind} tabs`}>
+        {shown.map((tab, index) => {
           const Icon = tab.icon;
           const selected = tab.id === active;
           return (
-            <div key={tab.id} className={`win-tab${selected ? " active" : ""}`} role="presentation">
+            <div key={tab.id} className={`win-tab${selected ? " active" : ""}`} role="presentation" {...(onMove && shown.length > 1 ? tabDrag.tabProps(index) : {})}>
               <button
                 type="button"
                 role="tab"
@@ -102,7 +112,7 @@ export function WindowTabs({
                 {Icon && <Icon size={13} aria-hidden className={tab.busy ? "spin" : undefined} />}
                 <span className="win-tab-label">{tab.label}</span>
               </button>
-              <button type="button" className="win-tab-close" onClick={() => onClose(tab.id)} aria-label={`Close ${tab.label}`} title="Close">
+              <button type="button" className="win-tab-close" data-no-drag onClick={() => onClose(tab.id)} aria-label={`Close ${tab.label}`} title="Close">
                 <X size={15} aria-hidden />
               </button>
             </div>
