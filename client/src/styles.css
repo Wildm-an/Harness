@@ -1623,6 +1623,11 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+/* The confirm button has a danger-color outline, as in the Claude app. */
+.confirm-actions .btn-danger {
+  border-color: var(--danger);
+}
+
 .menu .mode-item {
   align-items: flex-start;
   min-height: 0;
@@ -5853,15 +5858,50 @@ input.tree-rename-input[aria-invalid="true"] {
   line-height: 1.5;
 }
 
-.markdown table {
-  border-collapse: collapse;
+/* Tables, as in the Claude app: the full width, a line below each row, and no vertical lines. */
+.markdown .md-table {
   margin: 0 0 10px;
+  overflow-x: auto;
 }
 
+.markdown > .md-table:last-child {
+  margin-bottom: 0;
+}
+
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* A cell keeps each word whole: "anywhere" of .markdown lets a column shrink to one letter. */
 .markdown th,
 .markdown td {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
+  padding: 12px 16px 12px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: break-word;
+}
+
+.markdown th:last-child,
+.markdown td:last-child {
+  padding-right: 0;
+}
+
+.markdown th {
+  font-weight: 600;
+}
+
+.markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Equations (KaTeX). A display equation that is wider than the chat scrolls in its own box. */
+.markdown .katex-display {
+  margin: 0 0 10px;
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .markdown blockquote {
@@ -8245,28 +8285,6 @@ mark.word-del {
 
 .tree-item.menu-open {
   background: var(--hover);
-}
-
-.session-menu-confirm {
-  padding: 8px 8px 4px;
-}
-
-.session-menu-confirm p {
-  margin: 0 0 10px;
-  color: var(--text);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-
-.session-menu-confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.menu .session-menu-confirm-actions button {
-  width: auto;
-  justify-content: center;
 }
 
 .side-pinned {

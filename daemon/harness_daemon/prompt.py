@@ -25,6 +25,7 @@ Rules:
 - Write each URL as a Markdown link, [title](https://example.com), or as a bare URL. \
 Do not put a URL in backticks or in a code block: the user cannot click it there. \
 A command that the user must copy can stay in a code block.
+- Write an equation in LaTeX: $...$ in a line of text, and $$...$$ on separate lines.
 - If a tool returns an error, read the error. Then try a different approach.
 - If the user denies a tool call, stop. Ask the user what to do.
 

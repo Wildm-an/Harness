@@ -4,17 +4,19 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { useOverlay } from "../lib/overlay";
 
-export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCancel }: {
+export function ConfirmDialog({ title, children, confirmLabel, focusConfirm, onConfirm, onCancel }: {
   title: string; // A question, for example "Delete app.py?".
   children: ReactNode; // What happens, and what stays.
   confirmLabel: string; // A verb, for example "Delete".
+  focusConfirm?: boolean; // The focus starts on the confirm button, so Enter confirms (UI_RULES S8).
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const id = useId();
   const cancel = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
   useOverlay(true);
-  useEffect(() => cancel.current?.focus(), []);
+  useEffect(() => (focusConfirm ? confirm : cancel).current?.focus(), [focusConfirm]);
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
@@ -41,7 +43,7 @@ export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCanc
           <button ref={cancel} type="button" className="btn btn-small" onClick={onCancel}>
             Cancel
           </button>
-          <button type="button" className="btn btn-small btn-danger" onClick={onConfirm}>
+          <button ref={confirm} type="button" className="btn btn-small btn-danger" onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>
