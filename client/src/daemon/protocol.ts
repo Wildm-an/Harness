@@ -1082,7 +1082,8 @@ export type DaemonMessage =
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
   // default: the model that a new session with no model uses now, or null. An older daemon does not send it.
-  | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[]; default?: string | null }
+  // providers: the names of the providers that are on. An older daemon does not send it.
+  | { type: "models"; items: { provider: string; model: string }[]; errors: { provider: string; message: string }[]; default?: string | null; providers?: string[] }
   | ({ type: "mcp" } & McpStatus)
   | { type: "mcp.init"; path: string; created: boolean }
   | { type: "mcp.auth_url"; name: string; url: string }

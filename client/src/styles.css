@@ -1038,6 +1038,11 @@ textarea:focus-visible {
   box-sizing: border-box;
 }
 
+/* The new session screen has no line under the title bar (the user asked for this). */
+.topbar.no-line {
+  border-bottom-color: transparent;
+}
+
 /* The top bar is the title bar of the window. Its height and icons match the Claude app. */
 .topbar .icon-btn,
 .side-head .icon-btn {

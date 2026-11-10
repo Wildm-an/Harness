@@ -1,4 +1,5 @@
 import type { ModelList } from "../components/ModelMenu";
+import { savePref } from "./prefs";
 
 /** The provider part of "provider/model". */
 export function providerOf(spec: string): string {
@@ -58,4 +59,29 @@ export function proposedModel(models: ModelList | null, preferred: string[]): st
     if (found) return found;
   }
   return models.items[0] ?? "";
+}
+
+/**
+ * The model that the start screen shows for the saved model ``saved``. "" is "Default model".
+ *
+ * - While the model list loads, the saved model stays: a slow provider does not replace a choice.
+ * - A provider that did not answer, or that gives no list, keeps its saved model.
+ * - A model of a provider that is gone or off, or that its provider does not list now, gives "Default model".
+ */
+export function startModel(saved: string, models: ModelList | null): string {
+  if (!saved || !models) return saved;
+  const listed = listedModel(saved, models);
+  if (listed) return listed;
+  const provider = providerOf(saved);
+  if (provider && models.providers && !models.providers.includes(provider)) return "";
+  return isModelUnavailable(saved, models) ? "" : saved;
+}
+
+/**
+ * Save the model that the user chose last. The start screen shows it the next time: the model of the
+ * project (``projectId``), else the model of the connection (``scope``). "" is "Default model".
+ */
+export function rememberModel(scope: string, projectId: string | null | undefined, spec: string, save = savePref): void {
+  save(`model.${scope}`, spec);
+  if (projectId) save(`model.${scope}.${projectId}`, spec);
 }

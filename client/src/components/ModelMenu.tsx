@@ -12,6 +12,7 @@ export interface ModelList {
   items: string[]; // "provider/model", from the connections that are on.
   errors: { provider: string; message: string }[];
   default?: string | null; // The model of "Default model" now ("provider/model"). null or absent: not known.
+  providers?: string[]; // The names of the providers that are on. Absent: not known (an older daemon).
 }
 
 /** The effort levels, as in the Claude app. The daemon saves the choice of the user. With no choice: High. */

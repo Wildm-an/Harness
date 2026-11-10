@@ -32,6 +32,7 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 - **W2.** The left end of the title row holds the sidebar toggle (Ctrl+B) and Back / Forward (Alt+Left, Alt+Right).
 - **W3.** Alt alone or F10 opens the app menu at the top left. The app menu has these menus, in this order: File, Edit, View, Go, Help. See section 8 for the items.
 - **W4.** Claude has a "Chat / Cowork / Code" switch in the title row. Harness has only Code, so Harness does not show this switch.
+- **W5.** A line under the title row separates it from the chat and the panes. The new session screen has no line (the user asked for this).
 
 ## 3. Sidebar
 
@@ -203,6 +204,7 @@ Harness has no "+" button now. Add it.
 
 - **C14.** The menu header is "Model · this session" (on the start screen: "Model"). Each model has a one-line description (Harness has no model descriptions yet). Harness (`ModelMenu.tsx`, the user asked for this layout): the top list has the models of the online providers that are on, with the keys 1 to 9 at the right and a check mark on the current model. A provider heading shows only when two or more online providers give models. Then "Effort" and "Local models" rows, each with the current value and an arrow that opens a submenu next to the menu (on the left for a menu at the right edge). "Local models" lists the models of the providers on the computer of the daemon (Ollama, llama.cpp: `isLocalProvider`). The last row is "Show providers" (the user asked for this name): it opens the Providers page (P6).
 - **C15.** Effort is a control in the same menu: "Low", "Medium", "High", "Extra high", "Max". Help text: "Higher effort means more thorough responses, but takes longer and uses your limits faster." The default level is "High", as in the Claude app (the user asked for this). The level is the user setting `effort`: the daemon saves it in its settings file, so the app keeps the choice of the user after a restart. The daemon sends it as `reasoning_effort` ("Max" sends "xhigh": the API has no higher level). When the endpoint rejects it, the daemon sends the request again with no effort, and the session does not send it again.
+- **C14a.** The start screen chip shows the model that the user chose last: on the start screen, in a session menu, in "Switch", or with "Use" (Local models). Each project keeps its own choice. A saved model of a provider that is gone or off, or that its provider does not list, shows as "Default model". While the model list loads, the saved model stays.
 - **C16.** A change in the middle of a session asks first: "Switch model?" or "Change effort?", with "Don't ask again".
 - **C17.** Ctrl+Shift+. opens the model menu.
 - **C17a.** A model switch shows only in the model label under the prompt box. The chat shows no message for it (the user asked for this). A warning about the new model (for example, no API key) still shows in the chat. A typed `/model <provider>/<model>` still shows as a user message, as each typed command does.

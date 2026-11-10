@@ -3527,11 +3527,17 @@ async def on_providers_test(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_models_list(conn: Connection, msg: dict[str, Any]) -> None:
     """The models of each provider that is on, for the model field of the client. "default" is the
     model that a new session with no model uses now (the user settings), or null: the start screen
-    shows its name on the "Default model" chip."""
+    shows its name on the "Default model" chip. "providers" has the names of the providers that are on,
+    also those that did not answer or give no list: a saved model of another provider cannot work."""
     async def run() -> None:
         models, (default, _) = await asyncio.gather(provider_config.all_models(),
                                                     default_model_for_network(load_settings(None)))
-        await conn.send({"type": "models", **models, "default": default})
+        try:
+            names: list[str] | None = sorted(load_providers())
+        except ConfigError:
+            names = None  # A damaged providers.json: the client cannot tell which providers are gone.
+        await conn.send({"type": "models", **models, "default": default,
+                         **({"providers": names} if names is not None else {})})
 
     asyncio.create_task(run())
 
