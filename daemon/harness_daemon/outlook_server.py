@@ -472,8 +472,11 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
     try:
         import win32com.client  # noqa: F401
-    except ImportError:
-        print(json.dumps({"ok": False, "error": "The daemon has no pywin32. Install it: pip install pywin32."}),
+        # pywintypes imports win32timezone only when it converts a COM date. Import it here, so that a
+        # build without it fails at Connect (--check), not at the first message or event.
+        import win32timezone  # noqa: F401
+    except ImportError as e:
+        print(json.dumps({"ok": False, "error": f"The daemon has no pywin32 ({e}). Install it: pip install pywin32."}),
               flush=True)
         sys.exit(1)
     if "--check" in argv:
