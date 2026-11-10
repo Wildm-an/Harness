@@ -3,6 +3,53 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.66 (2026-11-10)
+
+### Chat
+
+- An error of a turn shows as a card with a title, "Try again", and "Copy details". The errors of
+  pages, the sidebar, and the panes show in a popup at the bottom right, not in the middle of a
+  reply. The same message shows one time with a count.
+- The number keys and Esc of a permission, question, or plan card work from the prompt box. Esc
+  answers the card and does not stop the turn. The empty prompt box names the keys.
+- Stop shows during the whole turn. When the box has text, Send shows next to it.
+- A request shows in one place. While a permission card waits, the tool row of its call does not
+  show. After the answer, one row shows with "Allowed once", "Always allowed", or "Denied". The
+  "Asked 2 questions" row above a question card is gone.
+- Each code block has "Copy code", and each finished reply has "Copy message".
+- A queued message is a muted bubble with a dashed edge, a "Queued" label, and "Remove" and
+  "Send now" that always show.
+- After a rewind, "Undo rewind" brings back the messages and the files.
+
+### Safety and data
+
+- The actions that remove a sign-in, a token, a host, or a connection, or that stop a program, ask
+  first. A terminal tab asks before it closes only when a program runs in it.
+- "Archive all" and the side chat "Clear" show a popup with "Undo".
+- A failed save keeps the editor text, with "Try again".
+- A session start with no connection does not lock the start screen. The "connection closed"
+  banner shows on all screens.
+- In Settings, Esc closes an open form first, and Harness asks before typed text is lost. A new
+  form scrolls into view and takes the focus.
+- The secret fields (tokens, keys, the mail app password) have a show and hide button.
+
+### Look and feel
+
+- Menus, dialogs, panes, opened rows, and new chat items move in softly. With "reduce motion" on,
+  nothing moves.
+- Gray placeholder rows show while Settings, the sidebar, and Changes load. The sidebar keeps its
+  list when the connection comes back.
+- A click on a skill keeps the list, with a spinner in the row, until the skill opens.
+- Font sizes, corners, switches, back links, check marks, and file sizes are the same in all of
+  the app. The ⋮ button shows an accent dot, not a red dot, while tasks run.
+
+### Sessions
+
+- A click on the session title in the top bar renames the session. A caret at the right of the
+  title opens the session menu. The folder name shows at the left of the title.
+- The X of the Browser pane also removes the view of the agent page from the session rail. The tab
+  stays open. "Minimize" still keeps the view in the rail.
+
 ## 0.1.65 (2026-11-10)
 
 ### Chat
