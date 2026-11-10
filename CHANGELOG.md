@@ -3,6 +3,23 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.65 (2026-11-10)
+
+### Chat
+
+- Rewind does not ask what to restore. It always restores the code and the conversation. In the
+  "Rewind" dialog (Esc two times), a click or Enter on a message rewinds to it. The rewind button
+  on a message rewinds with one click.
+
+### Sessions
+
+- The "Worktree" row of the Environment section shows only for a session in a worktree, or when the
+  "Worktree" box of the start screen is on for the project of the session.
+- The Background tasks section of the session rail shows only the running tasks. A task that ends
+  goes away from the rail.
+- In the Background tasks pane, the tasks that ended go into a "Finished" group under the running
+  tasks. The group starts folded. Click its heading to open it.
+
 ## 0.1.64 (2026-11-10)
 
 ### Chat
