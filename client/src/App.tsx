@@ -147,6 +147,7 @@ import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } fro
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
+import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
@@ -1645,11 +1646,15 @@ export default function App() {
     sendSafely({ type: "command", name: "model", args: spec });
   };
 
+  /** The saved project of a session: the project with the session folder, else the project with its name. */
+  const sessionProject = (s: { cwd: string; project?: string | null }) =>
+    projects?.find((p) => samePath(p.path, s.cwd)) ?? projects?.find((p) => p.name === s.project);
+
   /** The user chose a model for the session: the start screen shows it the next time (the model used last). */
   const chooseModel = (spec: string) => {
     switchModel(spec);
     const s = sessionRef.current;
-    const project = s ? (projects?.find((p) => samePath(p.path, s.cwd)) ?? projects?.find((p) => p.name === s.project)) : undefined;
+    const project = s ? sessionProject(s) : undefined;
     rememberModel(currentRef.current?.id ?? "local", project?.id, spec);
   };
 
@@ -3788,6 +3793,7 @@ export default function App() {
                     path: session.cwd,
                     branch: prStatus.get(pathKey(session.cwd))?.branch ?? null,
                     worktree: session.worktree,
+                    worktreeOption: loadWorktreeChoice(worktreeKey(current?.id ?? "local", sessionProject(session)?.id)).on,
                   }}
                   context={chat.context ? { tokens: chat.context.tokens, length: chat.context.length } : null}
                   usage={contextUsage}
