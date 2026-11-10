@@ -180,12 +180,30 @@ export interface BrowserEvent {
   title?: string; // Only in a title change.
 }
 
+// The calls that make, move, show, hide, or close the webview of a tab, by tab. Tauri runs async
+// commands at the same time. A move that ran while the webview was being made did nothing, so the
+// webview stayed at its first place, for example over the chat when the pane opened from a card.
+const tabCalls = new Map<string, Promise<unknown>>();
+
+/** Run ``call`` after the earlier calls of the same tab end (with a result or an error). */
+export function inTabOrder<T>(id: string, call: () => Promise<T>): Promise<T> {
+  const next = (tabCalls.get(id) ?? Promise.resolve()).then(call, call);
+  const tail = next.catch(() => undefined);
+  tabCalls.set(id, tail);
+  void tail.then(() => {
+    if (tabCalls.get(id) === tail) tabCalls.delete(id);
+  });
+  return next;
+}
+
 /** The webviews of the Browser pane: one for each tab. Each call does nothing outside the desktop app. */
 export const browserView = {
   /** fresh: clear the cookies and storage of all tabs before the page loads ("Keep cookies: Until quit"). */
-  async open(id: string, url: string, bounds: Bounds, fresh = false) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_open", { id, url, bounds, fresh });
+  open(id: string, url: string, bounds: Bounds, fresh = false) {
+    return inTabOrder(id, async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("browser_open", { id, url, bounds, fresh });
+    });
   },
   /** Saves a PNG screenshot of the visible part of a tab. */
   async screenshot(id: string, path: string) {
@@ -198,17 +216,23 @@ export const browserView = {
     const text = await invoke<string>("browser_cdp", { id, method, params: JSON.stringify(params ?? {}), timeout: timeoutMs });
     return text ? (JSON.parse(text) as Record<string, unknown>) : {};
   },
-  async bounds(id: string, bounds: Bounds) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_bounds", { id, bounds });
+  bounds(id: string, bounds: Bounds) {
+    return inTabOrder(id, async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("browser_bounds", { id, bounds });
+    });
   },
-  async visible(id: string, visible: boolean) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_visible", { id, visible });
+  visible(id: string, visible: boolean) {
+    return inTabOrder(id, async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("browser_visible", { id, visible });
+    });
   },
-  async navigate(id: string, url: string) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_navigate", { id, url });
+  navigate(id: string, url: string) {
+    return inTabOrder(id, async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("browser_navigate", { id, url });
+    });
   },
   async history(id: string, action: "back" | "forward" | "reload") {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -222,9 +246,11 @@ export const browserView = {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("browser_clear_data", { id });
   },
-  async close(id: string) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("browser_close", { id });
+  close(id: string) {
+    return inTabOrder(id, async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("browser_close", { id });
+    });
   },
   /** Close the webviews of all tabs: the page of the app loaded again, and its tabs are gone. */
   async closeAll() {
