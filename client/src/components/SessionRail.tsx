@@ -42,6 +42,12 @@ export interface RailEnvironment {
   path: string;
   branch: string | null; // The git branch of the folder. null: not a git repository, or not known yet.
   worktree: SessionWorktree | null;
+  worktreeOption: boolean; // The "Worktree" box of the start screen is on for the project of the session.
+}
+
+/** The "Worktree" row shows for a session in a worktree, or when the worktree option of its project is on. */
+export function showWorktreeRow(environment: Pick<RailEnvironment, "worktree" | "worktreeOption">): boolean {
+  return environment.worktree !== null || environment.worktreeOption;
 }
 
 /** The page where the agent works: its tab of the Browser pane, or the headless agent browser. */
@@ -229,16 +235,18 @@ export function SessionRail({
             <span className="rail-value-text mono">{branch}</span>
           </RailRow>
         )}
-        <RailRow
-          label="Worktree"
-          title={
-            environment.worktree
-              ? `${environment.worktree.path}${environment.worktree.base ? `. Started from ${environment.worktree.base}.` : ""}`
-              : "This session works in the project folder."
-          }
-        >
-          <span className="rail-value-text">{environment.worktree ? "On" : "Off"}</span>
-        </RailRow>
+        {showWorktreeRow(environment) && (
+          <RailRow
+            label="Worktree"
+            title={
+              environment.worktree
+                ? `${environment.worktree.path}${environment.worktree.base ? `. Started from ${environment.worktree.base}.` : ""}`
+                : "This session works in the project folder."
+            }
+          >
+            <span className="rail-value-text">{environment.worktree ? "On" : "Off"}</span>
+          </RailRow>
+        )}
       </dl>
       {awake}
       </>

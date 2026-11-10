@@ -22,18 +22,9 @@ import { modelName } from "../lib/modelName";
 import { PromptBox, type Submission } from "./PromptBox";
 import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
-import { WorktreeMenu, type WorktreeChoice } from "./WorktreeMenu";
+import { WorktreeMenu, loadWorktreeChoice, worktreeKey as projectWorktreeKey, type WorktreeChoice } from "./WorktreeMenu";
 import { FolderChooser, folderName } from "./RecentFolders";
 import type { ViewMode } from "../lib/viewMode";
-
-function loadWorktreeChoice(key: string): WorktreeChoice {
-  try {
-    const v = JSON.parse(loadPref(key, "{}"));
-    return { on: v?.on === true, base: typeof v?.base === "string" ? v.base : null };
-  } catch {
-    return { on: false, base: null };
-  }
-}
 
 /** The folder that holds a path. */
 interface ProjectDraft {
@@ -351,7 +342,7 @@ export function SessionStart({
   const newModel = shownModel || models?.default || ""; // The model of the new session: "provider/model".
 
   // Each project remembers its worktree choice. The chip shows only for a folder in a git repository.
-  const worktreeKey = `worktree.${prefScope}.${selected?.id ?? ""}`;
+  const worktreeKey = projectWorktreeKey(prefScope, selected?.id);
   const [worktree, setWorktree] = useState<WorktreeChoice>(() => loadWorktreeChoice(worktreeKey));
   useEffect(() => {
     setWorktree(loadWorktreeChoice(worktreeKey));

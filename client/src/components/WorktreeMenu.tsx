@@ -8,10 +8,26 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Folder, GitBranch } from "lucide-react";
 import type { GitBranches } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
+import { loadPref } from "../lib/prefs";
 
 export interface WorktreeChoice {
   on: boolean;
   base: string | null; // The branch to start from. null: the current branch of the project folder.
+}
+
+/** The key of the saved worktree choice of a project. Each connection and project has its own choice. */
+export function worktreeKey(prefScope: string, projectId: string | undefined): string {
+  return `worktree.${prefScope}.${projectId ?? ""}`;
+}
+
+/** The saved worktree choice of a project. No choice, or a bad one: the option is off. */
+export function loadWorktreeChoice(key: string): WorktreeChoice {
+  try {
+    const v = JSON.parse(loadPref(key, "{}"));
+    return { on: v?.on === true, base: typeof v?.base === "string" ? v.base : null };
+  } catch {
+    return { on: false, base: null };
+  }
 }
 
 /** The branch that the session starts from: the saved choice if it still exists, else the current branch. */
