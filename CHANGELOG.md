@@ -3,6 +3,36 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.63 (2026-11-09)
+
+### Models
+
+- The model chip on the new session screen shows the model that you chose last. A model change in a
+  session counts too. Before, an old model came back after each start and each update.
+- A saved model that no provider gives now shows as "Default model". While the model list loads, the
+  saved model stays.
+- Images that you attach go to the models of OpenAI-compatible servers. Harness reads image input from
+  the model list of the server. A model with no image input shows a warning in the chat and a note
+  under the image.
+
+### Chat
+
+- When a turn ends with open steps in the task list, the agent gets one reminder to close the list.
+
+### Files and Browser
+
+- A file opens in an unpinned tab (an italic name). The next file takes its place. A pin, a
+  double-click, or an edit keeps the tab open.
+- Drag a file tab or a browser tab to move it.
+- The Browser section of the session rail has a new card: the page title, a tab menu, "Open in the
+  Browser pane", "Close tab", and the page picture.
+- A click on a browser card opens the Browser pane in its place. The browser does not cover the chat.
+
+### Window
+
+- The new session screen has no line under the title bar.
+- After a click on "Hide sidebar", the sidebar stays hidden. It does not show again under the pointer.
+
 ## 0.1.62 (2026-11-09)
 
 ### Chat
