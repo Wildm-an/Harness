@@ -121,6 +121,7 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { overlayOpen } from "./lib/overlay";
+import { canStartPeek, peekGate } from "./lib/sidebarPeek";
 import {
   BrowserPane,
   agentBrowserOf,
@@ -3018,8 +3019,19 @@ export default function App() {
     if (peekTimer.current !== null) window.clearTimeout(peekTimer.current);
     peekTimer.current = null;
   };
+  // A click on "Hide sidebar" blocks the peek until the pointer leaves the toggle (see sidebarPeek.ts).
+  const peekBlocked = useRef(false);
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!peekBlocked.current) return;
+      const overToggle = e.target instanceof Element && e.target.closest(".sidebar-toggle") !== null;
+      peekBlocked.current = peekGate(peekBlocked.current, { type: "pointer", overToggle });
+    };
+    document.addEventListener("pointermove", onMove);
+    return () => document.removeEventListener("pointermove", onMove);
+  }, []);
   const startPeek = (e: React.MouseEvent) => {
-    if (e.buttons !== 0) return; // Not during a drag.
+    if (!canStartPeek(peekBlocked.current, e.buttons)) return;
     cancelPeek();
     peekTimer.current = window.setTimeout(() => {
       peekTimer.current = null;
@@ -3134,10 +3146,16 @@ export default function App() {
       <button
         type="button"
         className={`icon-btn ghost sidebar-toggle${peek && toggleHot ? " hot" : ""}`}
-        onClick={() => showSidebar(!sidebarOpen)}
+        onClick={() => {
+          if (sidebarOpen) peekBlocked.current = peekGate(peekBlocked.current, { type: "hide-click" });
+          showSidebar(!sidebarOpen);
+        }}
         // While the sidebar is hidden, the pointer on this button shows the sidebar over the view.
         onMouseEnter={sidebarOpen ? undefined : startPeek}
-        onMouseLeave={cancelPeek}
+        onMouseLeave={() => {
+          cancelPeek();
+          peekBlocked.current = peekGate(peekBlocked.current, { type: "leave" });
+        }}
         aria-label={sidebarOpen ? "Hide the sidebar" : "Show the sidebar"}
         title={`${sidebarOpen ? "Hide sidebar" : "Show sidebar"} (${SIDEBAR_SHORTCUT})`}
       >
