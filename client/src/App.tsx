@@ -179,6 +179,8 @@ import {
 } from "./lib/connections";
 import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openExternal, openLocalPath, pickFiles, pickFolder, revealInExplorer } from "./lib/tauri";
 import { filesPromptText } from "./lib/fileRefs";
+import { noImageNote } from "./lib/images";
+import { modelName } from "./lib/modelName";
 import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore, sessionPrUrls } from "./lib/pr";
 import { FolderMenu } from "./components/FolderMenu";
 import type { SessionActions } from "./components/SessionRow";
@@ -741,6 +743,7 @@ export default function App() {
             requests: msg.requests,
             turnStartedAt: msg.turn_started_at,
             turnTokens: msg.turn_tokens,
+            imageInput: msg.image_input ?? null,
           });
           // A return to a turn that waits for approval of a change: show the change for review.
           const change = msg.running ? msg.requests?.find((r) => r.diff) : undefined;
@@ -957,7 +960,12 @@ export default function App() {
           return;
         }
         case "models":
-          setModels({ items: msg.items.map((i) => `${i.provider}/${i.model}`), errors: msg.errors, default: msg.default ?? null });
+          setModels({
+            items: msg.items.map((i) => `${i.provider}/${i.model}`),
+            errors: msg.errors,
+            default: msg.default ?? null,
+            noImages: msg.items.filter((i) => i.image_input === false).map((i) => `${i.provider}/${i.model}`),
+          });
           return;
         case "preview.frame": {
           const { type: _type, ...frame } = msg;
@@ -2682,6 +2690,7 @@ export default function App() {
             onCycleMode={() => changeMode(nextMode(permissionMode))}
             suggestion={!chat.running && session && suggestion?.sessionId === session.id ? suggestion.text : null}
             onDismissSuggestion={() => setSuggestion(null)}
+            imageNote={session && !session.harness && chat.imageInput === false ? noImageNote(modelName(session.model)) : null}
             below={
               session && (
                 <>

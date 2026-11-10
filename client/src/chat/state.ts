@@ -64,9 +64,11 @@ export interface ChatState {
   usage: Usage | null;
   context: ContextUse | null;
   turn: TurnInfo | null;
+  // The session model accepts images. false: the prompt box shows a note at an image. null: not known.
+  imageInput: boolean | null;
 }
 
-export const emptyChat: ChatState = { items: [], running: false, usage: null, context: null, turn: null };
+export const emptyChat: ChatState = { items: [], running: false, usage: null, context: null, turn: null, imageInput: null };
 
 export type ChatAction =
   | { type: "daemon"; msg: DaemonMessage }
@@ -88,6 +90,7 @@ export type ChatAction =
       requests?: PermissionRequest[]; // The permission requests that wait for a decision.
       turnStartedAt?: number | null; // Epoch seconds.
       turnTokens?: number;
+      imageInput?: boolean | null;
     }
   | { type: "clear" };
 
@@ -294,7 +297,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       // The checks of the model endpoint finished after the open.
       const notices: ChatItem[] = msg.warnings.map((text) => ({ kind: "notice", id: nextId("notice"), level: "warning", text }));
       const context = state.context ? { ...state.context, length: msg.context_length, source: msg.context_source } : state.context;
-      return { ...state, items: notices.length ? [...state.items, ...notices] : state.items, context };
+      return { ...state, items: notices.length ? [...state.items, ...notices] : state.items, context, imageInput: msg.image_input };
     }
     case "command.result": {
       const notices: ChatItem[] = [];
@@ -307,7 +310,8 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         msg.name === "clear" && state.context ? { ...state.context, tokens: 0 }
         : msg.context_length && state.context ? { ...state.context, length: msg.context_length, source: msg.context_source }
         : state.context;
-      return { ...state, items, context };
+      const imageInput = switched && msg.image_input !== undefined ? msg.image_input : state.imageInput;
+      return { ...state, items, context, imageInput };
     }
     default:
       return state;
@@ -363,6 +367,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         usage: null,
         context: action.context,
         items: [...summary, ...historyToItems(action.history), ...warnings, ...live],
+        imageInput: action.imageInput ?? null,
       };
     }
     case "clear":

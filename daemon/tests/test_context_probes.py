@@ -9,7 +9,8 @@ import httpx
 import pytest
 
 from harness_daemon import providers
-from harness_daemon.providers import Provider, model_contexts, resolve_context_length
+from harness_daemon.providers import (Provider, image_input_from_entry, model_contexts, openai_image_input,
+                                     resolve_context_length)
 
 # A server answers only its own paths. Each test gives the paths of one server type.
 Routes = dict[tuple[str, str], Any]
@@ -115,3 +116,42 @@ def test_a_provider_context_length_needs_no_request(server):
 def test_context_info_json():
     assert providers.ContextInfo(10, "settings").to_json() == {"length": 10, "source": "settings"}
     assert providers.ContextInfo(10, "x", "careful").to_json()["warning"] == "careful"
+
+
+# -- image input ------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("entry, expected", [
+    ({"architecture": {"input_modalities": ["text", "image"]}}, True),
+    ({"architecture": {"input_modalities": ["text"]}}, False),
+    ({"input_modalities": ["text", "image"]}, True),
+    ({"modalities": {"input": ["text", "image"], "output": ["text"]}}, True),
+    ({"capabilities": ["completion", "vision"]}, True),
+    ({"capabilities": {"vision": False}}, False),
+    ({"supports_vision": True}, True),
+    ({"model_info": {"supports_vision": False}}, False),
+    ({"id": "m", "object": "model"}, None),
+])
+def test_image_input_from_a_model_list_entry(entry, expected):
+    assert image_input_from_entry(entry) is expected
+
+
+def images(p: Provider, model: str = "m") -> bool | None:
+    return asyncio.run(openai_image_input(p, model))
+
+
+def test_image_input_from_the_model_list(server):
+    server["routes"] = {("GET", "/v1/models"): {"data": [
+        {"id": "m", "architecture": {"input_modalities": ["text", "image"]}},
+        {"id": "plain"},
+    ]}}
+    assert images(provider()) is True
+    assert images(provider(), "plain") is None  # The list does not tell.
+
+
+def test_image_input_of_lm_studio_and_llama_server(server):
+    server["routes"] = {("GET", "/api/v0/models"): {"data": [{"id": "m", "type": "vlm"}, {"id": "t", "type": "llm"}]}}
+    assert images(provider()) is True
+    assert images(provider(), "t") is False
+    server["routes"] = {("GET", "/props"): {"modalities": {"vision": False}}}
+    assert images(provider()) is False

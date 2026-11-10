@@ -16,6 +16,8 @@ import { useOverlay } from "../lib/overlay";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
 import { loadPref, savePref } from "../lib/prefs";
+import { noImageNote } from "../lib/images";
+import { modelName } from "../lib/modelName";
 import { PromptBox, type Submission } from "./PromptBox";
 import { parentHints } from "../lib/projectLabels";
 import { mentionOrder, type MentionSession } from "./mentions";
@@ -333,6 +335,7 @@ export function SessionStart({
   const selected = projects?.find((p) => p.id === selectedId) ?? projects?.[0] ?? null;
   const modelKey = (id: string | undefined) => (id ? `model.${prefScope}.${id}` : `model.${prefScope}`);
   const [model, setModel] = useState("");
+  const startModel = model.trim() || models?.default || ""; // The model of the new session: "provider/model".
   const [mode, setMode] = useState<PermissionMode>(() => lastMode(prefScope)); // The mode of the last session.
   const noProjects = projects !== null && projects.length === 0;
   // With no project, the form to add one is open: a session needs a project.
@@ -505,6 +508,7 @@ export function SessionStart({
             onSubmit={start}
             onInterrupt={() => {}}
             onCycleMode={() => setMode(nextMode(mode))} // Shift+Tab changes the mode, as in a session.
+            imageNote={!harness && startModel && models?.noImages?.includes(startModel) ? noImageNote(modelName(startModel)) : null}
             below={
               <>
                 <div className="prompt-below-left">

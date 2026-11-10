@@ -823,7 +823,10 @@ def test_a_prompt_with_pasted_images(daemon, project, fake_model):
     c.new_session(project)
     fake_model.script({"text": "I cannot see it."})
     c.send({"type": "prompt", "text": "What is wrong here?", "images": [PNG_DOT]})
-    c.until("turn.end")
+    _, seen = c.until("turn.end")
+    # The user sees that the model did not get the image.
+    notices = [m["text"] for m in seen if m["type"] == "notice"]
+    assert any("test-model cannot read images" in n for n in notices), notices
     last = fake_model.requests[-1]["messages"][-1]
     assert isinstance(last["content"], str) and "attached 1 image" in last["content"]
     c.send({"type": "prompt", "text": "x", "images": ["https://example.com/a.png"]})
@@ -841,6 +844,86 @@ def test_a_prompt_with_pasted_images(daemon, project, fake_model):
     c.until("turn.end")
     parts = fake_model.requests[-1]["messages"][-1]["content"]
     assert parts[1] == {"type": "image_url", "image_url": {"url": PNG_DOT}}
+    c.close()
+
+
+def _openai_provider(harness_home, fake_model) -> None:
+    """A second provider "box": the fake model as an OpenAI-compatible server, with no /api/show."""
+    providers = json.loads((harness_home / "providers.json").read_text())
+    providers["box"] = {"base_url": fake_model.base_url, "api_key": "test", "kind": "openai", "context_length": 32768}
+    (harness_home / "providers.json").write_text(json.dumps(providers))
+
+
+def test_an_openai_server_that_lists_image_input(daemon, harness_home, project, fake_model):
+    # The bug: a model of an OpenAI-compatible server always got a note in place of the image.
+    _openai_provider(harness_home, fake_model)
+    fake_model.model_fields = {"test-model": {"architecture": {"input_modalities": ["text", "image"]}}}
+    c = Client(daemon)
+    c.new_session(project, model="box/test-model")
+    assert c.until("session.model_info")[0]["image_input"] is True
+    fake_model.script({"text": "I see a dot."})
+    c.send({"type": "prompt", "text": "What is this?", "images": [PNG_DOT]})
+    c.until("turn.end")
+    parts = fake_model.requests[-1]["messages"][-1]["content"]
+    assert parts[0] == {"type": "text", "text": "What is this?"}
+    assert parts[1] == {"type": "image_url", "image_url": {"url": PNG_DOT}}
+    c.close()
+
+
+def test_an_unknown_image_input_sends_the_image(daemon, harness_home, project, fake_model):
+    # The model list does not tell: the image goes to the model.
+    _openai_provider(harness_home, fake_model)
+    c = Client(daemon)
+    ready = c.new_session(project, model="box/test-model")
+    assert ready["image_input"] is None
+    fake_model.script({"text": "I see a dot."})
+    c.send({"type": "prompt", "text": "What is this?", "images": [PNG_DOT]})
+    _, seen = c.until("turn.end")
+    assert not [m for m in seen if m["type"] == "notice"]
+    parts = fake_model.requests[-1]["messages"][-1]["content"]
+    assert parts[1] == {"type": "image_url", "image_url": {"url": PNG_DOT}}
+    c.close()
+
+
+def test_a_rejected_image_becomes_a_note_with_a_notice(daemon, harness_home, project, fake_model):
+    # The model list does not tell, and the endpoint rejects the image: the request goes again with a
+    # note, and the user sees why.
+    _openai_provider(harness_home, fake_model)
+    c = Client(daemon)
+    c.new_session(project, model="box/test-model")
+    # Two rejections: the model client tries a 400 error one more time without reasoning_effort.
+    rejected = {"error": "image input is not supported", "status": 400}
+    fake_model.script(rejected, rejected, {"text": "I cannot see it."})
+    c.send({"type": "prompt", "text": "What is this?", "images": [PNG_DOT]})
+    _, seen = c.until("turn.end")
+    assert not [m for m in seen if m["type"] == "error"]
+    info = [m for m in seen if m["type"] == "session.model_info"][-1]
+    assert info["image_input"] is False and "rejected the attached image" in info["warnings"][0]
+    *tries, last = fake_model.requests
+    assert len(tries) == 2 and all(r["messages"][-1]["content"][1]["type"] == "image_url" for r in tries)
+    note = last["messages"][-1]["content"]
+    assert isinstance(note, str) and "attached 1 image" in note
+
+    # The next image of the session gets the note at once, with the notice.
+    fake_model.script({"text": "Still no."})
+    c.send({"type": "prompt", "text": "And this?", "images": [PNG_DOT]})
+    _, seen = c.until("turn.end")
+    assert any("cannot read images" in m["text"] for m in seen if m["type"] == "notice")
+    assert isinstance(fake_model.requests[-1]["messages"][-1]["content"], str)
+    c.close()
+
+
+def test_an_error_that_is_not_the_image_stays_an_error(daemon, harness_home, project, fake_model):
+    _openai_provider(harness_home, fake_model)
+    c = Client(daemon)
+    c.new_session(project, model="box/test-model")
+    # The API client tries a rate limit error one more time.
+    fake_model.script({"error": "Rate limit.", "status": 429}, {"error": "Rate limit.", "status": 429})
+    c.send({"type": "prompt", "text": "What is this?", "images": [PNG_DOT]})
+    _, seen = c.until("turn.end")
+    assert any("HTTP 429" in m.get("text", m.get("message", "")) for m in seen if m["type"] in ("error", "notice"))
+    assert not [m for m in seen if m["type"] == "session.model_info" and m["image_input"] is False]
+    assert all(r["messages"][-1]["content"][1]["type"] == "image_url" for r in fake_model.requests)
     c.close()
 
 
