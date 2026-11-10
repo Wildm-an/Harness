@@ -306,3 +306,26 @@ describe("a card of a background agent", () => {
     expect(s.items[1]).toMatchObject({ reason: 'The background agent "Read the README" asks.' });
   });
 });
+
+describe("the image input of the session model", () => {
+  const load = (imageInput: boolean | null) =>
+    chatReducer(emptyChat, { type: "load", history: [], warnings: [], summary: null, context: null, imageInput });
+
+  it("comes from the open, and changes with the model checks", () => {
+    expect(emptyChat.imageInput).toBeNull();
+    expect(load(null).imageInput).toBeNull();
+    const s = chatReducer(load(null), {
+      type: "daemon",
+      msg: { type: "session.model_info", context_length: 8192, image_input: false, warnings: ["The endpoint rejected the image."] },
+    });
+    expect(s.imageInput).toBe(false);
+    expect(s.items.at(-1)).toMatchObject({ kind: "notice", level: "warning", text: "The endpoint rejected the image." });
+  });
+
+  it("changes after /model, and not after other commands", () => {
+    const s = chatReducer(load(false), { type: "daemon", msg: { type: "command.result", name: "model", model: "box/llava", image_input: true } });
+    expect(s.imageInput).toBe(true);
+    const other = chatReducer(s, { type: "daemon", msg: { type: "command.result", name: "compact", text: "Done." } });
+    expect(other.imageInput).toBe(true);
+  });
+});

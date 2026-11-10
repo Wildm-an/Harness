@@ -12,6 +12,7 @@ export interface ModelList {
   items: string[]; // "provider/model", from the connections that are on.
   errors: { provider: string; message: string }[];
   default?: string | null; // The model of "Default model" now ("provider/model"). null or absent: not known.
+  noImages?: string[]; // The models ("provider/model") that the daemon knows have no image input.
 }
 
 /** The effort levels, as in the Claude app. The daemon saves the choice of the user. With no choice: High. */
