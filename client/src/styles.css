@@ -1122,10 +1122,52 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+/* The session title: a click renames it in place. The caret at its right opens the session menu. */
+.topbar-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .topbar-name {
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  transition: background var(--duration) var(--ease-out);
+}
+
+.topbar-name:hover {
+  background: var(--hover);
+}
+
+.topbar-rename {
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+}
+
+/* The line between the folder name and the session title. */
+.topbar-divider {
+  flex: none;
+  margin: 0 -4px;
+  color: var(--text-muted);
+  user-select: none;
 }
 
 /* The branch of a worktree session, after the folder chip. */
@@ -8300,16 +8342,26 @@ mark.word-del {
   min-width: 0;
 }
 
-.folder-chip {
+/* The folder name at the left of the session title: plain text. A click opens the folder menu. */
+.folder-name {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
-  transition: color var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out);
+  transition: color var(--duration) var(--ease-out), background var(--duration) var(--ease-out);
 }
 
-.folder-chip:hover,
-.folder-chip.active {
-  border-color: var(--border-strong);
+.folder-name:hover,
+.folder-name.active {
+  background: var(--hover);
   color: var(--text);
 }
 

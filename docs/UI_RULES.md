@@ -310,7 +310,7 @@ Harness has no "+" button now. Add it.
 
 ### 7.2 Session title bar
 
-- **V5.** Left side: the origin chip (local or remote, with the folder name), then the title. A click on the title renames it in place. A caret button opens the session menu (the same menu as S7).
+- **V5.** Left side: the folder name, a "|" line, then the title (`SessionTitle.tsx`). The folder name is plain text, not a chip (the user asked for this). A click on it opens the folder menu (V6). A click on the title renames it in place. A caret button at the right of the title opens the session menu (the same menu as S7).
 - **V6.** The folder chip menu: "Copy" > "Path" / "Branch name", "Change folder…", "Open in terminal".
 
 ### 7.2a Session rail

@@ -87,16 +87,18 @@ export function splitItem(actions: Pick<SessionActions, "onOpenSplit">, active: 
 const MENU_WIDTH = 210;
 const SUB_WIDTH = 160;
 
-type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split" | "pr";
+export type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split" | "pr";
 const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete", g: "pr" };
 
-function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onClose }: {
-  session: SessionSummary;
+/** The session menu: of a sidebar row, and of the caret button at the right of the title in the top bar. */
+export function SessionMenu({ session, unread, prItem, split, anchor, at, align = "right", onAction, onClose }: {
+  session: Pick<SessionSummary, "title" | "pinned" | "archived">;
   unread: boolean;
   prItem: boolean; // "Open PR": the branch of the session has a pull request.
   split: "on" | "off" | null; // "Open in" > "Split view": "off" when the main view shows the session. null: no item.
   anchor: HTMLElement;
   at: { x: number; y: number } | null; // A right click: the menu opens at the mouse, not under the ⋮ button.
+  align?: "left" | "right"; // The menu edge that lines up with the same edge of the anchor.
   onAction: (action: MenuAction) => void;
   onClose: () => void;
 }) {
@@ -118,8 +120,9 @@ function SessionMenu({ session, unread, prItem, split, anchor, at, onAction, onC
     }
     const r = anchor.getBoundingClientRect();
     const top = r.bottom + 4 + height > window.innerHeight ? Math.max(8, r.top - 4 - height) : r.bottom + 4;
-    setPos({ top, left: Math.max(8, Math.min(r.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)) });
-  }, [anchor, at]);
+    const left = align === "left" ? r.left : r.right - MENU_WIDTH;
+    setPos({ top, left: Math.max(8, Math.min(left, window.innerWidth - MENU_WIDTH - 8)) });
+  }, [anchor, at, align]);
 
   const close = useRef(onClose);
   close.current = onClose;

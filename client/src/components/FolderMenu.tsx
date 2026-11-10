@@ -1,8 +1,8 @@
-// The folder chip in the top bar of a session, with a menu as in Claude: Show in Explorer, Copy path,
-// Change folder, and Open in terminal.
+// The folder name in the top bar of a session, at the left of the title, with a menu as in Claude:
+// Show in Explorer, Copy path, Change folder, and Open in terminal. The name is plain text (the user asked for this).
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Folder, FolderInput, FolderOpen, SquareTerminal } from "lucide-react";
+import { Check, Copy, FolderInput, FolderOpen, SquareTerminal } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 
 export function FolderMenu({ name, path, canReveal, canChange, onReveal, onChange, onOpenTerminal }: {
@@ -77,13 +77,12 @@ export function FolderMenu({ name, path, canReveal, canChange, onReveal, onChang
       <button
         ref={chip}
         type="button"
-        className={`chip mono folder-chip${open ? " active" : ""}`}
+        className={`folder-name${open ? " active" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
         title={path}
         onClick={toggle}
       >
-        <Folder size={12} aria-hidden />
         {name}
       </button>
       {open && (
