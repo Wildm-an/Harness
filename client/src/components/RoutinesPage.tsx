@@ -11,6 +11,7 @@ import {
   CircleX,
   Clock,
   Copy,
+  CopyPlus,
   FolderOpen,
   KeyRound,
   LoaderCircle,
@@ -245,6 +246,16 @@ export function fieldsOf(d: RoutineDraft): RoutineFields {
   };
 }
 
+/** The name of a copy of a routine: "Daily summary (copy)", then "(copy 2)" if a routine has that name. */
+export function copyName(name: string, taken: string[]): string {
+  const base = name.trim().replace(/ \(copy(?: \d+)?\)$/, "") || "Routine";
+  const used = new Set(taken.map((n) => n.trim().toLowerCase()));
+  for (let n = 1; ; n++) {
+    const next = `${base} (copy${n === 1 ? "" : ` ${n}`})`;
+    if (!used.has(next.toLowerCase())) return next;
+  }
+}
+
 /** The path of the file of a routine: the folder, and the id with ".md". */
 export function routineFile(folder: string, id: string): string {
   const sep = folder.includes("\\") ? "\\" : "/";
@@ -377,10 +388,12 @@ function RoutineForm({
   onBrowse,
   onSave,
   onDelete,
+  onDuplicate,
   onRun,
   onOpenSession,
   onBack,
   api = null,
+  focusName = false,
 }: {
   item: RoutineItem | null; // null: a new routine.
   file: string | null; // The path of the routine file on the daemon computer.
@@ -395,14 +408,22 @@ function RoutineForm({
   onBrowse: (initial: string) => Promise<string | null>;
   onSave: (fields: RoutineFields) => void;
   onDelete: () => void;
+  onDuplicate: (fields: RoutineFields) => void; // The fields of the form, as a new routine.
   onRun: () => void;
   onOpenSession: (id: string) => void;
   onBack: () => void;
   api?: ApiProps | null; // The API trigger of a saved routine.
+  focusName?: boolean; // The routine is a new copy: the Name field gets the focus, with its text selected.
 }) {
   const [d, setD] = useState(initial);
   const [errors, setErrors] = useState<DraftErrors>({});
   const [confirm, setConfirm] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!focusName) return;
+    nameRef.current?.focus();
+    nameRef.current?.select();
+  }, [focusName]);
   const update = (patch: Partial<RoutineDraft>) => setD((old) => ({ ...old, ...patch }));
   const folders = projects.filter((p) => p.exists).map((p) => p.path);
   if (d.cwd && !folders.includes(d.cwd)) folders.unshift(d.cwd);
@@ -412,6 +433,12 @@ function RoutineForm({
     const found = checkDraft(d);
     setErrors(found);
     if (Object.keys(found).length === 0) onSave(fieldsOf(d));
+  };
+  // The copy gets the values that the form shows now. It does not change this routine.
+  const duplicate = () => {
+    const found = checkDraft(d);
+    setErrors(found);
+    if (Object.keys(found).length === 0) onDuplicate(fieldsOf(d));
   };
 
   return (
@@ -423,9 +450,13 @@ function RoutineForm({
       </div>
       {item && (
         <div className="routine-actions">
-          <button type="button" className="btn btn-small" onClick={onRun} disabled={item.running || item.queued || !!item.error}>
+          <button type="button" className="btn btn-small" onClick={onRun} disabled={!canRunNow(item)}>
             <Play size={14} aria-hidden />
             Run now
+          </button>
+          <button type="button" className="btn btn-small" onClick={duplicate} disabled={saving} title="Make a copy of this routine and open the copy">
+            <CopyPlus size={14} aria-hidden />
+            Duplicate
           </button>
           <button type="button" className="btn btn-small btn-danger" onClick={() => setConfirm(true)}>
             <Trash2 size={14} aria-hidden />
@@ -443,7 +474,7 @@ function RoutineForm({
       <form className="routine-form" onSubmit={submit} noValidate autoComplete="off">
         <div className="field">
           <label htmlFor="rt-name">Name</label>
-          <input id="rt-name" value={d.name} placeholder="Daily summary" onChange={(e) => update({ name: e.target.value })} aria-invalid={!!errors.name} />
+          <input id="rt-name" ref={nameRef} value={d.name} placeholder="Daily summary" onChange={(e) => update({ name: e.target.value })} aria-invalid={!!errors.name} />
           {errors.name && (
             <p className="field-error" role="alert">
               {errors.name}
@@ -692,7 +723,22 @@ function ApiAccess({ item, api }: { item: RoutineItem; api: ApiProps }) {
   );
 }
 
-function RoutineRow({ item, onOpen, onToggle }: { item: RoutineItem; onOpen: () => void; onToggle: (enabled: boolean) => void }) {
+/** "Run now" is off while the routine runs or waits to run, and for a file with a problem. */
+export function canRunNow(item: RoutineItem): boolean {
+  return !item.running && !item.queued && !item.error;
+}
+
+function RoutineRow({
+  item,
+  onOpen,
+  onRun,
+  onToggle,
+}: {
+  item: RoutineItem;
+  onOpen: () => void;
+  onRun: () => void;
+  onToggle: (enabled: boolean) => void;
+}) {
   const next = item.next_fire_at ? ` · Next: ${formatWhen(item.next_fire_at)}` : "";
   return (
     <li className="cap-item routine-item">
@@ -708,6 +754,17 @@ function RoutineRow({ item, onOpen, onToggle }: { item: RoutineItem; onOpen: () 
         </span>
         <StatePills item={item} />
         <ChevronRight size={14} aria-hidden className="cap-go" />
+      </button>
+      {/* "Run now" on the row: the user does not have to open the routine (RT3). */}
+      <button
+        type="button"
+        className="icon-btn ghost routine-run-now"
+        onClick={onRun}
+        disabled={!canRunNow(item)}
+        aria-label={`Run ${item.name} now`}
+        title="Run now"
+      >
+        <Play size={14} aria-hidden />
       </button>
       <Switch checked={item.enabled} label={`Run ${item.name} on the schedule`} onChange={onToggle} />
     </li>
@@ -761,6 +818,8 @@ export const RoutinesPage = memo(function RoutinesPage({
 }) {
   const [openId, setOpenId] = useState<string | null>(null); // "new": the form of a new routine.
   const [saving, setSaving] = useState(false);
+  const duplicating = useRef(false); // The save that runs now is "Duplicate".
+  const [copyId, setCopyId] = useState<string | null>(null); // The new copy: its Name field gets the focus.
   const savedKey = useRef(saved?.key ?? 0);
   const item = openId && openId !== "new" ? (routines?.find((r) => r.id === openId) ?? null) : null;
 
@@ -771,10 +830,14 @@ export const RoutinesPage = memo(function RoutinesPage({
     if (saving) {
       setSaving(false);
       setOpenId(saved.id);
+      setCopyId(duplicating.current ? saved.id : null);
+      duplicating.current = false;
     }
   }, [saved, saving]);
   useEffect(() => {
-    if (error) setSaving(false);
+    if (!error) return;
+    setSaving(false);
+    duplicating.current = false;
   }, [error]);
   // The run history of the open routine. A new list (a run started or ended) loads it again.
   useEffect(() => {
@@ -810,9 +873,19 @@ export const RoutinesPage = memo(function RoutinesPage({
           if (item) onDelete(item.id);
           setOpenId(null);
         }}
+        onDuplicate={(fields) => {
+          // The copy starts off: the schedule of this routine does not run two times.
+          duplicating.current = true;
+          setSaving(true);
+          onSave({ ...fields, name: copyName(fields.name, (routines ?? []).map((r) => r.name)), enabled: false });
+        }}
+        focusName={!!item && item.id === copyId}
         onRun={() => item && onRun(item.id)}
         onOpenSession={onOpenSession}
-        onBack={() => setOpenId(null)}
+        onBack={() => {
+          setOpenId(null);
+          setCopyId(null);
+        }}
         api={
           item && onToken
             ? {
@@ -847,7 +920,13 @@ export const RoutinesPage = memo(function RoutinesPage({
         ) : (
           <ul className="cap-list">
             {routines.map((r) => (
-              <RoutineRow key={r.id} item={r} onOpen={() => setOpenId(r.id)} onToggle={(enabled) => onToggle(r, enabled)} />
+              <RoutineRow
+                key={r.id}
+                item={r}
+                onOpen={() => setOpenId(r.id)}
+                onRun={() => onRun(r.id)}
+                onToggle={(enabled) => onToggle(r, enabled)}
+              />
             ))}
           </ul>
         )}

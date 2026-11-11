@@ -126,9 +126,48 @@ def test_check_and_the_tools_of_each_mode(outlook):
         return {t.name for t in await server.list_tools()}
 
     read = {"list_folders", "list_messages", "search_messages", "get_message", "list_events"}
+    organize = {"create_folder", "rename_folder", "move_folder", "move_messages", "mark_messages"}
     assert asyncio.run(names("read")) == read
-    assert asyncio.run(names("draft")) == read | {"create_draft", "create_reply_draft"}
-    assert asyncio.run(names("send")) == read | {"create_draft", "create_reply_draft", "send_draft"}
+    assert asyncio.run(names("draft")) == read | organize | {"create_draft", "create_reply_draft"}
+    assert asyncio.run(names("send")) == read | organize | {"create_draft", "create_reply_draft", "send_draft"}
+
+
+def test_organize_folders_and_messages(outlook, app):
+    assert call(outlook, outlook_server.create_folder, "Inbox", " Finance ") == {"created": "Inbox/Finance"}
+    assert call(outlook, outlook_server.create_folder, "Inbox", "Receipts") == {"created": "Inbox/Receipts"}
+    with pytest.raises(OutlookError, match="has a folder 'Finance' already"):
+        call(outlook, outlook_server.create_folder, "Inbox", "finance")
+    with pytest.raises(OutlookError, match="no / or"):
+        call(outlook, outlook_server.create_folder, "Inbox", "a/b")
+
+    # A folder moves into a subfolder, with its messages.
+    receipts = outlook.call(lambda: outlook.folder("Inbox/Receipts"))
+    receipts.add(fake_outlook_com.Mail(app, "Receipt 1", "Shop", "shop@example.com", "Paid."))
+    assert call(outlook, outlook_server.move_folder, "Inbox/Receipts", "Inbox/Finance") == {
+        "moved": "Inbox/Receipts", "path": "Inbox/Finance/Receipts"}
+    assert [m["subject"] for m in call(outlook, outlook_server.list_messages, "Inbox/Finance/Receipts", 10, False)] == ["Receipt 1"]
+    with pytest.raises(OutlookError, match="into itself or into one of its subfolders"):
+        call(outlook, outlook_server.move_folder, "Inbox/Finance", "Inbox/Finance/Receipts")
+    for fn, args in ((outlook_server.move_folder, ("Inbox", "Inbox/Finance")),
+                     (outlook_server.rename_folder, ("Drafts", "Old drafts"))):
+        with pytest.raises(OutlookError, match="default folder"):
+            call(outlook, fn, *args)
+    assert call(outlook, outlook_server.rename_folder, "Inbox/Finance", "Money") == {
+        "renamed": "Inbox/Finance", "path": "Inbox/Money"}
+    names = [f["path"] for f in call(outlook, outlook_server.list_folders, 3)]
+    assert "Inbox/Money/Receipts" in names and "Inbox/Finance" not in names
+
+    # Messages move to a folder and get a new entry_id. A bad id does not stop the others.
+    invoice = app.inbox._items[1]
+    old_id = invoice.EntryID
+    got = call(outlook, outlook_server.move_messages, [old_id, "mail-404", old_id], "Inbox/Money")
+    assert got["to_folder"] == "Inbox/Money" and len(got["moved"]) == 1 and len(got["failed"]) == 1
+    assert got["moved"][0]["old_entry_id"] == old_id and got["moved"][0]["entry_id"] != old_id
+    assert invoice.Parent.Name == "Money" and invoice.UnRead
+    assert call(outlook, outlook_server.mark_messages, [invoice.EntryID], True) == {"marked": 1, "read": True, "failed": []}
+    assert not invoice.UnRead
+    with pytest.raises(OutlookError, match="one or more entry_ids"):
+        call(outlook, outlook_server.move_messages, [" "], "Inbox")
 
 
 def user_servers() -> dict:

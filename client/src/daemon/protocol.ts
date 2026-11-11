@@ -228,7 +228,8 @@ export interface UserSettings {
   // Settings > Operating Harness: the id of the ACP harness for new sessions. null or "harness": the built-in loop.
   operating_harness?: string | null;
   auto_archive_days?: number; // "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.
-  // The agent instructions of the user. The system prompt includes them. null: no instructions.
+  output_style?: string; // Your Harness > "Output style": a built-in id ("default", "concise", …) or a custom style id.
+  // The global instructions of the user, for all projects. The system prompt includes them. null: no instructions.
   instructions_thinking?: string | null;
   instructions_research?: string | null;
   instructions_speaking?: string | null;
@@ -500,6 +501,14 @@ export interface DiskUsage {
 }
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+/** One output style (daemon output_styles.py). custom: a file in ~/.harness/output-styles. */
+export interface OutputStyleItem {
+  id: string;
+  name: string;
+  description: string;
+  custom: boolean;
+}
 
 /** One memory of a project (daemon memory.py). */
 export interface MemoryItem {
@@ -881,6 +890,12 @@ export type ClientMessage =
   | { type: "harnesses.model"; id: string; model: string | null } // A model of a Harness provider. null: the harness settings.
   | { type: "harnesses.save"; name: string; command: string; id?: string }
   | { type: "harnesses.delete"; id: string }
+  // Settings > Your Harness > Output style. create: a model drafts a style from the description.
+  | { type: "output_styles.list" }
+  | { type: "output_styles.create"; description: string; name?: string; model?: string }
+  // Settings > Your Harness > Project instructions. cwd: the project folder. text null: no instructions.
+  | { type: "project_instructions.get"; cwd: string }
+  | { type: "project_instructions.set"; cwd: string; text: string | null }
   | { type: "memory.list"; cwd: string }
   | { type: "memory.save"; cwd: string; name: string; old_name?: string; description: string; memory_type: MemoryType; content: string }
   | { type: "memory.delete"; cwd: string; name: string }
@@ -1136,6 +1151,10 @@ export type DaemonMessage =
   | { type: "fs.found"; query: string; items: string[] } // Paths for the "@" menu. A folder ends with "/".
   | ({ type: "context.usage" } & ContextUsage) // The context breakdown, the reply to context.get.
   | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
+  // The output styles. created: the id of a new style (it is also the output style now). note: a problem of the draft.
+  | { type: "output_styles"; items: OutputStyleItem[]; folder: string; created?: string; note?: string | null }
+  // The instructions of a project from the settings. path: the file on the daemon computer. saved: after a set.
+  | { type: "project_instructions"; cwd: string; path: string; text: string | null; saved?: boolean }
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.

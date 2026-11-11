@@ -36,7 +36,7 @@ from .plugins.host import (
 from .loop_guards import (
     MAX_STALL_NUDGES, STALL_NOTICE, STALL_NUDGE, is_stall, repair_tool_name, repaired_note, repeat_key, repeat_note,
 )
-from .prompt import build_system_prompt, load_project_instructions, system_prompt_parts
+from .prompt import build_system_prompt, load_project_instructions, load_project_note, system_prompt_parts
 from .providers import DEFAULT_CONTEXT_LENGTH, DEFAULT_EFFORT, EFFORT_API, ModelClient, ModelError, resolve_model
 from .skills import Skill, render_skill
 from .tools import (
@@ -198,6 +198,7 @@ class Agent:
         self.gate.auto = AutoReviewer(self)
         self.history: list[dict[str, Any]] = list(history or [])
         self.instructions = load_project_instructions(self.cwd)
+        self.project_note = load_project_note(self.cwd)  # Settings > Your Harness > "Project instructions".
         self.summary = summary
         self.context_length = context_length
         self.context_source = context_source  # Where the context length came from, for the client.
@@ -236,7 +237,8 @@ class Agent:
     def _rebuild_prompt(self) -> None:
         self.system_prompt = build_system_prompt(
             self.ctx, self.client.label, self.instructions, self.summary, list(self.skills.values()),
-            self._plugin_sections(), user_facing=self.user_facing, tool_names=list(self.tools))
+            self._plugin_sections(), user_facing=self.user_facing, tool_names=list(self.tools),
+            project_note=self.project_note)
         if self.role_prompt:
             self.system_prompt += "\n\n" + self.role_prompt  # The prompt of the agent type of a subagent.
         memory = self._memory_snapshot()
@@ -497,6 +499,13 @@ class Agent:
         self._sync_tool_search()
         self._rebuild_prompt()
 
+    def reload_project_note(self) -> None:
+        """The user changed the project instructions in Settings. The next turn uses the new text."""
+        note = load_project_note(self.cwd)
+        if note != self.project_note:
+            self.project_note = note
+            self._rebuild_prompt()
+
     def clear(self) -> None:
         """Start a new context: no history and no summary."""
         self.history.clear()
@@ -525,7 +534,7 @@ class Agent:
         sizes = {"system": 0, "instructions": 0, "skills": 0, "plugins": 0, "summary": 0}
         for kind, text in system_prompt_parts(self.ctx, self.client.label, self.instructions, self.summary,
                                               list(self.skills.values()), self._plugin_sections(),
-                                              user_facing=self.user_facing):
+                                              user_facing=self.user_facing, project_note=self.project_note):
             sizes[kind] += text_tokens(text)
         memory = self._memory_snapshot()
         if memory:

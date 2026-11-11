@@ -671,6 +671,43 @@ def test_user_settings_need_no_session(daemon, harness_home, project, fake_model
     c.close()
 
 
+def test_project_instructions_of_the_settings(daemon, harness_home, project, fake_model):
+    fake_model.script({"text": "One."}, {"text": "Two."}, {"text": "Three."})
+    c = Client(daemon)
+    cwd = str(project)
+    c.new_session(project)
+    c.send({"type": "project_instructions.get", "cwd": cwd})
+    got = c.until("project_instructions")[0]
+    assert got["text"] is None and got["cwd"] == cwd and got["path"].endswith("instructions.md")
+    assert Path(got["path"]).is_relative_to(harness_home / "projects")  # Not in the project folder.
+    c.send({"type": "prompt", "text": "hi"})
+    c.until("turn.end")
+    assert "Project instructions from the settings" not in fake_model.requests[-1]["messages"][0]["content"]
+    # The open session of the project uses the new text at the next turn.
+    c.send({"type": "project_instructions.set", "cwd": cwd, "text": "  Use pnpm.\n"})
+    got = c.until("project_instructions")[0]
+    assert got["text"] == "Use pnpm." and got["saved"] is True
+    c.send({"type": "prompt", "text": "again"})
+    c.until("turn.end")
+    system = fake_model.requests[-1]["messages"][0]["content"]
+    assert "# Project instructions from the settings" in system and "Use pnpm." in system
+    # A worktree of the project has the same instructions. Another project has none.
+    c.send({"type": "project_instructions.get", "cwd": str(project / ".harness" / "worktrees" / "session-1")})
+    assert c.until("project_instructions")[0]["text"] == "Use pnpm."
+    c.send({"type": "project_instructions.get", "cwd": str(project.parent / "other")})
+    assert c.until("project_instructions")[0]["text"] is None
+    c.send({"type": "project_instructions.set", "cwd": cwd, "text": "x" * 10_001})
+    assert "10000 characters or less" in c.until("error")[0]["message"]
+    c.send({"type": "project_instructions.set", "cwd": "relative", "text": "x"})
+    assert "absolute path" in c.until("error")[0]["message"]
+    c.send({"type": "project_instructions.set", "cwd": cwd, "text": None})
+    assert c.until("project_instructions")[0]["text"] is None
+    c.send({"type": "prompt", "text": "last"})
+    c.until("turn.end")
+    assert "Use pnpm." not in fake_model.requests[-1]["messages"][0]["content"]
+    c.close()
+
+
 def test_rewind_and_fork(daemon, project, fake_model):
     (project / ".harness").mkdir()
     (project / ".harness" / "settings.json").write_text(json.dumps({"allow": ["edit", "write"]}))

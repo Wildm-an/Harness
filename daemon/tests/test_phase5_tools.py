@@ -202,6 +202,20 @@ def test_user_instructions_from_the_settings(project):
     assert "# User instructions" not in build_system_prompt(ctx, "fake/m", user_facing=False)
 
 
+def test_project_instructions_from_the_settings(project):
+    assert "from the settings" not in build_system_prompt(make_ctx(project), "fake/m", project_note="   ")
+    ctx = make_ctx(project, instructions_other="Use npm.")
+    (project / "HARNESS.md").write_text("Use spaces.")
+    prompt = build_system_prompt(ctx, "fake/m", load_project_instructions(project), project_note=" Use pnpm. ")
+    assert "# Project instructions from the settings" in prompt and "\n\nUse pnpm." in prompt
+    # The order: all projects, then this project, then the instruction file of the project.
+    assert (prompt.index("# User instructions") < prompt.index("# Project instructions from the settings")
+            < prompt.index("# Project instructions\n"))
+    # A subagent gets the project instructions, but not the instructions for all projects.
+    sub = build_system_prompt(ctx, "fake/m", user_facing=False, project_note="Use pnpm.")
+    assert "Use pnpm." in sub and "Use npm." not in sub
+
+
 # -- read: images ---------------------------------------------------------------
 
 

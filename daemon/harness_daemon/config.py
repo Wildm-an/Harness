@@ -30,12 +30,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "permission_mode": "default",  # default, acceptEdits, plan, or bypassPermissions (permissions.py).
     "prompt_suggestions": True,  # After a turn, the model suggests the next prompt (suggestions.py).
     "subagents": True,  # The agent tool: the agent can start subagents, also several at once in the background.
-    # The agent instructions of the user (Settings > General). The system prompt includes them (prompt.py).
+    # The global instructions of the user (Settings > Your Harness). The system prompt includes them (prompt.py).
     "auto_memory": True,  # The agent keeps notes between sessions (memory.py).
     "memory_sensitive": False,  # The memory can have sensitive topics, for example health conditions.
     "chat_search": True,  # The conversation_search tool: the agent searches the past sessions of the project.
     "web_search": "duckduckgo",  # The search provider of web_search (web.py): duckduckgo, brave, tavily, searxng, or off.
     "web_search_url": None,  # The URL of a SearXNG server, for "searxng".
+    "output_style": "default",  # The output style of the agent (output_styles.py): a built-in id or a custom style file.
     "instructions_thinking": None,
     "instructions_research": None,
     "instructions_speaking": None,

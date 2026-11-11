@@ -71,15 +71,34 @@ class Items:
         return self._items[self._index - 1]
 
 
+class Folders(Collection):
+    def __init__(self, owner: "Folder"):
+        super().__init__()
+        self._owner = owner
+
+    def Add(self, name: str) -> "Folder":
+        if any(f.Name.lower() == name.lower() for f in self):
+            raise ComError(-2147352567, "Exception occurred.", "Cannot create the folder.")
+        return Folder(name, self._owner)
+
+
 class Folder:
+    _count = 0
+
     def __init__(self, name: str, parent: "Folder | None" = None):
+        Folder._count += 1
         self.Name = name
         self.Parent = parent
-        self.EntryID = f"folder-{name}"
-        self.Folders = Collection()
+        self.EntryID = f"folder-{Folder._count}-{name}"
+        self.Folders = Folders(self)
         self._items: list[Any] = []
         if parent is not None:
             parent.Folders.append(self)
+
+    def MoveTo(self, target: "Folder") -> None:
+        self.Parent.Folders.remove(self)
+        target.Folders.append(self)
+        self.Parent = target
 
     @property
     def Items(self) -> Items:
@@ -151,6 +170,16 @@ class Mail:
     def Send(self) -> None:
         self.sent = True
         self._outlook.sent.add(self)
+
+    def Move(self, target: Folder) -> "Mail":
+        """As Outlook: the moved message gets a new EntryID, and the old one stops working."""
+        self.Parent._items.remove(self)
+        del self._outlook.items[self.EntryID]
+        Mail._count += 1
+        self.EntryID = f"mail-{Mail._count}"
+        self._outlook.items[self.EntryID] = self
+        target.add(self)
+        return self
 
 
 class Event:

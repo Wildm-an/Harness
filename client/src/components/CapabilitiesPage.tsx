@@ -628,7 +628,7 @@ function DeviceConnect({
 /** The modes of Outlook (classic): the label of the choice, and the short name for the summary line. */
 const OUTLOOK_MODES: Record<OutlookMode, { label: string; short: string }> = {
   read: { label: "Read-only: the agent can read mail and events", short: "read-only" },
-  draft: { label: "Drafts: the agent can also make drafts and replies, and you send them from Outlook", short: "drafts" },
+  draft: { label: "Drafts: the agent can also make drafts and replies, and organize folders and messages. You send the drafts from Outlook", short: "drafts" },
   send: { label: "Send: the agent can also send a draft", short: "can send" },
 };
 
