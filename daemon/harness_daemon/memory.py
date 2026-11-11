@@ -28,8 +28,12 @@ MAX_INDEX_CHARS = 20_000
 PROMPT = """# Memory
 
 You have a memory that stays between sessions, in {folder}. The index MEMORY.md is below. Use the
-memory tool to save, read, and delete memories.
+memory tool to save, read, and delete memories. Keeping this memory current is part of each task.
 
+- Before your final answer to a task, check what you learned in the task. Save each new fact that
+  will help a later session. Do this without a request from the user.
+- When the user corrects you, or tells you a preference or a rule ("always", "never", "from now on"),
+  save it at once as a feedback memory.
 - Save a fact when it will help in a later session: who the user is (role, knowledge, preferences),
   how the user wants you to work (also a correction, with the reason), facts about the project that
   the code and the git history do not show (goals, decisions, dates as absolute dates), and pointers
