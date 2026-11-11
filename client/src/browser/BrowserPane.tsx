@@ -269,8 +269,11 @@ function parkBounds(): Bounds {
 async function park(id: string): Promise<void> {
   if (shown === id) return;
   parked.add(id);
-  await browserView.bounds(id, parkBounds());
-  await browserView.visible(id, true);
+  // Both calls go in the queue of the tab now: a later call runs after them, not between them.
+  const moved = browserView.bounds(id, parkBounds());
+  const visible = browserView.visible(id, true);
+  await moved;
+  await visible;
 }
 
 function tabExists(id: string): boolean {
@@ -942,9 +945,14 @@ export function BrowserPane({
 
   // Keep the webview of the active tab over the pane area. Hide the other webviews, and hide all
   // of them when the pane is hidden or an overlay (a menu, a dialog) covers the page.
+  // A new pane waits one frame before it places a webview: the layout can still change in that
+  // frame. For example, the session rail closes after a click on its browser view opens the pane.
+  // A place from before that change puts the webview over the chat for a moment.
+  const settled = useRef(false);
   useLayoutEffect(() => {
     if (!tauri) return;
     const sync = () => {
+      if (!settled.current) return;
       const bounds = measure();
       const box = area.current?.getBoundingClientRect();
       if (box && box.width >= 2 && box.height >= 2) parkSize = { width: Math.round(box.width), height: Math.round(box.height) };
@@ -985,13 +993,12 @@ export function BrowserPane({
         if (unpark && bounds) {
           // A parked tab (minimized to the rail, or an agent tab) moves back from out of sight. A move
           // with the same size does not make WebView2 draw again: the page stays blank until a resize.
-          // A change of size and a hide and show make it draw.
-          void (async () => {
-            await browserView.bounds(tab.id, { ...bounds, width: bounds.width + 1 });
-            await browserView.bounds(tab.id, bounds);
-            await browserView.visible(tab.id, false);
-            await browserView.visible(tab.id, true);
-          })().catch(() => undefined);
+          // A change of size and a hide and show make it draw. All four calls go in the queue of the
+          // tab now: a later move (the layout changes) then runs after them, not between them.
+          void browserView.bounds(tab.id, { ...bounds, width: bounds.width + 1 }).catch(() => undefined);
+          void browserView.bounds(tab.id, bounds).catch(() => undefined);
+          void browserView.visible(tab.id, false).catch(() => undefined);
+          void browserView.visible(tab.id, true).catch(() => undefined);
           continue;
         }
         if (show && bounds) void browserView.bounds(tab.id, bounds);
@@ -1000,12 +1007,24 @@ export function BrowserPane({
       }
     };
     sync();
+    // A hidden window gets no animation frames: the interval below then does the first sync.
+    const frame = settled.current
+      ? 0
+      : requestAnimationFrame(() => {
+          settled.current = true;
+          sync();
+        });
     const observer = new ResizeObserver(sync);
     if (area.current) observer.observe(area.current);
     window.addEventListener("resize", sync);
     // Layout moves (a split, a tab change) do not resize the area. A hidden window does not need the check.
-    const timer = window.setInterval(() => document.hidden || sync(), 500);
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      settled.current = true;
+      sync();
+    }, 500);
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", sync);
       window.clearInterval(timer);

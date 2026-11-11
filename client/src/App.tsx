@@ -2185,9 +2185,10 @@ export default function App() {
   // In the Code view, the rail closes when a pane opens (the browser, the files, the changes, and the
   // others), so the pane gets the room. When the last pane closes, the rail opens again. The saved
   // preference does not change, and the title bar button still opens the rail. A change of view only
-  // records the panes.
+  // records the panes. A layout effect: the rail closes before the new pane shows, so the pane does
+  // not change its size after its first frame (the Browser pane places a native webview there).
   const roomPanes = useRef<{ view: ViewMode; open: string[] } | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const open = ROOM_PANES.filter((p) => findGroupOf(layout, p) !== null);
     const before = roomPanes.current;
     roomPanes.current = { view, open };
