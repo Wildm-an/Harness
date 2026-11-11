@@ -1,22 +1,24 @@
 /*
- * Design tokens. The layout and the colors follow the Claude Code desktop app: warm neutral
- * surfaces, a clay action color, a sidebar of sessions, and a plain transcript.
+ * Design tokens. The layout follows the Claude Code desktop app: a sidebar of sessions and a
+ * plain transcript. The dark theme is grey on dark grey (the user asked for it, UI_RULES T3):
+ * neutral greys with no hue, and no full black. The light theme is light grey on off-white.
  * --accent is the clay color for text and icons. --accent-fill is the clay color behind
- * text (buttons). --success is green for the states that are good: done, allowed, running.
+ * text (buttons). lib/theme.ts replaces the accent tokens for each accent other than clay.
+ * --success is green for the states that are good: done, allowed, running.
  * Text contrast is 4.5:1 or more on each surface.
  */
 :root {
   color-scheme: dark;
-  --bg: #262624;
-  --sidebar: #1f1e1d;
-  --surface: #30302e;
-  --surface-2: #3a3a37;
-  --surface-sunken: #1f1e1d;
-  --hover: rgba(250, 249, 245, 0.06);
-  --border: #45443f;
-  --border-strong: #5a5852;
-  --text: #faf9f5;
-  --text-muted: #a8a59c;
+  --bg: #1c1c1c;
+  --sidebar: #262626; /* The sidebar: a little lighter than the page (the user asked for this). */
+  --surface: #242424;
+  --surface-2: #2e2e2e;
+  --surface-sunken: #161616;
+  --hover: rgba(255, 255, 255, 0.06);
+  --border: #353535;
+  --border-strong: #4a4a4a;
+  --text: #d6d6d6;
+  --text-muted: #9a9a9a; /* 4.8:1 on --surface-2. */
   --accent: #d97757;
   --accent-hover: #e38b6d;
   --accent-fill: #c6613f;
@@ -50,7 +52,7 @@
   --orange-soft: rgba(255, 163, 31, 0.14);
   --purple: #a98bff;
   --purple-soft: rgba(169, 139, 255, 0.16);
-  --code-inline: #f28b82; /* Inline code in the transcript, as in Claude. 4.8:1 on --surface-2. */
+  --code-inline: #ffffff; /* Inline code in the transcript: white (the user asked for this, UI_RULES T3d). */
   /* The git state of a file in the file tree (gitStatus.ts): Clear Sight hues. A changed file has the
      orange of uncommitted work in the rail, and a new file has the green. Deleted files and conflicts
      use --danger. */
@@ -58,7 +60,7 @@
   --git-added: var(--success);
   --violet: #c3a6f0;
   --teal: #6fc8c0;
-  --backdrop: rgba(15, 14, 13, 0.6);
+  --backdrop: rgba(0, 0, 0, 0.6);
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
   --diff-add-bg: rgba(63, 220, 110, 0.14);
@@ -67,16 +69,18 @@
   --diff-del-text: #ffa781;
   --diff-add-word: rgba(63, 220, 110, 0.38);
   --diff-del-word: rgba(255, 94, 26, 0.38);
-  --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(168, 165, 156, 0.06) 6px 12px);
+  --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(143, 143, 143, 0.06) 6px 12px);
 
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
-  /* The corner radii: the "tighter" set (the user chose it, UI_RULES 11.4). */
-  --radius-sm: 4px;
-  --radius: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 14px;
-  --prompt-radius: 8px; /* The prompt box and the chat bubble of the user (the user asked for one radius). */
+  /* The corner radius: one value for all elements with rounded corners (the user asked for this,
+     UI_RULES 11.4). The other tokens stay as names, with the same value. Circles (dots, the radio
+     button, avatars, color swatches) keep 50%. */
+  --radius-sm: 2px;
+  --radius: var(--radius-sm);
+  --radius-lg: var(--radius-sm);
+  --radius-xl: var(--radius-sm);
+  --prompt-radius: var(--radius-sm);
   --column: 780px;
   --sidebar-width: 264px;
   /* Motion (UI_RULES T11). Animate only opacity and transform (translate, scale). */
@@ -100,31 +104,33 @@
 /* The light theme. lib/theme.ts sets data-theme from the Appearance setting or the system. */
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #faf9f5;
-  --sidebar: #f3f1ea;
-  --surface: #ffffff;
-  --surface-2: #f0eee6;
-  --surface-sunken: #f3f1ea;
-  --hover: rgba(31, 30, 29, 0.05);
-  --border: #e3e0d6;
-  --border-strong: #cdc9bc;
-  --text: #1f1e1d;
-  --text-muted: #5f5d57;
+  /* Light grey on off-white (the user asked for it, UI_RULES T3): neutral greys with no hue. */
+  --bg: #f8f8f8;
+  --sidebar: #efefef;
+  --surface: #f1f1f1;
+  --surface-2: #e9e9e9;
+  --surface-sunken: #efefef;
+  --hover: rgba(0, 0, 0, 0.05);
+  --border: #dedede;
+  --border-strong: #c6c6c6;
+  --text: #1c1c1c;
+  --text-muted: #5f5f5f; /* 5.2:1 on --surface-2. */
   --accent: #b8532f;
   --accent-hover: #9c4526;
   --accent-fill: #c6613f;
   --accent-fill-hover: #ae5230;
   --accent-text: #ffffff;
   --accent-soft: rgba(198, 97, 63, 0.1);
-  /* Darker shades of the Clear Sight hues: these tokens also color text, so each has 4.5:1 or more on --bg. */
-  --success: #0a7a43;
-  --success-soft: rgba(10, 122, 67, 0.1);
-  --danger: #b34700;
-  --danger-soft: rgba(179, 71, 0, 0.08);
-  --warning: #8a6200;
+  /* Darker shades of the Clear Sight hues: these tokens also color text, so each has 4.5:1 or more on
+     --bg and on the grey surfaces (to --surface-2). */
+  --success: #08703d;
+  --success-soft: rgba(8, 112, 61, 0.1);
+  --danger: #a84300;
+  --danger-soft: rgba(168, 67, 0, 0.08);
+  --warning: #7f5a00;
   --warning-soft: rgba(217, 154, 0, 0.12);
-  --info: #0072b2;
-  --focus: #0072b2;
+  --info: #0068a6;
+  --focus: #0068a6;
   /* The context parts are fills, not text: they keep the bright hues. */
   --ctx-instructions: #0f9d58;
   --ctx-skills: #d99a00;
@@ -134,25 +140,25 @@
   --ctx-mcp-tools: #3a9fd6;
   --ctx-messages: #d55e00;
   --ctx-tool-results: #7e57c2;
-  --orange: #a85a00;
+  --orange: #995200;
   --orange-soft: rgba(230, 159, 0, 0.12);
-  --purple: #7e57c2;
-  --purple-soft: rgba(126, 87, 194, 0.1);
-  --code-inline: #b3261e; /* 5.6:1 on --surface-2. */
+  --purple: #7450b8;
+  --purple-soft: rgba(116, 80, 184, 0.1);
+  --code-inline: #000000; /* Black: white does not show on the light grey fill. */
   --git-modified: var(--orange);
   --git-added: var(--success);
   --violet: #7a4fc0;
-  --teal: #1f7f78;
-  --backdrop: rgba(31, 30, 29, 0.35);
-  --shadow: 0 12px 32px rgba(31, 30, 29, 0.12);
-  --shadow-lg: 0 24px 64px rgba(31, 30, 29, 0.18);
+  --teal: #1a726c;
+  --backdrop: rgba(0, 0, 0, 0.35);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.18);
   --diff-add-bg: #dcf5e3;
   --diff-add-text: #06572f;
   --diff-del-bg: #fbe6d9;
   --diff-del-text: #8a3300;
   --diff-add-word: #a8e6bb;
   --diff-del-word: #f6c3a3;
-  --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(95, 93, 87, 0.07) 6px 12px);
+  --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(95, 95, 95, 0.07) 6px 12px);
 }
 
 *,
@@ -183,7 +189,7 @@ body,
 .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
   left: 3px !important;
   width: 6px !important;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 /* Only the panes scroll. A page scrollbar would move the window buttons under the pointer. */
@@ -208,13 +214,12 @@ pre,
 kbd {
   padding: 0 4px;
   border: 1px solid var(--border-strong);
-  border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.8em;
 }
 
 :focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -468,7 +473,7 @@ textarea:focus-visible {
   --side-group-pt: 12px;
   --side-icon: 16px;
   --side-ctl: 20px;
-  --side-radius: 4px;
+  --side-radius: var(--radius-sm);
   /* The columns, as in Claude: the row is 8px from the sidebar edge. An icon or a status ring is
      centered in a leading slot. The text starts after the slot. A label lines up with the icons. */
   --side-row-px: 2px;
@@ -491,7 +496,6 @@ textarea:focus-visible {
   --side-group-pt: 16px;
   --side-icon: 20px;
   --side-ctl: 24px;
-  --side-radius: 6px;
   --side-slot: 28px;
   --side-row-gap: 8px;
 }
@@ -891,7 +895,7 @@ textarea:focus-visible {
 
 .side-foot {
   flex: none;
-  padding: 8px;
+  padding: 4px 8px;
   border-top: 1px solid var(--border);
 }
 
@@ -962,10 +966,10 @@ textarea:focus-visible {
 .conn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  min-height: 44px;
-  padding: 6px 10px;
+  min-height: 28px; /* One row (the user asked for a compact footer). */
+  padding: 0 8px;
   border: none;
   border-radius: var(--radius);
   background: transparent;
@@ -988,32 +992,36 @@ textarea:focus-visible {
 
 .conn-text {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  gap: 5px;
   min-width: 0;
 }
 
 .conn-name,
 .conn-host {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .conn-name {
+  flex: 0 1 auto;
   color: var(--text);
   font-size: 13px;
   font-weight: 500;
 }
 
 .conn-host {
+  flex: 1 1 0;
   color: var(--text-muted);
   font-size: 12px;
 }
 
 .conn-dot {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--text-muted);
 }
@@ -1184,7 +1192,7 @@ textarea:focus-visible {
   min-width: 0;
   padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -1245,7 +1253,7 @@ textarea:focus-visible {
   max-width: 280px;
   padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 12px;
   overflow: hidden;
@@ -1814,7 +1822,7 @@ textarea:focus-visible {
   height: 8px;
   margin-bottom: 12px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
 
@@ -2394,7 +2402,7 @@ textarea:focus-visible {
 .cap-tab-count {
   min-width: 18px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: var(--border);
   color: var(--text-muted);
   font-size: 12px;
@@ -2564,7 +2572,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
@@ -3118,7 +3126,7 @@ select {
 .fit-badge {
   flex: none;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -3243,13 +3251,13 @@ select {
   height: 6px;
   min-width: 80px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface-sunken);
 }
 
 .dl-bar {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   transition: width 300ms var(--ease-out);
 }
@@ -3566,7 +3574,7 @@ select {
   height: 20px;
   padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: 999px; /* A switch stays round (the user asked for this, UI_RULES T7a). */
   background: var(--surface-sunken);
   cursor: pointer;
   transition: background var(--duration) var(--ease-out), border-color var(--duration) var(--ease-out);
@@ -3594,7 +3602,7 @@ select {
 }
 
 .switch:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -3654,7 +3662,7 @@ select {
 .model-chip {
   padding: 3px 9px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface-sunken);
   color: var(--text);
   font-size: 12px;
@@ -4049,7 +4057,7 @@ select {
   height: 20px;
   margin-right: 4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -4077,7 +4085,7 @@ select {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--warning-soft);
   color: var(--warning);
   font-size: 11px;
@@ -4120,16 +4128,19 @@ select {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 38px;
+  height: 32px; /* A compact header (the user asked for this, UI_RULES V6o). */
   padding: 0 6px;
   flex: none;
   user-select: none;
 }
 
+/* The title gets narrower before a button goes out of a narrow window. */
 .win-title {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+  overflow: hidden;
   padding: 0 6px;
   color: var(--text);
   font: 500 12.5px var(--font-sans);
@@ -4138,6 +4149,7 @@ select {
 }
 
 .win-title > svg {
+  flex: none;
   color: var(--text-muted);
 }
 
@@ -4404,7 +4416,7 @@ select {
 .drop-zone {
   position: absolute;
   z-index: var(--z-overlay);
-  border: 2px dashed var(--accent);
+  border: 1px dashed var(--accent);
   border-radius: var(--radius);
   background: var(--accent-soft);
   pointer-events: none;
@@ -4496,16 +4508,6 @@ select {
   background: var(--surface);
 }
 
-.editor-side-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 36px;
-  padding: 0 6px 0 8px;
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
-
 .editor-side-body {
   flex: 1;
   min-height: 0;
@@ -4588,7 +4590,7 @@ input.tree-rename-input {
   min-height: 0;
   padding: 0 4px;
   border: 1px solid var(--focus);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: 12.5px var(--font-sans);
@@ -4700,7 +4702,7 @@ input.tree-rename-input[aria-invalid="true"] {
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -4898,7 +4900,7 @@ input.tree-rename-input[aria-invalid="true"] {
   width: 24px;
   height: 24px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -4988,7 +4990,7 @@ input.tree-rename-input[aria-invalid="true"] {
 .path-link {
   padding: 1px 5px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--info);
   font-family: var(--font-mono);
@@ -5275,7 +5277,7 @@ input.tree-rename-input[aria-invalid="true"] {
   flex: 1;
   min-height: 28px;
   margin: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   padding: 0 12px;
   font-size: 12px;
 }
@@ -5520,7 +5522,7 @@ input.tree-rename-input[aria-invalid="true"] {
   height: 15px;
   padding: 0 3px;
   box-sizing: border-box;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: #fff;
   font-size: 10px;
@@ -5576,7 +5578,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .annotate-tool:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -5619,7 +5621,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .annotate-wline {
   display: inline-block;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: currentColor;
 }
 
@@ -5640,7 +5642,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .menu .annotate-swatch.active {
-  outline: 2px solid var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -5757,7 +5759,7 @@ input.tree-rename-input[aria-invalid="true"] {
   height: 32px;
   transform: translateY(-100%);
   border: 1px solid var(--border-strong);
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   background: var(--surface-2, var(--panel));
   color: var(--text-muted);
   box-shadow: 0 1px 2px #0000001f, 0 2px 8px #00000029;
@@ -5847,10 +5849,10 @@ input.tree-rename-input[aria-invalid="true"] {
   align-self: flex-end;
   max-width: 80%;
   margin-top: 12px;
-  padding: 10px 16px;
+  padding: 7px 10px; /* A tight box on the words (the user asked for this, UI_RULES M1). */
   border-radius: var(--prompt-radius);
   background: var(--surface-2);
-  line-height: 1.55;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -5920,7 +5922,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .markdown :not(pre) > code {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--code-inline);
 }
@@ -6369,7 +6371,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .permission-actions:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -6382,7 +6384,7 @@ input.tree-rename-input[aria-invalid="true"] {
   flex: none;
   padding: 1px 7px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -6412,7 +6414,7 @@ input.tree-rename-input[aria-invalid="true"] {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -6989,7 +6991,7 @@ input.tree-rename-input[aria-invalid="true"] {
   flex: none;
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--info);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -7000,7 +7002,7 @@ input.tree-rename-input[aria-invalid="true"] {
   flex: none;
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 11px;
 }
@@ -7045,7 +7047,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .badge {
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text-muted);
   font-size: 11px;
@@ -7109,9 +7111,12 @@ input.tree-rename-input[aria-invalid="true"] {
 
 /* composer: the prompt box, as in the Claude Code desktop app */
 
+/* 6px under the row of chips (the user asked for the prompt box nearer to the bottom edge). The
+   24px chips then have their center 18px above the edge: the same line as the footer row of the
+   sidebar (.side-foot: 4px + half of 28px). Keep the two equal (UI_RULES C3b). */
 .composer {
   flex: none;
-  padding: 4px 16px 16px;
+  padding: 4px 16px 6px;
 }
 
 /* The working line: the orange glyph, then the time, the tokens, the tasks, and the status. */
@@ -7190,7 +7195,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .working-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -7269,7 +7274,7 @@ input.tree-rename-input[aria-invalid="true"] {
   overflow: hidden;
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text-muted);
   font-family: var(--font-mono);
@@ -7291,7 +7296,7 @@ input.tree-rename-input[aria-invalid="true"] {
   height: 100%;
   object-fit: cover;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 
 .prompt-attachment-label {
@@ -7327,7 +7332,7 @@ input.tree-rename-input[aria-invalid="true"] {
   height: 16px;
   padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -7393,7 +7398,7 @@ input.tree-rename-input[aria-invalid="true"] {
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
@@ -7451,7 +7456,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .side-pane:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -7605,7 +7610,7 @@ input.tree-rename-input[aria-invalid="true"] {
   width: 28px;
   height: 24px;
   border: none;
-  border-radius: 4px;
+  border-radius: 1px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -8708,7 +8713,7 @@ mark.word-del {
 .more-count {
   min-width: 18px;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text-muted);
   font-size: 12px;
@@ -8906,8 +8911,8 @@ mark.word-del {
 
 .icon-btn.side-settings {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   color: var(--text-muted);
 }
 
@@ -8964,7 +8969,7 @@ mark.word-del {
   min-height: 38px;
   padding: 0 12px;
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font: 500 13.5px var(--font-sans);
@@ -8984,7 +8989,7 @@ mark.word-del {
 }
 
 .settings-nav-item:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -9193,7 +9198,7 @@ textarea.setting-textarea:disabled {
 }
 
 .appearance-choice:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -9411,14 +9416,14 @@ textarea.setting-textarea:disabled {
   flex: 1;
   height: 6px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface-sunken);
 }
 
 .update-toast-bar {
   width: 0;
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   transition: width 300ms var(--ease-out);
 }
@@ -9856,7 +9861,7 @@ textarea.setting-textarea:disabled {
   overflow-y: auto;
   padding: 8px 8px 16px;
   border-left: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--bg); /* The same color as the chat (the user asked for this, UI_RULES T3). */
   font: 13px var(--font-sans);
   outline: none;
 }
@@ -9968,7 +9973,7 @@ body.sorting * {
 }
 
 .rail-section-head button:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -10053,7 +10058,7 @@ body.sorting * {
 .rail-meter {
   height: 6px;
   margin: 8px 0 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--hover);
   overflow: hidden;
 }
@@ -10170,7 +10175,7 @@ body.sorting * {
 }
 
 .rail-item:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -10339,7 +10344,7 @@ body.sorting * {
 }
 
 .rail-browser-frame:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -10422,7 +10427,7 @@ body.sorting * {
 
 .accent-swatch:focus-visible,
 .accent-custom:focus-within {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: 3px;
 }
 
@@ -10532,7 +10537,7 @@ body.sorting * {
 }
 
 .ide-preset:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -10559,7 +10564,7 @@ body.sorting * {
 }
 
 .ide-sketch > span {
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--border-strong);
 }
 
@@ -10964,7 +10969,7 @@ body.sorting * {
 
 .plan-circle {
   box-sizing: border-box;
-  border: 1.5px solid var(--text-muted);
+  border: 1px solid var(--text-muted);
   border-radius: 50%;
 }
 
@@ -11034,40 +11039,29 @@ body.sorting * {
   align-items: center;
 }
 
-/* The Files sidebar head: all the action buttons when they fit, else one "..." menu with the same
-   actions. The sidebar is a size container. Its minimum width keeps the Files and Search switch and
-   the "..." button in view. */
+/* The Files pane has one header row (UI_RULES V6o): the "⋯" menu of the file actions is in the
+   window header, in the IDE view and in the Code view. In the Code view, its menu opens to the left.
+   In the IDE view, the menu has a fixed place under the button (EditorPane.tsx). */
 .editor-side {
-  container: fileside / inline-size;
   min-width: 120px;
-}
-
-.side-actions-full {
-  display: flex;
-  align-items: center;
-  gap: 2px;
 }
 
 .side-actions-more {
   position: relative;
-  display: none;
 }
 
 .menu.side-more-menu {
-  left: 0;
-  right: auto;
-  min-width: 180px;
-}
-
-/* The "⋯" menu of the Files pane of the Code view is in the window header: it always shows, and
-   its menu opens to the left. */
-.side-actions-more.code-more {
-  display: block;
-}
-
-.code-more .menu.side-more-menu {
   left: auto;
   right: 0;
+  min-width: 180px;
+}
+/* The Files and Search switch of the IDE view, in the window header: two icon buttons, and the
+   pressed one has the fill of an active button. */
+.win-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
 }
 
 /* A button that cannot act now, but still shows its hover tip (aria-disabled, not disabled). */
@@ -11177,16 +11171,6 @@ body.sorting * {
   border-radius: 50%;
   background: currentColor;
   opacity: 0.8;
-}
-
-@container fileside (max-width: 236px) {
-  .side-actions-full {
-    display: none;
-  }
-
-  .side-actions-more {
-    display: block;
-  }
 }
 
 /* xterm.css paints the viewport black. The terminal fits whole rows only, so the space under the
@@ -11643,7 +11627,7 @@ body.sorting * {
   height: 8px;
   margin: 12px 0 10px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
 
@@ -11846,7 +11830,7 @@ body.sorting * {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid var(--focus);
+  border: 1px solid var(--focus);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--focus) 12%, transparent);
   pointer-events: none;
@@ -11865,7 +11849,7 @@ body.sorting * {
   left: 0;
   padding: 4px 10px;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: 500 12px var(--font-sans);
@@ -11998,7 +11982,7 @@ body.sorting * {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--hover);
   font-size: 12px;
   font-weight: 500;
@@ -12110,7 +12094,7 @@ body.sorting * {
 .rail-pr-main:focus-visible,
 .rail-pr-more:focus-visible,
 .rail-work-row:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 1px solid var(--focus);
   outline-offset: -2px;
 }
 .rail-pr-more {
@@ -12278,7 +12262,7 @@ body.sorting * {
   gap: 10px;
   padding: 12px 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: none;
   color: inherit;
   font: inherit;
@@ -12291,7 +12275,7 @@ body.sorting * {
 }
 
 .harness-choice:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: -2px;
 }
 
@@ -12307,7 +12291,7 @@ body.sorting * {
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  border: 1.5px solid var(--border-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
   color: var(--accent-text);
 }
@@ -12336,7 +12320,7 @@ body.sorting * {
 
 .harness-badge {
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--hover);
   color: var(--text-muted);
   font-size: 11px;
@@ -12386,7 +12370,7 @@ body.sorting * {
 
 .harness-skeleton {
   height: 64px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--hover);
   animation: skeleton-pulse 1.6s ease-in-out infinite; /* The shared pulse of the skeletons (M16). */
 }

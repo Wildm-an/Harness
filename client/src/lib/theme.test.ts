@@ -31,14 +31,14 @@ describe("the accent color", () => {
   });
 
   it("is white on the dark theme and black on the light theme", () => {
-    expect(accentTokens("white", "dark")!["--accent-fill"]).toBe("#faf9f5");
-    expect(accentTokens("white", "dark")!["--accent-text"]).toBe("#1f1e1d");
-    expect(accentTokens("white", "light")!["--accent-fill"]).toBe("#1f1e1d");
+    expect(accentTokens("white", "dark")!["--accent-fill"]).toBe("#e6e6e6");
+    expect(accentTokens("white", "dark")!["--accent-text"]).toBe("#1c1c1c");
+    expect(accentTokens("white", "light")!["--accent-fill"]).toBe("#1c1c1c");
     expect(accentTokens("white", "light")!["--accent-text"]).toBe("#ffffff");
   });
 
   it("puts readable text on the fill", () => {
-    expect(textOn("#ffff00")).toBe("#1f1e1d");
+    expect(textOn("#ffff00")).toBe("#1c1c1c");
     expect(textOn("#2a78d6")).toBe("#ffffff");
   });
 

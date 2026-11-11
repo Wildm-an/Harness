@@ -47,6 +47,8 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 
 Harness now has a "More" accordion for Permission rules, and a Settings gear in the footer. Move these to the Capabilities page and the account menu.
 
+- **S18.** The footer of the sidebar is one row, 28px high (the user asked for a compact footer): the status dot (6px), the icon of the computer, the name of the connection, then "· {computer}" in muted text, and the Settings button (28px) at the right. A green dot shows "Connected", so the row does not show that word. A state that is not "Connected" shows as text in place of the computer: "· Connecting" or "· Disconnected". With no connection, the row shows only "No connection". The hover tip has the full state.
+
 ### 3.2 Group and sort menu
 
 - **S1.** The menu button shows when the pointer is on a group heading. Its tooltip is "Group and sort". When a filter is active, the tooltip is "Filter (active)".
@@ -150,10 +152,11 @@ Claude shows skills and connectors on separate tabs of its "Customize" page. The
 
 ### 5.1 Layout
 
-- **C1.** The prompt box is one card with a large radius. Claude uses `--cds-radius-composer` (14px in comfortable density). Harness uses `--prompt-radius` (8px, see section 11.4). The text area grows to `min(24rem, 40svh)`.
+- **C1.** The prompt box is one card with a large radius. Claude uses `--cds-radius-composer` (14px in comfortable density). Harness uses `--prompt-radius` (2px, the one corner radius of the app, see section 11.4). The text area grows to `min(24rem, 40svh)`.
 - **C2.** The action row inside the card, left to right: the "+" button, the text area, then Send / Stop at the right.
 - **C3.** The "chin" bar under the card, left to right: the permission mode picker; then, at the right, the model picker (with effort), then the context ring.
 - **C3a.** The chips under the prompt box (mode, project, model) are text with no border and no arrow. On hover and while the menu is open, the full chip gets the hover background (the user asked for this). The model chip has no icon: it shows the model name, a bar, then the effort level, for example "qwen3 | High" (the user asked for the bar). It has the same text color as the other chips under the prompt box (the user asked for this). Its class is `model-button`: the `model-chip` class of the Providers page has other colors.
+- **C3b.** The chin bar is 6px above the bottom edge of the window (the user asked for the prompt box nearer to the edge). Its chips are on the same line as the footer row of the sidebar (S18): the center of each is 18px above the edge (the user asked for this). A change to the height or the padding of one needs the same change to the other.
 - **C4.** The same prompt box shows on the start screen and in a session (see the memory rule "Prompt boxes have the same features").
 
 ### 5.2 The "+" menu
@@ -219,7 +222,7 @@ Harness has no "+" button now. Add it.
 
 ### 6.1 Messages
 
-- **M1.** The user message is a bubble with a light tint. On hover it shows a toolbar, in this order: "Copy message", "Rewind to here", "Fork from here", then the time. The bubble has the corner radius of the prompt box (`--prompt-radius`, 8px; the user asked for this). The images of a message have the same radius.
+- **M1.** The user message is a bubble with a light tint. On hover it shows a toolbar, in this order: "Copy message", "Rewind to here", "Fork from here", then the time. The bubble has the corner radius of the prompt box (`--prompt-radius`, 2px; the user asked for this). The bubble is tight on its words (the user asked for this): 7px of space above and below the text, 10px at the left and the right, and a line height of 1.5. The images of a message have the same radius.
 - **M1b.** In place of the check icon of the Claude app ("Read by Claude"), the toolbar of a user message shows the text "Read" or "Sent", then "|", then the time (the user asked for this). "Sent": the turn runs and nothing came after the message yet (no reply, no tool call, no card). "Read": all other messages. The tip of "Read" is "Read by the agent".
 - **M1a.** The round button that scrolls to the bottom shows three moving dots while the agent works. On hover it shows a down arrow, the jump to the agent, and the button gets a highlight: a lighter fill and a brighter ring (the user asked for both). The button shows only when the end of the chat is out of view: while the agent works, the working line; else the bottom of the chat (the user asked for this). A scroll up stops the follow, but the button stays hidden while the working line is in view.
 - **M1c.** A click that opens a dropdown in the chat (a tool row, a tool group, the working line, the task list, a visual, or a menu such as the ⋯ of a card) scrolls the chat down so the opened part is in view, with 12px of room (the user asked for this). The chat scrolls only as far as needed, never up, and the clicked row stays in view (`revealScroll` in `MessageList.tsx`).
@@ -381,7 +384,7 @@ Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
 - **V6k.** Editor autocomplete, as GitHub Copilot: when the user stops typing (400 ms), the model of the session writes the text at the cursor. The editor shows it as gray text. Tab accepts it, and Esc hides it. "Autocomplete" in the editor status bar turns it on or off (on by default). While it is on, the word list opens only with Ctrl+Space.
 - **V6m.** The Files sidebar head has "New file…" and "New folder…". A name field opens at the top of the tree, with the folder of the open file as the start. Enter makes the item (the daemon message `fs.create`), and a new file opens in the editor. Esc closes the field. The edge on the right of the sidebar changes its width. A double-click sets the automatic width.
 - **V6n.** The language of the open file is a menu in the editor status bar, with a filter. The choice changes the colors and the editor features of that file. The file on disk does not change.
-- **V6o.** The Files sidebar head shows its action buttons when they fit. A narrow sidebar (236px or less) shows one "⋯" menu with the same actions and their names. The sidebar is at least 120px wide: the Files and Search switch and "⋯" stay in view.
+- **V6o.** The Files pane of the IDE view has one header row (the user asked for a compact header): the window header holds the title "Files", then the Files and Search switch (two icon buttons, the pressed one has the fill of an active button), the "⋯" menu with the file actions and their names, and the window buttons. The pane has no second row. A file action from the "⋯" menu shows the file tree. A window header is 32px high, and each of its buttons is 28px. In a narrow window, the title gets narrower before a button goes out of view. The editor shows no empty tab row: with no open file, the "Editor" header is the only row above the editor (the user asked for this).
 - **V6p0.** Esc stops the agent from anywhere in the window, not only in the prompt box (the user asked for this). An open menu or dialog closes first. A waiting card takes Esc before the agent stop (M10a). A text field, the terminal, the editor, and the split pane keep their own Esc.
 - **V6p.** The agent shows a task list and an end-of-turn box, as Claude Code does (daemon tools `update_plan` and `wrap_up`). The chat draws the latest plan under the messages: a check mark for a completed step, a spinner for the step in progress, and a dashed circle for a pending step. At the end of a turn it draws a box with the recap, a question, and one or two answer buttons. A button sends its message as the next prompt. The chat does not show these two tools as tool rows. An unfinished plan of an older turn stays under the messages with no spinner, until the agent sends a new plan. The plan of an interrupted turn does not show after the next prompt. Exception: "Send now" of a queued message also stops the turn, but the plan stays (the user asked for this). When the user writes during a turn (a queued or steered message), or after the turn, the plan shows the muted heading "Plan from before your last message" at once, and its step in progress shows a "⋯" circle in place of the spinner, as in Claude Code (the user asked for this). A finished plan (all steps completed, or a `wrap_up` after it) folds into one line, "Plan finished · {n} steps", with a chevron (the user asked for this). A click opens the steps, and "Plan finished" at the top folds them again. The caret stays at the far right in both states: it points right on the folded line and down on the open list (the user asked for this). Each completed step shows its time at the right, in muted text ("8s", "1m 11s"), and the folded line and "Plan finished" show the total time of the plan (the user asked for this). The daemon puts the end time (`ts`) on each tool result, so the times stay after a reload. A step starts at the first `update_plan` that shows it in progress (or else at the call before the one that completes it), and ends at the first call that completes it. A step in progress at a `wrap_up` ends at the `wrap_up`. The total is the time from the first `update_plan` of the turn to the end of the plan. An old session with no times shows no times. When the turn has an end-of-turn box, the finished plan line is at the top of the box, over a line, so the plan and the recap are one card (the user asked for this). The recap is 300 characters or less (about 40 words), and the question 100 characters or less, as in the Claude app: `wrap_up` gives an error for a longer text, and the agent writes it again.
 - **V6q.** The agent must keep the task list current (the user asked for this). The system prompt has a "Task list" rule: a plan in the first reply of a task of more than one step, one step in progress, an `update_plan` as soon as each step finishes, a new whole list after each new message of the user, and `wrap_up` at the end. The daemon adds harness notes (`agent.py` `_plan_note`): after 3 tool calls in a turn with no plan (one time in the turn), after each 8 tool calls with no `update_plan` while the plan has open steps (the user asked for this: some models mark all steps completed at the end, so the step times are wrong), after a message of the user during the turn when a plan exists, and at a new prompt when the last plan has steps that are not completed (the note names them).
@@ -619,7 +622,10 @@ Rules:
 - **T1.** Use the accent blue for focus rings, links, selection and the unread dot. Use clay only for the brand.
 - **T2.** Make borders and hover fills from the text color with alpha. Do not use fixed gray borders.
 - **T3a.** The sidebar has an opaque background (`--sidebar`). The user compared a translucent sidebar (Windows Mica and Acrylic) and chose the opaque sidebar.
-- **T3.** Harness dark colors (`#262624`, `#1f1e1d`, `#30302e`) are the older warm claude.ai palette. The move to the CDS palette is a large visual change. Decide it in its own change, and change all the tokens in `styles.css` together.
+- **T3.** The Harness dark theme is grey on dark grey (the user asked for this, and for no full black): neutral greys with no hue. The page is `#1c1c1c`, the sidebar `#262626` (a little lighter than the page, the user asked for this), a sunken field `#161616`, a panel `#242424`, a raised fill `#2e2e2e`, a border `#353535`, a strong border `#4a4a4a`, the text `#d6d6d6`, and the muted text `#9a9a9a`. The default accent ("White") is `#e6e6e6` on the dark theme. The status colors keep their hues. The light theme is light grey on off-white (the user asked for this), also with no hue: the page is `#f8f8f8`, the sidebar `#efefef`, a panel `#f1f1f1`, a raised fill `#e9e9e9`, a border `#dedede`, a strong border `#c6c6c6`, the text `#1c1c1c`, and the muted text `#5f5f5f`. The default accent is `#1c1c1c` on the light theme. The status colors of the light theme are dark shades with 4.5:1 or more on the page and on the grey surfaces. Change all the tokens of a theme in `styles.css` together.
+- **T3c.** The session rail has the color of the chat (`--bg`) in each theme (the user asked for this). A 1px border separates it from the chat.
+- **T3d.** Inline code in the transcript has no hue (the user asked for white text): `#ffffff` on the dark theme, and `#000000` on the light theme, on the raised fill (`--code-inline`).
+- **T3b.** A line is 1px: a border, a focus ring, and a drop outline (the user asked for thin outlines). Do not use 1.5px or 2px for an outline. A tab underline and a state bar can be 2px, because they are marks, not outlines.
 
 ### 11.3 Type
 
@@ -651,18 +657,17 @@ Rules:
 | Gap xs / sm / md / lg / xl | 6 / 8 / 12 / 20 / 32px | 8 / 12 / 16 / 28 / 40px |
 
 - **T7.** Use these steps. Do not use other padding values.
-- **T7a.** Harness uses a tighter set of corner radii than Claude (the user chose it from three sets). Use these tokens. Do not use other radius values for these elements:
+- **T7a.** Harness has one corner radius: 2px (the user asked for this: each element with rounded corners has the radius of the buttons). The value is `--radius-sm`. The tokens `--radius`, `--radius-lg`, `--radius-xl`, `--prompt-radius`, and `--side-radius` stay as names for their elements, and each has the value of `--radius-sm`. Use a token. Do not write a radius value in a rule:
 
-  | Token | Value | Elements |
-  |---|---|---|
-  | `--radius-sm` | 4px | buttons, small controls, rail headings |
-  | `--radius` | 6px | menus, code blocks, tool cards, list rows |
-  | `--radius-lg` | 8px | panels, dialogs, the chat cards (permission, plan, end-of-turn box) |
-  | `--radius-xl` | 14px | not in use now |
-  | `--prompt-radius` | 8px | the prompt box and the user message |
-  | `--side-radius` | 4px compact, 6px comfortable | the sidebar rows |
+  | Token | Elements |
+  |---|---|
+  | `--radius-sm` | all buttons, small controls, rail headings, question options, Settings nav items, chips, status pills, badges, meters |
+  | `--radius` | menus, code blocks, tool cards, list rows |
+  | `--radius-lg` | panels, dialogs, the chat cards (permission, plan, end-of-turn box), the recent folders block |
+  | `--prompt-radius` | the prompt box and the user message |
+  | `--side-radius` | the sidebar rows |
 
-  Round items (pills, dots, avatars) keep `999px` or `50%`.
+  A pill shape (`999px`) is in use only for a switch: a switch is round, with a round knob (the user asked for this). A chip, a status pill, a badge, and a meter have the 2px radius. The scroll-to-bottom button and the x of an attachment are square with the 2px radius. A circle keeps `50%`: a status dot, the radio button, an avatar, a color swatch, the switch knob, and the circle of a plan step. A segmented button, inside a 2px corner, has 1px.
 - **T8.** The app default density is comfortable.
 
 ### 11.5 Depth and motion

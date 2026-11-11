@@ -245,7 +245,7 @@ export function luminance(hex: string): number {
 }
 
 const contrast = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-const DARK_TEXT = "#1f1e1d";
+const DARK_TEXT = "#1c1c1c"; // --text of the light theme.
 
 /** The text color on a fill of this color: dark text or white text, whichever has more contrast. */
 export function textOn(hex: string): string {
@@ -259,8 +259,9 @@ export function accentTokens(value: string, theme: "light" | "dark"): AccentToke
   if (accent === "clay") return null;
   if (accent === "white") {
     return theme === "dark"
-      ? { "--accent": "#faf9f5", "--accent-hover": "#ffffff", "--accent-fill": "#faf9f5", "--accent-fill-hover": "#e6e4dc", "--accent-text": DARK_TEXT, "--accent-soft": "rgba(250, 249, 245, 0.12)" }
-      : { "--accent": DARK_TEXT, "--accent-hover": "#000000", "--accent-fill": DARK_TEXT, "--accent-fill-hover": "#3a3936", "--accent-text": "#ffffff", "--accent-soft": "rgba(31, 30, 29, 0.08)" };
+      ? // The dark theme is grey on dark grey: a light grey with no hue.
+        { "--accent": "#e6e6e6", "--accent-hover": "#ffffff", "--accent-fill": "#e6e6e6", "--accent-fill-hover": "#cccccc", "--accent-text": DARK_TEXT, "--accent-soft": "rgba(255, 255, 255, 0.12)" }
+      : { "--accent": DARK_TEXT, "--accent-hover": "#000000", "--accent-fill": DARK_TEXT, "--accent-fill-hover": "#3a3a3a", "--accent-text": "#ffffff", "--accent-soft": "rgba(0, 0, 0, 0.08)" };
   }
   const base = HEX.test(accent) ? accent : ACCENT_PRESETS.find(([id]) => id === accent)![2];
   const l = luminance(base);

@@ -189,15 +189,15 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML = `<style>
     :host{all:initial}
-    .box{position:fixed;border:2px solid #2a78d6;background:rgba(42,120,214,.12);border-radius:3px;pointer-events:none;display:none}
-    .tag{position:fixed;padding:2px 6px;border-radius:4px;background:#2a78d6;color:#fff;font:12px/1.4 system-ui,sans-serif;pointer-events:none;display:none;white-space:nowrap}
-    .badge{position:absolute;min-width:20px;height:20px;padding:0 5px;box-sizing:border-box;border-radius:10px;background:#2a78d6;color:#fff;font:600 12px/20px system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.3)}
-    .pop{position:fixed;width:280px;padding:10px;border-radius:10px;background:#1f1f1e;color:#f0efec;border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 24px rgba(0,0,0,.35);font:13px/1.4 system-ui,sans-serif;pointer-events:auto;display:none}
-    .pop textarea{box-sizing:border-box;width:100%;min-height:64px;resize:vertical;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:#151515;color:inherit;font:inherit}
+    .box{position:fixed;border:2px solid #2a78d6;background:rgba(42,120,214,.12);border-radius:2px;pointer-events:none;display:none}
+    .tag{position:fixed;padding:2px 6px;border-radius:2px;background:#2a78d6;color:#fff;font:12px/1.4 system-ui,sans-serif;pointer-events:none;display:none;white-space:nowrap}
+    .badge{position:absolute;min-width:20px;height:20px;padding:0 5px;box-sizing:border-box;border-radius:2px;background:#2a78d6;color:#fff;font:600 12px/20px system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+    .pop{position:fixed;width:280px;padding:10px;border-radius:2px;background:#1f1f1e;color:#f0efec;border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 24px rgba(0,0,0,.35);font:13px/1.4 system-ui,sans-serif;pointer-events:auto;display:none}
+    .pop textarea{box-sizing:border-box;width:100%;min-height:64px;resize:vertical;padding:6px 8px;border-radius:2px;border:1px solid rgba(255,255,255,.2);background:#151515;color:inherit;font:inherit}
     .pop .row{display:flex;justify-content:flex-end;gap:6px;margin-top:8px}
-    .pop button{padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:transparent;color:inherit;font:inherit;cursor:pointer}
+    .pop button{padding:4px 10px;border-radius:2px;border:1px solid rgba(255,255,255,.2);background:transparent;color:inherit;font:inherit;cursor:pointer}
     .pop button.primary{background:#2a78d6;border-color:#2a78d6;color:#fff}
-    .hint{position:fixed;left:50%;top:12px;transform:translateX(-50%);padding:6px 12px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font:12px/1.4 system-ui,sans-serif;pointer-events:none}
+    .hint{position:fixed;left:50%;top:12px;transform:translateX(-50%);padding:6px 12px;border-radius:2px;background:rgba(20,20,20,.9);color:#fff;font:12px/1.4 system-ui,sans-serif;pointer-events:none}
     svg.draw{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
     svg.draw.active{pointer-events:auto;cursor:crosshair}
     .textin{position:fixed;min-width:120px;padding:2px 4px;border:1px dashed currentColor;background:rgba(0,0,0,.35);font:600 16px/1.3 system-ui,sans-serif;outline:none;pointer-events:auto}
