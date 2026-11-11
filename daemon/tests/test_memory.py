@@ -138,3 +138,62 @@ def test_the_settings_page_manages_the_memory(daemon, project, fake_model):  # n
     c.send({"type": "memory.delete", "cwd": cwd, "name": "user-role"})
     assert [i["name"] for i in c.until("memory")[0]["items"]] == ["ship-it"]
     c.close()
+
+
+def _harness_notes(fake_model):
+    return [m["content"] for r in fake_model.requests for m in r["messages"]
+            if m.get("role") == "user" and "saved nothing to the memory" in str(m.get("content"))]
+
+
+def test_a_preference_with_no_save_gets_one_memory_check(harness_home, project, fake_model):
+    fake_model.script(
+        {"text": "OK."},
+        {"tool_calls": [{"name": "memory", "arguments": {"action": "save", "name": "short-answers",
+                                                         "description": "The user wants short answers.",
+                                                         "type": "feedback", "content": "Keep answers short."}}]},
+        {"text": ""},
+    )
+    agent, _, _ = make_agent(project)
+    assert asyncio.run(agent.run_turn("From now on, keep answers short.")) == "end"
+    assert len(fake_model.requests) == 3 and fake_model.replies == []
+    assert len(set(_harness_notes(fake_model))) == 1
+    assert "Keep answers short." in MemoryStore(project).read("short-answers")
+
+
+def test_the_memory_check_comes_one_time_in_a_turn(harness_home, project, fake_model):
+    fake_model.script({"text": "OK."}, {"text": ""})
+    agent, _, _ = make_agent(project)
+    assert asyncio.run(agent.run_turn("Always use tabs.")) == "end"
+    assert len(fake_model.requests) == 2
+
+
+def test_no_memory_check_for_a_short_turn_or_a_turn_that_saved(harness_home, project, fake_model):
+    fake_model.script({"text": "Hello."})
+    agent, _, _ = make_agent(project)
+    asyncio.run(agent.run_turn("hi"))
+    assert len(fake_model.requests) == 1
+    fake_model.requests.clear()
+    fake_model.script(
+        {"tool_calls": [{"name": "memory", "arguments": {"action": "save", "name": "tabs", "description": "Tabs.",
+                                                         "type": "feedback", "content": "Use tabs."}}]},
+        {"text": "Saved."},
+    )
+    asyncio.run(agent.run_turn("Remember: always use tabs."))
+    assert len(fake_model.requests) == 2 and _harness_notes(fake_model) == []
+
+
+def test_no_memory_check_when_the_memory_is_off(harness_home, project, fake_model):
+    fake_model.script({"text": "OK."})
+    agent, _, _ = make_agent(project, auto_memory=False)
+    asyncio.run(agent.run_turn("From now on, keep answers short."))
+    assert len(fake_model.requests) == 1
+
+
+def test_a_long_turn_gets_the_memory_check(harness_home, project, fake_model):
+    from harness_daemon.agent import MEMORY_CHECK_CALLS
+    (project / "a.txt").write_text("x", encoding="utf-8")
+    fake_model.script(*[{"tool_calls": [{"name": "read", "arguments": {"path": "a.txt"}}]}] * MEMORY_CHECK_CALLS,
+                      {"text": "Done."}, {"text": ""})
+    agent, _, _ = make_agent(project)
+    assert asyncio.run(agent.run_turn("Look at the file.")) == "end"
+    assert len(_harness_notes(fake_model)) >= 1 and fake_model.replies == []

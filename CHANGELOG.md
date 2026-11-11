@@ -3,6 +3,16 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Memory
+
+- The agent must keep the project memory current. Before its final answer, it saves the new facts
+  of the task. It saves a correction or a preference of the user at once.
+- A memory check at the end of a turn: when the turn saved nothing, and you told the agent a
+  preference ("always", "from now on", "remember") or the turn was long, the agent gets one more
+  step to save facts. It does not write its answer again.
+
 ## 0.1.71 (2026-11-11)
 
 ### Appearance

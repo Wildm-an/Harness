@@ -228,6 +228,7 @@ class Agent:
         self._turn_start = 0  # The history index of the user message of the turn.
         self._plan_nudged = False  # The turn got the reminder to show a task list.
         self._plan_close_nudged = False  # The turn got the reminder to close its task list (PLAN_CLOSE_NOTE).
+        self._memory_nudged = False  # The turn got the reminder to save to the memory (MEMORY_CHECK_NOTE).
         self._stale_nudges = (-1, 0)  # (history index of the last plan, reminders sent for it): PLAN_STALE_NOTE.
         self._rebuild_prompt()
 
@@ -699,6 +700,7 @@ class Agent:
         self._turn_start = len(self.history) - 1  # The plan reminders look at the calls of this turn.
         self._plan_nudged = False
         self._plan_close_nudged = False
+        self._memory_nudged = False
         self.gate.turn_allow = list(allow)
         self.turn_number += 1
         turn = self.turn_number
@@ -784,6 +786,11 @@ class Agent:
                     close_note = self._plan_close_note(origin, ended=True)
                     if close_note:
                         new_messages = [self._add_harness_note(close_note)]
+                        continue
+                    # The turn saved nothing to the memory: one more step to check for facts to save.
+                    memory_note = self._memory_check_note(display if display is not None else text, calls_used, origin)
+                    if memory_note:
+                        new_messages = [self._add_harness_note(memory_note)]
                         continue
                     # turn.stopping handlers can add messages: then the turn continues.
                     if self.hooks.has("turn.stopping") and continuations < MAX_STEER_CONTINUATIONS:
@@ -1057,6 +1064,32 @@ class Agent:
         self._plan_close_nudged = True
         note = PLAN_CLOSE_END_NOTE if ended else PLAN_CLOSE_NOTE
         return note.format(steps="; ".join(open_steps[:6]))
+
+    def _memory_check_note(self, user_text: str, calls: int, origin: str | None) -> str | None:
+        """A reminder to save to the memory, one time in a turn, when the model ends the turn.
+
+        It comes when the turn made no memory save, and the user message has a memory signal
+        (MEMORY_SIGNAL_RE, for example "always" or "from now on"), or the turn made MEMORY_CHECK_CALLS
+        tool calls or more. A short turn with no signal gets no reminder.
+        """
+        if (not self.user_facing or MemoryTool.name not in self.tools or not self._memory_on()
+                or origin == "task" or self._memory_nudged):
+            return None
+        if not (MEMORY_SIGNAL_RE.search(user_text or "") or calls >= MEMORY_CHECK_CALLS):
+            return None
+        for m in self.history[self._turn_start:]:
+            for call in m.get("tool_calls") or [] if m.get("role") == "assistant" else []:
+                fn = call.get("function") or {}
+                if fn.get("name") != MemoryTool.name:
+                    continue
+                try:
+                    action = json.loads(fn.get("arguments") or "{}").get("action")
+                except (ValueError, AttributeError):
+                    continue
+                if action in ("save", "delete"):
+                    return None
+        self._memory_nudged = True
+        return MEMORY_CHECK_NOTE
 
     def _stale_plan_note(self) -> str | None:
         """PLAN_STALE_NOTE after each PLAN_STALE_CALLS tool calls in the turn since the last update_plan."""
@@ -1539,6 +1572,17 @@ PLAN_OFF_NOTE = "[Harness: Plan mode is off. You can change files again. Stay in
 MEMORY_NOTE = ("[Harness: The user changed the memory in Settings. This memory replaces the memory in the "
                "system prompt.]\n\n{memory}")
 MEMORY_OFF_NOTE = "[Harness: The user turned off or cleared the memory. Do not use the memory in the system prompt.]"
+# The memory check at the end of a turn (_memory_check_note).
+MEMORY_CHECK_CALLS = 8
+MEMORY_SIGNAL_RE = re.compile(
+    r"\b(remember|forget|always|never|from now on|going forward|in the future|next time|every time|each time"
+    r"|prefer|preference|instead of|stop (?:doing|using)|that'?s (?:wrong|not)|not what i)\b", re.I)
+MEMORY_CHECK_NOTE = ("[Harness: You ended the turn, but you saved nothing to the memory in this turn. Check the "
+                     "turn now for facts that will help a later session: a correction or a preference of the user, "
+                     "a rule for how to work, a project fact that the code and the git history do not show, or a "
+                     "pointer to an outside resource. Save each one with the memory tool. Update a memory on the "
+                     "same topic: do not make a duplicate. The user already sees your answer, so do not write it "
+                     "again. After the memory calls, or if there is nothing to save, end the turn with no text.]")
 
 
 def _parse_arguments(raw: str) -> tuple[dict[str, Any] | None, str | None]:
