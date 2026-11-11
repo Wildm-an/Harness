@@ -3,6 +3,15 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.68 (2026-11-10)
+
+### Browser
+
+- A tab that opens from the session rail stays inside the Browser pane. Before, the page showed
+  over the chat for a moment.
+- A pane that opens again in its last place does not start again. Before, the Browser pane moved
+  its page out of sight and back.
+
 ## 0.1.67 (2026-11-10)
 
 ### Browser
