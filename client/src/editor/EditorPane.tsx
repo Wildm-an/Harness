@@ -156,6 +156,7 @@ export function EditorPane({
 
   // The actions of the Files sidebar head: buttons when they fit, else the items of the "⋯" menu.
   const [moreOpen, setMoreOpen] = useState(false);
+  const [morePos, setMorePos] = useState<{ top: number; left: number } | null>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!moreOpen) return;
@@ -361,23 +362,30 @@ export function EditorPane({
     </form>
   );
 
-  // The "⋯" menu: in the sidebar head (the IDE view), or in the window header (the Code view).
+  // The "⋯" menu, in the window header of the Files pane (the IDE view and the Code view).
   const moreMenu = (
-    <div className={`side-actions-more${code ? " code-more" : ""}`} ref={moreRef}>
+    <div className="side-actions-more" ref={moreRef}>
       <button
         type="button"
         className={`icon-btn ghost${moreOpen ? " active" : ""}`}
-        onClick={() => setMoreOpen((o) => !o)}
+        onClick={(e) => {
+          // The IDE view: the menu gets a fixed place under the button, so the window of the narrow
+          // Files pane does not cut it. It stays in the app window.
+          const r = e.currentTarget.getBoundingClientRect();
+          setMorePos(code ? null : { top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 220)) });
+          setMoreOpen((o) => !o);
+        }}
         aria-haspopup="menu"
         aria-expanded={moreOpen}
         aria-label="More file actions"
         title="More"
       >
-        <MoreHorizontal size={code ? 15 : 14} aria-hidden />
+        <MoreHorizontal size={15} aria-hidden />
       </button>
       {moreOpen && (
         <div
           className="menu side-more-menu"
+          style={morePos ? { position: "fixed", top: morePos.top, left: morePos.left, right: "auto" } : undefined}
           role="menu"
           onKeyDown={(e) => {
             if (e.key === "Escape") {
@@ -396,6 +404,7 @@ export function EditorPane({
               onClick={() => {
                 setMoreOpen(false);
                 if (code && !treeShown) setTreeShown(true); // New file and New folder show in the tree.
+                if (!code) setSidebar("files"); // The IDE view: the actions are for the tree, not for the search.
                 a.run();
               }}
             >
@@ -580,41 +589,37 @@ export function EditorPane({
           {codeSide}
         </aside>
       )}
+      {/* The Files pane of the IDE view: the Files and Search switch and the "⋯" menu are in the
+          window header, so the pane has one header row (the user asked for this, UI_RULES V6o). */}
+      {part === "files" && (
+        <PaneActions>
+          <div className="win-modes" role="group" aria-label="Sidebar">
+            <button
+              type="button"
+              className={`icon-btn ghost${sidebar === "files" ? " active" : ""}`}
+              aria-pressed={sidebar === "files"}
+              onClick={() => setSidebar("files")}
+              title="Files"
+              aria-label="Files"
+            >
+              <Files size={15} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className={`icon-btn ghost${sidebar === "search" ? " active" : ""}`}
+              aria-pressed={sidebar === "search"}
+              onClick={() => setSidebar("search")}
+              title="Search"
+              aria-label="Search"
+            >
+              <Search size={15} aria-hidden />
+            </button>
+          </div>
+          {moreMenu}
+        </PaneActions>
+      )}
       {showSide && !code && (
         <aside className="editor-side" aria-label="Files and search" ref={sideRef}>
-          <div className="editor-side-head">
-            <div className="segmented" role="group" aria-label="Sidebar">
-              <button type="button" aria-pressed={sidebar === "files"} onClick={() => setSidebar("files")} title="Files" aria-label="Files">
-                <Files size={14} aria-hidden />
-              </button>
-              <button type="button" aria-pressed={sidebar === "search"} onClick={() => setSidebar("search")} title="Search" aria-label="Search">
-                <Search size={14} aria-hidden />
-              </button>
-            </div>
-            <span className="spacer" />
-            {sidebar === "files" ? (
-              <>
-                {/* All the buttons when they fit. A narrow sidebar shows "⋯" instead (styles.css). */}
-                <div className="side-actions-full">
-                  {sideActions.map((a) => (
-                    // aria-disabled, not disabled: a disabled button gets no hover, so it would show no tip.
-                    <button
-                      key={a.label}
-                      type="button"
-                      className="icon-btn ghost"
-                      onClick={() => !a.disabled && a.run()}
-                      aria-disabled={a.disabled || undefined}
-                      title={a.title ?? a.label}
-                      aria-label={a.label}
-                    >
-                      <a.icon size={14} aria-hidden />
-                    </button>
-                  ))}
-                </div>
-                {moreMenu}
-              </>
-            ) : null}
-          </div>
           {sidebar === "files" && creating && newEntryForm}
           {sidebar === "files" && (creating?.problem || api.createError) && (
             <p className="new-entry-error" role="alert">
@@ -645,8 +650,9 @@ export function EditorPane({
 
       {part !== "files" && (
       <div className="editor-main">
-        {/* The Code view shows no empty tab row: the editor shows "Open files appear here". */}
-        {!(code && api.files.length === 0) && (
+        {/* No empty tab row, in the Code view and in the IDE view (the user asked for a smaller top
+            border of the editor, UI_RULES V6k6): the editor shows the help text. */}
+        {api.files.length > 0 && (
         <div className={`file-tabs${tabDrag.rowClass}`} role="tablist" aria-label="Open files">
           {api.files.map((f, index) => (
             // An unpinned tab has its name in italics: the next file that opens takes its place (V6k4).

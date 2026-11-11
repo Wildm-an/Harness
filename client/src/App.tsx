@@ -3382,9 +3382,18 @@ export default function App() {
         >
           <span className="conn-dot" aria-hidden />
           <ConnectionIcon connection={current} />
+          {/* One row (the user asked for a compact footer): the name, then the computer. The dot shows
+              "Connected". A state that is not "Connected" shows as text in place of the computer. */}
           <span className="conn-text">
             <span className="conn-name">{current?.name ?? "No connection"}</span>
-            <span className="conn-host">{hello ? `${statusText} · ${hello.hostname}` : statusText}</span>
+            {status === "open" ? (
+              <>
+                <span className="sr-only">{statusText}</span>
+                {hello && <span className="conn-host">· {hello.hostname}</span>}
+              </>
+            ) : (
+              current && <span className="conn-host">· {statusText}</span>
+            )}
           </span>
         </button>
       }
