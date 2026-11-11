@@ -1,4 +1,5 @@
-// Settings > Your Harness: the agent instructions of the user and the memory of the agent. The memory
+// Settings > Your Harness: the global instructions of the user, the instructions of each project, and
+// the memory of the agent. The memory
 // rows follow the "Memory" settings of Claude: "Search and reference chats", "Generate memory from
 // chats", "Include sensitive topics in memory", "Your memory" (Manage), "Import memory from other AI
 // providers", and "Export memory". Each project has its own memory (daemon memory.py).
@@ -12,6 +13,7 @@ import { saveBase64File } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { INSTRUCTION_FIELDS, Row, Switch, TextAreaField } from "./SettingsDialog";
+import { NewOutputStyleDialog, OutputStyleSelect, useOutputStyles } from "./OutputStyle";
 import { RowsPending } from "./Skeleton";
 
 export const MEMORY_TYPES: [MemoryType, string, string][] = [
@@ -138,6 +140,78 @@ function useMemory(conn: DaemonConnection, cwd: string | null, connected: boolea
   };
 }
 
+/** The instructions of one project from the settings: the text from the daemon, and the request to save it. */
+function useProjectInstructions(conn: DaemonConnection, cwd: string | null, connected: boolean) {
+  const [data, setData] = useState<{ cwd: string; path: string; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [savedKey, setSavedKey] = useState(0); // It goes up after each save that the daemon did.
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+
+  useEffect(
+    () =>
+      conn.onMessage((msg) => {
+        if (msg.type === "project_instructions") {
+          if (msg.cwd !== cwdRef.current) return;
+          setData({ cwd: msg.cwd, path: msg.path, text: msg.text ?? "" });
+          setError(null);
+          if (msg.saved) setSavedKey((k) => k + 1);
+        } else if (msg.type === "error" && msg.ref?.startsWith("project_instructions.")) {
+          setError(msg.message);
+        }
+      }),
+    [conn],
+  );
+
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    if (!cwd || !connected) return;
+    try {
+      conn.send({ type: "project_instructions.get", cwd });
+    } catch {
+      // Not connected. The page shows the note.
+    }
+  }, [conn, cwd, connected]);
+
+  return {
+    data: data && data.cwd === cwd ? data : null,
+    error,
+    savedKey,
+    save: (text: string) => {
+      if (!cwd) return;
+      setError(null);
+      try {
+        conn.send({ type: "project_instructions.set", cwd, text: text || null });
+      } catch (e) {
+        setError(errorText(e));
+      }
+    },
+  };
+}
+
+/** The project of the project rows. The Project instructions and the Memory section show the same choice. */
+function ProjectSelect({ id, cwd, choices, projectName, disabled, onChange }: {
+  id: string;
+  cwd: string | null;
+  choices: ProjectItem[];
+  projectName: string;
+  disabled: boolean;
+  onChange: (path: string) => void;
+}) {
+  return (
+    <select id={id} value={cwd ?? ""} disabled={disabled || choices.length === 0} onChange={(e) => onChange(e.target.value)}>
+      {choices.length === 0 && <option value="">No projects yet</option>}
+      {cwd && !choices.some((p) => p.path === cwd) && <option value={cwd}>{projectName}</option>}
+      {choices.map((p) => (
+        <option key={p.id} value={p.path} title={p.path}>
+          {choices.some((o) => o !== p && o.name === p.name) ? `${p.name} · ${p.path.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] ?? p.path}` : p.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 type View = "main" | "manage" | "import";
 
 export function YourHarnessSettings({
@@ -165,21 +239,27 @@ export function YourHarnessSettings({
     setStatus("saving");
     onSet(changes);
   };
+  // The project of the project rows: the project of the session, else the last project that was used.
+  const choices = [...(projects ?? [])].sort((a, b) => b.last_used - a.last_used);
+  const [project, setProject] = useState<string | null>(null);
+  const cwd = project ?? currentProject ?? choices[0]?.path ?? null;
+  const memory = useMemory(conn, cwd, connected);
+  const notes = useProjectInstructions(conn, cwd, connected);
+  const styles = useOutputStyles(conn, connected);
+  const [newStyle, setNewStyle] = useState(false);
+  useEffect(() => {
+    if (styles.created) setNewStyle(false); // The new style is the output style now.
+  }, [styles.created]);
+
   useEffect(() => {
     if (status !== "saving") return;
     setStatus("saved");
     const timer = window.setTimeout(() => setStatus(""), 1500);
     return () => window.clearTimeout(timer);
-  }, [values]);
+  }, [values, notes.savedKey]);
   useEffect(() => {
-    if (error) setStatus("");
-  }, [error]);
-
-  // The project of the memory rows: the project of the session, else the last project that was used.
-  const choices = [...(projects ?? [])].sort((a, b) => b.last_used - a.last_used);
-  const [project, setProject] = useState<string | null>(null);
-  const cwd = project ?? currentProject ?? choices[0]?.path ?? null;
-  const memory = useMemory(conn, cwd, connected);
+    if (error || notes.error) setStatus("");
+  }, [error, notes.error]);
   const projectName = choices.find((p) => p.path === cwd)?.name ?? cwd?.split(/[\\/]/).filter(Boolean).pop() ?? "";
 
   useEffect(() => {
@@ -211,10 +291,36 @@ export function YourHarnessSettings({
       )}
       {!connected && <p className="help settings-note">Connect to a computer to change the settings of its daemon.</p>}
 
-      <h3 className="settings-section">Agent instructions</h3>
+      <h3 className="settings-section">Global instructions</h3>
       <p className="help settings-note">
-        The agent that you talk to follows these instructions in all projects. A subagent does not get them: its agent tells it how to act. A HARNESS.md or CLAUDE.md file can change them for one project. A change applies at the next turn.
+        The agent that you talk to follows these instructions in all projects. A subagent does not get them: its agent tells it how to act. The project instructions can change them for one project. A change applies at the next turn.
       </p>
+      <Row label="Output style" help="How the agent structures its replies, in all projects." htmlFor="setting-output-style">
+        <OutputStyleSelect
+          id="setting-output-style"
+          value={values?.output_style ?? "default"}
+          items={styles.items}
+          disabled={off}
+          onChange={(id) => set({ output_style: id })}
+          onNew={() => {
+            styles.clearError();
+            setNewStyle(true);
+          }}
+        />
+      </Row>
+      {styles.created?.note && (
+        <p className="help settings-note" role="status">
+          {styles.created.note}
+        </p>
+      )}
+      {styles.error && !newStyle && (
+        <p className="form-error" role="alert">
+          {styles.error}
+        </p>
+      )}
+      {newStyle && (
+        <NewOutputStyleDialog busy={styles.creating} error={styles.error} onCreate={styles.create} onClose={() => setNewStyle(false)} />
+      )}
       {INSTRUCTION_FIELDS.map(([key, label, help, placeholder]) => (
         <div key={key} className="setting-block">
           <label className="setting-label" htmlFor={`setting-${key}`}>
@@ -228,6 +334,42 @@ export function YourHarnessSettings({
           )}
         </div>
       ))}
+
+      <h3 className="settings-section">Project instructions</h3>
+      <p className="help settings-note">
+        The agents of one project follow these instructions, with the global instructions. Each project has its own text. Harness keeps the text out of the project folder. A HARNESS.md or CLAUDE.md file in the project folder also applies. A change applies at the next turn.
+      </p>
+      <Row label="Project" help="The instructions below apply to this project only. The Memory rows use the same project." htmlFor="setting-instructions-project">
+        <ProjectSelect id="setting-instructions-project" cwd={cwd} choices={choices} projectName={projectName} disabled={off} onChange={setProject} />
+      </Row>
+      <div className="setting-block">
+        <label className="setting-label" htmlFor="setting-project-instructions">
+          {projectName ? `Instructions for ${projectName}` : "Instructions for the project"}
+        </label>
+        <span className="setting-help">Rules for this project, for example its commands and its code style.</span>
+        {connected && cwd && !notes.data && !notes.error ? (
+          <span className="skeleton skeleton-textarea" aria-busy="true" aria-label="Loading" />
+        ) : (
+          <TextAreaField
+            key={cwd ?? ""}
+            id="setting-project-instructions"
+            value={notes.data?.text ?? ""}
+            placeholder="e.g. Use pnpm, not npm. Run the tests before you stop."
+            disabled={off || !notes.data}
+            rows={5}
+            onSave={(v) => {
+              setStatus("saving");
+              notes.save(v);
+            }}
+          />
+        )}
+        {notes.data && <span className="setting-help mono">{notes.data.path}</span>}
+      </div>
+      {notes.error && (
+        <p className="form-error" role="alert">
+          {notes.error}
+        </p>
+      )}
 
       <h3 className="settings-section">Memory</h3>
       {/* The switches show gray bars until the values arrive (rule R8). */}
@@ -252,15 +394,7 @@ export function YourHarnessSettings({
       </Row>
       </RowsPending.Provider>
       <Row label="Project" help="Each project has its own memory. The rows below apply to this project." htmlFor="setting-memory-project">
-        <select id="setting-memory-project" value={cwd ?? ""} disabled={off || choices.length === 0} onChange={(e) => setProject(e.target.value)}>
-          {choices.length === 0 && <option value="">No projects yet</option>}
-          {cwd && !choices.some((p) => p.path === cwd) && <option value={cwd}>{projectName}</option>}
-          {choices.map((p) => (
-            <option key={p.id} value={p.path} title={p.path}>
-              {choices.some((o) => o !== p && o.name === p.name) ? `${p.name} · ${p.path.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] ?? p.path}` : p.name}
-            </option>
-          ))}
-        </select>
+        <ProjectSelect id="setting-memory-project" cwd={cwd} choices={choices} projectName={projectName} disabled={off} onChange={setProject} />
       </Row>
       <Row
         label="Your memory"

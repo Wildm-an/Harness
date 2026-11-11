@@ -11321,6 +11321,45 @@ body.sorting * {
   font-size: 13px;
 }
 
+/* ---------- "New output style" (OutputStyle.tsx) ---------- */
+.modal.new-style-dialog {
+  max-width: 480px;
+}
+
+.new-style-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 0 20px;
+}
+
+/* Two classes: a dialog inside the Settings panel does not take the style of `.panel h2`. */
+.new-style-dialog .new-style-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.new-style-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 20px 20px;
+  overflow-y: auto;
+}
+
+.new-style-body .help,
+.new-style-body .form-error {
+  margin: 0;
+}
+
+.new-style-body .form-actions {
+  margin: 0;
+}
+
 /* ---------- the Routines page (RoutinesPage.tsx) ---------- */
 .routine-item {
   display: flex;
@@ -11330,6 +11369,11 @@ body.sorting * {
 
 .routine-item:hover {
   background: var(--hover);
+}
+
+/* "Run now" on a row, between the pills and the switch. */
+.routine-run-now {
+  margin-right: 8px;
 }
 
 .routine-actions {
@@ -11354,6 +11398,9 @@ body.sorting * {
   font: 13px var(--font-sans);
   line-height: 1.5;
   resize: vertical;
+  /* The box grows with the prompt, so the user reads all of it with no scroll (RT5). 5 lines at least. */
+  field-sizing: content;
+  min-height: calc(7.5em + 18px);
 }
 
 .routine-form .field-row select {

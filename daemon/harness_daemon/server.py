@@ -42,6 +42,8 @@ from .plugins.install import (InstallError, install as install_plugin, remove as
                               set_bundle_enabled)
 from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
+from .prompt import load_project_note, project_note_path, save_project_note
+from . import output_styles
 from . import disk_usage, provider_config
 from . import connectors, mcp_auth
 from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, load_mcp_config, project_config_path, user_config_path
@@ -3738,6 +3740,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "memory_sensitive": (bool,),
     "chat_search": (bool,),
     "web_search_url": (str, type(None)),
+    "output_style": (str,),  # Your Harness > Output style: a built-in id or the id of a custom style (output_styles.py).
     "instructions_thinking": (str, type(None)),
     "instructions_research": (str, type(None)),
     "instructions_speaking": (str, type(None)),
@@ -3793,6 +3796,9 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
         if (key == "operating_harness" and isinstance(value, str) and value.strip()
                 and value.strip() != acp_harnesses.BUILTIN_ID and acp_harnesses.find(value.strip()) is None):
             raise ProtocolError(f"Unknown harness: {value}. See Settings > Operating Harness.")
+        if key == "output_style" and output_styles.find(value) is None:
+            raise ProtocolError(f"Unknown output style: {value}. The styles are: "
+                                f"{', '.join(s.id for s in output_styles.all_styles())}.")
         if key == "tool_search" and value not in ("auto", "on", "off"):
             raise ProtocolError("'tool_search' must be one of: auto, on, off.")
         if key == "web_search" and value not in WEB_PROVIDERS:
@@ -3982,6 +3988,116 @@ async def _send_memory(conn: Connection, msg: dict[str, Any], store: MemoryStore
 def _memory_text(msg: dict[str, Any], key: str) -> str:
     value = msg.get(key)
     return value if isinstance(value, str) else ""
+
+
+# Settings > Your Harness > Output style (output_styles.py). The requests need no session.
+
+async def _send_output_styles(conn: Connection, **extra: Any) -> None:
+    items = await asyncio.to_thread(output_styles.items)
+    await conn.send({"type": "output_styles", "items": items, "folder": str(output_styles.styles_dir()), **extra})
+
+
+@handler("output_styles.list")
+async def on_output_styles_list(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_output_styles(conn)
+
+
+def _style_client(conn: Connection, msg: dict[str, Any]) -> ModelClient | None:
+    """The model that drafts a style: the "model" of the request, else the default model, else the model of an
+    open session."""
+    spec = msg.get("model")
+    if isinstance(spec, str) and spec.strip():
+        try:
+            provider, model = resolve_model(spec.strip())
+            return ModelClient(provider, model)
+        except ConfigError:
+            pass
+    client = _aux_client(load_settings(None))
+    if client is not None:
+        return client
+    for live in conn.live.values():
+        if live.session is not None and (found := model_client(live.session.agent)) is not None:
+            return found
+    return None
+
+
+@handler("output_styles.create")
+async def on_output_styles_create(conn: Connection, msg: dict[str, Any]) -> None:
+    """"New output style": {"description", "name"?, "model"?}. A model drafts the style from the description. The
+    new style becomes the output style of the user. With no model, the description is the text of the style."""
+    description = msg.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise ProtocolError("Describe the style.")
+    if len(description) > output_styles.MAX_DESCRIPTION:
+        raise ProtocolError(f"Make the description {output_styles.MAX_DESCRIPTION} characters or less.")
+    name = msg.get("name") if isinstance(msg.get("name"), str) else ""
+    client = _style_client(conn, msg)
+    drafted = await output_styles.draft(client, description) if client is not None else None
+    note = None
+    if drafted is None:
+        prompt = description.strip()
+        note = "No model drafted the style, so the style uses your description as written."
+        drafted_name = None
+    else:
+        drafted_name, prompt = drafted
+    final_name = name.strip() or drafted_name or output_styles.fallback_name(description)
+    try:
+        style = await asyncio.to_thread(output_styles.save, final_name, description, prompt)
+    except OSError as e:
+        raise ProtocolError(f"The style was not saved: {e}") from None
+    path = _user_settings_path()
+    data = read_json(path, {})
+    data["output_style"] = style.id
+    write_json(path, data)
+    for live in conn.live.values():
+        if live.session is not None:
+            live.session.agent.reload_settings(load_settings(live.session.cwd))
+    await _send_output_styles(conn, created=style.id, note=note)
+    await _send_user_settings(conn)
+
+
+# Settings > Your Harness > Project instructions: one text for each project (prompt.py). The agents of the
+# project get it in their system prompt. The requests need no session. "cwd" is the project folder.
+
+def _project_note_cwd(msg: dict[str, Any]) -> Path:
+    value = msg.get("cwd")
+    if not isinstance(value, str) or not value.strip() or not Path(value).expanduser().is_absolute():
+        raise ProtocolError("'cwd' must be the absolute path of a project folder.")
+    return Path(value).expanduser()
+
+
+async def _send_project_note(conn: Connection, msg: dict[str, Any], cwd: Path, **extra: Any) -> None:
+    text = await asyncio.to_thread(load_project_note, cwd)
+    await conn.send({"type": "project_instructions", "cwd": msg["cwd"], "path": str(project_note_path(cwd)),
+                     "text": text, **extra})
+
+
+@handler("project_instructions.get")
+async def on_project_instructions_get(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_project_note(conn, msg, _project_note_cwd(msg))
+
+
+@handler("project_instructions.set")
+async def on_project_instructions_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """Save the instructions of a project: {"cwd", "text"}. Null or an empty text removes them. The open
+    sessions of the project use the new text at the next turn."""
+    cwd = _project_note_cwd(msg)
+    text = msg.get("text")
+    if text is not None and not isinstance(text, str):
+        raise ProtocolError("'text' must be a string or null.")
+    if text and len(text) > USER_TEXT_LIMIT:
+        raise ProtocolError(f"'text' must have {USER_TEXT_LIMIT} characters or less.")
+    try:
+        await asyncio.to_thread(save_project_note, cwd, text or "")
+    except OSError as e:
+        raise ProtocolError(f"The project instructions were not saved: {e}") from None
+    path = project_note_path(cwd)
+    for live in conn.live.values():
+        agent = live.session.agent if live.session is not None else None
+        reload = getattr(agent, "reload_project_note", None)  # An ACP harness has its own prompt.
+        if reload is not None and project_note_path(live.session.cwd) == path:
+            reload()
+    await _send_project_note(conn, msg, cwd, saved=True)
 
 
 @handler("disk.usage")

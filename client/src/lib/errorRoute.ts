@@ -64,6 +64,8 @@ const VIEW_PREFIXES = [
   "fs.", // The editor, the file tree, the folder picker, and the Preview pane.
   "harnesses.", // Settings > Operating Harness.
   "memory.", // Settings > Your Harness.
+  "project_instructions.", // Settings > Your Harness.
+  "output_styles.", // Settings > Your Harness.
   "cookbook.",
   "serve.",
 ];

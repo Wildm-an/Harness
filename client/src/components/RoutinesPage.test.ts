@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, RoutineItem } from "../daemon/protocol";
 import { placeOf } from "../layout/history";
-import { activity, checkDraft, cronToSchedule, curlExample, describeSchedule, fieldsOf, fireUrl, formatWhen, newDraft, routineFile, runState, scheduleToCron } from "./RoutinesPage";
+import { activity, canRunNow, checkDraft, copyName, cronToSchedule, curlExample, describeSchedule, fieldsOf, fireUrl, formatWhen, newDraft, routineFile, runState, scheduleToCron } from "./RoutinesPage";
 
 const routine = (extra: Partial<RoutineItem> = {}): RoutineItem => ({
   id: "r1",
@@ -99,6 +99,24 @@ describe("the state of a routine", () => {
     expect(runState(routine({ running: true, last_run: run("waiting") }))).toBe("waiting");
     expect(runState(routine({ queued: true, enabled: false }))).toBe("queued");
     expect(runState(routine({ error: "bad", running: true }))).toBe("file_error");
+  });
+
+  it("lets Run now start a routine that is off, but not one that runs, waits, or has a file error", () => {
+    expect(canRunNow(routine())).toBe(true);
+    expect(canRunNow(routine({ enabled: false }))).toBe(true);
+    expect(canRunNow(routine({ last_run: run("failed") }))).toBe(true);
+    expect(canRunNow(routine({ running: true }))).toBe(false);
+    expect(canRunNow(routine({ queued: true }))).toBe(false);
+    expect(canRunNow(routine({ error: "schedule: bad" }))).toBe(false);
+  });
+
+  it("names a copy of a routine", () => {
+    expect(copyName("Daily check", ["Daily check"])).toBe("Daily check (copy)");
+    expect(copyName("Daily check", ["Daily check", "daily check (COPY)"])).toBe("Daily check (copy 2)");
+    // A copy of a copy does not get "(copy) (copy)".
+    expect(copyName("Daily check (copy)", ["Daily check", "Daily check (copy)"])).toBe("Daily check (copy 2)");
+    expect(copyName("Daily check (copy 2)", ["Daily check (copy 2)"])).toBe("Daily check (copy)");
+    expect(copyName("  ", [])).toBe("Routine (copy)");
   });
 
   it("names the file of a routine", () => {

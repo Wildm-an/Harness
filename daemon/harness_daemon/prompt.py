@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Collection
 
+from .memory import memory_dir
+from .output_styles import prompt_section as output_style_section
 from .osname import os_name
 from .model_prompts import PARALLEL_TOOL_CALLS, SMALL_MODEL_TOOL_CALLS, is_small_model, model_guidance
 from .tools import ToolContext
@@ -133,6 +135,40 @@ def load_project_instructions(cwd: Path) -> ProjectInstructions | None:
     return None
 
 
+# The project instructions of the settings (Settings > Your Harness > "Project instructions"). The user
+# writes them in the app, one text for each project. They are not in the project folder: the file is
+# next to the memory of the project, so a worktree uses the text of its project.
+PROJECT_NOTE_FILE = "instructions.md"
+MAX_PROJECT_NOTE_CHARS = 10_000
+
+
+def project_note_path(cwd: Path) -> Path:
+    return memory_dir(Path(cwd)).parent / PROJECT_NOTE_FILE
+
+
+def load_project_note(cwd: Path) -> str | None:
+    """The project instructions of the settings. None: the user wrote no instructions for the project."""
+    try:
+        text = project_note_path(cwd).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    return text[:MAX_PROJECT_NOTE_CHARS] or None
+
+
+def save_project_note(cwd: Path, text: str) -> str | None:
+    """Write the project instructions of the settings. An empty text removes the file. Return the saved text."""
+    path = project_note_path(cwd)
+    text = text.strip()
+    if not text:
+        path.unlink(missing_ok=True)
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return text
+
+
 def build_system_prompt(
     ctx: ToolContext,
     model: str,
@@ -142,9 +178,11 @@ def build_system_prompt(
     plugin_sections: list[str] | None = None,
     user_facing: bool = True,
     tool_names: "Collection[str] | None" = None,
+    project_note: str | None = None,
 ) -> str:
     return "\n\n".join(text for _kind, text in system_prompt_parts(ctx, model, instructions, summary, skills,
-                                                                  plugin_sections, user_facing, tool_names))
+                                                                  plugin_sections, user_facing, tool_names,
+                                                                  project_note))
 
 
 def system_prompt_parts(
@@ -156,12 +194,15 @@ def system_prompt_parts(
     plugin_sections: list[str] | None = None,
     user_facing: bool = True,
     tool_names: "Collection[str] | None" = None,
+    project_note: str | None = None,
 ) -> list[tuple[str, str]]:
     """The parts of the system prompt, with their kind: system, instructions, skills, plugins, or summary.
 
     The context breakdown of the client shows the size of each kind. ``user_facing`` False (a subagent)
     removes the agent instructions of the user: the agent that made the subagent tells it how to act.
     ``tool_names``: the tools of the agent. The model guidance leaves out the lines about missing tools.
+    ``project_note``: the project instructions of the settings. All agents of the project get them, as
+    they get the instruction file of the project.
     """
     parts: list[tuple[str, str]] = [("system", base_prompt(model)), ("system", "\n".join([
         "Environment:",
@@ -175,6 +216,14 @@ def system_prompt_parts(
     personal = user_instructions(ctx.settings) if user_facing else None
     if personal:
         parts.append(("instructions", personal))
+    style = output_style_section(ctx.settings.get("output_style")) if user_facing else None
+    if style:
+        parts.append(("instructions", style))
+    if project_note and project_note.strip():
+        parts.append(("instructions",
+                      "# Project instructions from the settings\n\nThe user wrote these instructions in the "
+                      "Harness settings for this project. Follow them in this project. When they disagree with "
+                      f"the user instructions for all projects, follow these instructions.\n\n{project_note.strip()}"))
     if instructions:
         note = " The file is long. Only the first part is shown." if instructions.truncated else ""
         parts.append(("instructions",

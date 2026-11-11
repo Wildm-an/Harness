@@ -1116,11 +1116,12 @@ export const INSTRUCTION_FIELDS: [InstructionKey, string, string, string][] = [
 export const INSTRUCTION_MAX = 10_000; // The daemon limit, in characters.
 
 /** A multi-line text field. It saves when the focus leaves it, or on Ctrl+Enter. */
-export function TextAreaField({ id, value, placeholder, disabled, onSave }: {
+export function TextAreaField({ id, value, placeholder, disabled, rows = 3, onSave }: {
   id: string;
   value: string;
   placeholder?: string;
   disabled?: boolean;
+  rows?: number;
   onSave: (v: string) => void;
 }) {
   const [text, setText] = useState(value);
@@ -1136,7 +1137,7 @@ export function TextAreaField({ id, value, placeholder, disabled, onSave }: {
       placeholder={placeholder}
       disabled={disabled}
       maxLength={INSTRUCTION_MAX}
-      rows={3}
+      rows={rows}
       onChange={(e) => setText(e.target.value)}
       onBlur={save}
       onKeyDown={(e) => {
