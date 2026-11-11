@@ -3,7 +3,7 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
-## Unreleased
+## 0.1.72 (2026-11-11)
 
 ### Memory
 
@@ -12,6 +12,12 @@ this file on its Changelog page.
 - A memory check at the end of a turn: when the turn saved nothing, and you told the agent a
   preference ("always", "from now on", "remember") or the turn was long, the agent gets one more
   step to save facts. It does not write its answer again.
+
+### Appearance
+
+- The status colors have new palettes. On the dark theme they are softer, so they agree with the
+  greys. On the light theme the text shades are dark, and the dots, bars, and borders are brighter.
+- The scroll-to-bottom button is a circle again.
 
 ## 0.1.71 (2026-11-11)
 
