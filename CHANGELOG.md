@@ -3,6 +3,14 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.70 (2026-11-11)
+
+### Updates
+
+- The install page shows "Installing Harness", and the version under it in a smaller gray font.
+- An update deletes the old installers that earlier updates left in the temp folder. Each one is
+  about 90 MB.
+
 ## 0.1.69 (2026-11-11)
 
 ### Routines
