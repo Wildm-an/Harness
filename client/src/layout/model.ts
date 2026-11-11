@@ -277,9 +277,31 @@ export function reopenInSlot(prev: LayoutNode | null, next: LayoutNode, slots: M
     if (!slot) return next;
     const without = closePane(next, pane);
     if (layoutSignature(without) !== layoutSignature(prev)) return next;
-    return openPaneAt(prev, pane, slot);
+    // The pane is already open in ``next``: the ids of ``next`` keep its window. A new id would
+    // remount the pane, for example the Browser pane, which then moves its webview two times.
+    return keepIds(openPaneAt(prev, pane, slot), next);
   }
   return next;
+}
+
+/** ``node`` with the ids of ``from`` where both have the same shape. An id that ``node`` uses at another place stays. */
+function keepIds(node: LayoutNode, from: LayoutNode): LayoutNode {
+  const used = new Set<string>();
+  const collect = (n: LayoutNode) => {
+    used.add(n.id);
+    if (n.type === "split") n.children.forEach(collect);
+  };
+  collect(node);
+  const take = (n: LayoutNode, f: LayoutNode): string => (n.id === f.id || !used.has(f.id) ? f.id : n.id);
+  const walk = (n: LayoutNode, f: LayoutNode): LayoutNode => {
+    if (n.type === "group") {
+      const same = f.type === "group" && f.tabs.length === n.tabs.length && f.tabs.every((t, i) => t === n.tabs[i]);
+      return same ? { ...n, id: take(n, f) } : n;
+    }
+    if (f.type !== "split" || f.direction !== n.direction || f.children.length !== n.children.length) return n;
+    return { ...n, id: take(n, f), children: n.children.map((c, i) => walk(c, f.children[i])) };
+  };
+  return walk(node, from);
 }
 
 /** Opens a pane in its last place and size (a slot of paneSlot). Without the place, as openPane. */

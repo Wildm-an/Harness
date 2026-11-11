@@ -114,6 +114,19 @@ describe("a closed pane of the IDE view", () => {
     expect(sizesOf(placed)).toBe(sizesOf(start));
   });
 
+  it("keeps the window ids of the opened layout, so the pane does not mount again", () => {
+    const start = resize(ideLayoutFor(options({})), "terminal", 0.42);
+    const slots = new Map<PaneId, PaneSlot>();
+    const closed = closePane(start, "terminal");
+    reopenInSlot(start, closed, slots);
+    const opened = openPane(closed, "terminal");
+    const placed = reopenInSlot(closed, opened, slots);
+    expect(placed).not.toBe(opened); // The sizes changed.
+    const ids = (node: LayoutNode): string[] => (node.type === "group" ? [node.id] : [node.id, ...node.children.flatMap(ids)]);
+    expect(ids(placed)).toEqual(ids(opened));
+    expect(new Set(ids(placed)).size).toBe(ids(placed).length);
+  });
+
   it("gives the space of a closed pane to the pane next to it", () => {
     const start = ideLayoutFor(options({}));
     const closed = closePane(start, "files");
