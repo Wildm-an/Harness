@@ -3,6 +3,27 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.69 (2026-11-11)
+
+### Routines
+
+- Each routine row has a "Run now" button. You do not have to open the routine to run it.
+- "Duplicate" in the routine view makes a copy and opens it. The copy has the name "{name} (copy)",
+  and the Name field has the focus. The schedule of the copy is off.
+- The Prompt box grows with the prompt, so you can read all of it.
+
+### Your Harness
+
+- "Agent instructions" is now "Global instructions". They apply to all projects.
+- "Project instructions" has one text box for each project. The agents of that project follow it.
+- "Output style" sets how the agent writes its replies: Default, Concise, Explanatory, Learning, or
+  Proactive. "New output style…" makes a style from your description.
+
+### Connectors
+
+- Outlook (classic) can organize the mailbox in the "Drafts" and "Send" modes: make, rename, and
+  move folders, move messages to a folder, and mark messages as read or unread. It does not delete.
+
 ## 0.1.68 (2026-11-10)
 
 ### Browser
