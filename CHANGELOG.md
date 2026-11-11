@@ -3,6 +3,25 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## 0.1.71 (2026-11-11)
+
+### Appearance
+
+- The dark theme is now grey on dark grey, with no hue. The light theme is light grey on off-white.
+- The default accent color "White" is a neutral grey.
+- All corners have one small radius. Switches and dots stay round. All outlines are thin.
+- Inline code in the chat is white on the dark theme, and black on the light theme.
+- The session rail has the color of the chat. The sidebar is a little lighter than the chat.
+
+### Layout
+
+- The footer of the sidebar is one row: the name of the connection, then the computer.
+- The prompt box is nearer to the bottom edge of the window.
+- The bubble of your message is smaller.
+- Each pane header is smaller. The editor shows no empty tab row.
+- The Files pane of the IDE view has one header row. The Files and Search switch and the "⋯" menu
+  of the file actions are in that row.
+
 ## 0.1.70 (2026-11-11)
 
 ### Updates
