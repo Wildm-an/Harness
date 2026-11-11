@@ -188,8 +188,8 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; - The welcome page and the finish page show the logo in the middle, and the text under it.
 ; - The other pages show the logo and the name in the middle of the header.
 ; - The install page shows the logo in the middle, the loading bar under it, and then the status:
-;   the percentage ("37%"), "Installing Harness 0.1.20", "Name: harness-daemon.exe... 37%" (NSIS
-;   updates it during the copy of a file), and the folder.
+;   the percentage ("37%"), "Installing Harness", "Version 0.1.20", "Name: harness-daemon.exe... 37%"
+;   (NSIS updates it during the copy of a file), and the folder.
 ; The images are in nsis/brand (make_images.py), one for each display scale of Windows.
 
 ; The colors of the dark theme of Harness (client/src/styles.css): --sidebar, --text, --text-muted,
@@ -216,6 +216,7 @@ Var HarnessHeader ; The logo and the name in the header.
 Var HarnessStatus
 Var HarnessPercent ; The percentage under the loading bar of the install page.
 Var HarnessBigFont
+Var HarnessVersionFont ; The version under the large status line of the install page.
 Var HarnessOneClick ; 1: the page for an installed version does not show.
 Var HarnessDirText ; The install folder on the first page.
 Var HarnessDirLabel
@@ -536,8 +537,9 @@ Function ${UN}HarnessProgressPage
   StrCpy $R3 6
   Call ${UN}HarnessCenter
 
-  ; The large status line. The install page shows the percentage between the bar and this line.
-  StrCpy $R1 146
+  ; The large status line. The install page shows the percentage between the bar and this line,
+  ; and the version under this line.
+  StrCpy $R1 138
   StrCpy $R3 26
   Call ${UN}HarnessLabel
   StrCpy $HarnessStatus $0
@@ -546,7 +548,7 @@ Function ${UN}HarnessProgressPage
 
   ; "Name: harness-daemon.exe... 37%": the status line of NSIS.
   GetDlgItem $0 $HarnessPage 1006
-  StrCpy $R1 176
+  StrCpy $R1 186
   StrCpy $R2 0
   StrCpy $R3 18
   Call ${UN}HarnessCenter
@@ -587,16 +589,24 @@ Function HarnessBigPage
 FunctionEnd
 
 Function HarnessInstFilesShow
-  StrCpy $R4 "Installing ${PRODUCTNAME} ${VERSION}"
+  StrCpy $R4 "Installing ${PRODUCTNAME}"
   Call HarnessProgressPage
   ; The percentage, directly under the loading bar: from 0% to 100%.
-  StrCpy $R1 120
+  StrCpy $R1 118
   StrCpy $R3 18
   StrCpy $R4 "0%"
   Call HarnessLabel
   StrCpy $HarnessPercent $0
   SetCtlColors $HarnessPercent ${HARNESS_MUTED} ${HARNESS_BG}
-  StrCpy $R1 204
+  ; The version, under the large status line: a smaller font, with the color of the folder.
+  StrCpy $R1 164
+  StrCpy $R3 20
+  StrCpy $R4 "Version ${VERSION}"
+  Call HarnessLabel
+  CreateFont $HarnessVersionFont "Segoe UI" 10 400
+  SendMessage $0 ${WM_SETFONT} $HarnessVersionFont 1
+  SetCtlColors $0 ${HARNESS_MUTED} ${HARNESS_BG}
+  StrCpy $R1 206
   StrCpy $R3 18
   StrCpy $R4 "$INSTDIR"
   Call HarnessLabel
@@ -642,6 +652,30 @@ Function HarnessInstallDone
   ${If} $HarnessPercent != ""
     SendMessage $HarnessPercent ${WM_SETTEXT} 0 "STR:100%"
   ${EndIf}
+FunctionEnd
+
+; The updater of the app puts each installer in a new folder in %TEMP%, for example
+; "Harness-0.1.69-updater-hxPhMr", and it does not delete the folder. Delete these folders, but
+; not the folder of this installer: it is open while this installer runs.
+Function HarnessRemoveOldUpdates
+  Push $0
+  Push $1
+  Push $2
+  ${GetFileName} $EXEDIR $2
+  SetDetailsPrint none
+  FindFirst $0 $1 "$TEMP\${PRODUCTNAME}-*-updater-*"
+  ${DoWhile} $1 != ""
+    ${If} $1 != $2
+    ${AndIf} ${FileExists} "$TEMP\$1\*.*"
+      RMDir /r "$TEMP\$1"
+    ${EndIf}
+    FindNext $0 $1
+  ${Loop}
+  FindClose $0
+  SetDetailsPrint lastused
+  Pop $2
+  Pop $1
+  Pop $0
 FunctionEnd
 
 ; Installer pages, must be ordered as they appear
@@ -1378,6 +1412,7 @@ Section Install
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
 
+  Call HarnessRemoveOldUpdates
   Call HarnessInstallDone
 
   ; Auto close this page for passive mode
