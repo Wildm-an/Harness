@@ -628,6 +628,18 @@ Rules:
 - **T3.** The Harness dark theme is grey on dark grey (the user asked for this, and for no full black): neutral greys with no hue. The page is `#1c1c1c`, the sidebar `#262626` (a little lighter than the page, the user asked for this), a sunken field `#161616`, a panel `#242424`, a raised fill `#2e2e2e`, a border `#353535`, a strong border `#4a4a4a`, the text `#d6d6d6`, and the muted text `#9a9a9a`. The default accent ("White") is `#e6e6e6` on the dark theme. The status colors keep their hues. The light theme is light grey on off-white (the user asked for this), also with no hue: the page is `#f8f8f8`, the sidebar `#efefef`, a panel `#f1f1f1`, a raised fill `#e9e9e9`, a border `#dedede`, a strong border `#c6c6c6`, the text `#1c1c1c`, and the muted text `#5f5f5f`. The default accent is `#1c1c1c` on the light theme. The status colors of the light theme are dark shades with 4.5:1 or more on the page and on the grey surfaces. Change all the tokens of a theme in `styles.css` together.
 - **T3c.** The session rail has the color of the chat (`--bg`) in each theme (the user asked for this). A 1px border separates it from the chat.
 - **T3d.** Inline code in the transcript has no hue (the user asked for white text): `#ffffff` on the dark theme, and `#000000` on the light theme, on the raised fill (`--code-inline`).
+- **T3e.** The status colors (the user chose them from examples). Each status color has two tokens: the text shade (`--success`) and the mark shade (`--success-mark`). Use the text shade for text. Use the mark shade for each use that is not text: a dot, an icon with no text, a bar, a border, a stroke, and a fill. Text needs 4.5:1 on the page and on the grey surfaces. A mark needs 3:1 on the page and on the sidebar. The focus ring (`--focus`) is the blue mark shade.
+
+  | Color | Dark (text and mark) | Light text | Light mark |
+  |---|---|---|---|
+  | Green (`--success`) | `#63cf84` | `#08762d` | `#169c46` |
+  | Red (`--danger`) | `#f07443` | `#c4260f` | `#f04a1c` |
+  | Yellow (`--warning`) | `#edc54f` | `#8f5a00` | `#b47b00` |
+  | Blue (`--info`) | `#60a7f0` | `#0a5fd0` | `#2b7fff` |
+  | Purple (`--purple`) | `#ae99f0` | `#7a3fe0` | `#9461ff` |
+  | Orange (`--orange`) | `#f0a54a` | `#995200` | `#cf6a08` |
+
+  The dark theme colors are the "Clear Sight" hues (Okabe-Ito) with half of their saturation removed, so they agree with the greys. The light theme text shades are vivid hues that are dark. The light theme yellow stays a dark amber: a yellow with more light does not have enough contrast on off-white.
 - **T3b.** A line is 1px: a border, a focus ring, and a drop outline (the user asked for thin outlines). Do not use 1.5px or 2px for an outline. A tab underline and a state bar can be 2px, because they are marks, not outlines.
 
 ### 11.3 Type
@@ -670,7 +682,7 @@ Rules:
   | `--prompt-radius` | the prompt box and the user message |
   | `--side-radius` | the sidebar rows |
 
-  A pill shape (`999px`) is in use only for a switch: a switch is round, with a round knob (the user asked for this). A chip, a status pill, a badge, and a meter have the 2px radius. The scroll-to-bottom button and the x of an attachment are square with the 2px radius. A circle keeps `50%`: a status dot, the radio button, an avatar, a color swatch, the switch knob, and the circle of a plan step. A segmented button, inside a 2px corner, has 1px.
+  A pill shape (`999px`) is in use only for a switch: a switch is round, with a round knob (the user asked for this). A chip, a status pill, a badge, and a meter have the 2px radius. The x of an attachment is square with the 2px radius. A circle keeps `50%`: the scroll-to-bottom button (the user asked for a circle), a status dot, the radio button, an avatar, a color swatch, the switch knob, and the circle of a plan step. A segmented button, inside a 2px corner, has 1px.
 - **T8.** The app default density is comfortable.
 
 ### 11.5 Depth and motion

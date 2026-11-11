@@ -68,7 +68,7 @@ export function categories(usage: DiskUsage, app: AppFolder[]): Category[] {
     {
       id: "models",
       label: "Local models",
-      color: "var(--info)",
+      color: "var(--info-mark)",
       size: usage.models.size,
       summary: usage.models.items.length
         ? `${plural(usage.models.items.length, "model", "models")} in the Hugging Face cache.`
@@ -79,7 +79,7 @@ export function categories(usage: DiskUsage, app: AppFolder[]): Category[] {
     {
       id: "runtime",
       label: "Runtime",
-      color: "var(--success)",
+      color: "var(--success-mark)",
       size: runtime.reduce((n, i) => n + i.size, 0),
       summary: app.some((f) => f.id === "app") ? "The Harness app and the Chromium of the browser tools." : "The Chromium of the browser tools.",
       items: runtime,
@@ -88,7 +88,7 @@ export function categories(usage: DiskUsage, app: AppFolder[]): Category[] {
     {
       id: "memory",
       label: "Memory and settings",
-      color: "var(--warning)",
+      color: "var(--warning-mark)",
       size: usage.memory.size,
       summary: "Memory, routines, plugins, and settings.",
       items: usage.memory.items,

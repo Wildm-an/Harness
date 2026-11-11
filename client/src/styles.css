@@ -25,33 +25,43 @@
   --accent-fill-hover: #b5563a;
   --accent-text: #ffffff;
   --accent-soft: rgba(217, 119, 87, 0.14);
-  /* The status colors: the "Clear Sight" palette (bright Okabe-Ito hues). People with red-green color
-     blindness can tell them apart. The green and the yellow are from the Signal palette (the user chose them).
+  /* The status colors (UI_RULES T3e): the hues of the "Clear Sight" palette (Okabe-Ito), with half
+     of their saturation removed, so they agree with the greys (the user chose this level). People
+     with red-green color blindness can tell them apart.
      Green: connected and done checks. Yellow: needs input. Blue: done, unread. Vermilion: errors. */
-  --success: #3fdc6e;
-  --success-soft: rgba(63, 220, 110, 0.14);
-  --danger: #ff5e1a;
-  --danger-soft: rgba(255, 94, 26, 0.14);
-  --warning: #ffcc33;
-  --warning-soft: rgba(255, 204, 51, 0.12);
-  --info: #3aa0ff;
-  --focus: #3aa0ff;
+  --success: #63cf84;
+  --success-soft: rgba(99, 207, 132, 0.14);
+  --danger: #f07443;
+  --danger-soft: rgba(240, 116, 67, 0.14);
+  --warning: #edc54f;
+  --warning-soft: rgba(237, 197, 79, 0.12);
+  --info: #60a7f0;
+  --focus: var(--info-mark);
+  /* The "mark" shade of each status color: for a dot, an icon, a bar, a border, and a fill. A mark
+     needs 3:1, and text needs 4.5:1. On the dark theme the two shades are the same. The light theme
+     gives the marks a brighter shade. Use the mark token for each use that is not text. */
+  --success-mark: var(--success);
+  --danger-mark: var(--danger);
+  --warning-mark: var(--warning);
+  --info-mark: var(--info);
+  --purple-mark: var(--purple);
+  --orange-mark: var(--orange);
   /* The parts of the context breakdown (ContextRing.tsx): one hue for each part. */
-  --ctx-instructions: #3fdc6e;
-  --ctx-skills: #ffcc33;
-  --ctx-plugins: #ffa31f;
-  --ctx-summary: #e58ac8;
-  --ctx-tools: #3aa0ff;
-  --ctx-mcp-tools: #8fd3ff;
-  --ctx-messages: #ff5e1a;
-  --ctx-tool-results: #a98bff;
-  /* The pull request and work colors (lib/pr.ts): Clear Sight hues. Orange: uncommitted work. Purple:
-     a merged pull request. Blue (--info): commits that are not pushed. Green (--success): pushed work
-     and an open pull request. Vermilion (--danger): a closed pull request. */
-  --orange: #ffa31f;
-  --orange-soft: rgba(255, 163, 31, 0.14);
-  --purple: #a98bff;
-  --purple-soft: rgba(169, 139, 255, 0.16);
+  --ctx-instructions: #63cf84;
+  --ctx-skills: #edc54f;
+  --ctx-plugins: #f0a54a;
+  --ctx-summary: #e09ac8;
+  --ctx-tools: #60a7f0;
+  --ctx-mcp-tools: #9ccdf0;
+  --ctx-messages: #f07443;
+  --ctx-tool-results: #ae99f0;
+  /* The pull request and work colors (lib/pr.ts). Orange: uncommitted work. Purple: a merged pull
+     request. Blue (--info): commits that are not pushed. Green (--success): pushed work and an open
+     pull request. Vermilion (--danger): a closed pull request. */
+  --orange: #f0a54a;
+  --orange-soft: rgba(240, 165, 74, 0.14);
+  --purple: #ae99f0;
+  --purple-soft: rgba(174, 153, 240, 0.16);
   --code-inline: #ffffff; /* Inline code in the transcript: white (the user asked for this, UI_RULES T3d). */
   /* The git state of a file in the file tree (gitStatus.ts): Clear Sight hues. A changed file has the
      orange of uncommitted work in the rail, and a new file has the green. Deleted files and conflicts
@@ -63,12 +73,12 @@
   --backdrop: rgba(0, 0, 0, 0.6);
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
-  --diff-add-bg: rgba(63, 220, 110, 0.14);
-  --diff-add-text: #95ecaf;
-  --diff-del-bg: rgba(255, 94, 26, 0.14);
-  --diff-del-text: #ffa781;
-  --diff-add-word: rgba(63, 220, 110, 0.38);
-  --diff-del-word: rgba(255, 94, 26, 0.38);
+  --diff-add-bg: rgba(99, 207, 132, 0.14);
+  --diff-add-text: #a8e5ba;
+  --diff-del-bg: rgba(240, 116, 67, 0.14);
+  --diff-del-text: #f7b59b;
+  --diff-add-word: rgba(99, 207, 132, 0.38);
+  --diff-del-word: rgba(240, 116, 67, 0.38);
   --diff-empty: repeating-linear-gradient(135deg, transparent 0 6px, rgba(143, 143, 143, 0.06) 6px 12px);
 
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -121,16 +131,20 @@
   --accent-fill-hover: #ae5230;
   --accent-text: #ffffff;
   --accent-soft: rgba(198, 97, 63, 0.1);
-  /* Darker shades of the Clear Sight hues: these tokens also color text, so each has 4.5:1 or more on
-     --bg and on the grey surfaces (to --surface-2). */
-  --success: #08703d;
-  --success-soft: rgba(8, 112, 61, 0.1);
-  --danger: #a84300;
-  --danger-soft: rgba(168, 67, 0, 0.08);
-  --warning: #7f5a00;
-  --warning-soft: rgba(217, 154, 0, 0.12);
-  --info: #0068a6;
-  --focus: #0068a6;
+  /* The text shades: vivid hues that are dark, so each has 4.5:1 or more on --bg and on the grey
+     surfaces (to --surface-2). The mark shades are brighter: each has 3:1 or more on --bg and on
+     --sidebar (the user asked for brighter colors with high contrast, UI_RULES T3e). */
+  --success: #08762d;
+  --success-mark: #169c46;
+  --success-soft: rgba(22, 156, 70, 0.12);
+  --danger: #c4260f;
+  --danger-mark: #f04a1c;
+  --danger-soft: rgba(240, 74, 28, 0.1);
+  --warning: #8f5a00;
+  --warning-mark: #b47b00;
+  --warning-soft: rgba(180, 123, 0, 0.14);
+  --info: #0a5fd0;
+  --info-mark: #2b7fff;
   /* The context parts are fills, not text: they keep the bright hues. */
   --ctx-instructions: #0f9d58;
   --ctx-skills: #d99a00;
@@ -141,9 +155,11 @@
   --ctx-messages: #d55e00;
   --ctx-tool-results: #7e57c2;
   --orange: #995200;
-  --orange-soft: rgba(230, 159, 0, 0.12);
-  --purple: #7450b8;
-  --purple-soft: rgba(116, 80, 184, 0.1);
+  --orange-mark: #cf6a08;
+  --orange-soft: rgba(207, 106, 8, 0.12);
+  --purple: #7a3fe0;
+  --purple-mark: #9461ff;
+  --purple-soft: rgba(148, 97, 255, 0.1);
   --code-inline: #000000; /* Black: white does not show on the light grey fill. */
   --git-modified: var(--orange);
   --git-added: var(--success);
@@ -598,7 +614,7 @@ textarea:focus-visible {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--danger);
+  background: var(--danger-mark);
 }
 
 .side-item:hover:not(:disabled),
@@ -807,11 +823,11 @@ textarea:focus-visible {
 }
 
 .side-session-status.awaiting {
-  background: var(--warning);
+  background: var(--warning-mark);
 }
 
 .side-session-status.unread {
-  background: var(--info);
+  background: var(--info-mark);
 }
 
 .side-session-title {
@@ -1027,15 +1043,15 @@ textarea:focus-visible {
 }
 
 .conn-open .conn-dot {
-  background: var(--success);
+  background: var(--success-mark);
 }
 
 .conn-connecting .conn-dot {
-  background: var(--warning);
+  background: var(--warning-mark);
 }
 
 .conn-closed .conn-dot {
-  background: var(--danger);
+  background: var(--danger-mark);
 }
 
 /* the top bar */
@@ -1238,7 +1254,7 @@ textarea:focus-visible {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--danger);
+  background: var(--danger-mark);
 }
 
 /* Work runs (not a failure): the accent color. */
@@ -1690,7 +1706,7 @@ textarea:focus-visible {
 
 /* The confirm button has a danger-color outline, as in the Claude app. */
 .confirm-actions .btn-danger {
-  border-color: var(--danger);
+  border-color: var(--danger-mark);
 }
 
 .menu .mode-item {
@@ -1785,11 +1801,11 @@ textarea:focus-visible {
 }
 
 .context-mid .ring-fill {
-  stroke: var(--warning) !important;
+  stroke: var(--warning-mark) !important;
 }
 
 .context-high .ring-fill {
-  stroke: var(--danger) !important;
+  stroke: var(--danger-mark) !important;
 }
 
 .menu.context-panel {
@@ -2414,7 +2430,7 @@ textarea:focus-visible {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--danger);
+  background: var(--danger-mark);
 }
 
 .cap-page-head h1 {
@@ -2532,7 +2548,7 @@ textarea:focus-visible {
 
 .cap-icon.bad {
   background: var(--danger-soft);
-  color: var(--danger);
+  color: var(--danger-mark);
 }
 
 .cap-text {
@@ -2589,7 +2605,7 @@ textarea:focus-visible {
 }
 
 .cap-busy {
-  background: color-mix(in srgb, var(--info) 12%, transparent);
+  background: color-mix(in srgb, var(--info-mark) 12%, transparent);
   color: var(--info);
 }
 
@@ -3263,12 +3279,12 @@ select {
 }
 
 .dl-bar.state-paused {
-  background: var(--warning);
+  background: var(--warning-mark);
 }
 
 .dl-bar.state-error,
 .dl-bar.state-cancelled {
-  background: var(--danger);
+  background: var(--danger-mark);
 }
 
 .cb-card {
@@ -4597,7 +4613,7 @@ input.tree-rename-input {
 }
 
 input.tree-rename-input[aria-invalid="true"] {
-  border-color: var(--danger);
+  border-color: var(--danger-mark);
 }
 
 .tree-rename-problem {
@@ -4607,7 +4623,7 @@ input.tree-rename-input[aria-invalid="true"] {
   right: 0;
   z-index: var(--z-overlay);
   padding: 4px 8px;
-  border: 1px solid var(--danger);
+  border: 1px solid var(--danger-mark);
   background: var(--surface);
   color: var(--danger);
   font-size: 12px;
@@ -4741,7 +4757,7 @@ input.tree-rename-input[aria-invalid="true"] {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--warning);
+  background: var(--warning-mark);
 }
 
 .editor-surface {
@@ -4794,7 +4810,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .notice-bar.warn > svg {
-  color: var(--warning);
+  color: var(--warning-mark);
 }
 
 .notice-bar.bad {
@@ -4849,7 +4865,7 @@ input.tree-rename-input[aria-invalid="true"] {
   margin-left: 4px;
   width: 3px !important;
   border-radius: 2px;
-  background: var(--success);
+  background: var(--success-mark);
 }
 
 .search-panel {
@@ -5759,7 +5775,7 @@ input.tree-rename-input[aria-invalid="true"] {
   height: 32px;
   transform: translateY(-100%);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: 50%; /* A circle (the user asked for this, UI_RULES T7a). */
   background: var(--surface-2, var(--panel));
   color: var(--text-muted);
   box-shadow: 0 1px 2px #0000001f, 0 2px 8px #00000029;
@@ -6166,11 +6182,11 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .inline-diff-line.add {
-  background: color-mix(in srgb, var(--success) 14%, transparent);
+  background: color-mix(in srgb, var(--success-mark) 14%, transparent);
 }
 
 .inline-diff-line.del {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  background: color-mix(in srgb, var(--danger-mark) 14%, transparent);
 }
 
 .inline-diff-line.hunk {
@@ -6773,11 +6789,11 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .file-card-icon.pdf {
-  color: var(--danger);
+  color: var(--danger-mark);
 }
 
 .file-card-icon.docx {
-  color: var(--info);
+  color: var(--info-mark);
 }
 
 .file-card-text {
@@ -6817,11 +6833,11 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .file-card-icon.sheet {
-  color: var(--success);
+  color: var(--success-mark);
 }
 
 .file-card-icon.slides {
-  color: var(--warning);
+  color: var(--warning-mark);
 }
 
 /* The files that the agent sent (send_file): an optional caption, then a card for each file. */
@@ -7317,7 +7333,7 @@ input.tree-rename-input[aria-invalid="true"] {
 
 .prompt-attachment-note svg {
   flex: none;
-  color: var(--warning);
+  color: var(--warning-mark);
 }
 
 /* The x shows on hover or focus, at the top right of the chip. */
@@ -7527,7 +7543,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .pane-foot.pending {
-  border-top-color: var(--warning);
+  border-top-color: var(--warning-mark);
   background: var(--warning-soft);
 }
 
@@ -7545,7 +7561,7 @@ input.tree-rename-input[aria-invalid="true"] {
 }
 
 .pane-foot-title > svg {
-  color: var(--warning);
+  color: var(--warning-mark);
 }
 
 .pane-foot-status {
@@ -7993,14 +8009,14 @@ mark.word-del {
 /* A removed line: a red tint, and a striped bar at the left. An added line: a green tint and a solid bar. */
 .cv-del {
   background: var(--diff-del-bg);
-  background-image: repeating-linear-gradient(135deg, var(--danger) 0 2px, transparent 2px 5px);
+  background-image: repeating-linear-gradient(135deg, var(--danger-mark) 0 2px, transparent 2px 5px);
   background-size: 4px 100%;
   background-repeat: no-repeat;
 }
 
 .cv-add {
   background: var(--diff-add-bg);
-  box-shadow: inset 4px 0 0 var(--success);
+  box-shadow: inset 4px 0 0 var(--success-mark);
 }
 
 .cv-gap {
@@ -8824,11 +8840,11 @@ mark.word-del {
 }
 
 .task-row > svg.task-ok {
-  color: var(--success);
+  color: var(--success-mark);
 }
 
 .task-row > svg.task-failed {
-  color: var(--danger);
+  color: var(--danger-mark);
 }
 
 .task-text {
@@ -9362,7 +9378,7 @@ textarea.setting-textarea:disabled {
 
 /* The error popups (ErrorToasts.tsx): an error that is not part of the conversation. */
 .error-toast .update-toast-icon {
-  color: var(--danger);
+  color: var(--danger-mark);
 }
 
 .error-toast .error-toast-body {
@@ -9555,15 +9571,15 @@ textarea.setting-textarea:disabled {
 }
 
 .side-pr-open {
-  color: var(--success);
+  color: var(--success-mark);
 }
 
 .side-pr-merged {
-  color: var(--purple);
+  color: var(--purple-mark);
 }
 
 .side-pr-closed {
-  color: var(--danger);
+  color: var(--danger-mark);
 }
 
 .side-flat {
@@ -9834,7 +9850,7 @@ textarea.setting-textarea:disabled {
 }
 
 .daemon-update-done .update-toast-icon {
-  color: var(--success);
+  color: var(--success-mark);
 }
 
 .daemon-update-body {
@@ -10071,11 +10087,11 @@ body.sorting * {
 }
 
 .rail-meter.mid > span {
-  background: var(--warning);
+  background: var(--warning-mark);
 }
 
 .rail-meter.high > span {
-  background: var(--danger);
+  background: var(--danger-mark);
 }
 
 .rail-action {
@@ -10376,15 +10392,15 @@ body.sorting * {
 }
 
 .rail-dot.running {
-  background: var(--success);
+  background: var(--success-mark);
 }
 
 .rail-dot.starting {
-  background: var(--warning);
+  background: var(--warning-mark);
 }
 
 .rail-dot.crashed {
-  background: var(--danger);
+  background: var(--danger-mark);
 }
 
 .rail-pr-icon {
@@ -10393,15 +10409,15 @@ body.sorting * {
 }
 
 .rail-pr-icon.open {
-  color: var(--success);
+  color: var(--success-mark);
 }
 
 .rail-pr-icon.merged {
-  color: var(--purple);
+  color: var(--purple-mark);
 }
 
 .rail-pr-icon.closed {
-  color: var(--danger);
+  color: var(--danger-mark);
 }
 
 /* The accent color swatches on the Appearance page. The last swatch opens the system color picker. */
@@ -11028,7 +11044,7 @@ body.sorting * {
 
 .model-unavailable .wrapup-ask > svg {
   flex: none;
-  color: var(--warning);
+  color: var(--warning-mark);
 }
 
 .model-unavailable .wrapup-recap {
@@ -12262,7 +12278,7 @@ body.sorting * {
 .rail-git-menu .rail-git-check {
   flex: none;
   margin-left: 12px;
-  color: var(--info);
+  color: var(--info-mark);
 }
 
 /* Settings > Operating Harness (OperatingHarnessSettings.tsx). */
