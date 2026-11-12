@@ -82,6 +82,19 @@ def test_new_token_replaces_the_token_file(harness_home):
         stop_daemon(proc)
 
 
+def test_also_host_listens_on_a_second_address(harness_home):
+    # The play button of the app adds the Tailscale address. 127.0.0.2 is a second loopback address.
+    proc, ready = start_daemon(harness_home, "--host", "127.0.0.1", "--also-host", "127.0.0.2")
+    try:
+        assert ready["hosts"] == ["127.0.0.1", "127.0.0.2"]
+        for host in ready["hosts"]:
+            with connect(f"ws://{host}:{ready['port']}/ws") as ws:
+                ws.send(json.dumps({"type": "auth", "token": ready["token"]}))
+                assert json.loads(ws.recv(timeout=10))["type"] == "auth.ok"
+    finally:
+        stop_daemon(proc)
+
+
 def test_daemon_reports_the_connections_of_clients(harness_home):
     proc, ready = start_daemon(harness_home, "--report-connections")
     try:

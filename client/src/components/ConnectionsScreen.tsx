@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Play, Plug, Plus, RefreshCw, Square, Trash2, TriangleAlert } from "lucide-react";
 import { SecretInput } from "./SecretInput";
 import type { HostInfo } from "../daemon/protocol";
-import { describe, newConnectionId, validate, type Connection, type ConnectionKind } from "../lib/connections";
-import { isTauri, SERVER_DAEMON_EVENT, SERVER_DAEMON_PORT, serverDaemon, type ServerInfo } from "../lib/tauri";
+import { describe, loadToken, newConnectionId, validate, type Connection, type ConnectionKind } from "../lib/connections";
+import { isTauri, SERVER_DAEMON_EVENT, SERVER_DAEMON_PORT, serverDaemon, tailscaleAddress, type ServerInfo } from "../lib/tauri";
+import { loadPref, savePref } from "../lib/prefs";
+import { Switch } from "./Switch";
 import { useFormIntoView } from "../lib/formFocus";
 import { useConfirm } from "./ConfirmDialog";
 
@@ -60,6 +62,19 @@ function ConnectionForm({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [test, setTest] = useState<TestState>({ state: "idle" });
+
+  // Edit: the field shows the saved token (hidden until "Show the token"), so the user can copy it.
+  useEffect(() => {
+    if (!hasToken) return;
+    let live = true;
+    loadToken(initial.id).then(
+      (saved) => live && saved && setToken((typed) => typed || saved),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [hasToken, initial.id]);
 
   const update = (patch: Partial<Connection>) => {
     setC((prev) => ({ ...prev, ...patch }));
@@ -212,7 +227,7 @@ function ConnectionForm({
         error={errors.token}
         help={
           hasToken
-            ? "Leave empty to keep the saved token."
+            ? "The saved token. Type a new token to replace it."
             : isTauri()
               ? "The app keeps the token in the keychain of your operating system."
               : "Without the desktop app, the token is kept only until this tab closes."
@@ -220,6 +235,7 @@ function ConnectionForm({
       >
         <SecretInput
           what="the token"
+          copy
           id="cf-token"
           className="mono"
           autoComplete="off"
@@ -442,6 +458,15 @@ type ServerState =
   | { state: "running"; info: ServerInfo }
   | { state: "error"; message: string };
 
+const TAILSCALE_PREF = "serverDaemon.tailscale";
+
+/** "127.0.0.1 (SSH tunnel) and 100.64.0.5 (Tailscale)". */
+function listenText(hosts: string[], tailscaleIp: string | null): string {
+  return hosts
+    .map((h) => (h === "127.0.0.1" ? "127.0.0.1 (SSH tunnel)" : h === tailscaleIp ? `${h} (Tailscale)` : h))
+    .join(" and ");
+}
+
 /** "21:52" for today, else the date and the time. */
 function connectedAt(since: number): string {
   const date = new Date(since);
@@ -462,6 +487,17 @@ function ServerDaemonControl() {
   const [copied, setCopied] = useState(false);
   const acting = useRef(false); // A start, a stop, or a new token runs: the events do not change the state.
   const confirm = useConfirm();
+  // Also listen on the Tailscale address, so other computers of the tailnet can connect directly.
+  const [tailscaleIp, setTailscaleIp] = useState<string | null>(null);
+  const [useTailscale, setUseTailscale] = useState(() => loadPref(TAILSCALE_PREF, "1") === "1");
+
+  useEffect(() => {
+    let live = true;
+    void tailscaleAddress().then((ip) => live && setTailscaleIp(ip));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -489,7 +525,10 @@ function ServerDaemonControl() {
     setServer({ state: "busy" });
     if (action !== "new-token") setTokenShown(false);
     try {
-      const info = await serverDaemon(action);
+      // A new token keeps the addresses of the daemon that runs.
+      const tailscale =
+        action === "new-token" && server.state === "running" ? server.info.hosts.length > 1 : useTailscale && !!tailscaleIp;
+      const info = await serverDaemon(action, tailscale);
       setServer(info ? { state: "running", info } : { state: "stopped" });
     } catch (e) {
       setServer({ state: "error", message: e instanceof Error ? e.message : String(e) });
@@ -536,8 +575,8 @@ function ServerDaemonControl() {
         {server.state === "running" ? (
           <>
             <span className="ok" role="status">
-              <Check size={14} aria-hidden /> The daemon runs on this computer, on port {server.info.port}. It stops when you quit
-              Harness.
+              <Check size={14} aria-hidden /> The daemon runs on this computer, on port {server.info.port}, at{" "}
+              {listenText(server.info.hosts, tailscaleIp)}. It stops when you quit Harness.
             </span>
             <div className="server-token">
               <button type="button" className="btn btn-small" onClick={() => setTokenShown((v) => !v)} aria-expanded={tokenShown}>
@@ -592,6 +631,27 @@ function ServerDaemonControl() {
           </span>
         ) : (
           <span className="help">The play button starts the daemon of this app on this computer. It stops when you quit Harness.</span>
+        )}
+        {tailscaleIp && (
+          <div className="server-tailscale">
+            <Switch
+              checked={running ? server.info.hosts.includes(tailscaleIp) : useTailscale}
+              label="Also listen on Tailscale"
+              disabled={server.state !== "stopped" && server.state !== "error"}
+              onChange={(on) => {
+                setUseTailscale(on);
+                savePref(TAILSCALE_PREF, on ? "1" : "0");
+              }}
+            />
+            <span>
+              Also listen on Tailscale (<span className="mono">{tailscaleIp}</span>)
+              <span className="help">
+                {running
+                  ? " Stop the daemon to change this."
+                  : " Other computers connect to this address. Windows can ask to let the daemon through the firewall: allow it."}
+              </span>
+            </span>
+          </div>
         )}
       </div>
       {confirm.dialog}

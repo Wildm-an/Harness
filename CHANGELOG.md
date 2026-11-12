@@ -3,6 +3,19 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Computers
+
+- The play button of Settings > Computers can also listen on the Tailscale address of this
+  computer: the switch "Also listen on Tailscale" shows when Tailscale runs, and it is on by
+  default. Before, that daemon listened only on 127.0.0.1, so a connection through Tailscale failed.
+- A connection to an address where no daemon answers now says "Cannot reach a daemon at
+  {address}". Before, it said that the daemon did not reply to the token.
+- The token field of a remote daemon has one show button and a copy button. The second eye was
+  the built-in button of the WebView, and it is gone from all secret fields.
+- Edit of a remote daemon fills in the saved token, so you can show it or copy it.
+
 ## 0.1.73 (2026-11-11)
 
 ### Computers

@@ -119,7 +119,7 @@ The same daemon runs on a remote computer. The desktop client connects to it fro
 3. The daemon prints its token in the ready line (`"token"`). It also keeps the token in `~/.harness/daemon-token`, so the token stays the same after a restart. Read it again with `cat ~/.harness/daemon-token`. `--new-token` makes a new token.
 4. Select how the client connects:
    - **SSH tunnel:** keep the default address `127.0.0.1`. The desktop app opens `ssh -N -L` to the daemon port. SSH must log in with a key.
-   - **Tailscale or a LAN:** add `--host` with the address of the computer on that network, for example `--host 100.64.0.5`. Never expose the daemon port to the internet.
+   - **Tailscale or a LAN:** add `--host` with the address of the computer on that network, for example `--host 100.64.0.5`. Never expose the daemon port to the internet. `--also-host <address>` adds a second address on the same port, so the daemon listens on `127.0.0.1` and on the Tailscale address. The play button of Settings > Computers uses it.
 
 The providers, the skills, and the sessions of a remote daemon are the ones on the remote computer.
 

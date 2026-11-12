@@ -31,6 +31,7 @@ export interface ClientConnection {
 }
 
 export interface ServerInfo extends DaemonInfo {
+  hosts: string[]; // The addresses that the daemon listens on: 127.0.0.1, and the Tailscale address.
   connections: ClientConnection[];
 }
 
@@ -39,16 +40,26 @@ export interface ServerInfo extends DaemonInfo {
  * It uses the token file, so its token stays the same. It stops when this app stops. "new-token"
  * restarts it with a new token: the computers of the old token lose the connection.
  */
-export async function serverDaemon(action: "start" | "new-token" | "status" | "stop"): Promise<ServerInfo | null> {
+export async function serverDaemon(
+  action: "start" | "new-token" | "status" | "stop",
+  tailscale = false, // Also listen on the Tailscale address of this computer.
+): Promise<ServerInfo | null> {
   const { invoke } = await import("@tauri-apps/api/core");
   if (action === "start" || action === "new-token") {
-    return invoke<ServerInfo>("server_daemon_start", { port: SERVER_DAEMON_PORT, newToken: action === "new-token" });
+    return invoke<ServerInfo>("server_daemon_start", { port: SERVER_DAEMON_PORT, newToken: action === "new-token", tailscale });
   }
   if (action === "stop") {
     await invoke("server_daemon_stop");
     return null;
   }
   return invoke<ServerInfo | null>("server_daemon_status");
+}
+
+/** The Tailscale address of this computer (100.x.y.z), or null. */
+export async function tailscaleAddress(): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string | null>("tailscale_address").catch(() => null);
 }
 
 let identity: Promise<{ name?: string; app?: string }> | null = null;
