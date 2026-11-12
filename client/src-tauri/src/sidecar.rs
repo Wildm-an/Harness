@@ -58,7 +58,6 @@ pub struct ClientConnection {
 #[derive(Clone, Serialize)]
 pub struct ServerInfo {
     pub host: String,
-    pub hosts: Vec<String>, // All the addresses that the daemon listens on: 127.0.0.1, and the Tailscale address.
     pub port: u16,
     pub token: String,
     pub connections: Vec<ClientConnection>,
@@ -70,7 +69,6 @@ pub type OnChange = Arc<dyn Fn() + Send + Sync>;
 struct Running {
     child: Child,
     info: DaemonInfo,
-    hosts: Vec<String>,
     clients: Arc<Mutex<Vec<ClientConnection>>>,
     ended: Arc<AtomicBool>, // The stdout of the daemon closed: the daemon stops.
 }
@@ -135,13 +133,11 @@ impl ServerDaemon {
     /// Starts the server daemon on `port`, or returns the one that runs. Blocks until it is ready.
     /// `new_token`: stop the daemon that runs, and start it with a new token (`--new-token`). The
     /// clients of the old token lose the connection, and they cannot connect again.
-    /// `also_host`: one more address to listen on, for example the Tailscale address of this computer.
     pub fn start(
         &self,
         resource_dir: Option<&Path>,
         port: u16,
         new_token: bool,
-        also_host: Option<String>,
         on_change: OnChange,
     ) -> Result<ServerInfo, String> {
         if new_token {
@@ -150,8 +146,7 @@ impl ServerDaemon {
             return Ok(info);
         }
         let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
-        let mode = Mode::Server { port, new_token, also_host: also_host.as_deref() };
-        let running = spawn(resource_dir, mode, Some(on_change))?;
+        let running = spawn(resource_dir, Mode::Server { port, new_token }, Some(on_change))?;
         let info = server_info(&running);
         *guard = Some(running);
         Ok(info)
@@ -182,7 +177,6 @@ fn server_info(running: &Running) -> ServerInfo {
     let connections = running.clients.lock().map(|c| c.clone()).unwrap_or_default();
     ServerInfo {
         host: running.info.host.clone(),
-        hosts: running.hosts.clone(),
         port: running.info.port,
         token: running.info.token.clone(),
         connections,
@@ -191,46 +185,9 @@ fn server_info(running: &Running) -> ServerInfo {
 
 /// The local daemon of this app, or the server daemon on a fixed port.
 #[derive(Clone, Copy)]
-enum Mode<'a> {
+enum Mode {
     Local,
-    Server { port: u16, new_token: bool, also_host: Option<&'a str> },
-}
-
-/// True for an address of the Tailscale range (100.64.0.0/10).
-fn is_tailscale(ip: std::net::Ipv4Addr) -> bool {
-    let [a, b, ..] = ip.octets();
-    a == 100 && (64..128).contains(&b)
-}
-
-/// The Tailscale address of this computer, or None. The route to the Tailscale DNS address
-/// (100.100.100.100) goes through the Tailscale interface: a UDP socket that "connects" to it gets
-/// the local address of that interface. It sends no packet. Else the `tailscale ip -4` command.
-pub fn tailscale_address() -> Option<String> {
-    use std::net::{IpAddr, UdpSocket};
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("100.100.100.100:53").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                if let IpAddr::V4(ip) = addr.ip() {
-                    if is_tailscale(ip) {
-                        return Some(ip.to_string());
-                    }
-                }
-            }
-        }
-    }
-    let mut cmd = Command::new("tailscale");
-    cmd.args(["ip", "-4"]).stdin(Stdio::null()).stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let out = cmd.output().ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse::<std::net::Ipv4Addr>().ok())
-        .find(|ip| is_tailscale(*ip))
-        .map(|ip| ip.to_string())
+    Server { port: u16, new_token: bool },
 }
 
 /// Applies one stdout line of the server daemon (`clients.py`) to the list. True if the list changed.
@@ -291,15 +248,6 @@ fn daemon_command(resource_dir: Option<&Path>) -> Result<(Command, bool), String
     Ok((cmd, true))
 }
 
-/// The program of the daemon, for the firewall rule (firewall.rs). None for the development daemon
-/// (`python -m harness_daemon`).
-pub fn daemon_program(resource_dir: Option<&Path>) -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("HARNESS_DAEMON") {
-        return Some(PathBuf::from(path));
-    }
-    bundled_sidecar(resource_dir)
-}
-
 /// The sidecar that the installer put in the resource folder: `harness-daemon/harness-daemon`. Else the
 /// onefile sidecar of an older install, next to the app executable (Contents/MacOS on macOS).
 fn bundled_sidecar(resource_dir: Option<&Path>) -> Option<PathBuf> {
@@ -337,7 +285,7 @@ fn open_log(logs: &Path, name: &str) -> std::io::Result<(File, PathBuf)> {
     Ok((File::create(&path)?, path))
 }
 
-fn spawn(resource_dir: Option<&Path>, mode: Mode<'_>, on_change: Option<OnChange>) -> Result<Running, String> {
+fn spawn(resource_dir: Option<&Path>, mode: Mode, on_change: Option<OnChange>) -> Result<Running, String> {
     let (mut cmd, log_to_terminal) = daemon_command(resource_dir)?;
     let token = match mode {
         Mode::Local => {
@@ -347,13 +295,10 @@ fn spawn(resource_dir: Option<&Path>, mode: Mode<'_>, on_change: Option<OnChange
             cmd.args(["--host", "127.0.0.1", "--port", "0", "--prefer-port", "47615"]).env("HARNESS_TOKEN", &token);
             Some(token)
         }
-        Mode::Server { port, new_token, also_host } => {
+        Mode::Server { port, new_token } => {
             // No HARNESS_TOKEN: the daemon uses the token file, and the ready line has the token.
             cmd.args(["--host", "127.0.0.1", "--port", &port.to_string(), "--report-connections"])
                 .env_remove("HARNESS_TOKEN");
-            if let Some(host) = also_host {
-                cmd.args(["--also-host", host]);
-            }
             if new_token {
                 cmd.arg("--new-token");
             }
@@ -463,15 +408,9 @@ fn spawn(resource_dir: Option<&Path>, mode: Mode<'_>, on_change: Option<OnChange
             }
         },
     };
-    let hosts = ready
-        .get("hosts")
-        .and_then(|h| h.as_array())
-        .map(|h| h.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-        .unwrap_or_else(|| vec!["127.0.0.1".to_string()]);
     Ok(Running {
         child,
         info: DaemonInfo { host: "127.0.0.1".into(), port, token },
-        hosts,
         clients,
         ended,
     })
@@ -480,15 +419,6 @@ fn spawn(resource_dir: Option<&Path>, mode: Mode<'_>, on_change: Option<OnChange
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tailscale_range() {
-        assert!(is_tailscale("100.64.0.1".parse().unwrap()));
-        assert!(is_tailscale("100.127.255.254".parse().unwrap()));
-        assert!(!is_tailscale("100.128.0.1".parse().unwrap()));
-        assert!(!is_tailscale("100.63.0.1".parse().unwrap()));
-        assert!(!is_tailscale("192.168.1.5".parse().unwrap()));
-    }
 
     #[test]
     fn client_events_update_the_list() {

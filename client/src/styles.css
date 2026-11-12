@@ -3775,36 +3775,28 @@ select {
   color: var(--danger);
 }
 
-.remote-help ol {
+/* "Remote daemon on this computer": the title and its text, with the start button at the right. */
+.server-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.server-head-text h2 {
+  margin: 0 0 4px;
+}
+
+.server-head-text .help {
   margin: 0;
-  padding-left: 20px;
-  color: var(--text-muted);
-  font-size: 13px;
 }
 
-.remote-help li {
-  margin-bottom: 8px;
-}
-
-.remote-help pre {
-  margin: 6px 0 0;
-}
-
-/* The start command with its play button (the server daemon of this computer). */
-.server-command {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  column-gap: 6px;
-}
-
-.server-command .server-command-btn {
-  margin-top: 6px;
+.server-head .btn {
+  flex: none;
 }
 
 .server-status {
-  grid-column: 1 / -1;
-  margin-top: 6px;
+  margin-top: 12px;
   font-size: 12px;
 }
 
@@ -3838,41 +3830,6 @@ select {
 
 .key-field.server-token-field .key-field-btn:nth-of-type(1) {
   right: 4px;
-}
-
-/* The Windows Firewall line of the server daemon. */
-.server-firewall {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.server-firewall.blocked {
-  flex-wrap: wrap;
-  color: var(--warning);
-}
-
-.server-firewall.blocked svg {
-  flex: none;
-}
-
-.server-firewall.blocked span {
-  flex: 1;
-  min-width: 200px;
-}
-
-/* The switch "Also listen on Tailscale" of the server daemon. */
-.server-tailscale {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 10px;
-  color: var(--text);
-}
-
-.server-tailscale .switch {
-  flex: none;
 }
 
 /* The computers that are connected to the server daemon now. */
