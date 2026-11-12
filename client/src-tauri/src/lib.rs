@@ -114,7 +114,9 @@ async fn server_firewall(app: AppHandle, port: u16, open: bool) -> Result<firewa
         if !open || state == firewall::FirewallState::Open {
             return Ok(state);
         }
-        firewall::open(port, program.as_deref())?;
+        // Limit the rule to the interface of the Tailscale address.
+        let tailscale_ip = sidecar::tailscale_address();
+        firewall::open(port, program.as_deref(), tailscale_ip.as_deref())?;
         firewall::check(port, program.as_deref())
     })
     .await
