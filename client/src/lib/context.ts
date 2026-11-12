@@ -54,9 +54,9 @@ const PART_LABELS: Record<string, string> = {
 };
 
 /**
- * The order of the parts, as in the /context view of Claude Code: System prompt, System tools,
- * MCP tools, Memory files, Skills, Messages. Plugins go with the skills. The summary and the tool
- * results go with the messages. A part kind that is not in this list goes after them.
+ * The order of two parts with the same size, as in the /context view of Claude Code: System prompt,
+ * System tools, MCP tools, Memory files, Skills, Messages. Plugins go with the skills. The summary
+ * and the tool results go with the messages. A part kind that is not in this list goes after them.
  */
 const PART_ORDER = ["system", "tools", "mcp_tools", "instructions", "skills", "plugins", "summary", "messages", "tool_results"];
 
@@ -66,14 +66,15 @@ function partRank(kind: string): number {
 }
 
 /**
- * The rows of the context view, as in the /context view of Claude Code: the parts that are not
- * empty, then the free space, then the buffer. The buffer is the space after the compaction point.
+ * The rows of the context view: the parts that are not empty, the largest first (the user asked
+ * for this), then the free space, then the buffer. The buffer is the space after the compaction point.
  */
 export function contextRows(usage: ContextUsage): ContextRow[] {
   const length = Math.max(usage.length, 1);
   const rows: ContextRow[] = usage.parts
     .filter((p) => p.tokens > 0 || p.kind === "messages")
-    .sort((a, b) => partRank(a.kind) - partRank(b.kind)) // A stable sort: two parts of one kind keep their order.
+    // A stable sort: two parts of one kind and size keep their order.
+    .sort((a, b) => b.tokens - a.tokens || partRank(a.kind) - partRank(b.kind))
     .map((p) => ({ kind: p.kind, label: PART_LABELS[p.kind] ?? p.kind, tokens: p.tokens, share: p.tokens / length }));
   const compactAt = Math.round(length * usage.compact_at);
   const free = Math.max(0, compactAt - usage.tokens);

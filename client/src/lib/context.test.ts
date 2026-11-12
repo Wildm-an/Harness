@@ -35,10 +35,10 @@ describe("the context rows", () => {
     ],
   };
 
-  it("lists the parts, the free space, and the buffer", () => {
+  it("lists the parts (the largest first), the free space, and the buffer", () => {
     expect(contextRows(usage).map((r) => [r.kind, r.label, r.tokens, r.share])).toEqual([
-      ["system", "System prompt", 1000, 0.1],
       ["tools", "Built-in tools", 1500, 0.15],
+      ["system", "System prompt", 1000, 0.1],
       ["messages", "Messages", 500, 0.05],
       ["free", "Free space", 5000, 0.5],
       ["buffer", "Compaction buffer", 2000, 0.2],
@@ -51,7 +51,7 @@ describe("the context rows", () => {
     expect(full.find((r) => r.kind === "buffer")?.tokens).toBe(1000);
   });
 
-  it("puts the parts in the order of Claude Code /context", () => {
+  it("puts parts of the same size in the order of Claude Code /context", () => {
     const mixed = {
       ...usage,
       parts: [
