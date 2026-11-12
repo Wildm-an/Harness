@@ -9408,6 +9408,10 @@ textarea.setting-textarea:disabled {
   place-items: center;
   width: 72px;
   height: 72px;
+  color: #fff; /* White in the dark theme (the user asked for this). */
+}
+
+:root[data-theme="light"] .update-hero-icon {
   color: var(--info-mark);
 }
 
@@ -9494,6 +9498,11 @@ textarea.setting-textarea:disabled {
 
 .changelog-head .settings-section {
   margin: 0 0 4px;
+}
+
+/* "Show more" under the changelog: 5 more versions each click. */
+.changelog-more {
+  margin: 12px 0 8px;
 }
 
 /* The popup at the bottom left, above the computer button of the sidebar. */

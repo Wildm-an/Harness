@@ -2,6 +2,7 @@
 // for this): a large status icon with a badge, the status and the time of the last check, and the
 // action at the right. The setting "Check for updates when the app opens" is under it, then the
 // changelog: CHANGELOG.md at the root of the repository, built into the app, from its first version heading.
+// The changelog shows the 5 newest versions, and "Show more" adds 5 more (the user asked for this).
 
 import { useState } from "react";
 import { Check, RefreshCw, X } from "lucide-react";
@@ -11,8 +12,21 @@ import { Row, Switch } from "./SettingsDialog";
 import { isTauri } from "../lib/tauri";
 import { checkAtStart, checkForUpdate, installUpdate, lastChecked, setCheckAtStart, useUpdateState, type UpdateState } from "../lib/updater";
 
-const start = changelog.search(/^## /m);
-const changes = start >= 0 ? changelog.slice(start) : changelog;
+/** The number of versions that the changelog shows first, and that each "Show more" adds. */
+export const CHANGELOG_STEP = 5;
+
+/** The sections of the changelog, one for each "## " heading (a version or "Unreleased"), newest first. */
+export function changelogSections(text: string): string[] {
+  const start = text.search(/^## /m);
+  if (start < 0) return [text];
+  return text
+    .slice(start)
+    .split(/^(?=## )/m)
+    .map((part) => part.trimEnd())
+    .filter(Boolean);
+}
+
+const sections = changelogSections(changelog);
 
 /** The badge on the status icon: up to date, an update waits, an error, or none. */
 export type UpdateBadge = "ok" | "pending" | "error" | "none";
@@ -78,6 +92,7 @@ export function UpdatesPage({ appVersion }: { appVersion: string | null }) {
   const desktop = isTauri();
   const hero = updateHero(state, appVersion, lastChecked(), desktop);
   const [atStart, setAtStart] = useState(checkAtStart);
+  const [shown, setShown] = useState(CHANGELOG_STEP);
 
   return (
     <div className="settings-page updates-page">
@@ -132,8 +147,13 @@ export function UpdatesPage({ appVersion }: { appVersion: string | null }) {
         {appVersion && <span className="settings-status">This version: {appVersion}</span>}
       </div>
       <div className="changelog-page">
-        <Markdown text={changes} />
+        <Markdown text={sections.slice(0, shown).join("\n\n")} />
       </div>
+      {shown < sections.length && (
+        <button type="button" className="btn changelog-more" onClick={() => setShown((n) => n + CHANGELOG_STEP)}>
+          Show more
+        </button>
+      )}
     </div>
   );
 }
