@@ -432,9 +432,11 @@ Claude Code has no IDE view. The user asked for one, as in Cursor (P6).
   - Up to date: a green check badge, "Harness is up to date", "Last checked: Today, 9:41 AM", and "Check for updates".
   - No check yet in this run: "Check for updates", the time of the last check (or "Harness did not check for updates yet."), and "Check for updates".
   - Checking: the arrows turn, "Checking for updates…".
-  - An update: an orange "!" badge, "Harness {version} is available", "You have version {current}. The app closes for the install, and then starts again.", and "Install and restart".
+  - An update: an orange "!" badge, "Harness {version} is available", "The app closes for the install, and then starts again.", and "Install and restart".
   - The download: the arrows turn, "Downloading Harness {version}", the percent, and a progress bar. Then "Installing Harness {version}".
   - An error: a red X badge, "The update check failed" or "The update did not install", the reason, and "Try again".
+
+  Each state also shows "Current version: {version}" under the status line (the user asked for this). The update state does not repeat it ("You have version …" is gone).
 
   Under it is the switch "Check for updates when the app opens", then the changelog (CHANGELOG.md) with "This version: {version}". The changelog shows the 5 newest versions, and a "Show more" button under it adds 5 more each click (the user asked for this). The button goes away when all versions show. The Settings nav shows the update dot on "Updates". The Settings button of the sidebar and the update toast open this page while an update is available.
 - **V9b.** Each open of the window checks for an update, if "Check for updates when the app opens" is on (the user asked for this): a click on the tray icon, "Open Harness" in the tray menu, a second start of the app (for example the taskbar shortcut while the app is in the tray), and a restore of a minimized or hidden window. The desktop app sends `app-opened` for the first three (`open_main` in `lib.rs`). The focus alone checks at most once each 30 minutes. The check is quiet: an error shows only on the Updates page when the user clicks the button.

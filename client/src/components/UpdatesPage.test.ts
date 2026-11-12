@@ -17,12 +17,13 @@ describe("the Updates page", () => {
     const h = hero({ kind: "none" });
     expect([h.badge, h.title, h.action?.label]).toEqual(["ok", "Harness is up to date", "Check for updates"]);
     expect(h.detail).toMatch(/^Last checked: Today, /);
+    expect(h.version).toBe("Current version: 0.1.77");
   });
 
   it("offers the install of a new version", () => {
     const h = hero({ kind: "available", update: { version: "0.1.78" } } as UpdateState);
     expect([h.badge, h.title, h.action?.kind, h.action?.label]).toEqual(["pending", "Harness 0.1.78 is available", "install", "Install and restart"]);
-    expect(h.detail).toContain("You have version 0.1.77.");
+    expect(h.version).toBe("Current version: 0.1.77");
   });
 
   it("shows the download progress, then the install", () => {
@@ -43,6 +44,8 @@ describe("the Updates page", () => {
     expect(hero({ kind: "idle" }, null).detail).toBe("Harness did not check for updates yet.");
     const web = updateHero({ kind: "idle" }, "0.1.77", null, false, now);
     expect(web.action).toBeNull();
+    expect(web.version).toBe("Current version: 0.1.77");
+    expect(updateHero({ kind: "none" }, null, at, true, now).version).toBeNull();
   });
 });
 

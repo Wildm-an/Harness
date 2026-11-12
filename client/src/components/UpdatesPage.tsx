@@ -37,6 +37,7 @@ export interface UpdateHero {
   title: string;
   detail: string;
   percent: number | null; // The download progress bar. null: no bar.
+  version: string | null; // "Current version: 0.1.78", under the status (the user asked for this). null: not known.
   action: { kind: "check" | "install"; label: string } | null;
 }
 
@@ -56,12 +57,17 @@ const CHECK_PREFIX = "The update check failed: ";
 export function updateHero(state: UpdateState, appVersion: string | null, checkedAt: number | null, desktop: boolean, now = Date.now()): UpdateHero {
   const checked = checkedAt ? `Last checked: ${checkedText(checkedAt, now)}` : "Harness did not check for updates yet.";
   const check = { kind: "check" as const, label: "Check for updates" };
+  const version = appVersion ? `Current version: ${appVersion}` : null;
   if (!desktop) {
-    return { badge: "none", busy: false, title: "Updates are in the desktop app", detail: "The desktop app checks for updates and installs them.", percent: null, action: null };
+    return { badge: "none", busy: false, title: "Updates are in the desktop app", detail: "The desktop app checks for updates and installs them.", percent: null, version, action: null };
   }
+  return { ...heroOf(state, checked, check), version };
+}
+
+function heroOf(state: UpdateState, checked: string, check: { kind: "check"; label: string }): Omit<UpdateHero, "version"> {
   switch (state.kind) {
     case "checking":
-      return { badge: "none", busy: true, title: "Checking for updates…", detail: appVersion ? `You have version ${appVersion}.` : "", percent: null, action: null };
+      return { badge: "none", busy: true, title: "Checking for updates…", detail: "", percent: null, action: null };
     case "none":
       return { badge: "ok", busy: false, title: "Harness is up to date", detail: checked, percent: null, action: check };
     case "available":
@@ -69,7 +75,7 @@ export function updateHero(state: UpdateState, appVersion: string | null, checke
         badge: "pending",
         busy: false,
         title: `Harness ${state.update.version} is available`,
-        detail: appVersion ? `You have version ${appVersion}. The app closes for the install, and then starts again.` : "The app closes for the install, and then starts again.",
+        detail: "The app closes for the install, and then starts again.",
         percent: null,
         action: { kind: "install", label: "Install and restart" },
       };
@@ -117,6 +123,7 @@ export function UpdatesPage({ appVersion }: { appVersion: string | null }) {
               <span style={{ width: `${hero.percent}%` }} />
             </span>
           )}
+          {hero.version && <span className="update-hero-detail">{hero.version}</span>}
         </div>
         {hero.action && (
           <button
