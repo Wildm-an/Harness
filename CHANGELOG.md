@@ -3,7 +3,20 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
-## Unreleased
+## 0.1.77 (2026-11-12)
+
+### Session rail
+
+- The Context section keeps the share of the context window in its heading when the section is
+  open, as in the Claude app. Under the heading, it shows the tokens in use and the window, for
+  example "130.8k / 1M".
+- The context breakdown (the rail and the context ring) lists the largest parts first. Free space
+  and the compaction buffer stay at the end. Parts of the same size are in the order of Claude
+  Code /context.
+- Messages are blue in the context breakdown. Built-in tools are vermilion.
+- A token count shows one decimal place when it is not a whole number ("32.8k", "1.5M"), and a
+  window of one million tokens shows "1M".
+- The context ring under the prompt box shows only while the session rail is hidden.
 
 ### Computers
 
