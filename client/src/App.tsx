@@ -2718,6 +2718,9 @@ export default function App() {
     </div>
   );
 
+  // The session rail shows at the right of the session. The split pane takes its room (V6t).
+  const railVisible = rail && view === "code" && screen === "chat" && session !== null && split === null;
+
   const chatPane = (
     <div className="chat">
       {sideFloating && !sideDocked && session && (
@@ -2836,8 +2839,9 @@ export default function App() {
                   onManage={showProviders}
                 />
                 )}
-                {/* An ACP session shows the ring only when its harness reports the usage (usage_update). */}
-                {chat.context && (!session.harness || chat.context.tokens > 0) && (
+                {/* An ACP session shows the ring only when its harness reports the usage (usage_update).
+                    The open session rail has the Context section, so the ring shows only while the rail is hidden. */}
+                {!railVisible && chat.context && (!session.harness || chat.context.tokens > 0) && (
                   <ContextRing
                     tokens={chat.context.tokens}
                     length={chat.context.length}
@@ -3904,7 +3908,7 @@ export default function App() {
             <div className="session-body">
               <Workspace layout={layout} onChange={setLayout} panes={panes} reveal={reveal} />
               {/* The split pane gets the room of the session rail, as a pane does (V6t). */}
-              {rail && view === "code" && !splitShown && (
+              {railVisible && (
                 <SessionRail
                   key={session.id} // Each session starts with its Context section folded.
                   sessionId={session.id}

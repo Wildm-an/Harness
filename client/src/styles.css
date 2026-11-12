@@ -10172,19 +10172,14 @@ body.sorting * {
   white-space: nowrap;
 }
 
+/* "130.8k / 1M" at the right, above the bar, as in the Claude app. */
 .rail-context-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  text-align: right;
   color: var(--text-muted);
-}
-
-.rail-context-pct {
-  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
-/* The share of the context in the heading of the folded Context section. */
+/* The share of the context in the heading of the Context section, open or folded. */
 .rail-section-head .rail-head-value {
   margin-left: auto;
   color: var(--text);
