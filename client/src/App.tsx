@@ -759,6 +759,7 @@ export default function App() {
             // When no provider gives the model of the session, the model by network replaces it, or the chat asks.
             requestModels();
             sendSafely({ type: "user_settings.get" });
+            sendSafely({ type: "connectors.list" }); // The Connectors section of the session rail.
             // The agent works in a tab of the Browser pane: only the desktop app on Windows with the local daemon.
             sendSafely({ type: "browser.pane", enabled: canHostAgentBrowser(currentRef.current?.kind) });
           } else if (sessionRef.current.cwd !== msg.cwd) {
@@ -3944,6 +3945,11 @@ export default function App() {
                   servers={servers.items}
                   onOpenServer={(s) => void openServer(s)}
                   onShowServers={() => setLayout((l) => openPane(l, "browser"))}
+                  onStopServer={(name) => void servers.stop(name)}
+                  connectors={connectors}
+                  // The MCP states of the session. The daemon sends each change ("mcp"). A server that is not live is "stopped".
+                  mcpServers={mcpStatus?.items ?? null}
+                  onShowConnectors={() => openCapabilities("connections")}
                   browser={
                     agentTab
                       ? { tab: agentTab.tab, image: null, url: agentTab.url, title: agentTab.title, live: agentTab.live, agent: agentTab.agent }

@@ -3,13 +3,14 @@
 // window the rail covers the workspace, and Esc or a click outside closes it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, Check, ChevronDown, ChevronRight, Coffee, Folder, GitBranch, Globe, GripVertical, KeyRound, Maximize2, Monitor, X } from "lucide-react";
+import { Archive, Check, ChevronDown, ChevronRight, Coffee, Folder, GitBranch, Globe, GripVertical, KeyRound, Maximize2, Monitor, Square, X } from "lucide-react";
 import { useSortable } from "../lib/useSortable";
 import type { GitChanges } from "../daemon/protocol";
 import { RailChanges, RailPrList } from "./RailChanges";
 import { listedPrs, prKeyUrl, usePrInfos, usePrRefresh, type GitAction } from "../lib/pr";
 import { captureAgentTab } from "../browser/BrowserPane";
-import type { PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
+import type { ConnectorItem, McpServerItem, PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
+import { ConnectorLogo } from "./ConnectorLogo";
 import type { ConnectionKind } from "../lib/connections";
 import {
   RAIL_SECTIONS,
@@ -18,11 +19,15 @@ import {
   sectionOrder,
   stepSection,
   foldedSections,
+  connectorsHeadValue,
+  contextLevel,
   foldedValue,
+  railConnectors,
   railTasks,
   taskDetailText,
   taskSummary,
   toggleFolded,
+  type RailConnectorState,
   type RailSection,
 } from "../lib/sessionRail";
 import { formatTokens, type ContextUsage } from "../lib/context";
@@ -32,6 +37,8 @@ export const SESSION_RAIL_ID = "session-rail";
 const NARROW = "(max-width: 900px)";
 const PLACE_ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
 const SERVER_STATES: Record<ServerItem["state"], string> = { stopped: "Stopped", starting: "Starting", running: "Running", crashed: "Crashed" };
+// The dot of a connector row: green when active, yellow while it connects, red for a problem, gray otherwise.
+const CONNECTOR_DOTS: Record<RailConnectorState, string> = { active: "running", connecting: "starting", problem: "crashed", idle: "stopped", off: "stopped" };
 
 export interface RailEnvironment {
   placeKind: ConnectionKind;
@@ -91,6 +98,10 @@ export function SessionRail({
   servers,
   onOpenServer,
   onShowServers,
+  onStopServer,
+  connectors,
+  mcpServers,
+  onShowConnectors,
   tasks,
   onShowTasks,
   keepAwake,
@@ -120,6 +131,10 @@ export function SessionRail({
   servers: ServerItem[];
   onOpenServer: (server: ServerItem) => void;
   onShowServers: () => void;
+  onStopServer: (name: string) => void; // The stop button of a running or starting server.
+  connectors: ConnectorItem[] | null; // All the connectors (daemon message "connectors"). null: not known yet.
+  mcpServers: McpServerItem[] | null; // The MCP servers of the session, with their states. null: not known yet.
+  onShowConnectors: () => void; // Open the Connectors tab of the Capabilities page.
   tasks: TaskItem[];
   onShowTasks: () => void;
   keepAwake: boolean; // "Keep computer awake" for this session (the same switch as in the ⋮ menu).
@@ -165,7 +180,8 @@ export function SessionRail({
 
   const PlaceIcon = PLACE_ICONS[environment.placeKind];
   const share = context ? contextShare(context.tokens, context.length) : 0;
-  const level = share >= 0.8 ? "high" : share >= 0.6 ? "mid" : "low";
+  // The same colors as the ring under the prompt box.
+  const level = contextLevel(share, usage?.compact_at);
   // Only the running tasks (commands, monitors, agents, wakeups). An ended task goes away from the rail.
   const shownTasks = railTasks(tasks);
   // The time of a wakeup counts down.
@@ -186,6 +202,9 @@ export function SessionRail({
   const branchKey = prKeyUrl(branchPr?.url);
   usePrRefresh(branchKey && !sessionPrs.includes(branchKey) ? [...sessionPrs, branchKey] : sessionPrs, running);
   const prs = listedPrs(sessionPrs, branchPr, prInfo);
+  // All the connectors, the active connectors first. The heading shows how many are active.
+  const connectorRows = connectors ? railConnectors(connectors, mcpServers) : [];
+  const connectorsValue = connectorsHeadValue(connectorRows);
 
   // Under the environment: the computer of the agent does not sleep while the agent works in this session.
   const awake = (
@@ -279,12 +298,32 @@ export function SessionRail({
     ),
     // The Changes section shows the pull request of a git folder. This section shows it only when
     // the Changes section does not show.
+    // All the connectors, as in the Claude app. A click opens the Connectors tab.
+    connectors:
+      connectorRows.length > 0 ? (
+        <ul className="rail-list">
+          {connectorRows.map((c) => (
+            <li key={c.id}>
+              <button type="button" className={`rail-item rail-connector ${c.state}`} onClick={onShowConnectors} title="Show the connectors">
+                <span className="rail-connector-logo" aria-hidden>
+                  <ConnectorLogo id={c.id} size={15} />
+                </span>
+                <span className="rail-item-text">
+                  <span className="rail-item-title">{c.name}</span>
+                  <span className="rail-item-detail">{c.detail}</span>
+                </span>
+                <span className={`rail-dot ${CONNECTOR_DOTS[c.state]}`} aria-hidden />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null,
     pullRequests: prs.length > 0 && !changes?.repo ? <RailPrList prs={prs} onOpen={onOpenPr} /> : null,
     servers:
       servers.length > 0 ? (
         <ul className="rail-list">
           {servers.map((s) => (
-            <li key={s.name}>
+            <li key={s.name} className="rail-server">
               <button type="button" className="rail-item" onClick={() => (s.url ? onOpenServer(s) : onShowServers())} title={s.url ?? "Show the servers"}>
                 <span className={`rail-dot ${s.state}`} aria-hidden />
                 <span className="rail-item-text">
@@ -295,6 +334,11 @@ export function SessionRail({
                   </span>
                 </span>
               </button>
+              {(s.state === "running" || s.state === "starting") && (
+                <button type="button" className="rail-server-stop" onClick={() => onStopServer(s.name)} aria-label={`Stop ${s.name}`} title="Stop">
+                  <Square size={12} aria-hidden />
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -365,10 +409,19 @@ export function SessionRail({
                 {foldedValue(s.id, context) && (
                   <span className="rail-head-value" aria-label={`${foldedValue(s.id, context)} of the context window in use`}>
                     {foldedValue(s.id, context)}
+                    {/* A small bar after the share, as in the Claude app. */}
+                    <span className={`rail-head-meter ${level}`} aria-hidden>
+                      <span style={{ width: `${Math.max(share * 100, share > 0 ? 8 : 0)}%` }} />
+                    </span>
+                  </span>
+                )}
+                {s.id === "connectors" && connectorsValue && (
+                  <span className="rail-head-value" aria-label={`Connectors in this session: ${connectorsValue}`}>
+                    {connectorsValue}
                   </span>
                 )}
               </button>
-              {/* The grip at the far right shows on hover, as in the Claude app. */}
+              {/* The grip at the far right shows on hover in place of the heading value, as in the Claude app. */}
               <span className="rail-grip" aria-hidden>
                 <GripVertical size={14} />
               </span>
