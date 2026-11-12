@@ -1,9 +1,26 @@
 # Changelog
 
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
-this file on its Changelog page.
+this file on its Updates page, under the update status.
 
-## Unreleased
+## 0.1.78 (2026-11-12)
+
+### Updates
+
+- Settings has an Updates page, the last page of the list, in the style of the Windows Update
+  page. A large icon with a badge shows the status: up to date, an update, or an error. The page
+  shows the time of the last check, and "Check for updates", "Install and restart", or "Try
+  again" at the right. A download shows the percent and a progress bar.
+- The switch "Check for updates when the app opens" and the changelog are on the Updates page.
+  The Changelog page and the Updates section of the General page are gone.
+- The app checks for an update each time you open it: a click on the tray icon, "Open Harness"
+  in the tray menu, a second start of the app, or a restore of the window. Before, the app
+  checked at most once each 30 minutes.
+
+### Browser
+
+- While you annotate a page, the page shows no hint at the top, for example "Pick a tool in the
+  bar under the page. Esc stops." The bar under the page shows the tools. Esc still stops.
 
 ### Computers
 
