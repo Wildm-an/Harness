@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
@@ -82,13 +84,29 @@ def test_new_token_replaces_the_token_file(harness_home):
         stop_daemon(proc)
 
 
+def _second_loopback() -> str | None:
+    """A second local address: 127.0.0.2 (Windows, Linux), else ::1 (macOS has only 127.0.0.1)."""
+    for host, family in (("127.0.0.2", socket.AF_INET), ("::1", socket.AF_INET6)):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.bind((host, 0))
+            return host
+        except OSError:
+            continue
+    return None
+
+
 def test_also_host_listens_on_a_second_address(harness_home):
-    # The play button of the app adds the Tailscale address. 127.0.0.2 is a second loopback address.
-    proc, ready = start_daemon(harness_home, "--host", "127.0.0.1", "--also-host", "127.0.0.2")
+    # The play button of the app adds the Tailscale address. Here the second address is a loopback address.
+    second = _second_loopback()
+    if second is None:
+        pytest.skip("This computer has no second loopback address.")
+    proc, ready = start_daemon(harness_home, "--host", "127.0.0.1", "--also-host", second)
     try:
-        assert ready["hosts"] == ["127.0.0.1", "127.0.0.2"]
+        assert ready["hosts"] == ["127.0.0.1", second]
         for host in ready["hosts"]:
-            with connect(f"ws://{host}:{ready['port']}/ws") as ws:
+            address = f"[{host}]" if ":" in host else host
+            with connect(f"ws://{address}:{ready['port']}/ws") as ws:
                 ws.send(json.dumps({"type": "auth", "token": ready["token"]}))
                 assert json.loads(ws.recv(timeout=10))["type"] == "auth.ok"
     finally:
