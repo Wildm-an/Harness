@@ -19,7 +19,6 @@ import {
   stepSection,
   foldedSections,
   foldedValue,
-  percentText,
   railTasks,
   taskDetailText,
   taskSummary,
@@ -253,11 +252,9 @@ export function SessionRail({
     ),
     context: context ? (
       <div className="rail-context">
-        <div className="rail-context-head">
-          <span>
-            {formatTokens(context.tokens)} of {formatTokens(context.length)} tokens
-          </span>
-          <span className="rail-context-pct">{percentText(share)}</span>
+        {/* The share in use is in the section heading, as in the Claude app. */}
+        <div className="rail-context-head" aria-label={`${formatTokens(context.tokens)} of ${formatTokens(context.length)} tokens`}>
+          {formatTokens(context.tokens)} / {formatTokens(context.length)}
         </div>
         {usage ? (
           <ContextBreakdown usage={usage} />
@@ -365,7 +362,7 @@ export function SessionRail({
               >
                 <ChevronRight size={13} aria-hidden className="rail-chevron" />
                 {s.title}
-                {!open && foldedValue(s.id, context) && (
+                {foldedValue(s.id, context) && (
                   <span className="rail-head-value" aria-label={`${foldedValue(s.id, context)} of the context window in use`}>
                     {foldedValue(s.id, context)}
                   </span>
