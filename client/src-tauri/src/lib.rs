@@ -1,4 +1,5 @@
 mod browser;
+mod firewall;
 mod forward;
 mod prefs;
 mod secrets;
@@ -101,6 +102,23 @@ async fn server_daemon_start(
 #[tauri::command]
 async fn tailscale_address() -> Option<String> {
     tauri::async_runtime::spawn_blocking(sidecar::tailscale_address).await.ok().flatten()
+}
+
+/// The Windows Firewall of the server daemon (firewall.rs). `open`: if the port is blocked, change the
+/// firewall. Windows then shows its administrator prompt. Returns the state after the change.
+#[tauri::command]
+async fn server_firewall(app: AppHandle, port: u16, open: bool) -> Result<firewall::FirewallState, String> {
+    let program = sidecar::daemon_program(app.path().resource_dir().ok().as_deref());
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = firewall::check(port, program.as_deref())?;
+        if !open || state == firewall::FirewallState::Open {
+            return Ok(state);
+        }
+        firewall::open(port, program.as_deref())?;
+        firewall::check(port, program.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The running server daemon and its clients, or null.
@@ -544,6 +562,7 @@ pub fn run() {
             server_daemon_stop,
             computer_name,
             tailscale_address,
+            server_firewall,
             tunnel_open,
             tunnel_close,
             secret_get,

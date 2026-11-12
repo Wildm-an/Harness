@@ -3,6 +3,16 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Computers
+
+- On Windows, the play button with "Also listen on Tailscale" checks Windows Firewall. When the
+  port is blocked, Windows asks for administrator rights one time. Then the app adds the rule
+  "Harness remote daemon" (TCP 8765, only from Tailscale addresses), and removes the block rules
+  of the daemon program. Before, the firewall dropped the connections of the other computers.
+- When the port is still blocked, the page says so, with "Allow in Windows Firewall".
+
 ## 0.1.74 (2026-11-11)
 
 ### Computers
