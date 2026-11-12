@@ -3790,6 +3790,99 @@ select {
   margin: 6px 0 0;
 }
 
+/* The start command with its play button (the server daemon of this computer). */
+.server-command {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 6px;
+}
+
+.server-command .server-command-btn {
+  margin-top: 6px;
+}
+
+.server-status {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.server-status .ok {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--success);
+}
+
+.server-status .ok svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.server-token {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.server-token-field {
+  margin-top: 8px;
+}
+
+.server-token-field input {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.key-field.server-token-field .key-field-btn:nth-of-type(1) {
+  right: 4px;
+}
+
+/* The computers that are connected to the server daemon now. */
+.server-clients {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.server-clients-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.server-clients ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.remote-help .server-clients li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.server-clients li svg {
+  flex: none;
+}
+
+.server-client-name {
+  color: var(--text);
+}
+
+.server-client-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
 /* ---------- modal and folder picker ---------- */
 
 .modal-backdrop {

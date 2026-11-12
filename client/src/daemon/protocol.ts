@@ -823,7 +823,8 @@ export interface HfSearchFilters {
 }
 
 export type ClientMessage =
-  | { type: "auth"; token: string }
+  // client: the computer name and the app version. A server daemon shows them (clients.py).
+  | { type: "auth"; token: string; client?: { name?: string; app?: string } }
   | {
       type: "session.new";
       cwd: string;

@@ -37,7 +37,7 @@ from pathlib import Path
 
 import uvicorn
 
-from . import __version__, frozen, update
+from . import __version__, clients, frozen, update
 from .config import harness_home
 from .server import create_app, stop_all_servers
 from .tunnels import TUNNELS
@@ -108,6 +108,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--log-level", default="warning")
     parser.add_argument("--exit-on-stdin-eof", action="store_true",
                         help="Stop when stdin closes. The desktop client uses this for the sidecar.")
+    parser.add_argument("--report-connections", action="store_true",
+                        help="Print a JSON line when a client connects or disconnects (clients.py).")
     parser.add_argument("--install-browser", action="store_true",
                         help="Install Chromium for the agent browser (Playwright), then stop.")
     parser.add_argument("--version", action="version", version=f"harness-daemon {__version__}")
@@ -127,6 +129,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Warning: the daemon listens on {args.host}. Do not expose this port to the internet.", file=sys.stderr)
 
     update.enable(argv, sidecar=args.exit_on_stdin_eof)
+    if args.report_connections:
+        clients.enable()
     wait = bool(os.environ.pop(update.WAIT_PID_ENV, None))
     sock = None
     if args.port == 0 and args.prefer_port:

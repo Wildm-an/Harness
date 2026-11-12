@@ -3,6 +3,22 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Computers
+
+- Settings > Computers has a play button next to the start command. It starts the daemon of this
+  app on port 8765, so other computers can connect to this computer. The daemon uses the token file,
+  so its token stays the same. It stops when you quit Harness.
+- While that daemon runs, "Show token" shows its token, with a copy button. The play button
+  changes to a stop button, "Stop remote daemon".
+- "New token" restarts that daemon with a new token. The computers that use the old token lose the
+  connection, and they cannot connect again.
+- The page shows the computers that are connected to that daemon now: the name, the address, the
+  app version, and the time of the connection. The app now sends its computer name and version when
+  it connects to a daemon.
+- While that daemon runs, the tray menu has "Stop remote daemon".
+
 ## 0.1.72 (2026-11-11)
 
 ### Memory

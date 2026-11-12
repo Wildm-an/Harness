@@ -7,7 +7,8 @@ mod tunnel;
 
 use browser::Bounds;
 use forward::{ForwardSpec, Forwards};
-use sidecar::{DaemonInfo, Sidecar};
+use sidecar::{DaemonInfo, ServerDaemon, ServerInfo, Sidecar};
+use std::sync::Arc;
 use tauri::AppHandle;
 use tunnel::{TunnelSpec, Tunnels};
 use tauri::{Manager, RunEvent, State};
@@ -62,6 +63,88 @@ async fn restart_daemon(state: State<'_, Sidecar>) -> Result<DaemonInfo, String>
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Starts the server daemon on `port` for other computers (Settings > Computers), or returns the one
+/// that runs. It stops when this app stops. `new_token`: restart it with a new token.
+#[tauri::command]
+async fn server_daemon_start(
+    app: AppHandle,
+    state: State<'_, ServerDaemon>,
+    port: u16,
+    new_token: Option<bool>,
+) -> Result<ServerInfo, String> {
+    let server = state.inner().clone();
+    let resource_dir = app.path().resource_dir().ok();
+    let handle = app.clone();
+    // A client connects or disconnects, or the daemon stops by itself.
+    let on_change: sidecar::OnChange = Arc::new(move || server_daemon_changed(&handle));
+    let new_token = new_token.unwrap_or(false);
+    let info = tauri::async_runtime::spawn_blocking(move || {
+        server.start(resource_dir.as_deref(), port, new_token, on_change)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    server_daemon_changed(&app);
+    Ok(info)
+}
+
+/// The running server daemon and its clients, or null.
+#[tauri::command]
+fn server_daemon_status(state: State<'_, ServerDaemon>) -> Option<ServerInfo> {
+    state.status()
+}
+
+/// The name of this computer, for the auth message: the Computers page of a server daemon shows it.
+#[tauri::command]
+fn computer_name() -> Option<String> {
+    let var = if cfg!(windows) { "COMPUTERNAME" } else { "HOSTNAME" };
+    if let Some(name) = std::env::var(var).ok().filter(|n| !n.trim().is_empty()) {
+        return Some(name.trim().to_string());
+    }
+    let out = std::process::Command::new("hostname").output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+#[tauri::command]
+async fn server_daemon_stop(app: AppHandle, state: State<'_, ServerDaemon>) -> Result<(), String> {
+    let server = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || server.stop()).await.map_err(|e| e.to_string())?;
+    server_daemon_changed(&app);
+    Ok(())
+}
+
+/// The UI event after a start or a stop of the server daemon. The Computers page shows the new state.
+const SERVER_DAEMON_EVENT: &str = "server-daemon-changed";
+
+/// The tray menu item "Stop remote daemon". It is in the menu only while the server
+/// daemon runs.
+#[cfg(desktop)]
+struct ServerTrayItem {
+    menu: tauri::menu::Menu<tauri::Wry>,
+    item: tauri::menu::MenuItem<tauri::Wry>,
+    shown: std::sync::Mutex<bool>, // The item is in the menu.
+}
+
+/// Shows or removes the tray menu item of the server daemon, and tells the UI. It reads the state
+/// itself: a new token stops and starts the daemon, and two threads call this function at once.
+fn server_daemon_changed(app: &AppHandle) {
+    use tauri::Emitter;
+    #[cfg(desktop)]
+    if let Some(tray) = app.try_state::<ServerTrayItem>() {
+        if let Ok(mut shown) = tray.shown.lock() {
+            // In the lock, so that the item goes into the menu only one time.
+            let running = app.state::<ServerDaemon>().status().is_some();
+            if running && !*shown {
+                *shown = tray.menu.insert(&tray.item, 1).is_ok(); // After "Open Harness".
+            } else if !running && *shown {
+                let _ = tray.menu.remove(&tray.item);
+                *shown = false;
+            }
+        }
+    }
+    let _ = app.emit(SERVER_DAEMON_EVENT, ());
 }
 
 /// Opens an SSH tunnel to a remote daemon. Returns the local port.
@@ -320,7 +403,8 @@ fn show_main(app: &AppHandle) {
 }
 
 /// The tray icon. A left click shows the window. "Quit Harness" shows the window and asks the UI
-/// to quit: QuitGuard asks first when the agent works (docs/UI_RULES.md V10a).
+/// to quit: QuitGuard asks first when the agent works (docs/UI_RULES.md V10a). While the server
+/// daemon runs, the menu also has "Stop remote daemon".
 #[cfg(desktop)]
 fn make_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
@@ -331,12 +415,22 @@ fn make_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", format!("Open {name}"), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", format!("Quit {name}"), true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
+    let server_stop = MenuItem::with_id(app, "server-stop", "Stop remote daemon", true, None::<&str>)?;
+    app.manage(ServerTrayItem { menu: menu.clone(), item: server_stop, shown: std::sync::Mutex::new(false) });
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip(&name)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
+            "server-stop" => {
+                // The stop can take some seconds: the daemon stops its turns and servers first.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    app.state::<ServerDaemon>().stop();
+                    server_daemon_changed(&app);
+                });
+            }
             "quit" => {
                 show_main(app);
                 let _ = app.emit_to("main", "quit-requested", ());
@@ -379,6 +473,7 @@ pub fn run() {
             tauri_plugin_window_state::Builder::default().with_state_flags(window_state_flags()).build(),
         )
         .manage(Sidecar::default())
+        .manage(ServerDaemon::default())
         .manage(Tunnels::default())
         .manage(Forwards::default())
         .setup(|app| {
@@ -430,6 +525,10 @@ pub fn run() {
             daemon_info,
             daemon_wheel,
             restart_daemon,
+            server_daemon_start,
+            server_daemon_status,
+            server_daemon_stop,
+            computer_name,
             tunnel_open,
             tunnel_close,
             secret_get,
@@ -465,6 +564,7 @@ pub fn run() {
             handle.state::<Tunnels>().close_all();
             handle.state::<Forwards>().close_all();
             handle.state::<Sidecar>().stop();
+            handle.state::<ServerDaemon>().stop();
         }
     });
 }
