@@ -549,12 +549,9 @@ class Agent:
         sizes["tools"] = estimate_tokens(builtin) if builtin else 0
         sizes["mcp_tools"] = estimate_tokens(mcp) if mcp else 0
         sizes["plugins"] += estimate_tokens(plugin) if plugin else 0
-        # The messages of the turns, without the system prompt. The tool results are a part of their own.
+        # The messages of the turns, without the system prompt. As in Claude Code, the tool results are messages.
         sent = self.messages()[1:]
-        results = [m for m in sent if m.get("role") == "tool"]
-        talk = [m for m in sent if m.get("role") != "tool"]
-        sizes["messages"] = estimate_tokens(talk) if talk else 0
-        sizes["tool_results"] = estimate_tokens(results) if results else 0
+        sizes["messages"] = estimate_tokens(sent) if sent else 0
         # The endpoint count is exact, and the parts are estimates. Scale the parts to the total.
         total = self.context_tokens()
         estimate = sum(sizes.values())

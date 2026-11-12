@@ -165,16 +165,15 @@ def test_context_breakdown(daemon, project, harness_home, fake_model):  # noqa: 
     c.send({"type": "context.get"})
     usage = c.until("context.usage")[0]
     parts = {p["kind"]: p["tokens"] for p in usage["parts"]}
-    assert list(parts) == ["system", "instructions", "skills", "plugins", "summary", "tools", "mcp_tools", "messages", "tool_results"]
+    assert list(parts) == ["system", "instructions", "skills", "plugins", "summary", "tools", "mcp_tools", "messages"]
     assert parts["instructions"] > 0 and parts["tools"] > 0 and parts["messages"] > 0
-    assert parts["tool_results"] == 0  # The turn ran no tool.
     assert parts["instructions"] > parts["skills"]  # The project instructions are long.
     assert parts["summary"] == 0 and parts["mcp_tools"] == 0 and parts["plugins"] == 0
     assert sum(parts.values()) == usage["tokens"] and usage["length"] == 32768 and usage["compact_at"] == 0.8
     c.close()
 
 
-def test_context_breakdown_counts_tool_results(daemon, project, harness_home, fake_model):  # noqa: F811
+def test_context_breakdown_counts_tool_results_as_messages(daemon, project, harness_home, fake_model):  # noqa: F811
     (project / "notes.txt").write_text("A long line of notes. " * 300)
     c = Client(daemon)
     c.new_session(project)
@@ -186,6 +185,8 @@ def test_context_breakdown_counts_tool_results(daemon, project, harness_home, fa
     c.send({"type": "context.get"})
     usage = c.until("context.usage")[0]
     parts = {p["kind"]: p["tokens"] for p in usage["parts"]}
-    assert parts["tool_results"] > parts["messages"] > 0  # The file text is a tool result.
+    assert "tool_results" not in parts
+    # The prompt and the answer are less than 20 tokens. The rest of the messages is the file text, a tool result.
+    assert parts["messages"] > 200
     assert sum(parts.values()) == usage["tokens"]
     c.close()

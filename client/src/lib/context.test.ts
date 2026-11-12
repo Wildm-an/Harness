@@ -37,7 +37,7 @@ describe("the context rows", () => {
 
   it("lists the parts (the largest first), the free space, and the buffer", () => {
     expect(contextRows(usage).map((r) => [r.kind, r.label, r.tokens, r.share])).toEqual([
-      ["tools", "Built-in tools", 1500, 0.15],
+      ["tools", "System tools", 1500, 0.15],
       ["system", "System prompt", 1000, 0.1],
       ["messages", "Messages", 500, 0.05],
       ["free", "Free space", 5000, 0.5],
@@ -56,7 +56,6 @@ describe("the context rows", () => {
       ...usage,
       parts: [
         { kind: "instructions", tokens: 100 },
-        { kind: "tool_results", tokens: 100 },
         { kind: "messages", tokens: 100 },
         { kind: "skills", tokens: 100 },
         { kind: "summary", tokens: 100 },
@@ -67,14 +66,7 @@ describe("the context rows", () => {
       ],
     };
     expect(contextRows(mixed).map((r) => r.kind)).toEqual([
-      "system", "tools", "mcp_tools", "instructions", "skills", "plugins", "summary", "messages", "tool_results", "free", "buffer",
+      "system", "tools", "mcp_tools", "instructions", "skills", "plugins", "summary", "messages", "free", "buffer",
     ]);
-  });
-
-  it("names the tool results, and hides them when they are empty", () => {
-    const withResults = { ...usage, parts: [...usage.parts, { kind: "tool_results", tokens: 800 }] };
-    expect(contextRows(withResults).find((r) => r.kind === "tool_results")?.label).toBe("Tool results");
-    const empty = { ...usage, parts: [...usage.parts, { kind: "tool_results", tokens: 0 }] };
-    expect(contextRows(empty).some((r) => r.kind === "tool_results")).toBe(false);
   });
 });
