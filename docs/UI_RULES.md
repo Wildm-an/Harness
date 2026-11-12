@@ -219,7 +219,7 @@ Harness has no "+" button now. Add it.
 ### 5.6 Context ring
 
 - **C18.** The ring tooltip is "Context {summary}". A click opens a panel with the usage parts and two actions: "Compact this session" and "New session".
-- **C18a.** The usage parts are in the order of Claude Code /context (the user asked for this): System prompt, Built-in tools, MCP tools, Project instructions, Skills, Plugins, Summary of earlier turns, Messages, Tool results, then Free space and Compaction buffer.
+- **C18a.** The usage parts are in the order of Claude Code /context (the user asked for this): System prompt, Built-in tools, MCP tools, Project instructions, Skills, Plugins, Summary of earlier turns, Messages, Tool results, then Free space and Compaction buffer. Messages are blue (the user asked for this). Built-in tools are vermilion.
 - **C18b.** A token count has one decimal place when it is not a whole number, as in Claude (the user asked for this): "512", "1.2k", "130.8k", "200k", "1M", "1.5M".
 - **C18c.** The ring shows only while the session rail is hidden (the user asked for this). The open rail has the Context section, so the ring does not show. The split pane has no rail, so it always shows its ring.
 

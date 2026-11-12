@@ -51,9 +51,9 @@
   --ctx-skills: #edc54f;
   --ctx-plugins: #f0a54a;
   --ctx-summary: #e09ac8;
-  --ctx-tools: #60a7f0;
+  --ctx-tools: #f07443;
   --ctx-mcp-tools: #9ccdf0;
-  --ctx-messages: #f07443;
+  --ctx-messages: #60a7f0;
   --ctx-tool-results: #ae99f0;
   /* The pull request and work colors (lib/pr.ts). Orange: uncommitted work. Purple: a merged pull
      request. Blue (--info): commits that are not pushed. Green (--success): pushed work and an open
@@ -150,9 +150,9 @@
   --ctx-skills: #d99a00;
   --ctx-plugins: #e69f00;
   --ctx-summary: #cc79a7;
-  --ctx-tools: #0072b2;
+  --ctx-tools: #d55e00;
   --ctx-mcp-tools: #3a9fd6;
-  --ctx-messages: #d55e00;
+  --ctx-messages: #0072b2;
   --ctx-tool-results: #7e57c2;
   --orange: #995200;
   --orange-mark: #cf6a08;
