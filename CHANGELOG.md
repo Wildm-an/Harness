@@ -3,6 +3,17 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Computers
+
+- The SSH connection of a remote daemon can log in with a password. "Log in with" in the
+  connection form selects "SSH key" or "Password".
+- "SSH key" takes the whole private key as text. Leave it empty to use the keys of this computer.
+  The key and the password are hidden, with a button to show them, and the app keeps them in the
+  keychain. A pasted key goes to a temporary file only while the tunnel is open.
+- The "Identity file" field is gone. A connection that has one still uses it when no key is pasted.
+
 ## 0.1.77 (2026-11-12)
 
 ### Session rail

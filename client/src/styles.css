@@ -12881,6 +12881,27 @@ body.sorting * {
   right: 4px;
 }
 
+/* A multi-line secret (SecretTextArea): the show button at the top right. */
+.key-field.secret-area {
+  align-items: stretch;
+}
+
+.key-field.secret-area textarea {
+  flex: 1;
+  min-width: 0;
+  padding-right: 38px;
+  resize: vertical;
+  font-size: 12px;
+}
+
+.key-field.secret-area .key-field-btn {
+  top: 4px;
+}
+
+.secret-hidden {
+  -webkit-text-security: disc;
+}
+
 /* The secret fields have their own show button. The built-in reveal button of the WebView (Edge)
    was a second eye in the field, and it cannot show a value that the app filled in. */
 input::-ms-reveal,

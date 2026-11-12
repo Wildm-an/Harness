@@ -4,7 +4,7 @@
 // The built-in reveal button of the WebView is hidden (styles.css): it cannot show a value that the
 // app filled in, and two eye buttons confused the user.
 
-import { useState, type InputHTMLAttributes } from "react";
+import { useState, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { Check, Copy, Eye, EyeOff } from "lucide-react";
 
 export function SecretInput({ what = "the text", copy = false, ...input }: InputHTMLAttributes<HTMLInputElement> & {
@@ -49,6 +49,40 @@ export function SecretInput({ what = "the text", copy = false, ...input }: Input
           {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
         </button>
       )}
+    </span>
+  );
+}
+
+/**
+ * A multi-line secret, for example a private key. An input cannot keep line breaks, so this is a
+ * textarea. While it is hidden, CSS draws each character as a dot (`.secret-hidden`).
+ */
+export function SecretTextArea({ what = "the text", className, ...area }: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  what?: string; // For the button label: "Show the private key".
+}) {
+  const [shown, setShown] = useState(false);
+  const label = `${shown ? "Hide" : "Show"} ${what}`;
+  return (
+    <span className="key-field secret-field secret-area">
+      <textarea
+        rows={4}
+        spellCheck={false}
+        autoComplete="off"
+        {...area}
+        className={`mono${shown ? "" : " secret-hidden"}${className ? ` ${className}` : ""}`}
+      />
+      <button
+        type="button"
+        className="icon-btn ghost key-field-btn"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setShown((v) => !v)}
+        disabled={!area.value || area.disabled}
+        aria-pressed={shown}
+        aria-label={label}
+        title={label}
+      >
+        {shown ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
+      </button>
     </span>
   );
 }

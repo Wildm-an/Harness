@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Play, Plug, Plus, RefreshCw, Square, Trash2, TriangleAlert } from "lucide-react";
-import { SecretInput } from "./SecretInput";
+import { Check, Copy, Globe, KeyRound, LoaderCircle, Lock, Monitor, Pencil, Play, Plug, Plus, RefreshCw, Square, Trash2, TriangleAlert } from "lucide-react";
+import { SecretInput, SecretTextArea } from "./SecretInput";
 import type { HostInfo } from "../daemon/protocol";
-import { describe, loadToken, newConnectionId, validate, type Connection } from "../lib/connections";
+import {
+  describe,
+  loadSshSecret,
+  loadToken,
+  newConnectionId,
+  validate,
+  type Connection,
+  type ConnectionSecrets,
+  type SshAuth,
+} from "../lib/connections";
 import { isTauri, SERVER_DAEMON_EVENT, SERVER_DAEMON_PORT, serverDaemon, type ServerInfo } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { useConfirm } from "./ConfirmDialog";
@@ -50,15 +59,20 @@ function ConnectionForm({
   initial: Connection;
   isNew: boolean;
   hasToken: boolean; // A token for this connection is in the keychain.
-  onSave: (c: Connection, token: string) => Promise<void>;
+  onSave: (c: Connection, secrets: ConnectionSecrets) => Promise<void>;
   onCancel: () => void;
-  onTest: (c: Connection, token: string) => Promise<HostInfo>;
+  onTest: (c: Connection, secrets: ConnectionSecrets) => Promise<HostInfo>;
 }) {
   // The desktop app connects only through an SSH tunnel (the user asked for this). A saved direct
   // connection becomes an SSH connection when the user edits it. A normal browser cannot open an SSH
   // tunnel, so it keeps a direct connection.
   const [c, setC] = useState<Connection>(() => ({ ...initial, kind: isTauri() ? "ssh" : "direct" }));
   const [token, setToken] = useState("");
+  // The SSH login: a pasted private key (empty: the keys of this computer), or a password.
+  const [sshKey, setSshKey] = useState("");
+  const [sshPassword, setSshPassword] = useState("");
+  const auth: SshAuth = c.sshAuth ?? "key";
+  const secrets = (): ConnectionSecrets => ({ token, sshKey, sshPassword });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -77,6 +91,20 @@ function ConnectionForm({
     };
   }, [hasToken, initial.id]);
 
+  // Edit: the fields show the saved SSH key and password, hidden until "Show".
+  useEffect(() => {
+    if (isNew) return;
+    let live = true;
+    void loadSshSecret(initial.id, "key").then((saved) => live && saved && setSshKey((typed) => typed || saved), () => undefined);
+    void loadSshSecret(initial.id, "password").then(
+      (saved) => live && saved && setSshPassword((typed) => typed || saved),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [isNew, initial.id]);
+
   const update = (patch: Partial<Connection>) => {
     setC((prev) => ({ ...prev, ...patch }));
     setTest({ state: "idle" });
@@ -84,7 +112,7 @@ function ConnectionForm({
   const numberOrUndefined = (v: string) => (v.trim() === "" ? undefined : Number(v));
 
   const check = () => {
-    const found = validate(c, token, !hasToken);
+    const found = validate(c, token, !hasToken, sshPassword);
     setErrors(found);
     return Object.keys(found).length === 0;
   };
@@ -93,7 +121,7 @@ function ConnectionForm({
     if (!check()) return;
     setTest({ state: "busy" });
     try {
-      setTest({ state: "ok", host: await onTest(c, token) });
+      setTest({ state: "ok", host: await onTest(c, secrets()) });
     } catch (e) {
       setTest({ state: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -105,7 +133,10 @@ function ConnectionForm({
     setSaving(true);
     setSaveError(null);
     try {
-      await onSave({ ...c, name: c.name.trim(), host: c.host.trim(), sshUser: c.sshUser?.trim() || undefined }, token);
+      await onSave(
+        { ...c, name: c.name.trim(), host: c.host.trim(), sshUser: c.sshUser?.trim() || undefined, sshAuth: auth },
+        secrets(),
+      );
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
       setSaving(false);
@@ -132,7 +163,7 @@ function ConnectionForm({
 
       <p className="help">
         {c.kind === "ssh"
-          ? "The app opens an SSH tunnel to the daemon, which listens on 127.0.0.1 of the remote computer. SSH must log in with a key, with no password prompt."
+          ? "The app opens an SSH tunnel to the daemon, which listens on 127.0.0.1 of the remote computer."
           : "A normal browser cannot open an SSH tunnel, so it connects to the daemon address directly. Never expose the daemon to the internet."}
       </p>
 
@@ -190,15 +221,69 @@ function ConnectionForm({
               />
             </Field>
           </div>
-          <Field id="cf-identity" label="Identity file" help="Optional. The private key file, for example ~/.ssh/id_ed25519.">
-            <input
-              id="cf-identity"
-              className="mono"
-              value={c.identityFile ?? ""}
-              onChange={(e) => update({ identityFile: e.target.value })}
-              spellCheck={false}
-            />
-          </Field>
+          <div className="field">
+            <span className="field-label" id="cf-auth-label">
+              Log in with
+            </span>
+            <div className="segmented wide" role="radiogroup" aria-labelledby="cf-auth-label">
+              {(["key", "password"] as SshAuth[]).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  role="radio"
+                  aria-checked={auth === kind}
+                  aria-pressed={auth === kind}
+                  onClick={() => update({ sshAuth: kind })}
+                >
+                  {kind === "key" ? <KeyRound size={14} aria-hidden /> : <Lock size={14} aria-hidden />}
+                  {kind === "key" ? "SSH key" : "Password"}
+                </button>
+              ))}
+            </div>
+          </div>
+          {auth === "key" ? (
+            <Field
+              id="cf-sshkey"
+              label="Private key"
+              help={
+                c.identityFile && !sshKey.trim()
+                  ? `Optional. Paste the whole private key. With no key here, the app uses the key file ${c.identityFile}.`
+                  : "Optional. Paste the whole private key, for example the text of ~/.ssh/id_ed25519. With no key here, the app uses the keys of this computer. The app keeps the key in the keychain."
+              }
+            >
+              <SecretTextArea
+                what="the private key"
+                id="cf-sshkey"
+                value={sshKey}
+                onChange={(e) => {
+                  setSshKey(e.target.value);
+                  setTest({ state: "idle" });
+                }}
+                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+              />
+            </Field>
+          ) : (
+            <Field
+              id="cf-sshpassword"
+              label="Password"
+              error={errors.sshPassword}
+              help="The password of the SSH user on the remote computer. The app keeps it in the keychain."
+            >
+              <SecretInput
+                what="the password"
+                id="cf-sshpassword"
+                className="mono"
+                autoComplete="off"
+                value={sshPassword}
+                onChange={(e) => {
+                  setSshPassword(e.target.value);
+                  setTest({ state: "idle" });
+                }}
+                aria-invalid={!!errors.sshPassword}
+                aria-describedby={describedBy("sshPassword")}
+              />
+            </Field>
+          )}
         </>
       )}
 
@@ -295,9 +380,9 @@ export function ConnectionsScreen({
   canReturn: boolean; // The current connection is open.
   hasSession: boolean;
   onConnect: (c: Connection) => void;
-  onSave: (c: Connection, token: string) => Promise<void>;
+  onSave: (c: Connection, secrets: ConnectionSecrets) => Promise<void>;
   onDelete: (c: Connection) => void;
-  onTest: (c: Connection, token: string) => Promise<HostInfo>;
+  onTest: (c: Connection, secrets: ConnectionSecrets) => Promise<HostInfo>;
   onReturn: () => void;
 }) {
   const [editing, setEditing] = useState<{ connection: Connection; isNew: boolean } | null>(null);
@@ -409,8 +494,8 @@ export function ConnectionsScreen({
           hasToken={tokenIds.has(editing.connection.id)}
           onTest={onTest}
           onCancel={() => setEditing(null)}
-          onSave={async (c, token) => {
-            await onSave(c, token);
+          onSave={async (c, secrets) => {
+            await onSave(c, secrets);
             setEditing(null);
           }}
         />

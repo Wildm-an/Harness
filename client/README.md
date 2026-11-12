@@ -61,7 +61,9 @@ After an install, the agent browser needs Chromium. Run the installed sidecar wi
 The Computers screen (the computer button at the bottom of the sidebar) lists "This computer" and the remote daemons.
 
 - **Direct:** the client connects to `ws://<host>:<port>/ws`, for example over Tailscale.
-- **SSH tunnel:** the app starts `ssh -N -L 127.0.0.1:<free port>:127.0.0.1:<daemon port>` with `BatchMode=yes` (key login only) and `StrictHostKeyChecking=accept-new`. The app stops the tunnel when it disconnects or quits.
+- **SSH tunnel:** the app starts `ssh -N -L 127.0.0.1:<free port>:127.0.0.1:<daemon port>` and `StrictHostKeyChecking=accept-new`. The app stops the tunnel when it disconnects or quits.
+  - **SSH key** (`BatchMode=yes`): a pasted private key goes to a temporary file that only the user can read (`-i`, `IdentitiesOnly=yes`), and the app deletes it when the tunnel closes. With no pasted key, ssh uses the keys of this computer.
+  - **Password**: ssh runs the app itself as `SSH_ASKPASS` (`SSH_ASKPASS_REQUIRE=force`). In that mode the app prints the password from its environment for a password prompt, and stops before its window opens (`tunnel::askpass`, first in `main`).
 - The tokens are in the keychain of the operating system (`src-tauri/src/secrets.rs`). The connection list has no secrets.
 - For a remote daemon, "Browse" opens a folder picker that lists the folders of the remote computer.
 

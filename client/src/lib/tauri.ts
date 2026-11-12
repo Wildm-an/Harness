@@ -182,6 +182,8 @@ export interface TunnelSpec {
   sshPort?: number;
   identityFile?: string;
   remotePort: number;
+  privateKey?: string; // The text of a private key. Secret.
+  password?: string; // The SSH password. Secret.
 }
 
 /** Opens an SSH tunnel to a remote daemon. Returns the local port. */

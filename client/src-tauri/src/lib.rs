@@ -448,6 +448,11 @@ fn make_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// For main: true when ssh runs this program as SSH_ASKPASS (tunnel.rs). The app must not start.
+pub fn askpass() -> bool {
+    tunnel::askpass()
+}
+
 pub fn run() {
     let mut builder = tauri::Builder::default();
     // A second start of the app shows the window of the first one, so two daemons never run.

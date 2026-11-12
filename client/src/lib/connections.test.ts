@@ -15,6 +15,13 @@ group("validate", () => {
     expect(Object.keys(errors).sort()).toEqual(["host", "name", "port", "token"]);
   });
 
+  it("needs a password only for a password login", () => {
+    expect(validate({ ...ssh, sshAuth: "password" }, "t", true, "")).toEqual({ sshPassword: "Enter the SSH password." });
+    expect(validate({ ...ssh, sshAuth: "password" }, "t", true, "pw")).toEqual({});
+    expect(validate({ ...ssh, sshAuth: "key" }, "t", true, "")).toEqual({}); // No key: the keys of this computer.
+    expect(validate(ssh, "t", true)).toEqual({});
+  });
+
   it("checks the SSH fields only for an SSH connection", () => {
     expect(validate({ ...ssh, sshUser: "a b", sshPort: 0 }, "t", true)).toEqual({
       sshUser: "The user cannot have spaces or start with -.",
