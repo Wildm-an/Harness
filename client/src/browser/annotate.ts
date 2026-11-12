@@ -10,7 +10,8 @@
 // The annotation bar is in the app, under the page, as in the Claude app (AnnotateBar.tsx). The pane
 // gives the bar its own space at the bottom: the page gets smaller, so the bar covers no part of it.
 // The bar sends each choice to the page script with annotateCall. The page script draws the marks,
-// the outline of the element, the note box, and the hint.
+// the outline of the element and the note box. The page shows no hint: the bar under the page is
+// enough (the user asked for this).
 // Tools: element selection, a pen, shapes (line, arrow, rectangle, ellipse, numbered step), and text.
 // No tool is on when the bar opens: the user picks one. The color and the line width show only for
 // the tools that use them. "Add to prompt" puts a screenshot of the page with the marks into the
@@ -197,7 +198,6 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     .pop .row{display:flex;justify-content:flex-end;gap:6px;margin-top:8px}
     .pop button{padding:4px 10px;border-radius:2px;border:1px solid rgba(255,255,255,.2);background:transparent;color:inherit;font:inherit;cursor:pointer}
     .pop button.primary{background:#2a78d6;border-color:#2a78d6;color:#fff}
-    .hint{position:fixed;left:50%;top:12px;transform:translateX(-50%);padding:6px 12px;border-radius:2px;background:rgba(20,20,20,.9);color:#fff;font:12px/1.4 system-ui,sans-serif;pointer-events:none}
     svg.draw{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
     svg.draw.active{pointer-events:auto;cursor:crosshair}
     .textin{position:fixed;min-width:120px;padding:2px 4px;border:1px dashed currentColor;background:rgba(0,0,0,.35);font:600 16px/1.3 system-ui,sans-serif;outline:none;pointer-events:auto}
@@ -207,15 +207,13 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
   <div class="pop" role="dialog" aria-label="Note for the agent">
     <textarea placeholder="What should the agent know about this element?"></textarea>
     <div class="row"><button type="button" class="cancel">Cancel</button><button type="button" class="primary add">Add to prompt</button></div>
-  </div>
-  <div class="hint"></div>`;
+  </div>`;
   document.documentElement.appendChild(host);
   const box = root.querySelector(".box") as HTMLElement;
   const tag = root.querySelector(".tag") as HTMLElement;
   const pop = root.querySelector(".pop") as HTMLElement;
   const area = root.querySelector("textarea") as HTMLTextAreaElement;
   const badges = root.querySelector(".badges") as HTMLElement;
-  const hint = root.querySelector(".hint") as HTMLElement;
   const svg = root.querySelector("svg.draw") as SVGSVGElement;
   const defs = svg.querySelector("defs") as SVGDefsElement;
   const shapes = svg.querySelector("g.shapes") as SVGGElement;
@@ -226,17 +224,6 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
   let count = 0;
   let steps = 0;
   const marks: { el: Element; badge: HTMLElement }[] = [];
-  const HINTS: Record<string, string> = {
-    none: "Pick a tool in the bar under the page. Esc stops.",
-    select: "Click an element to add a note for the agent. Esc stops.",
-    pen: "Draw on the page. Esc stops.",
-    text: "Click to add text. Esc stops.",
-    step: "Click to add a numbered step. Esc stops.",
-  };
-  const showHint = () => {
-    hint.textContent = HINTS[tool] || "Drag to draw the shape. Esc stops.";
-  };
-  showHint();
 
   const el = (name: string, attrs: Record<string, string | number>) => {
     const node = document.createElementNS(SVG, name);
@@ -344,7 +331,6 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
       closePop();
       hideBox();
     }
-    showHint();
   };
   const undo = () => {
     const last = shapes.lastElementChild;
@@ -520,9 +506,8 @@ function pageScript(on: boolean, send: string, sendUrl: string, opts: any) {
     setWidth(next: number) {
       width = next;
     },
-    // Before a screenshot: hide the hint, the outline, and the note box. After it: show them again.
+    // Before a screenshot: hide the outline and the note box.
     prepare(capture: boolean) {
-      hint.style.display = capture ? "none" : "";
       if (capture) {
         closePop();
         hideBox();
