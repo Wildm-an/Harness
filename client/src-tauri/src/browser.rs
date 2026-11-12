@@ -79,11 +79,17 @@ struct NewTab {
 
 fn parse_url(url: &str) -> Result<Url, String> {
     let parsed = Url::parse(url).map_err(|e| format!("Not a valid address: {e}"))?;
-    match parsed.scheme() {
-        "http" | "https" | "about" | "file" => Ok(parsed),
-        other => Err(format!("The browser does not open {other}: addresses.")),
+    if ALLOWED_SCHEMES.contains(&parsed.scheme()) {
+        Ok(parsed)
+    } else {
+        Err(format!("The browser does not open {}: addresses.", parsed.scheme()))
     }
 }
+
+/// The schemes that a tab opens and navigates to. "file" is for "Open HTML file" of the Browser pane
+/// (`fileUrl` in BrowserPane.tsx): a local page of this computer. The tab webviews have no IPC, so
+/// a page cannot call the app. Other schemes (javascript:, data:, a custom protocol) stay blocked.
+const ALLOWED_SCHEMES: [&str; 4] = ["http", "https", "about", "file"];
 
 /// The label of the webview of a tab. A tab id has only letters, digits, and "-".
 fn label(id: &str) -> Result<String, String> {
@@ -128,7 +134,7 @@ pub fn open(app: &AppHandle, id: &str, url: &str, bounds: Bounds, fresh: bool) -
                 let _ = notes.emit_to("main", "browser-annotation", Annotation { id: note_id.clone(), data });
                 return false; // The page stays.
             }
-            matches!(url.scheme(), "http" | "https" | "about" | "file")
+            ALLOWED_SCHEMES.contains(&url.scheme())
         })
         .on_page_load(move |_view, payload| {
             let event = BrowserEvent {
@@ -179,7 +185,7 @@ pub fn screenshot(app: &AppHandle, id: &str) -> Result<std::sync::mpsc::Receiver
         let start = || -> windows::core::Result<()> {
             unsafe {
                 let core = platform.controller().CoreWebView2()?;
-                let stream: IStream = SHCreateMemStream(None).ok_or_else(|| windows::core::Error::from_thread())?;
+                let stream: IStream = SHCreateMemStream(None).ok_or_else(windows::core::Error::from_thread)?;
                 let filled = stream.clone();
                 let handler = CapturePreviewCompletedHandler::create(Box::new(move |result| {
                     let bytes = result.and_then(|()| read_stream(&filled)).map_err(|e| e.to_string());
@@ -325,12 +331,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_web_addresses_load() {
+    fn only_web_addresses_and_local_files_load() {
         assert!(parse_url("http://localhost:5173/").is_ok());
         assert!(parse_url("https://example.com").is_ok());
         assert!(parse_url("about:blank").is_ok());
-        assert!(parse_url("file:///C:/Windows/win.ini").is_err());
+        // "Open HTML file" of the Browser pane opens a local page.
+        assert!(parse_url("file:///C:/Users/me/site/index.html").is_ok());
         assert!(parse_url("javascript:alert(1)").is_err());
+        assert!(parse_url("data:text/html,<script>alert(1)</script>").is_err());
+        assert!(parse_url("tauri://localhost/").is_err());
+        assert!(parse_url("ms-settings:privacy").is_err());
         assert!(parse_url("not a url").is_err());
     }
 
