@@ -2,6 +2,7 @@
 // for this): a large status icon with a badge, the status and the time of the last check, and the
 // action at the right. The setting "Check for updates when the app opens" is under it, then the
 // changelog: CHANGELOG.md at the root of the repository, built into the app, from its first version heading.
+// The changelog shows the 5 newest versions, and "Show more" adds 5 more (the user asked for this).
 
 import { useState } from "react";
 import { Check, RefreshCw, X } from "lucide-react";
@@ -11,8 +12,21 @@ import { Row, Switch } from "./SettingsDialog";
 import { isTauri } from "../lib/tauri";
 import { checkAtStart, checkForUpdate, installUpdate, lastChecked, setCheckAtStart, useUpdateState, type UpdateState } from "../lib/updater";
 
-const start = changelog.search(/^## /m);
-const changes = start >= 0 ? changelog.slice(start) : changelog;
+/** The number of versions that the changelog shows first, and that each "Show more" adds. */
+export const CHANGELOG_STEP = 5;
+
+/** The sections of the changelog, one for each "## " heading (a version or "Unreleased"), newest first. */
+export function changelogSections(text: string): string[] {
+  const start = text.search(/^## /m);
+  if (start < 0) return [text];
+  return text
+    .slice(start)
+    .split(/^(?=## )/m)
+    .map((part) => part.trimEnd())
+    .filter(Boolean);
+}
+
+const sections = changelogSections(changelog);
 
 /** The badge on the status icon: up to date, an update waits, an error, or none. */
 export type UpdateBadge = "ok" | "pending" | "error" | "none";
@@ -23,6 +37,7 @@ export interface UpdateHero {
   title: string;
   detail: string;
   percent: number | null; // The download progress bar. null: no bar.
+  version: string | null; // "Current version: 0.1.78", under the status (the user asked for this). null: not known.
   action: { kind: "check" | "install"; label: string } | null;
 }
 
@@ -42,12 +57,17 @@ const CHECK_PREFIX = "The update check failed: ";
 export function updateHero(state: UpdateState, appVersion: string | null, checkedAt: number | null, desktop: boolean, now = Date.now()): UpdateHero {
   const checked = checkedAt ? `Last checked: ${checkedText(checkedAt, now)}` : "Harness did not check for updates yet.";
   const check = { kind: "check" as const, label: "Check for updates" };
+  const version = appVersion ? `Current version: ${appVersion}` : null;
   if (!desktop) {
-    return { badge: "none", busy: false, title: "Updates are in the desktop app", detail: "The desktop app checks for updates and installs them.", percent: null, action: null };
+    return { badge: "none", busy: false, title: "Updates are in the desktop app", detail: "The desktop app checks for updates and installs them.", percent: null, version, action: null };
   }
+  return { ...heroOf(state, checked, check), version };
+}
+
+function heroOf(state: UpdateState, checked: string, check: { kind: "check"; label: string }): Omit<UpdateHero, "version"> {
   switch (state.kind) {
     case "checking":
-      return { badge: "none", busy: true, title: "Checking for updates…", detail: appVersion ? `You have version ${appVersion}.` : "", percent: null, action: null };
+      return { badge: "none", busy: true, title: "Checking for updates…", detail: "", percent: null, action: null };
     case "none":
       return { badge: "ok", busy: false, title: "Harness is up to date", detail: checked, percent: null, action: check };
     case "available":
@@ -55,7 +75,7 @@ export function updateHero(state: UpdateState, appVersion: string | null, checke
         badge: "pending",
         busy: false,
         title: `Harness ${state.update.version} is available`,
-        detail: appVersion ? `You have version ${appVersion}. The app closes for the install, and then starts again.` : "The app closes for the install, and then starts again.",
+        detail: "The app closes for the install, and then starts again.",
         percent: null,
         action: { kind: "install", label: "Install and restart" },
       };
@@ -78,6 +98,7 @@ export function UpdatesPage({ appVersion }: { appVersion: string | null }) {
   const desktop = isTauri();
   const hero = updateHero(state, appVersion, lastChecked(), desktop);
   const [atStart, setAtStart] = useState(checkAtStart);
+  const [shown, setShown] = useState(CHANGELOG_STEP);
 
   return (
     <div className="settings-page updates-page">
@@ -102,6 +123,7 @@ export function UpdatesPage({ appVersion }: { appVersion: string | null }) {
               <span style={{ width: `${hero.percent}%` }} />
             </span>
           )}
+          {hero.version && <span className="update-hero-detail">{hero.version}</span>}
         </div>
         {hero.action && (
           <button
@@ -132,8 +154,13 @@ export function UpdatesPage({ appVersion }: { appVersion: string | null }) {
         {appVersion && <span className="settings-status">This version: {appVersion}</span>}
       </div>
       <div className="changelog-page">
-        <Markdown text={changes} />
+        <Markdown text={sections.slice(0, shown).join("\n\n")} />
       </div>
+      {shown < sections.length && (
+        <button type="button" className="btn changelog-more" onClick={() => setShown((n) => n + CHANGELOG_STEP)}>
+          Show more
+        </button>
+      )}
     </div>
   );
 }
