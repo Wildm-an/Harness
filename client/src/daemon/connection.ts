@@ -27,6 +27,14 @@ export function forSession(msg: DaemonMessage, sessionId: string | null): boolea
   return typeof id !== "string" || id === sessionId;
 }
 
+/** The error when the socket did not open. */
+export function unreachable(host: string, port: number): string {
+  return (
+    `Cannot reach a daemon at ${host}:${port}. Check that the daemon runs and listens on that address ` +
+    "(for Tailscale, start it with the Tailscale address), and that the firewall of that computer allows the port."
+  );
+}
+
 export class DaemonConnection {
   private ws: WebSocket | null = null;
   private messageListeners = new Set<MessageListener>();
@@ -51,8 +59,11 @@ export class DaemonConnection {
       let authed = false;
       const timer = window.setTimeout(() => {
         if (!authed) {
+          // CONNECTING: nothing answered at the address, for example a firewall drops the packets or
+          // the daemon does not listen on that address. OPEN: the daemon got the token and did not reply.
+          const reached = ws.readyState === WebSocket.OPEN;
           ws.close();
-          reject(new Error("The daemon did not reply to the token."));
+          reject(new Error(reached ? "The daemon did not reply to the token." : unreachable(host, port)));
         }
       }, AUTH_TIMEOUT_MS);
 
@@ -90,7 +101,7 @@ export class DaemonConnection {
           this.setStatus("closed");
         }
         if (!authed) {
-          reject(new Error(event.code === 4401 ? "The daemon refused the token." : "Cannot connect to the daemon."));
+          reject(new Error(event.code === 4401 ? "The daemon refused the token." : unreachable(host, port)));
         }
       };
     });

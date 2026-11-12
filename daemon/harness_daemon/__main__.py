@@ -99,6 +99,8 @@ def main(argv: list[str] | None = None) -> None:
         return
     parser = argparse.ArgumentParser(prog="harness-daemon")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address. Default 127.0.0.1.")
+    parser.add_argument("--also-host", action="append", default=[], metavar="ADDRESS",
+                        help="One more bind address on the same port, for example a Tailscale address. Repeatable.")
     parser.add_argument("--port", type=int, default=0, help="Port. 0 selects a random free port.")
     parser.add_argument("--prefer-port", type=int, default=0,
                         help="With --port 0: try this port first (the desktop app, for a stable routine fire URL).")
@@ -125,8 +127,10 @@ def main(argv: list[str] | None = None) -> None:
         token, created = load_or_create_token(token_file, args.new_token)
         state = "created" if created else "read"
         print(f"The token was {state}: {token_file}", file=sys.stderr)
-    if not _is_loopback(args.host):
-        print(f"Warning: the daemon listens on {args.host}. Do not expose this port to the internet.", file=sys.stderr)
+    hosts = [args.host, *(h for h in args.also_host if h and h != args.host)]
+    for host in hosts:
+        if not _is_loopback(host):
+            print(f"Warning: the daemon listens on {host}. Do not expose this port to the internet.", file=sys.stderr)
 
     update.enable(argv, sidecar=args.exit_on_stdin_eof)
     if args.report_connections:
@@ -144,10 +148,17 @@ def main(argv: list[str] | None = None) -> None:
         sock = _bind(args.host, args.port, wait=wait)
     sock.listen(64)
     port = sock.getsockname()[1]
+    sockets = [sock]
+    for host in hosts[1:]:
+        extra = _bind(host, port, wait=wait)  # The same port on each address.
+        extra.listen(64)
+        sockets.append(extra)
 
     app = create_app(token=token)
     server = uvicorn.Server(uvicorn.Config(app, log_level=args.log_level, ws_max_size=32 * 1024 * 1024))
     ready: dict = {"event": "ready", "host": args.host, "port": port}
+    if len(hosts) > 1:
+        ready["hosts"] = hosts
     if token_file is not None:
         # The user started the daemon by hand. Show the token that the client needs.
         ready["token"] = token
@@ -155,7 +166,7 @@ def main(argv: list[str] | None = None) -> None:
     print(json.dumps(ready), flush=True)
     if args.exit_on_stdin_eof:
         threading.Thread(target=_exit_on_stdin_eof, args=(server,), daemon=True).start()
-    asyncio.run(server.serve(sockets=[sock]))
+    asyncio.run(server.serve(sockets=sockets))
 
 
 def _bind(host: str, port: int, wait: bool) -> socket.socket:

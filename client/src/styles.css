@@ -3840,6 +3840,19 @@ select {
   right: 4px;
 }
 
+/* The switch "Also listen on Tailscale" of the server daemon. */
+.server-tailscale {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text);
+}
+
+.server-tailscale .switch {
+  flex: none;
+}
+
 /* The computers that are connected to the server daemon now. */
 .server-clients {
   display: flex;
@@ -12879,4 +12892,24 @@ body.sorting * {
 
 .key-field.secret-field .key-field-btn {
   right: 4px;
+}
+
+/* With a copy button: show at the left, copy at the right. */
+.key-field.secret-field.has-copy input {
+  padding-right: 72px;
+}
+
+.key-field.secret-field.has-copy .key-field-btn:nth-of-type(1) {
+  right: 36px;
+}
+
+.key-field.secret-field.has-copy .key-field-btn:nth-of-type(2) {
+  right: 4px;
+}
+
+/* The secret fields have their own show button. The built-in reveal button of the WebView (Edge)
+   was a second eye in the field, and it cannot show a value that the app filled in. */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
 }
