@@ -401,6 +401,14 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// The user opens the app: a click on the tray icon, "Open Harness" in the tray menu, or a second
+/// start. The window shows, and the UI checks for an update ("app-opened", lib/updater.ts).
+fn open_main(app: &AppHandle) {
+    use tauri::Emitter;
+    show_main(app);
+    let _ = app.emit_to("main", "app-opened", ());
+}
+
 /// The tray icon. A left click shows the window. "Quit Harness" shows the window and asks the UI
 /// to quit: QuitGuard asks first when the agent works (docs/UI_RULES.md V10a). While the server
 /// daemon runs, the menu also has "Stop remote daemon".
@@ -421,7 +429,7 @@ fn make_tray(app: &tauri::App) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => show_main(app),
+            "open" => open_main(app),
             "server-stop" => {
                 // The stop can take some seconds: the daemon stops its turns and servers first.
                 let app = app.clone();
@@ -438,7 +446,7 @@ fn make_tray(app: &tauri::App) -> tauri::Result<()> {
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                show_main(tray.app_handle());
+                open_main(tray.app_handle());
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -460,7 +468,7 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder
-            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_main(app)))
             // "Run on startup" (Settings > General). The Run key of Windows starts the app with
             // --background. The uninstaller removes the value (nsis/installer.nsi).
             .plugin(tauri_plugin_autostart::Builder::new().arg(BACKGROUND_ARG).build())

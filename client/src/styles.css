@@ -9391,33 +9391,109 @@ textarea.setting-textarea:disabled {
   box-shadow: none;
 }
 
-.update-banner {
+/* The top of Settings > Updates, in the style of the Windows Update page: a large icon with a badge,
+   the status, and the action at the right (UpdatesPage.tsx). */
+.update-hero {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 4px 0 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--accent-fill);
-  border-radius: var(--radius-lg);
-  background: var(--accent-soft);
+  gap: 20px;
+  margin: 8px 0 16px;
+  padding: 20px 4px;
 }
 
-.update-banner-icon {
+.update-hero-icon {
+  position: relative;
   flex: none;
-  color: var(--accent);
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  color: var(--info-mark);
 }
 
-.update-banner-text {
+.update-hero-icon.busy svg {
+  animation: spin 1.6s linear infinite;
+}
+
+.update-hero-badge {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  color: #1a1a1a;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.update-hero-badge svg {
+  animation: none;
+}
+
+.update-hero-badge.ok {
+  background: var(--success);
+}
+
+.update-hero-badge.pending {
+  background: var(--orange);
+}
+
+.update-hero-badge.error {
+  background: var(--danger);
+}
+
+.update-hero-text {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
-.update-banner-title {
-  font-size: 14px;
+.update-hero-title {
+  font-size: 20px;
   font-weight: 600;
+  line-height: 1.25;
+}
+
+.update-hero-detail {
+  color: var(--text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.update-hero-bar {
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.update-hero-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--info-mark);
+  transition: width 0.2s ease;
+}
+
+.update-hero-action {
+  flex: none;
+}
+
+.changelog-head {
+  align-items: baseline;
+  margin-top: 24px;
+}
+
+.changelog-head .settings-section {
+  margin: 0 0 4px;
 }
 
 /* The popup at the bottom left, above the computer button of the sidebar. */

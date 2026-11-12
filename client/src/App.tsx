@@ -170,7 +170,7 @@ import { SessionSearch } from "./components/SessionSearch";
 import { DOUBLE_ESC_MS, RewindDialog, rewindTargets } from "./components/RewindDialog";
 import { DaemonUpdateToast, VersionWarning, type DaemonUpdate } from "./components/VersionWarning";
 import { compareVersions } from "./lib/version";
-import { ChangelogPage } from "./components/ChangelogPage";
+import { UpdatesPage } from "./components/UpdatesPage";
 import { PromptBox, type PromptAttachment, type Submission } from "./components/PromptBox";
 import { mentionOrder } from "./components/mentions";
 import { SessionStart } from "./components/SessionStart";
@@ -3416,7 +3416,7 @@ export default function App() {
         <button
           type="button"
           className={`icon-btn ghost side-settings${settingsPage ? " active" : ""}`}
-          onClick={() => (settingsPage ? setSettingsPage(null) : openSettings("general"))}
+          onClick={() => (settingsPage ? setSettingsPage(null) : openSettings(newVersion ? "updates" : "general"))}
           aria-label={newVersion ? `Settings (${SETTINGS_SHORTCUT}). Version ${newVersion} is available.` : `Settings (${SETTINGS_SHORTCUT})`}
           title={newVersion ? `Settings (${SETTINGS_SHORTCUT}): version ${newVersion} is available` : `Settings (${SETTINGS_SHORTCUT})`}
         >
@@ -3726,7 +3726,7 @@ export default function App() {
         {/* The popups at the bottom right: the app update, the daemon version, and the daemon update. */}
         <ToastStack>
           <ErrorToasts items={errorToasts} onClose={(id) => setErrorToasts((l) => l.filter((t) => t.id !== id))} />
-          {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("general")} />}
+          {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("updates")} />}
           {/* The X hides the warning for this daemon and these versions. It shows again for another daemon or another version. */}
           {appVersion &&
             daemonVersion &&
@@ -3791,7 +3791,7 @@ export default function App() {
                 : null
             }
           >
-            {settingsPage === "changelog" && <ChangelogPage appVersion={appVersion} />}
+            {settingsPage === "updates" && <UpdatesPage appVersion={appVersion} />}
             {settingsPage === "appearance" && <AppearanceSettings />}
             {settingsPage === "operating" && (
               <OperatingHarnessSettings

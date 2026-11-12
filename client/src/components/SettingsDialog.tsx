@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } fr
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RowsPending, useRowsPending } from "./Skeleton";
 import { Switch } from "./Switch";
-import { ArrowUpCircle, Boxes, Cable, FileCog, Monitor, Moon, Palette, RotateCcw, Rows2, Rows4, ScrollText, Settings, Sun, TriangleAlert, UserRound, Workflow, X, type LucideIcon } from "lucide-react";
+import { Boxes, Cable, FileCog, Monitor, Moon, Palette, RefreshCw, RotateCcw, Rows2, Rows4, Settings, Sun, TriangleAlert, UserRound, Workflow, X, type LucideIcon } from "lucide-react";
 import { SecretInput } from "./SecretInput";
 import type { NewTaskPrompt, PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
 import type { WebKeyProvider } from "../lib/providerKeys";
@@ -58,9 +58,9 @@ import { MODES } from "./ModeMenu";
 import { isTauri } from "../lib/tauri";
 import { useLinksInPane } from "../lib/openLink";
 import { compareVersions } from "../lib/version";
-import { availableVersion, checkAtStart, checkForUpdate, installUpdate, setCheckAtStart, useUpdateState } from "../lib/updater";
+import { availableVersion, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "harness" | "operating" | "appearance" | "models" | "connections" | "computers" | "changelog";
+export type SettingsPage = "general" | "harness" | "operating" | "appearance" | "models" | "connections" | "computers" | "updates";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
@@ -70,7 +70,7 @@ const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "models", label: "Local models", icon: Boxes },
   { id: "connections", label: "Providers", icon: Cable },
   { id: "computers", label: "Computers", icon: Monitor },
-  { id: "changelog", label: "Changelog", icon: ScrollText },
+  { id: "updates", label: "Updates", icon: RefreshCw },
 ];
 
 export const SETTINGS_SHORTCUT = "Ctrl+,";
@@ -269,7 +269,7 @@ export function SettingsDialog({
                 >
                   <Icon size={16} aria-hidden />
                   {p.label}
-                  {p.id === "general" && update && (
+                  {p.id === "updates" && update && (
                     <span className="settings-nav-dot" role="img" aria-label={`Version ${update} is available`} />
                   )}
                 </button>
@@ -761,7 +761,6 @@ export function GeneralSettings({
           {error}
         </p>
       )}
-      {isTauri() && <UpdateBanner appVersion={appVersion} />}
 
       <Row label="Send while the agent works" help="Queue: send after the turn. Interrupt: stop the turn and send. Steer: the agent reads it at its next step." htmlFor="setting-busy-send">
         <select
@@ -947,8 +946,6 @@ export function GeneralSettings({
           </div>
         ))}
       </dl>
-
-      {isTauri() && <UpdatesRow />}
 
       <p className="settings-version">
         {appVersion && <>App version {appVersion}</>}
@@ -1176,84 +1173,3 @@ function TextField({ id, value, placeholder, disabled, maxLength, onSave }: {
   );
 }
 
-/** The update at the top of the General page, while a new version is available or installs. */
-function UpdateBanner({ appVersion }: { appVersion: string | null }) {
-  const state = useUpdateState();
-  const version = availableVersion(state);
-  if (!version) return null;
-  return (
-    <div className="update-banner" role="status">
-      <ArrowUpCircle size={18} aria-hidden className="update-banner-icon" />
-      <div className="update-banner-text">
-        <span className="update-banner-title">Harness {version} is available</span>
-        <span className="setting-help">
-          {state.kind === "installing"
-            ? `Installing${state.percent !== null ? `: ${state.percent}%` : "…"} The app starts again when the update is installed.`
-            : appVersion
-              ? `You have version ${appVersion}. The app closes for the install, and then starts again.`
-              : "The app closes for the install, and then starts again."}
-        </span>
-      </div>
-      {state.kind === "available" && (
-        <button type="button" className="btn btn-primary btn-small" onClick={() => void installUpdate()}>
-          Install and restart
-        </button>
-      )}
-    </div>
-  );
-}
-
-/** Check for a new version of the app, and install it. The app also checks once when it starts, if the setting is on. */
-function UpdatesRow() {
-  const state = useUpdateState();
-  const [atStart, setAtStart] = useState(checkAtStart);
-  const help =
-    state.kind === "checking"
-      ? "Looking for a new version…"
-      : state.kind === "none"
-        ? "This is the newest version."
-        : state.kind === "available"
-          ? `Version ${state.update.version} is available.`
-          : state.kind === "installing"
-            ? `Installing${state.percent !== null ? `: ${state.percent}%` : "…"} The app starts again when the update is installed.`
-            : atStart
-              ? "The app looks for a new version each time it starts."
-              : "The app looks for a new version only when you click the button.";
-
-  return (
-    <>
-      <h3 className="settings-section">Updates</h3>
-      <Row label="App updates" help={help}>
-        {state.kind === "available" ? (
-          <button type="button" className="btn btn-primary btn-small" onClick={() => void installUpdate()}>
-            Install and restart
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-small"
-            onClick={() => void checkForUpdate()}
-            disabled={state.kind === "checking" || state.kind === "installing"}
-          >
-            Check for updates
-          </button>
-        )}
-      </Row>
-      <Row label="Check for updates when the app opens" help="The app asks github.com for the newest version number. The request has no data about your projects.">
-        <Switch
-          checked={atStart}
-          label="Check for updates when the app opens"
-          onChange={(on) => {
-            setAtStart(on);
-            setCheckAtStart(on);
-          }}
-        />
-      </Row>
-      {state.kind === "error" && (
-        <p className="form-error" role="alert">
-          {state.message}
-        </p>
-      )}
-    </>
-  );
-}
