@@ -10132,9 +10132,8 @@ body.sorting * {
   gap: 6px;
   width: 100%;
   min-height: 24px;
-  /* The right side keeps room for the grip, so a value in the heading (the context share) never
-     goes under it. */
-  padding: 0 26px 0 6px;
+  /* A value in the heading (the context share) is at the right edge. On hover the grip takes its place. */
+  padding: 0 6px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -10214,9 +10213,44 @@ body.sorting * {
 
 /* The share of the context in the heading of the Context section, open or folded. */
 .rail-section-head .rail-head-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+/* On hover the grip shows, and the heading value goes away, as in the Claude app. */
+.rail-section-head:hover .rail-head-value,
+.rail-section.dragging .rail-head-value {
+  opacity: 0;
+}
+
+/* The small bar after the context share in the heading. */
+.rail-head-meter {
+  display: inline-block;
+  width: 24px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.rail-head-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.rail-head-meter.mid > span {
+  background: var(--warning-mark);
+}
+
+.rail-head-meter.high > span {
+  background: var(--danger-mark);
 }
 
 .rail-context .context-bar {
@@ -10373,6 +10407,37 @@ body.sorting * {
 .rail-item-end {
   flex: none;
   color: var(--text-muted);
+}
+
+/* A server row of the session rail: the row, then the stop button of a running server. */
+.rail-server {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rail-server-stop {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rail-server-stop:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.rail-server-stop:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: -2px;
 }
 
 /* The Changes section: the change count of the session and "Create PR". */
@@ -10545,6 +10610,25 @@ body.sorting * {
   height: 7px;
   border-radius: 50%;
   background: var(--text-muted);
+}
+
+/* A connector row of the session rail: the logo, the name and state, then the state dot. */
+.rail-connector-logo {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  justify-content: center;
+  color: var(--text);
+}
+
+.rail-connector .rail-dot {
+  margin-right: 4px;
+}
+
+/* A connector that is not connected is dim. */
+.rail-connector.off .rail-connector-logo,
+.rail-connector.off .rail-item-title {
+  color: var(--text-muted);
 }
 
 .rail-dot.running {

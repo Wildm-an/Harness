@@ -2,7 +2,7 @@
 // details of the session in sections. The title bar button shows or hides it. Claude keeps the
 // shown state and the folded sections, so the app saves them as per-device preferences.
 
-import type { PrStatus, TaskItem } from "../daemon/protocol";
+import type { ConnectorItem, McpServerItem, PrStatus, TaskItem } from "../daemon/protocol";
 import { loadPref, savePref } from "./prefs";
 
 /**
@@ -11,11 +11,12 @@ import { loadPref, savePref } from "./prefs";
  * the prompt box. "Browser" (the small live view of the page where the agent works) is under
  * "Servers" (the user asked for it). The user can drag the sections into another order.
  */
-export type RailSection = "browser" | "environment" | "context" | "changes" | "pullRequests" | "servers" | "backgroundTasks";
+export type RailSection = "browser" | "environment" | "context" | "connectors" | "changes" | "pullRequests" | "servers" | "backgroundTasks";
 
 export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
   { id: "environment", title: "Environment" },
   { id: "context", title: "Context" },
+  { id: "connectors", title: "Connectors" },
   { id: "changes", title: "Changes" },
   { id: "pullRequests", title: "Pull requests" },
   { id: "servers", title: "Servers" },
@@ -146,6 +147,58 @@ export function foldedValue(section: RailSection, context: { tokens: number; len
 export function percentText(share: number): string {
   const p = share * 100;
   return p > 0 && p < 1 ? "<1%" : `${Math.round(p)}%`;
+}
+
+/**
+ * The state of a connector in the session:
+ * - "active": its MCP server is connected in this session, so the agent can use its tools.
+ * - "connecting": its MCP server starts, or a sign-in waits.
+ * - "problem": its MCP server failed or needs a sign-in.
+ * - "idle": the connector is connected, but its MCP server is not in this session (for example, the user
+ *   connected it after the session started).
+ * - "off": the connector is not connected.
+ */
+export type RailConnectorState = "active" | "connecting" | "problem" | "idle" | "off";
+
+export interface RailConnector {
+  id: string;
+  name: string;
+  state: RailConnectorState;
+  detail: string;
+}
+
+const CONNECTOR_ORDER: RailConnectorState[] = ["active", "connecting", "problem", "idle", "off"];
+
+/**
+ * All the connectors, for the Connectors section of the rail: the active connectors first, then the
+ * others, each group in the order of the Connectors tab. ``mcp`` is the list of the MCP servers of the
+ * session (null: not known yet).
+ */
+export function railConnectors(connectors: ConnectorItem[], mcp: McpServerItem[] | null): RailConnector[] {
+  const rows = connectors.map((c): RailConnector => {
+    const server = mcp?.find((s) => s.connector === c.id);
+    if (c.signing_in) return { id: c.id, name: c.name, state: "connecting", detail: "Signing in" };
+    if (server?.state === "connected") {
+      const tools = server.tools.length;
+      return { id: c.id, name: c.name, state: "active", detail: `Active · ${tools} ${tools === 1 ? "tool" : "tools"}` };
+    }
+    if (server?.state === "starting" || server?.state === "authenticating") return { id: c.id, name: c.name, state: "connecting", detail: "Connecting" };
+    if (server?.state === "failed") return { id: c.id, name: c.name, state: "problem", detail: "Failed" };
+    if (server?.state === "needs_auth") return { id: c.id, name: c.name, state: "problem", detail: "Needs authentication" };
+    if (server?.state === "disabled") return { id: c.id, name: c.name, state: "idle", detail: "Disabled" };
+    if (c.source !== null) return { id: c.id, name: c.name, state: "idle", detail: "Connected · not in this session" };
+    return { id: c.id, name: c.name, state: "off", detail: "Not connected" };
+  });
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => CONNECTOR_ORDER.indexOf(a.row.state) - CONNECTOR_ORDER.indexOf(b.row.state) || a.index - b.index)
+    .map(({ row }) => row);
+}
+
+/** The value in the heading of the Connectors section: "2 active", or null when no connector is active. */
+export function connectorsHeadValue(rows: RailConnector[]): string | null {
+  const active = rows.filter((r) => r.state === "active").length;
+  return active > 0 ? `${active} active` : null;
 }
 
 const PR_STATES: Record<NonNullable<PrStatus["pr"]>["state"], string> = {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, contextShare, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import type { ConnectorItem, McpServerItem, TaskItem } from "../daemon/protocol";
+import { RAIL_SECTIONS, connectorsHeadValue, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -14,7 +14,7 @@ const task = (id: string, status: TaskItem["status"], started_at: number): TaskI
 
 describe("the session rail sections", () => {
   it("use the order of Claude", () => {
-    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
   });
 
   it("read the folded sections and drop unknown ids", () => {
@@ -136,12 +136,12 @@ describe("the background tasks of the rail", () => {
 
 describe("section order", () => {
   it("keeps the saved order and puts a new section after its default neighbor", () => {
-    expect(parseOrder("not json")).toEqual(["environment", "context", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(parseOrder("not json")).toEqual(["environment", "context", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
     // A saved order from before the Browser and Changes sections: each goes after its default neighbor.
     expect(parseOrder(JSON.stringify(["servers", "environment", "context", "pullRequests", "backgroundTasks"]))).toEqual([
-      "servers", "browser", "environment", "context", "changes", "pullRequests", "backgroundTasks",
+      "servers", "browser", "environment", "context", "connectors", "changes", "pullRequests", "backgroundTasks",
     ]);
-    expect(parseOrder(JSON.stringify(["context", "nope", "context"]))).toEqual(["environment", "context", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(parseOrder(JSON.stringify(["context", "nope", "context"]))).toEqual(["environment", "context", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
   });
 
   it("moves a section before or after another, and one step in the shown list", () => {
@@ -152,5 +152,55 @@ describe("section order", () => {
     const up = stepSection(order, shown, "browser", -1);
     expect(up.indexOf("browser")).toBeLessThan(up.indexOf("servers"));
     expect(stepSection(order, shown, "environment", -1)).toBe(order);
+  });
+});
+
+describe("the Connectors section", () => {
+  const connector = (id: string, source: ConnectorItem["source"], signing_in = false): ConnectorItem => ({
+    id,
+    name: id.toUpperCase(),
+    description: "",
+    kind: "token",
+    url: "",
+    installed: source !== null,
+    source,
+    login: null,
+    signing_in,
+  });
+  const server = (connector: string, state: McpServerItem["state"], tools = 0): McpServerItem => ({
+    name: connector,
+    scope: "user",
+    transport: "http",
+    target: "",
+    state,
+    error: null,
+    server_name: null,
+    tools: Array.from({ length: tools }, (_, i) => ({ name: `t${i}`, agent_name: `t${i}`, description: "" })),
+    connector,
+  });
+
+  it("lists all the connectors, the active connectors first", () => {
+    const rows = railConnectors(
+      [connector("off", null), connector("idle", "token"), connector("bad", "token"), connector("live", "gh"), connector("wait", null, true)],
+      [server("live", "connected", 3), server("bad", "needs_auth")],
+    );
+    expect(rows.map((r) => [r.id, r.state, r.detail])).toEqual([
+      ["live", "active", "Active · 3 tools"],
+      ["wait", "connecting", "Signing in"],
+      ["bad", "problem", "Needs authentication"],
+      ["idle", "idle", "Connected · not in this session"],
+      ["off", "off", "Not connected"],
+    ]);
+    expect(connectorsHeadValue(rows)).toBe("1 active");
+  });
+
+  it("shows no heading value when no connector is active, also before the MCP states are known", () => {
+    const rows = railConnectors([connector("gh", "gh")], null);
+    expect(rows[0].state).toBe("idle");
+    expect(connectorsHeadValue(rows)).toBeNull();
+  });
+
+  it("treats a server that is not live (stopped) as not in the session", () => {
+    expect(railConnectors([connector("gh", "gh")], [server("gh", "stopped")])[0].state).toBe("idle");
   });
 });
