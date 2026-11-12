@@ -291,6 +291,15 @@ fn daemon_command(resource_dir: Option<&Path>) -> Result<(Command, bool), String
     Ok((cmd, true))
 }
 
+/// The program of the daemon, for the firewall rule (firewall.rs). None for the development daemon
+/// (`python -m harness_daemon`).
+pub fn daemon_program(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("HARNESS_DAEMON") {
+        return Some(PathBuf::from(path));
+    }
+    bundled_sidecar(resource_dir)
+}
+
 /// The sidecar that the installer put in the resource folder: `harness-daemon/harness-daemon`. Else the
 /// onefile sidecar of an older install, next to the app executable (Contents/MacOS on macOS).
 fn bundled_sidecar(resource_dir: Option<&Path>) -> Option<PathBuf> {

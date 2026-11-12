@@ -3840,6 +3840,28 @@ select {
   right: 4px;
 }
 
+/* The Windows Firewall line of the server daemon. */
+.server-firewall {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.server-firewall.blocked {
+  flex-wrap: wrap;
+  color: var(--warning);
+}
+
+.server-firewall.blocked svg {
+  flex: none;
+}
+
+.server-firewall.blocked span {
+  flex: 1;
+  min-width: 200px;
+}
+
 /* The switch "Also listen on Tailscale" of the server daemon. */
 .server-tailscale {
   display: flex;

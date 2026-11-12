@@ -55,6 +55,17 @@ export async function serverDaemon(
   return invoke<ServerInfo | null>("server_daemon_status");
 }
 
+/**
+ * The Windows Firewall for the server daemon port: "open" or "blocked". With `open`, a blocked port is
+ * opened for Tailscale addresses: Windows shows its administrator prompt. Always "open" on macOS and
+ * Linux, and in a normal browser.
+ */
+export async function serverFirewall(open: boolean): Promise<"open" | "blocked"> {
+  if (!isTauri()) return "open";
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<"open" | "blocked">("server_firewall", { port: SERVER_DAEMON_PORT, open });
+}
+
 /** The Tailscale address of this computer (100.x.y.z), or null. */
 export async function tailscaleAddress(): Promise<string | null> {
   if (!isTauri()) return null;

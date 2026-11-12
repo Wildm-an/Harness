@@ -3,7 +3,15 @@ import { Check, Copy, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Play, Plug
 import { SecretInput } from "./SecretInput";
 import type { HostInfo } from "../daemon/protocol";
 import { describe, loadToken, newConnectionId, validate, type Connection, type ConnectionKind } from "../lib/connections";
-import { isTauri, SERVER_DAEMON_EVENT, SERVER_DAEMON_PORT, serverDaemon, tailscaleAddress, type ServerInfo } from "../lib/tauri";
+import {
+  isTauri,
+  SERVER_DAEMON_EVENT,
+  SERVER_DAEMON_PORT,
+  serverDaemon,
+  serverFirewall,
+  tailscaleAddress,
+  type ServerInfo,
+} from "../lib/tauri";
 import { loadPref, savePref } from "../lib/prefs";
 import { Switch } from "./Switch";
 import { useFormIntoView } from "../lib/formFocus";
@@ -490,6 +498,27 @@ function ServerDaemonControl() {
   // Also listen on the Tailscale address, so other computers of the tailnet can connect directly.
   const [tailscaleIp, setTailscaleIp] = useState<string | null>(null);
   const [useTailscale, setUseTailscale] = useState(() => loadPref(TAILSCALE_PREF, "1") === "1");
+  // The Windows Firewall for the Tailscale address: null (not checked, or no Tailscale), or the state.
+  const [firewall, setFirewall] = useState<
+    { state: "checking" } | { state: "open" } | { state: "blocked"; error?: string } | null
+  >(null);
+
+  /** Checks the firewall. `open`: open a blocked port (the administrator prompt of Windows). */
+  const checkFirewall = async (open: boolean) => {
+    setFirewall({ state: "checking" });
+    try {
+      setFirewall({ state: await serverFirewall(open) });
+    } catch (e) {
+      setFirewall({ state: "blocked", error: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  const listensOnTailscale = server.state === "running" && server.info.hosts.length > 1;
+  useEffect(() => {
+    // The daemon ran already when the page opened: check the firewall, with no prompt.
+    if (listensOnTailscale && firewall === null) void checkFirewall(false);
+    if (!listensOnTailscale && firewall !== null && server.state !== "busy") setFirewall(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listensOnTailscale, server.state]);
 
   useEffect(() => {
     let live = true;
@@ -530,6 +559,8 @@ function ServerDaemonControl() {
         action === "new-token" && server.state === "running" ? server.info.hosts.length > 1 : useTailscale && !!tailscaleIp;
       const info = await serverDaemon(action, tailscale);
       setServer(info ? { state: "running", info } : { state: "stopped" });
+      // The play button with Tailscale: other computers need an open firewall port.
+      if (info && info.hosts.length > 1 && action === "start") void checkFirewall(true);
     } catch (e) {
       setServer({ state: "error", message: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -631,6 +662,23 @@ function ServerDaemonControl() {
           </span>
         ) : (
           <span className="help">The play button starts the daemon of this app on this computer. It stops when you quit Harness.</span>
+        )}
+        {listensOnTailscale && firewall?.state === "checking" && (
+          <span className="help server-firewall">
+            <LoaderCircle size={14} className="spin" aria-hidden /> Checking Windows Firewall.
+          </span>
+        )}
+        {listensOnTailscale && firewall?.state === "blocked" && (
+          <div className="server-firewall blocked" role="alert">
+            <TriangleAlert size={14} aria-hidden />
+            <span>
+              Windows Firewall blocks the other computers on port {SERVER_DAEMON_PORT}.
+              {firewall.error ? ` ${firewall.error}` : ""}
+            </span>
+            <button type="button" className="btn btn-small" onClick={() => void checkFirewall(true)}>
+              Allow in Windows Firewall
+            </button>
+          </div>
         )}
         {tailscaleIp && (
           <div className="server-tailscale">
