@@ -3,6 +3,21 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.80 (2026-11-12)
+
+### Context
+
+- The context breakdown names the tool definitions "System tools", as in Claude Code /context.
+- The tool results are a part of Messages, as in Claude Code. The "Tool results" row is gone.
+- The percentages in the context panel and the breakdown have one decimal, for example "78.1%"
+  and "0.3%".
+- The context bar is thinner.
+
+### Session rail
+
+- Each row of the Connectors section is one compact line: the logo, the name, and a dot. The dot
+  is green for an active connector and gray for the others. The state shows on hover.
+
 ## 0.1.79 (2026-11-12)
 
 ### Updates
