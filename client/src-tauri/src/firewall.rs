@@ -96,34 +96,95 @@ fn check_script(port: u16, program: Option<&Path>) -> String {
 
 /// The change, run with administrator rights: remove the block rules, then add the allow rule.
 /// The rule applies only to the daemon program (when it is known), and only to the interface that has
-/// the Tailscale address (when Windows finds it). Splatting (`@limits`) adds these parameters.
+/// the Tailscale address (when Windows finds it). Splatting (`@l`) adds these parameters.
+///
+/// The script is compact on purpose: `-Verb RunAs` starts the process through ShellExecute, which can
+/// cut a long argument list (about 2,048 characters), and `-EncodedCommand` makes the text 2.7 times
+/// longer. A cut script does not run, and PowerShell exits with code 1. ELEVATED_MAX keeps it short.
+/// Each step sets $s. An error stops the script with the exit code of its step (STEP_ERRORS).
 #[cfg(windows)]
 fn open_script(port: u16, program: Option<&Path>, tailscale_ip: Option<&str>) -> String {
-    let program_limit = match program {
-        Some(program) => format!("$limits['Program'] = {}\n", quote(&program.to_string_lossy())),
-        None => String::new(),
-    };
-    let interface_limit = match tailscale_ip {
-        Some(ip) => format!(
-            "$alias = @(Get-NetIPAddress -IPAddress {} -ErrorAction SilentlyContinue)[0].InterfaceAlias\n\
-             if ($alias) {{ $limits['InterfaceAlias'] = $alias }}\n",
+    let mut script = format!("$ErrorActionPreference='Stop';$s={STEP_READ};try{{\n");
+    match program {
+        Some(program) => script.push_str(&format!(
+            "$p={}\n\
+             $b=@(Get-NetFirewallApplicationFilter -Program $p -EA 0|Get-NetFirewallRule|?{{$_.Action -eq 'Block' -and $_.Direction -eq 'Inbound'}})\n\
+             $s={STEP_REMOVE_BLOCKS};$b|Remove-NetFirewallRule\n\
+             $l=@{{Program=$p}}\n",
+            quote(&program.to_string_lossy())
+        )),
+        None => script.push_str("$l=@{}\n"),
+    }
+    script.push_str(&format!(
+        "$s={STEP_REMOVE_OLD};Get-NetFirewallRule -DisplayName {name} -EA 0|Remove-NetFirewallRule\n",
+        name = quote(RULE_NAME)
+    ));
+    if let Some(ip) = tailscale_ip {
+        script.push_str(&format!(
+            "$s={STEP_INTERFACE};$a=@(Get-NetIPAddress -IPAddress {} -EA 0)[0].InterfaceAlias;if($a){{$l.InterfaceAlias=$a}}\n",
             quote(ip)
-        ),
-        None => String::new(),
+        ));
+    }
+    // The defaults of New-NetFirewallRule are -Direction Inbound and -Profile Any.
+    script.push_str(&format!(
+        "$s={STEP_ADD};New-NetFirewallRule -DisplayName {name} -Action Allow -Protocol TCP \
+         -LocalPort {port} -RemoteAddress {TAILSCALE_RANGE} @l >$null\n\
+         }}catch{{exit $s}}\nexit 0\n",
+        name = quote(RULE_NAME)
+    ));
+    script
+}
+
+/// The longest base64 text of the elevated script, below the limit of ShellExecute (about 2,048).
+#[cfg(windows)]
+const ELEVATED_MAX: usize = 1900;
+
+// The exit codes of the steps of the elevated script.
+#[cfg(windows)]
+const STEP_READ: i32 = 10;
+#[cfg(windows)]
+const STEP_REMOVE_BLOCKS: i32 = 11;
+#[cfg(windows)]
+const STEP_REMOVE_OLD: i32 = 12;
+#[cfg(windows)]
+const STEP_INTERFACE: i32 = 13;
+#[cfg(windows)]
+const STEP_ADD: i32 = 14;
+
+/// The error text for an exit code of the elevated script.
+#[cfg(windows)]
+fn step_error(code: Option<i32>) -> String {
+    let what = match code {
+        Some(STEP_READ) => "it could not read the block rules of the daemon program".to_string(),
+        Some(STEP_REMOVE_BLOCKS) => {
+            "it could not remove the block rules of the daemon program. A policy of the computer (for example \
+             Group Policy or a security program) can own them"
+                .to_string()
+        }
+        Some(STEP_REMOVE_OLD) => format!("it could not remove the old rule \"{RULE_NAME}\""),
+        Some(STEP_INTERFACE) => "it could not find the network interface of the Tailscale address".to_string(),
+        Some(STEP_ADD) => format!("it could not add the rule \"{RULE_NAME}\". A policy of the computer can forbid new rules"),
+        // 1: PowerShell did not run the script, or an error happened outside the steps. An antivirus
+        // program can block a hidden PowerShell script with administrator rights.
+        Some(1) => "PowerShell did not run the script (exit code 1). An antivirus program or a policy of the computer \
+                    can block it"
+            .to_string(),
+        Some(code) => format!("PowerShell stopped with exit code {code}"),
+        None => "PowerShell stopped".to_string(),
     };
+    format!("Windows could not change the firewall: {what}.")
+}
+
+/// The outer PowerShell command: it starts the inner script and exits with its exit code. With
+/// `elevate`, Windows shows its administrator prompt (Start-Process -Verb RunAs). A closed prompt is an
+/// error of Start-Process: exit code 1223.
+#[cfg(windows)]
+fn outer_command(inner: &str, elevate: bool) -> String {
+    let verb = if elevate { "-Verb RunAs " } else { "" };
     format!(
-        "$ErrorActionPreference = 'Stop'\n\
-         {blocks}\
-         $blocks | Remove-NetFirewallRule\n\
-         Get-NetFirewallRule -DisplayName {name} -ErrorAction SilentlyContinue | Remove-NetFirewallRule\n\
-         $limits = @{{}}\n\
-         {program_limit}\
-         {interface_limit}\
-         New-NetFirewallRule -DisplayName {name} -Description 'Lets other computers of your Tailscale network connect to the Harness daemon.' \
-         -Direction Inbound -Action Allow -Protocol TCP -LocalPort {port} -RemoteAddress {range} -Profile Any @limits | Out-Null\n",
-        name = quote(RULE_NAME),
-        blocks = blocks_script(program),
-        range = TAILSCALE_RANGE,
+        "try {{ $p = Start-Process powershell.exe {verb}-Wait -PassThru -WindowStyle Hidden \
+         -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{inner}'; exit $p.ExitCode }} \
+         catch {{ exit 1223 }}"
     )
 }
 
@@ -168,17 +229,19 @@ pub fn check(port: u16, program: Option<&Path>) -> Result<FirewallState, String>
 pub fn open(port: u16, program: Option<&Path>, tailscale_ip: Option<&str>) -> Result<(), String> {
     // The outer PowerShell has no rights. Start-Process -Verb RunAs shows the prompt, and starts the
     // inner PowerShell with administrator rights. A closed prompt is an error of Start-Process.
-    let inner = encoded(&open_script(port, program, tailscale_ip));
-    let outer = format!(
-        "try {{ $p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Hidden \
-         -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{inner}'; exit $p.ExitCode }} \
-         catch {{ exit 1223 }}"
-    );
-    let out = powershell(&["-Command", &outer])?;
+    let mut inner = encoded(&open_script(port, program, tailscale_ip));
+    if inner.len() > ELEVATED_MAX {
+        // A very long program path: leave out the interface limit, then the program limit.
+        inner = encoded(&open_script(port, program, None));
+    }
+    if inner.len() > ELEVATED_MAX {
+        inner = encoded(&open_script(port, None, None));
+    }
+    let out = powershell(&["-Command", &outer_command(&inner, true)])?;
     match out.status.code() {
         Some(0) => Ok(()),
         Some(1223) => Err("Windows did not change the firewall: the administrator prompt was closed.".into()),
-        code => Err(format!("Windows could not change the firewall (exit code {}).", code.unwrap_or(-1))),
+        code => Err(step_error(code)),
     }
 }
 
@@ -208,16 +271,16 @@ mod tests {
         let program = Path::new(r"C:\Users\it's me\Harness\harness-daemon\harness-daemon.exe");
         let quoted = r"'C:\Users\it''s me\Harness\harness-daemon\harness-daemon.exe'";
         let open = open_script(8765, Some(program), Some("100.72.1.2"));
-        assert!(open.contains(&format!("-Program {quoted}")));
-        assert!(open.contains(&format!("$limits['Program'] = {quoted}")));
+        assert!(open.contains(&format!("$p={quoted}")));
+        assert!(open.contains("-Program $p") && open.contains("$l=@{Program=$p}"));
         assert!(open.contains("Get-NetIPAddress -IPAddress '100.72.1.2'"));
-        assert!(open.contains("-LocalPort 8765 -RemoteAddress 100.64.0.0/10 -Profile Any @limits"));
+        assert!(open.contains("-LocalPort 8765 -RemoteAddress 100.64.0.0/10 @l >$null"));
         assert!(open.contains("-Action Allow"));
         let check = check_script(8765, Some(program));
         assert!(check.contains(&format!("Get-NetFirewallApplicationFilter).Program -eq {quoted}")));
         // The development daemon: no program limit, and no interface limit without an address.
         let dev = open_script(8765, None, None);
-        assert!(!dev.contains("$limits['Program']") && !dev.contains("Get-NetIPAddress"));
+        assert!(!dev.contains("Program") && !dev.contains("Get-NetIPAddress"));
         assert!(check_script(8765, None).contains("$blocks = @()"));
     }
 
@@ -241,6 +304,33 @@ mod tests {
             let out = powershell(&["-Command", &parse]).unwrap();
             assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0", "parse errors in:\n{script}");
         }
+    }
+
+    /// The elevated command stays below the limit of ShellExecute, also with a long install path. A
+    /// Windows user name has 20 characters or less: the test uses 40.
+    #[test]
+    fn the_elevated_script_is_short() {
+        let long = format!(r"C:\Users\{}\AppData\Local\Harness\harness-daemon\harness-daemon.exe", "a".repeat(40));
+        let inner = encoded(&open_script(8765, Some(Path::new(&long)), Some("100.127.129.77")));
+        assert!(inner.len() <= ELEVATED_MAX, "the encoded script has {} characters", inner.len());
+    }
+
+    /// The outer command gives the exit code of the inner script. No elevation, and a harmless script.
+    #[test]
+    fn the_outer_command_returns_the_exit_code_of_the_script() {
+        let out = powershell(&["-Command", &outer_command(&encoded("exit 7"), false)]).unwrap();
+        assert_eq!(out.status.code(), Some(7));
+    }
+
+    /// A failed step gives its exit code. The script here has only a failing step: it changes nothing.
+    #[test]
+    fn a_failed_step_gives_its_exit_code() {
+        let script = "$ErrorActionPreference = 'Stop'\n$step = 13\ntry {\nGet-Item -LiteralPath 'Z:\\no\\such\\file'\n} catch { exit $step }\nexit 0\n";
+        let out = powershell(&["-Command", &outer_command(&encoded(script), false)]).unwrap();
+        assert_eq!(out.status.code(), Some(STEP_INTERFACE));
+        assert!(step_error(Some(STEP_REMOVE_BLOCKS)).contains("block rules"));
+        assert!(step_error(Some(1)).contains("exit code 1"));
+        assert!(step_error(Some(9)).contains("exit code 9"));
     }
 
     /// The read-only check runs on this computer. It changes nothing.

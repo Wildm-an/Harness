@@ -3,6 +3,23 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Computers
+
+- "Allow in Windows Firewall" failed with exit code 1: the command that runs with administrator
+  rights was about 2,900 characters, and Windows can cut such a command at about 2,048. The
+  command is now shorter than 1,900 characters.
+- When the app cannot change Windows Firewall, the error says which step failed: the block rules
+  of the daemon, the old rule, the Tailscale interface, or the new rule. Exit code 1 says that
+  PowerShell did not run the script, for example because an antivirus program blocked it.
+
+### Other changes
+
+- A test of the Browser pane expected that the pane does not open file: addresses. The pane opens
+  them on purpose ("Open HTML file"), so the test now checks that. One list of allowed schemes is
+  used for both the address check and the navigation of a tab.
+
 ## 0.1.75 (2026-11-12)
 
 ### Computers
