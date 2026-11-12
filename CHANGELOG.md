@@ -3,6 +3,25 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.79 (2026-11-12)
+
+### Updates
+
+- The changelog on the Updates page shows the 5 newest versions. "Show more" under it adds 5
+  more each click.
+- The Updates page shows "Current version: {version}" under the status.
+- The arrows icon of the Updates page is white in the dark theme.
+
+### Session rail
+
+- A new Connectors section lists all connectors, the active ones first, with the state of each
+  in this session. The heading shows "{n} active".
+- A running or starting server has a stop button on its row in the Servers section.
+- The value of a section heading is at the right edge. On hover, the grip takes its place. The
+  Context heading shows a small bar after its share.
+- The context bars of the rail have the colors of the ring under the prompt box: gray, yellow
+  from 60%, and red from the compaction point.
+
 ## 0.1.78 (2026-11-12)
 
 ### Updates
