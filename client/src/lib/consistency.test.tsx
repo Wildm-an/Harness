@@ -5,7 +5,7 @@ import { projectLabels } from "../components/SessionSearch";
 import { workingStatus } from "../components/WorkingLine";
 import { planOutcome } from "../components/PlanCard";
 import { Switch } from "../components/Switch";
-import { SecretInput } from "../components/SecretInput";
+import { SecretInput, SecretTextArea } from "../components/SecretInput";
 import type { ChatItem } from "../chat/state";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
 
@@ -53,5 +53,12 @@ describe("shared controls (C3, C10)", () => {
     const html = renderToStaticMarkup(<SecretInput what="the token" value="abc" onChange={() => {}} />);
     expect(html).toContain('type="password"');
     expect(html).toContain('aria-label="Show the token"');
+  });
+
+  it("hides a multi-line secret and offers to show it", () => {
+    const html = renderToStaticMarkup(<SecretTextArea what="the private key" value={"line 1\nline 2"} onChange={() => {}} />);
+    expect(html).toContain("<textarea");
+    expect(html).toContain("secret-hidden");
+    expect(html).toContain('aria-label="Show the private key"');
   });
 });

@@ -188,6 +188,9 @@ import {
   LOCAL,
   closeTunnel,
   deleteToken,
+  deleteSshSecrets,
+  saveSshSecret,
+  type ConnectionSecrets,
   lastConnectionId,
   loadConnections,
   loadToken,
@@ -1535,8 +1538,14 @@ export default function App() {
     if (currentRef.current) void connectTo(currentRef.current);
   };
 
-  const saveConnection = async (c: Connection, token: string) => {
-    if (token.trim()) await saveToken(c.id, token.trim());
+  const saveConnection = async (c: Connection, secrets: ConnectionSecrets) => {
+    if (secrets.token.trim()) await saveToken(c.id, secrets.token.trim());
+    if (c.kind === "ssh") {
+      // The choice of the form decides which secret stays. An empty key: the keys of this computer.
+      const password = c.sshAuth === "password";
+      await saveSshSecret(c.id, "password", password ? secrets.sshPassword : "");
+      await saveSshSecret(c.id, "key", password ? "" : secrets.sshKey);
+    }
     const next = connections.some((x) => x.id === c.id) ? connections.map((x) => (x.id === c.id ? c : x)) : [...connections, c];
     saveConnections(next);
     setConnections(next);
@@ -1546,6 +1555,7 @@ export default function App() {
   const deleteConnection = async (c: Connection) => {
     if (currentRef.current?.id === c.id) await leave();
     await deleteToken(c.id).catch(() => undefined);
+    await deleteSshSecrets(c.id).catch(() => undefined);
     await closeTunnel(c).catch(() => undefined);
     const next = connections.filter((x) => x.id !== c.id);
     saveConnections(next);
@@ -1553,8 +1563,9 @@ export default function App() {
   };
 
   /** Connects with a second socket to check the address and the token, then closes it. */
-  const testConnection = async (c: Connection, token: string): Promise<HostInfo> => {
-    const target = await resolveTarget(c, false, token.trim() || undefined);
+  const testConnection = async (c: Connection, secrets: ConnectionSecrets): Promise<HostInfo> => {
+    const ssh = c.sshAuth === "password" ? { password: secrets.sshPassword } : { key: secrets.sshKey };
+    const target = await resolveTarget(c, false, secrets.token.trim() || undefined, ssh);
     const probe = new DaemonConnection();
     try {
       return (await probe.connect(target.host, target.port, target.token)).host;

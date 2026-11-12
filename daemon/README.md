@@ -117,7 +117,7 @@ The same daemon runs on a remote computer. The desktop client connects to it fro
    ```
 
 3. The daemon prints its token in the ready line (`"token"`). It also keeps the token in `~/.harness/daemon-token`, so the token stays the same after a restart. Read it again with `cat ~/.harness/daemon-token`. `--new-token` makes a new token.
-4. Keep the default address `127.0.0.1`. The desktop app connects only through an SSH tunnel: it opens `ssh -N -L` to the daemon port. The remote computer needs an SSH server, and SSH must log in with a key. On Windows, install "OpenSSH Server" (Settings > System > Optional features) and start its service.
+4. Keep the default address `127.0.0.1`. The desktop app connects only through an SSH tunnel: it opens `ssh -N -L` to the daemon port. The remote computer needs an SSH server. In the connection form, "Log in with" selects "SSH key" (a pasted private key, or else the keys of this computer) or "Password". The app keeps the key and the password in the keychain. On Windows, install "OpenSSH Server" (Settings > System > Optional features) and start its service.
    - `--host` and `--also-host <address>` make the daemon listen on another address, for example for a client in a normal browser. Never expose the daemon port to the internet.
 
 The providers, the skills, and the sessions of a remote daemon are the ones on the remote computer.

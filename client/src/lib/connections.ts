@@ -4,8 +4,8 @@
 // - "direct": a daemon that the client reaches on its own address, for example over Tailscale.
 // - "ssh": a daemon on 127.0.0.1 of a remote host, through an SSH tunnel that the app opens.
 //
-// The list has no secrets and is kept in local storage. The tokens are in the keychain of the
-// operating system. In a normal browser (development) there is no keychain: the token stays in
+// The list has no secrets and is kept in local storage. The tokens, the pasted SSH keys, and the SSH
+// passwords are in the keychain of the operating system. In a normal browser (development) there is no keychain: the token stays in
 // session storage and is lost when the tab closes.
 
 import { prefsChanged } from "./prefs";
@@ -21,7 +21,18 @@ export interface Connection {
   port: number; // The daemon port (on the remote host for ssh).
   sshUser?: string;
   sshPort?: number;
-  identityFile?: string;
+  identityFile?: string; // An older setting: a key file. A pasted key replaces it.
+  sshAuth?: SshAuth; // How SSH logs in. Default: "key".
+}
+
+/** "key": the pasted private key, else the keys of this computer. "password": the SSH password. */
+export type SshAuth = "key" | "password";
+
+/** The secrets of the connection form. An empty value: nothing typed. */
+export interface ConnectionSecrets {
+  token: string;
+  sshKey: string;
+  sshPassword: string;
 }
 
 export interface Target {
@@ -98,6 +109,27 @@ export async function deleteToken(id: string): Promise<void> {
   }
 }
 
+type SshSecret = "key" | "password";
+const sshSecretKey = (id: string, which: SshSecret) => `connection-ssh-${which}:${id}`;
+
+/** A pasted SSH key or an SSH password of a connection. Only the desktop app has SSH. */
+export async function loadSshSecret(id: string, which: SshSecret): Promise<string | null> {
+  return isTauri() ? secretGet(sshSecretKey(id, which)) : null;
+}
+
+/** Saves a secret. An empty value removes it. */
+export async function saveSshSecret(id: string, which: SshSecret, value: string): Promise<void> {
+  if (!isTauri()) return;
+  if (value.trim()) await secretSet(sshSecretKey(id, which), value);
+  else await secretDelete(sshSecretKey(id, which)).catch(() => undefined);
+}
+
+export async function deleteSshSecrets(id: string): Promise<void> {
+  if (!isTauri()) return;
+  await secretDelete(sshSecretKey(id, "key")).catch(() => undefined);
+  await secretDelete(sshSecretKey(id, "password")).catch(() => undefined);
+}
+
 export function describe(c: Connection): string {
   if (c.kind === "local") return "The daemon runs on this computer.";
   if (c.kind === "direct") return `${c.host}:${c.port}`;
@@ -108,9 +140,15 @@ export function describe(c: Connection): string {
 
 /**
  * Finds the address and the token of a connection. For "ssh", opens the tunnel first.
- * ``restart`` starts a new local daemon. ``token`` replaces the saved token (for a test).
+ * ``restart`` starts a new local daemon. ``token`` and ``ssh`` replace the saved secrets (for a test
+ * of the form values).
  */
-export async function resolveTarget(c: Connection, restart = false, tokenOverride?: string): Promise<Target> {
+export async function resolveTarget(
+  c: Connection,
+  restart = false,
+  tokenOverride?: string,
+  ssh?: { key?: string; password?: string },
+): Promise<Target> {
   if (c.kind === "local") {
     if (!isTauri()) throw new Error("The local daemon needs the desktop app. Add a remote daemon for browser use.");
     return localDaemonInfo(restart);
@@ -119,6 +157,14 @@ export async function resolveTarget(c: Connection, restart = false, tokenOverrid
   if (!token) throw new Error("There is no token for this connection. Edit the connection and enter the token.");
   if (c.kind === "direct") return { host: c.host, port: c.port, token };
   if (!isTauri()) throw new Error("SSH tunnels need the desktop app.");
+  let password: string | undefined;
+  let privateKey: string | undefined;
+  if ((c.sshAuth ?? "key") === "password") {
+    password = ssh?.password || (await loadSshSecret(c.id, "password")) || undefined;
+    if (!password) throw new Error("There is no SSH password for this connection. Edit the connection and enter it.");
+  } else {
+    privateKey = ssh?.key ?? ((await loadSshSecret(c.id, "key")) || undefined);
+  }
   const port = await tunnelOpen({
     id: c.id,
     sshHost: c.host,
@@ -126,6 +172,8 @@ export async function resolveTarget(c: Connection, restart = false, tokenOverrid
     sshPort: c.sshPort || undefined,
     identityFile: c.identityFile || undefined,
     remotePort: c.port,
+    privateKey: privateKey?.trim() ? privateKey : undefined,
+    password,
   });
   return { host: "127.0.0.1", port, token };
 }
@@ -135,7 +183,7 @@ export async function closeTunnel(c: Connection): Promise<void> {
 }
 
 /** Checks a connection form. Returns an error text for each bad field. */
-export function validate(c: Connection, token: string, tokenRequired: boolean): Record<string, string> {
+export function validate(c: Connection, token: string, tokenRequired: boolean, sshPassword = ""): Record<string, string> {
   const errors: Record<string, string> = {};
   if (!c.name.trim()) errors.name = "Enter a name.";
   if (!c.host.trim()) errors.host = "Enter a host.";
@@ -146,6 +194,7 @@ export function validate(c: Connection, token: string, tokenRequired: boolean): 
     if (c.sshPort !== undefined && (!Number.isInteger(c.sshPort) || c.sshPort < 1 || c.sshPort > 65535)) {
       errors.sshPort = "Enter a port from 1 to 65535.";
     }
+    if (c.sshAuth === "password" && !sshPassword) errors.sshPassword = "Enter the SSH password.";
   }
   if (tokenRequired && !token.trim()) errors.token = "Enter the token of the daemon.";
   return errors;
