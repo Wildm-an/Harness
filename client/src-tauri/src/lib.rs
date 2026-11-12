@@ -1,5 +1,4 @@
 mod browser;
-mod firewall;
 mod forward;
 mod prefs;
 mod secrets;
@@ -67,15 +66,14 @@ async fn restart_daemon(state: State<'_, Sidecar>) -> Result<DaemonInfo, String>
 }
 
 /// Starts the server daemon on `port` for other computers (Settings > Computers), or returns the one
-/// that runs. It stops when this app stops. `new_token`: restart it with a new token. `tailscale`:
-/// also listen on the Tailscale address of this computer.
+/// that runs. It stops when this app stops. `new_token`: restart it with a new token. It listens only
+/// on 127.0.0.1: the other computers connect through an SSH tunnel.
 #[tauri::command]
 async fn server_daemon_start(
     app: AppHandle,
     state: State<'_, ServerDaemon>,
     port: u16,
     new_token: Option<bool>,
-    tailscale: Option<bool>,
 ) -> Result<ServerInfo, String> {
     let server = state.inner().clone();
     let resource_dir = app.path().resource_dir().ok();
@@ -83,44 +81,11 @@ async fn server_daemon_start(
     // A client connects or disconnects, or the daemon stops by itself.
     let on_change: sidecar::OnChange = Arc::new(move || server_daemon_changed(&handle));
     let new_token = new_token.unwrap_or(false);
-    let tailscale = tailscale.unwrap_or(false);
-    let info = tauri::async_runtime::spawn_blocking(move || {
-        let also_host = if tailscale {
-            Some(sidecar::tailscale_address().ok_or("Tailscale is not running on this computer, so it has no Tailscale address.")?)
-        } else {
-            None
-        };
-        server.start(resource_dir.as_deref(), port, new_token, also_host, on_change)
-    })
+    let info = tauri::async_runtime::spawn_blocking(move || server.start(resource_dir.as_deref(), port, new_token, on_change))
     .await
     .map_err(|e| e.to_string())??;
     server_daemon_changed(&app);
     Ok(info)
-}
-
-/// The Tailscale address of this computer (100.x.y.z), or null.
-#[tauri::command]
-async fn tailscale_address() -> Option<String> {
-    tauri::async_runtime::spawn_blocking(sidecar::tailscale_address).await.ok().flatten()
-}
-
-/// The Windows Firewall of the server daemon (firewall.rs). `open`: if the port is blocked, change the
-/// firewall. Windows then shows its administrator prompt. Returns the state after the change.
-#[tauri::command]
-async fn server_firewall(app: AppHandle, port: u16, open: bool) -> Result<firewall::FirewallState, String> {
-    let program = sidecar::daemon_program(app.path().resource_dir().ok().as_deref());
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = firewall::check(port, program.as_deref())?;
-        if !open || state == firewall::FirewallState::Open {
-            return Ok(state);
-        }
-        // Limit the rule to the interface of the Tailscale address.
-        let tailscale_ip = sidecar::tailscale_address();
-        firewall::open(port, program.as_deref(), tailscale_ip.as_deref())?;
-        firewall::check(port, program.as_deref())
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 /// The running server daemon and its clients, or null.
@@ -563,8 +528,6 @@ pub fn run() {
             server_daemon_status,
             server_daemon_stop,
             computer_name,
-            tailscale_address,
-            server_firewall,
             tunnel_open,
             tunnel_close,
             secret_get,

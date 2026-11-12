@@ -3,6 +3,21 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Changelog page.
 
+## Unreleased
+
+### Computers
+
+- The desktop app connects to a remote daemon only through an SSH tunnel. "Add a remote daemon"
+  has no "Connect through" choice. A saved direct connection still works, and its row asks you to
+  edit it: the edit makes it an SSH connection. In a normal browser, which cannot open SSH
+  tunnels, a connection stays direct.
+- The play button of Settings > Computers starts the daemon on 127.0.0.1 only. The switch "Also
+  listen on Tailscale" and the Windows Firewall rule "Harness remote daemon" are gone. The app
+  does not remove a rule that it made before: remove it in Windows Defender Firewall if you want.
+- The steps "Start a daemon on a remote computer" are gone. The panel "Remote daemon on this
+  computer" has one button, "Start remote daemon" or "Stop remote daemon", with the token and the
+  connected computers under it.
+
 ## 0.1.76 (2026-11-12)
 
 ### Computers

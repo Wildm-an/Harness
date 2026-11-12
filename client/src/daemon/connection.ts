@@ -30,8 +30,8 @@ export function forSession(msg: DaemonMessage, sessionId: string | null): boolea
 /** The error when the socket did not open. */
 export function unreachable(host: string, port: number): string {
   return (
-    `Cannot reach a daemon at ${host}:${port}. Check that the daemon runs and listens on that address ` +
-    "(for Tailscale, start it with the Tailscale address), and that the firewall of that computer allows the port."
+    `Cannot reach a daemon at ${host}:${port}. Check that the daemon runs on the remote computer, ` +
+    "and that it listens on the port of this connection."
   );
 }
 

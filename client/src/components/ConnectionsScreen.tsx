@@ -2,18 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Play, Plug, Plus, RefreshCw, Square, Trash2, TriangleAlert } from "lucide-react";
 import { SecretInput } from "./SecretInput";
 import type { HostInfo } from "../daemon/protocol";
-import { describe, loadToken, newConnectionId, validate, type Connection, type ConnectionKind } from "../lib/connections";
-import {
-  isTauri,
-  SERVER_DAEMON_EVENT,
-  SERVER_DAEMON_PORT,
-  serverDaemon,
-  serverFirewall,
-  tailscaleAddress,
-  type ServerInfo,
-} from "../lib/tauri";
-import { loadPref, savePref } from "../lib/prefs";
-import { Switch } from "./Switch";
+import { describe, loadToken, newConnectionId, validate, type Connection } from "../lib/connections";
+import { isTauri, SERVER_DAEMON_EVENT, SERVER_DAEMON_PORT, serverDaemon, type ServerInfo } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { useConfirm } from "./ConfirmDialog";
 
@@ -64,7 +54,10 @@ function ConnectionForm({
   onCancel: () => void;
   onTest: (c: Connection, token: string) => Promise<HostInfo>;
 }) {
-  const [c, setC] = useState<Connection>(initial);
+  // The desktop app connects only through an SSH tunnel (the user asked for this). A saved direct
+  // connection becomes an SSH connection when the user edits it. A normal browser cannot open an SSH
+  // tunnel, so it keeps a direct connection.
+  const [c, setC] = useState<Connection>(() => ({ ...initial, kind: isTauri() ? "ssh" : "direct" }));
   const [token, setToken] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -137,31 +130,11 @@ function ConnectionForm({
         />
       </Field>
 
-      <div className="field">
-        <span className="field-label" id="cf-kind-label">
-          Connect through
-        </span>
-        <div className="segmented wide" role="radiogroup" aria-labelledby="cf-kind-label">
-          {(["direct", "ssh"] as ConnectionKind[]).map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              role="radio"
-              aria-checked={c.kind === kind}
-              aria-pressed={c.kind === kind}
-              onClick={() => update({ kind })}
-            >
-              {kind === "direct" ? <Globe size={14} aria-hidden /> : <KeyRound size={14} aria-hidden />}
-              {kind === "direct" ? "Direct (Tailscale or LAN)" : "SSH tunnel"}
-            </button>
-          ))}
-        </div>
-        <p className="help">
-          {c.kind === "direct"
-            ? "The client connects to the daemon address. Use a private network such as Tailscale. Never expose the daemon to the internet."
-            : "The app opens an SSH tunnel to the daemon, which listens on 127.0.0.1 of the remote host. SSH must log in with a key, with no password prompt."}
-        </p>
-      </div>
+      <p className="help">
+        {c.kind === "ssh"
+          ? "The app opens an SSH tunnel to the daemon, which listens on 127.0.0.1 of the remote computer. SSH must log in with a key, with no password prompt."
+          : "A normal browser cannot open an SSH tunnel, so it connects to the daemon address directly. Never expose the daemon to the internet."}
+      </p>
 
       <div className="field-grid">
         <Field id="cf-host" label={c.kind === "ssh" ? "SSH host" : "Daemon host"} error={errors.host}>
@@ -331,7 +304,11 @@ export function ConnectionsScreen({
   const confirm = useConfirm(); // Delete asks first in a dialog (rule R7).
 
   const startAdd = () =>
-    setEditing({ connection: { id: newConnectionId(), name: "", kind: "direct", host: "", port: 8765 }, isNew: true });
+    // An SSH tunnel is the default. A normal browser cannot open SSH tunnels, so it uses a direct connection.
+    setEditing({
+      connection: { id: newConnectionId(), name: "", kind: isTauri() ? "ssh" : "direct", host: "", port: 8765 },
+      isNew: true,
+    });
 
   const Title = embedded ? "h2" : "h1";
   return (
@@ -363,6 +340,9 @@ export function ConnectionsScreen({
                   <span className="connection-desc mono">{describe(c)}</span>
                   {unavailable && <span className="help">The local daemon needs the desktop app.</span>}
                   {c.kind !== "local" && !tokenIds.has(c.id) && <span className="help">No saved token. Edit the connection.</span>}
+                  {c.kind === "direct" && isTauri() && (
+                    <span className="help">A direct connection. Edit it to connect through an SSH tunnel.</span>
+                  )}
                   {error?.id === c.id && (
                     <span className="field-error" role="alert">
                       {error.message}
@@ -436,25 +416,7 @@ export function ConnectionsScreen({
         />
       )}
 
-      <section className="panel remote-help" aria-labelledby="remote-help-title">
-        <h2 id="remote-help-title">Start a daemon on a remote computer</h2>
-        <ol>
-          <li>
-            Install the daemon on the remote computer, then start it:
-            <div className="server-command">
-              <pre className="tool-pre">python -m harness_daemon --port {SERVER_DAEMON_PORT}</pre>
-              {isTauri() && <ServerDaemonControl />}
-            </div>
-          </li>
-          <li>
-            The daemon prints its token. The token is also in <code>~/.harness/daemon-token</code> on that computer.
-          </li>
-          <li>
-            For an SSH tunnel, keep the default address <code>127.0.0.1</code>. For Tailscale, add{" "}
-            <code>--host</code> with the Tailscale address of the computer.
-          </li>
-        </ol>
-      </section>
+      {isTauri() && <ServerDaemonPanel />}
       {confirm.dialog}
     </div>
   );
@@ -466,15 +428,6 @@ type ServerState =
   | { state: "running"; info: ServerInfo }
   | { state: "error"; message: string };
 
-const TAILSCALE_PREF = "serverDaemon.tailscale";
-
-/** "127.0.0.1 (SSH tunnel) and 100.64.0.5 (Tailscale)". */
-function listenText(hosts: string[], tailscaleIp: string | null): string {
-  return hosts
-    .map((h) => (h === "127.0.0.1" ? "127.0.0.1 (SSH tunnel)" : h === tailscaleIp ? `${h} (Tailscale)` : h))
-    .join(" and ");
-}
-
 /** "21:52" for today, else the date and the time. */
 function connectedAt(since: number): string {
   const date = new Date(since);
@@ -485,49 +438,17 @@ function connectedAt(since: number): string {
 }
 
 /**
- * The play button of the start command: it starts the daemon of this app on this computer, for other
- * computers. While it runs, "Show token" shows the token that the other computers need, "New token"
- * replaces it, and a list shows the computers that are connected now.
+ * "Remote daemon on this computer": one button starts the daemon of this app for other computers (the
+ * user asked for a button, not the steps of a manual start). While it runs, "Show token" shows the
+ * token that the other computers need, "New token" replaces it, and a list shows the computers that
+ * are connected now.
  */
-function ServerDaemonControl() {
+function ServerDaemonPanel() {
   const [server, setServer] = useState<ServerState>({ state: "busy" });
   const [tokenShown, setTokenShown] = useState(false);
   const [copied, setCopied] = useState(false);
   const acting = useRef(false); // A start, a stop, or a new token runs: the events do not change the state.
   const confirm = useConfirm();
-  // Also listen on the Tailscale address, so other computers of the tailnet can connect directly.
-  const [tailscaleIp, setTailscaleIp] = useState<string | null>(null);
-  const [useTailscale, setUseTailscale] = useState(() => loadPref(TAILSCALE_PREF, "1") === "1");
-  // The Windows Firewall for the Tailscale address: null (not checked, or no Tailscale), or the state.
-  const [firewall, setFirewall] = useState<
-    { state: "checking" } | { state: "open" } | { state: "blocked"; error?: string } | null
-  >(null);
-
-  /** Checks the firewall. `open`: open a blocked port (the administrator prompt of Windows). */
-  const checkFirewall = async (open: boolean) => {
-    setFirewall({ state: "checking" });
-    try {
-      setFirewall({ state: await serverFirewall(open) });
-    } catch (e) {
-      setFirewall({ state: "blocked", error: e instanceof Error ? e.message : String(e) });
-    }
-  };
-  const listensOnTailscale = server.state === "running" && server.info.hosts.length > 1;
-  useEffect(() => {
-    // The daemon ran already when the page opened: check the firewall, with no prompt.
-    if (listensOnTailscale && firewall === null) void checkFirewall(false);
-    if (!listensOnTailscale && firewall !== null && server.state !== "busy") setFirewall(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listensOnTailscale, server.state]);
-
-  useEffect(() => {
-    let live = true;
-    void tailscaleAddress().then((ip) => live && setTailscaleIp(ip));
-    return () => {
-      live = false;
-    };
-  }, []);
-
   useEffect(() => {
     let live = true;
     let unlisten: (() => void) | null = null;
@@ -554,13 +475,8 @@ function ServerDaemonControl() {
     setServer({ state: "busy" });
     if (action !== "new-token") setTokenShown(false);
     try {
-      // A new token keeps the addresses of the daemon that runs.
-      const tailscale =
-        action === "new-token" && server.state === "running" ? server.info.hosts.length > 1 : useTailscale && !!tailscaleIp;
-      const info = await serverDaemon(action, tailscale);
+      const info = await serverDaemon(action);
       setServer(info ? { state: "running", info } : { state: "stopped" });
-      // The play button with Tailscale: other computers need an open firewall port.
-      if (info && info.hosts.length > 1 && action === "start") void checkFirewall(true);
     } catch (e) {
       setServer({ state: "error", message: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -585,29 +501,37 @@ function ServerDaemonControl() {
 
   const running = server.state === "running";
   return (
-    <>
-      <button
-        type="button"
-        className="icon-btn ghost server-command-btn"
-        onClick={() => void run(running ? "stop" : "start")}
-        disabled={server.state === "busy"}
-        aria-label={running ? "Stop remote daemon" : "Start the daemon on this computer"}
-        title={running ? "Stop remote daemon" : "Start on this computer"}
-      >
-        {server.state === "busy" ? (
-          <LoaderCircle size={14} className="spin" aria-hidden />
-        ) : running ? (
-          <Square size={13} aria-hidden />
-        ) : (
-          <Play size={14} aria-hidden />
-        )}
-      </button>
+    <section className="panel remote-help" aria-labelledby="remote-help-title">
+      <div className="server-head">
+        <div className="server-head-text">
+          <h2 id="remote-help-title">Remote daemon on this computer</h2>
+          <p className="help">
+            Let your other computers work on this computer. They connect through an SSH tunnel, so this computer needs an SSH
+            server that accepts their key.
+          </p>
+        </div>
+        <button
+          type="button"
+          className={`btn btn-small${running ? "" : " btn-primary"}`}
+          onClick={() => void run(running ? "stop" : "start")}
+          disabled={server.state === "busy"}
+        >
+          {server.state === "busy" ? (
+            <LoaderCircle size={14} className="spin" aria-hidden />
+          ) : running ? (
+            <Square size={13} aria-hidden />
+          ) : (
+            <Play size={14} aria-hidden />
+          )}
+          {running ? "Stop remote daemon" : "Start remote daemon"}
+        </button>
+      </div>
       <div className="server-status">
         {server.state === "running" ? (
           <>
             <span className="ok" role="status">
-              <Check size={14} aria-hidden /> The daemon runs on this computer, on port {server.info.port}, at{" "}
-              {listenText(server.info.hosts, tailscaleIp)}. It stops when you quit Harness.
+              <Check size={14} aria-hidden /> The daemon runs on this computer, at 127.0.0.1:{server.info.port}. Other computers
+              connect through an SSH tunnel. It stops when you quit Harness.
             </span>
             <div className="server-token">
               <button type="button" className="btn btn-small" onClick={() => setTokenShown((v) => !v)} aria-expanded={tokenShown}>
@@ -661,48 +585,10 @@ function ServerDaemonControl() {
             {server.message}
           </span>
         ) : (
-          <span className="help">The play button starts the daemon of this app on this computer. It stops when you quit Harness.</span>
-        )}
-        {listensOnTailscale && firewall?.state === "checking" && (
-          <span className="help server-firewall">
-            <LoaderCircle size={14} className="spin" aria-hidden /> Checking Windows Firewall.
-          </span>
-        )}
-        {listensOnTailscale && firewall?.state === "blocked" && (
-          <div className="server-firewall blocked" role="alert">
-            <TriangleAlert size={14} aria-hidden />
-            <span>
-              Windows Firewall blocks the other computers on port {SERVER_DAEMON_PORT}.
-              {firewall.error ? ` ${firewall.error}` : ""}
-            </span>
-            <button type="button" className="btn btn-small" onClick={() => void checkFirewall(true)}>
-              Allow in Windows Firewall
-            </button>
-          </div>
-        )}
-        {tailscaleIp && (
-          <div className="server-tailscale">
-            <Switch
-              checked={running ? server.info.hosts.includes(tailscaleIp) : useTailscale}
-              label="Also listen on Tailscale"
-              disabled={server.state !== "stopped" && server.state !== "error"}
-              onChange={(on) => {
-                setUseTailscale(on);
-                savePref(TAILSCALE_PREF, on ? "1" : "0");
-              }}
-            />
-            <span>
-              Also listen on Tailscale (<span className="mono">{tailscaleIp}</span>)
-              <span className="help">
-                {running
-                  ? " Stop the daemon to change this."
-                  : " Other computers connect to this address. Windows can ask to let the daemon through the firewall: allow it."}
-              </span>
-            </span>
-          </div>
+          <span className="help">The daemon listens on 127.0.0.1:{SERVER_DAEMON_PORT}. It stops when you quit Harness.</span>
         )}
       </div>
       {confirm.dialog}
-    </>
+    </section>
   );
 }

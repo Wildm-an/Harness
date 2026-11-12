@@ -31,7 +31,6 @@ export interface ClientConnection {
 }
 
 export interface ServerInfo extends DaemonInfo {
-  hosts: string[]; // The addresses that the daemon listens on: 127.0.0.1, and the Tailscale address.
   connections: ClientConnection[];
 }
 
@@ -42,35 +41,16 @@ export interface ServerInfo extends DaemonInfo {
  */
 export async function serverDaemon(
   action: "start" | "new-token" | "status" | "stop",
-  tailscale = false, // Also listen on the Tailscale address of this computer.
 ): Promise<ServerInfo | null> {
   const { invoke } = await import("@tauri-apps/api/core");
   if (action === "start" || action === "new-token") {
-    return invoke<ServerInfo>("server_daemon_start", { port: SERVER_DAEMON_PORT, newToken: action === "new-token", tailscale });
+    return invoke<ServerInfo>("server_daemon_start", { port: SERVER_DAEMON_PORT, newToken: action === "new-token" });
   }
   if (action === "stop") {
     await invoke("server_daemon_stop");
     return null;
   }
   return invoke<ServerInfo | null>("server_daemon_status");
-}
-
-/**
- * The Windows Firewall for the server daemon port: "open" or "blocked". With `open`, a blocked port is
- * opened for Tailscale addresses: Windows shows its administrator prompt. Always "open" on macOS and
- * Linux, and in a normal browser.
- */
-export async function serverFirewall(open: boolean): Promise<"open" | "blocked"> {
-  if (!isTauri()) return "open";
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<"open" | "blocked">("server_firewall", { port: SERVER_DAEMON_PORT, open });
-}
-
-/** The Tailscale address of this computer (100.x.y.z), or null. */
-export async function tailscaleAddress(): Promise<string | null> {
-  if (!isTauri()) return null;
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<string | null>("tailscale_address").catch(() => null);
 }
 
 let identity: Promise<{ name?: string; app?: string }> | null = null;
