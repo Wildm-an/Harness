@@ -54,7 +54,6 @@
   --ctx-tools: #f07443;
   --ctx-mcp-tools: #9ccdf0;
   --ctx-messages: #60a7f0;
-  --ctx-tool-results: #ae99f0;
   /* The pull request and work colors (lib/pr.ts). Orange: uncommitted work. Purple: a merged pull
      request. Blue (--info): commits that are not pushed. Green (--success): pushed work and an open
      pull request. Vermilion (--danger): a closed pull request. */
@@ -153,7 +152,6 @@
   --ctx-tools: #d55e00;
   --ctx-mcp-tools: #3a9fd6;
   --ctx-messages: #0072b2;
-  --ctx-tool-results: #7e57c2;
   --orange: #995200;
   --orange-mark: #cf6a08;
   --orange-soft: rgba(207, 106, 8, 0.12);
@@ -1903,7 +1901,6 @@ textarea:focus-visible {
 .ctx-tools { background: var(--ctx-tools); }
 .ctx-mcp_tools { background: var(--ctx-mcp-tools); }
 .ctx-messages { background: var(--ctx-messages); }
-.ctx-tool_results { background: var(--ctx-tool-results); }
 .ctx-free { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); }
 .ctx-buffer { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); }
 .context-bar > .ctx-free { box-shadow: none; }

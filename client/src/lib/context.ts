@@ -47,18 +47,17 @@ const PART_LABELS: Record<string, string> = {
   skills: "Skills",
   plugins: "Plugins",
   summary: "Summary of earlier turns",
-  tools: "Built-in tools",
+  tools: "System tools",
   mcp_tools: "MCP tools",
   messages: "Messages",
-  tool_results: "Tool results",
 };
 
 /**
  * The order of two parts with the same size, as in the /context view of Claude Code: System prompt,
  * System tools, MCP tools, Memory files, Skills, Messages. Plugins go with the skills. The summary
- * and the tool results go with the messages. A part kind that is not in this list goes after them.
+ * goes with the messages. A part kind that is not in this list goes after them.
  */
-const PART_ORDER = ["system", "tools", "mcp_tools", "instructions", "skills", "plugins", "summary", "messages", "tool_results"];
+const PART_ORDER = ["system", "tools", "mcp_tools", "instructions", "skills", "plugins", "summary", "messages"];
 
 function partRank(kind: string): number {
   const i = PART_ORDER.indexOf(kind);
