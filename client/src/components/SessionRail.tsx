@@ -20,6 +20,7 @@ import {
   stepSection,
   foldedSections,
   connectorsHeadValue,
+  contextLevel,
   foldedValue,
   railConnectors,
   railTasks,
@@ -179,7 +180,8 @@ export function SessionRail({
 
   const PlaceIcon = PLACE_ICONS[environment.placeKind];
   const share = context ? contextShare(context.tokens, context.length) : 0;
-  const level = share >= 0.8 ? "high" : share >= 0.6 ? "mid" : "low";
+  // The same colors as the ring under the prompt box.
+  const level = contextLevel(share, usage?.compact_at);
   // Only the running tasks (commands, monitors, agents, wakeups). An ended task goes away from the rail.
   const shownTasks = railTasks(tasks);
   // The time of a wakeup counts down.

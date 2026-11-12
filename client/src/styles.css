@@ -10228,7 +10228,8 @@ body.sorting * {
   opacity: 0;
 }
 
-/* The small bar after the context share in the heading. */
+/* The small bar after the context share in the heading. It has the colors of the ring under the
+   prompt box: gray, then yellow from 60%, then red from the compaction point. */
 .rail-head-meter {
   display: inline-block;
   width: 24px;
@@ -10242,7 +10243,7 @@ body.sorting * {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--text-muted);
 }
 
 .rail-head-meter.mid > span {

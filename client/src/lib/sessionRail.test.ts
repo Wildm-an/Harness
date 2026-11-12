@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectorItem, McpServerItem, TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, connectorsHeadValue, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, connectorsHeadValue, contextLevel, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -202,5 +202,14 @@ describe("the Connectors section", () => {
 
   it("treats a server that is not live (stopped) as not in the session", () => {
     expect(railConnectors([connector("gh", "gh")], [server("gh", "stopped")])[0].state).toBe("idle");
+  });
+});
+
+describe("the context color level", () => {
+  it("is gray when low, yellow from 60%, and red from the compaction point", () => {
+    expect(contextLevel(0.3)).toBe("low");
+    expect(contextLevel(0.6)).toBe("mid");
+    expect(contextLevel(0.8)).toBe("high");
+    expect(contextLevel(0.75, 0.7)).toBe("high");
   });
 });

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Archive, LoaderCircle } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 import { contextRows, contextSourceText, formatTokens, type ContextUsage } from "../lib/context";
-import { percentText } from "../lib/sessionRail";
+import { contextLevel, percentText } from "../lib/sessionRail";
 
 const RADIUS = 7;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -60,7 +60,7 @@ export function ContextRing({
   useOverlay(open);
   const share = length > 0 ? Math.min(tokens / length, 1) : 0;
   const compactAt = usage?.compact_at ?? 0.8;
-  const level = share >= compactAt ? "high" : share >= 0.6 ? "mid" : "low";
+  const level = contextLevel(share, compactAt);
 
   useEffect(() => {
     if (!open) return;

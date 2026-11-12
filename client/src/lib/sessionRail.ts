@@ -135,6 +135,14 @@ export function contextShare(tokens: number, length: number): number {
 }
 
 /**
+ * The color level of a context indicator (the ring under the prompt box and the bars of the rail):
+ * "high" (red) from the compaction point, "mid" (yellow) from 60%, else "low" (gray).
+ */
+export function contextLevel(share: number, compactAt = 0.8): "low" | "mid" | "high" {
+  return share >= compactAt ? "high" : share >= 0.6 ? "mid" : "low";
+}
+
+/**
  * The value in the heading of a folded section: the share of the context window in use for the
  * Context section ("57%"). null: the section shows no value.
  */
