@@ -1,6 +1,6 @@
 # Releases and app updates
 
-Harness uses the Tauri updater (`tauri-plugin-updater`). Settings > General > Updates checks for
+Harness uses the Tauri updater (`tauri-plugin-updater`). Settings > Updates checks for
 a new version, installs it, and starts the app again.
 
 ## The installer

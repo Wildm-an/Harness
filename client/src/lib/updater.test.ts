@@ -25,6 +25,15 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 
+// The "app-opened" event of the desktop app: a click on the tray icon, the tray menu, or a second start.
+let appOpened: () => void = () => {};
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: async (name: string, fn: () => void) => {
+    if (name === "app-opened") appOpened = fn;
+    return () => {};
+  },
+}));
+
 const { availableVersion, checkAtStart, checkForUpdate, checkWhenShown, getUpdateState, installUpdate, setCheckAtStart, setInstallGuard } =
   await import("./updater");
 const { updateToastView } = await import("../components/UpdateToast");
@@ -123,10 +132,24 @@ describe("the check at start", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(calls).toBe(1);
 
-    // A second open soon after does not check again.
+    // The focus alone soon after does not check again.
     focusChanged(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(calls).toBe(1);
+
+    // Each open of the window checks, also soon after the last check: the tray icon, the tray menu, a second start.
+    appOpened();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(2);
+    appOpened();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(3);
+
+    // No check while the window is hidden, and none when the setting is off.
+    windowVisible = false;
+    appOpened();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(3);
     vi.useRealTimers();
   });
 });

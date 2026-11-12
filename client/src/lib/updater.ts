@@ -2,8 +2,10 @@
 // tauri.conf.json when the public repository exists. Until then, a check gives a clear message.
 //
 // The app checks only when the user can see its window (checkWhenShown), if the setting "Check for
-// updates when the app opens" is on (the default). The state is shared: the dot on the Settings button, the popup at the
-// bottom left, and Settings > General > Updates read it.
+// updates when the app opens" is on (the default). Each open of the window checks: a click on the tray
+// icon, "Open Harness" in the tray menu, a second start of the app, and a restore from the tray or
+// the taskbar. The state is shared: the dot on the Settings button, the popup at the bottom left,
+// and the Updates page of Settings read it.
 
 import { useSyncExternalStore } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
@@ -34,6 +36,16 @@ export type UpdateState =
 const LAUNCH_DELAY_MS = 4000; // The app and the daemon start first.
 const RECHECK_GAP_MS = 30 * 60 * 1000; // The shortest time between two quiet checks.
 const CHECK_AT_START_PREF = "updates.check_at_start";
+const LAST_CHECKED_PREF = "updates.last_checked";
+
+/** The desktop app sends this event when the user opens the window: the tray icon, the tray menu, a second start. */
+export const APP_OPENED_EVENT = "app-opened";
+
+/** The time of the last check that got an answer (ms since 1970), or null before the first one. */
+export function lastChecked(): number | null {
+  const n = Number(loadPref(LAST_CHECKED_PREF, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 /** True if the app looks for a new version when it starts. The default is on. */
 export function checkAtStart(): boolean {
@@ -93,6 +105,7 @@ export async function checkForUpdate(quiet = false): Promise<void> {
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
+    savePref(LAST_CHECKED_PREF, String(Date.now()));
     setState(update ? { kind: "available", update } : { kind: "none" });
   } catch (e) {
     setState(quiet ? { kind: "idle" } : { kind: "error", message: updateErrorText(e) });
@@ -115,11 +128,14 @@ let watching = false;
 let ready = false; // False during the launch delay.
 let lastCheck = 0;
 
-/** A quiet check, if the setting is on, the user can see the window, and no check ran in the last RECHECK_GAP_MS. */
-async function checkIfShown(): Promise<void> {
+/**
+ * A quiet check, if the setting is on and the user can see the window. ``opened``: the user opened
+ * the window, so the check runs at once. Else (the window only got the focus) no check ran in the last RECHECK_GAP_MS.
+ */
+async function checkIfShown(opened = false): Promise<void> {
   if (!ready || !checkAtStart()) return;
   if (state.kind === "available" || state.kind === "installing") return;
-  if (lastCheck && Date.now() - lastCheck < RECHECK_GAP_MS) return;
+  if (!opened && lastCheck && Date.now() - lastCheck < RECHECK_GAP_MS) return;
   if (!(await windowShown())) return;
   lastCheck = Date.now();
   await checkForUpdate(true);
@@ -128,14 +144,23 @@ async function checkIfShown(): Promise<void> {
 /**
  * The quiet checks of the desktop app. The app does not check while its window is hidden (for example,
  * after a start at sign-in, the window stays in the tray). The first check runs a few seconds after the
- * window shows. A later check runs each time the user opens the window again, at most one each RECHECK_GAP_MS.
+ * window shows. A later check runs each time the user opens the window again (the user asked for this):
+ * the tray icon, the tray menu, a second start, or a restore of the window. The focus alone checks at
+ * most once each RECHECK_GAP_MS.
  */
 export function checkWhenShown(): void {
   if (watching || !isTauri()) return;
   watching = true;
   const onShow = () => void checkIfShown();
-  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onShow);
+  const onOpen = () => void checkIfShown(true);
+  if (typeof document !== "undefined") {
+    // A minimized or hidden window has a hidden document: "visible" again is an open of the window.
+    document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && onOpen());
+  }
   window.addEventListener("focus", onShow);
+  void import("@tauri-apps/api/event")
+    .then(({ listen }) => listen(APP_OPENED_EVENT, onOpen))
+    .catch(() => undefined);
   void import("@tauri-apps/api/window")
     .then(({ getCurrentWindow }) => getCurrentWindow().onFocusChanged(({ payload }) => payload && onShow()))
     .catch(() => undefined);
