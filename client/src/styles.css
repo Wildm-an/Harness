@@ -1833,7 +1833,7 @@ textarea:focus-visible {
 
 .context-bar {
   display: flex;
-  height: 8px;
+  height: 4px; /* Thin (the user asked for this). */
   margin-bottom: 12px;
   overflow: hidden;
   border-radius: var(--radius-sm);
@@ -10619,7 +10619,13 @@ body.sorting * {
   background: var(--text-muted);
 }
 
-/* A connector row of the session rail: the logo, the name and state, then the state dot. */
+/* A connector row of the session rail: the logo, the name, then the state dot. One line, so it is compact. */
+.rail-connector {
+  min-height: 26px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
 .rail-connector-logo {
   display: inline-flex;
   flex: none;

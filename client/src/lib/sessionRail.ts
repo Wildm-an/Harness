@@ -157,6 +157,12 @@ export function percentText(share: number): string {
   return p > 0 && p < 1 ? "<1%" : `${Math.round(p)}%`;
 }
 
+/** The share with one decimal, for the context breakdown: "78.1%", "1.0%", "0.3%", "<0.1%" for a small share that is not zero. */
+export function percentText1(share: number): string {
+  const p = share * 100;
+  return p > 0 && p < 0.05 ? "<0.1%" : `${p.toFixed(1)}%`;
+}
+
 /**
  * The state of a connector in the session:
  * - "active": its MCP server is connected in this session, so the agent can use its tools.
@@ -186,10 +192,7 @@ export function railConnectors(connectors: ConnectorItem[], mcp: McpServerItem[]
   const rows = connectors.map((c): RailConnector => {
     const server = mcp?.find((s) => s.connector === c.id);
     if (c.signing_in) return { id: c.id, name: c.name, state: "connecting", detail: "Signing in" };
-    if (server?.state === "connected") {
-      const tools = server.tools.length;
-      return { id: c.id, name: c.name, state: "active", detail: `Active · ${tools} ${tools === 1 ? "tool" : "tools"}` };
-    }
+    if (server?.state === "connected") return { id: c.id, name: c.name, state: "active", detail: "Active" };
     if (server?.state === "starting" || server?.state === "authenticating") return { id: c.id, name: c.name, state: "connecting", detail: "Connecting" };
     if (server?.state === "failed") return { id: c.id, name: c.name, state: "problem", detail: "Failed" };
     if (server?.state === "needs_auth") return { id: c.id, name: c.name, state: "problem", detail: "Needs authentication" };

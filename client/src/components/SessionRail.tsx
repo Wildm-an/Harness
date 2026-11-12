@@ -38,7 +38,8 @@ const NARROW = "(max-width: 900px)";
 const PLACE_ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
 const SERVER_STATES: Record<ServerItem["state"], string> = { stopped: "Stopped", starting: "Starting", running: "Running", crashed: "Crashed" };
 // The dot of a connector row: green when active, yellow while it connects, red for a problem, gray otherwise.
-const CONNECTOR_DOTS: Record<RailConnectorState, string> = { active: "running", connecting: "starting", problem: "crashed", idle: "stopped", off: "stopped" };
+// Green for an active connector, gray for all the others (the user asked for this).
+const CONNECTOR_DOTS: Record<RailConnectorState, string> = { active: "running", connecting: "stopped", problem: "stopped", idle: "stopped", off: "stopped" };
 
 export interface RailEnvironment {
   placeKind: ConnectionKind;
@@ -298,19 +299,19 @@ export function SessionRail({
     ),
     // The Changes section shows the pull request of a git folder. This section shows it only when
     // the Changes section does not show.
-    // All the connectors, as in the Claude app. A click opens the Connectors tab.
+    // All the connectors, as in the Claude app. A compact row: the logo, the name, and the dot (the user
+    // asked for this). The state shows on hover. A click opens the Connectors tab.
     connectors:
       connectorRows.length > 0 ? (
         <ul className="rail-list">
           {connectorRows.map((c) => (
             <li key={c.id}>
-              <button type="button" className={`rail-item rail-connector ${c.state}`} onClick={onShowConnectors} title="Show the connectors">
+              <button type="button" className={`rail-item rail-connector ${c.state}`} onClick={onShowConnectors} title={c.detail} aria-label={`${c.name}: ${c.detail}`}>
                 <span className="rail-connector-logo" aria-hidden>
                   <ConnectorLogo id={c.id} size={15} />
                 </span>
                 <span className="rail-item-text">
                   <span className="rail-item-title">{c.name}</span>
-                  <span className="rail-item-detail">{c.detail}</span>
                 </span>
                 <span className={`rail-dot ${CONNECTOR_DOTS[c.state]}`} aria-hidden />
               </button>
