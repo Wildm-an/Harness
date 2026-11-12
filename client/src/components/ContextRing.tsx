@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Archive, LoaderCircle } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 import { contextRows, contextSourceText, formatTokens, type ContextUsage } from "../lib/context";
-import { contextLevel, percentText } from "../lib/sessionRail";
+import { contextLevel, percentText, percentText1 } from "../lib/sessionRail";
 
 const RADIUS = 7;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 const percent = percentText;
+// The context panel and the breakdown show one decimal (the user asked for this).
+const percent1 = percentText1;
 
 /**
  * The parts of the context: a bar and a list with the tokens and the share of each part, then the
@@ -26,7 +28,7 @@ export function ContextBreakdown({ usage }: { usage: ContextUsage }) {
             <span className={`context-dot ctx-${r.kind}`} aria-hidden />
             <span className="context-label">{r.label}</span>
             <span className="context-tokens mono">{formatTokens(r.tokens)}</span>
-            <span className="context-share mono">{percent(r.share)}</span>
+            <span className="context-share mono">{percent1(r.share)}</span>
           </li>
         ))}
       </ul>
@@ -106,7 +108,7 @@ export function ContextRing({
           <div className="context-head">
             <span className="context-title">Context</span>
             <span className="context-total mono">
-              {formatTokens(usage?.tokens ?? tokens)} / {formatTokens(usage?.length ?? length)} tokens · {percent(share)}
+              {formatTokens(usage?.tokens ?? tokens)} / {formatTokens(usage?.length ?? length)} tokens · {percent1(share)}
             </span>
           </div>
           {!usage ? (

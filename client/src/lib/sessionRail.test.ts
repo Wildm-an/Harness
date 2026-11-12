@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectorItem, McpServerItem, TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, connectorsHeadValue, contextLevel, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, connectorsHeadValue, contextLevel, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, percentText1, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -45,6 +45,14 @@ describe("the context section", () => {
     expect(percentText(0)).toBe("0%");
     expect(percentText(0.004)).toBe("<1%");
     expect(percentText(0.456)).toBe("46%");
+  });
+
+  it("writes the share with one decimal for the context breakdown", () => {
+    expect(percentText1(0)).toBe("0.0%");
+    expect(percentText1(0.0002)).toBe("<0.1%");
+    expect(percentText1(0.003)).toBe("0.3%");
+    expect(percentText1(0.01)).toBe("1.0%");
+    expect(percentText1(0.7812)).toBe("78.1%");
   });
 });
 
@@ -185,7 +193,7 @@ describe("the Connectors section", () => {
       [server("live", "connected", 3), server("bad", "needs_auth")],
     );
     expect(rows.map((r) => [r.id, r.state, r.detail])).toEqual([
-      ["live", "active", "Active · 3 tools"],
+      ["live", "active", "Active"],
       ["wait", "connecting", "Signing in"],
       ["bad", "problem", "Needs authentication"],
       ["idle", "idle", "Connected · not in this session"],
