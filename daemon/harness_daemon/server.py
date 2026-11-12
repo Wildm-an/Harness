@@ -44,7 +44,7 @@ from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
 from .prompt import load_project_note, project_note_path, save_project_note
 from . import output_styles
-from . import disk_usage, provider_config
+from . import clients, disk_usage, provider_config
 from . import connectors, mcp_auth
 from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, load_mcp_config, project_config_path, user_config_path
 from .cookbook import hosts as cookbook_hosts
@@ -311,7 +311,7 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
             first = json.loads(await asyncio.wait_for(websocket.receive_text(), AUTH_TIMEOUT))
             given = first.get("token") if isinstance(first, dict) and first.get("type") == "auth" else None
         except (asyncio.TimeoutError, json.JSONDecodeError, WebSocketDisconnect):
-            given = None
+            first, given = None, None
         if not isinstance(given, str) or not hmac.compare_digest(given.encode(), token.encode()):
             # The client can close first, for example a page reload before the auth message.
             try:
@@ -324,7 +324,12 @@ def create_app(token: str, storage: Storage | None = None) -> FastAPI:
         conn = Connection(websocket, app.state.storage)
         await conn.send({"type": "auth.ok", "version": __version__, "host": host_info(),
                          "updatable": update.refusal() is None})
-        await conn.run()
+        peer = (websocket.client.host, websocket.client.port) if websocket.client else None
+        report_id = clients.opened(peer, first.get("client"))
+        try:
+            await conn.run()
+        finally:
+            clients.closed(report_id)
 
     @app.websocket("/forward")
     async def forward_endpoint(websocket: WebSocket):

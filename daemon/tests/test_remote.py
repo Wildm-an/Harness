@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from harness_daemon.__main__ import load_or_create_token
@@ -26,11 +27,11 @@ def test_token_file_is_created_read_and_replaced(tmp_path):
     assert created and new != token
 
 
-def start_daemon(home: Path) -> tuple[subprocess.Popen, dict]:
+def start_daemon(home: Path, *args: str) -> tuple[subprocess.Popen, dict]:
     env = {k: v for k, v in os.environ.items() if k != "HARNESS_TOKEN"}
     env["HARNESS_HOME"] = str(home)
     proc = subprocess.Popen(
-        [sys.executable, "-m", "harness_daemon", "--exit-on-stdin-eof"],
+        [sys.executable, "-m", "harness_daemon", "--exit-on-stdin-eof", *args],
         cwd=DAEMON_DIR, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     return proc, json.loads(proc.stdout.readline())
@@ -59,6 +60,53 @@ def test_daemon_that_is_started_by_hand_keeps_its_token(harness_home):
     proc, ready = start_daemon(harness_home)  # A restart reads the same token.
     try:
         assert ready["token"] == token
+    finally:
+        stop_daemon(proc)
+
+
+def test_new_token_replaces_the_token_file(harness_home):
+    proc, ready = start_daemon(harness_home)
+    stop_daemon(proc)
+    proc, again = start_daemon(harness_home, "--new-token")
+    try:
+        assert again["token"] != ready["token"]
+        assert (harness_home / "daemon-token").read_text().strip() == again["token"]
+        with connect(f"ws://127.0.0.1:{again['port']}/ws") as ws:  # The old token does not work.
+            ws.send(json.dumps({"type": "auth", "token": ready["token"]}))
+            try:
+                ws.recv(timeout=10)
+                raise AssertionError("The daemon accepted the old token.")
+            except ConnectionClosed:
+                pass
+    finally:
+        stop_daemon(proc)
+
+
+def test_daemon_reports_the_connections_of_clients(harness_home):
+    proc, ready = start_daemon(harness_home, "--report-connections")
+    try:
+        with connect(f"ws://127.0.0.1:{ready['port']}/ws") as ws:
+            ws.send(json.dumps({"type": "auth", "token": ready["token"], "client": {"name": " my\nlaptop ", "app": "0.1.73"}}))
+            assert json.loads(ws.recv(timeout=10))["type"] == "auth.ok"
+            opened = json.loads(proc.stdout.readline())
+            assert opened["event"] == "connection.open"
+            assert opened["name"] == "my laptop" and opened["app"] == "0.1.73"
+            assert opened["peer"].startswith("127.0.0.1:") and opened["since"] > 0
+        closed = json.loads(proc.stdout.readline())
+        assert closed == {"event": "connection.close", "id": opened["id"]}
+        # A bad token is not a connection, and a client with no "client" object has no name.
+        with connect(f"ws://127.0.0.1:{ready['port']}/ws") as ws:
+            ws.send(json.dumps({"type": "auth", "token": "wrong"}))
+            try:
+                ws.recv(timeout=10)
+            except ConnectionClosed:
+                pass
+        with connect(f"ws://127.0.0.1:{ready['port']}/ws") as ws:
+            ws.send(json.dumps({"type": "auth", "token": ready["token"]}))
+            ws.recv(timeout=10)
+            second = json.loads(proc.stdout.readline())
+            assert second["event"] == "connection.open" and second["id"] == opened["id"] + 1
+            assert second["name"] is None and second["app"] is None
     finally:
         stop_daemon(proc)
 

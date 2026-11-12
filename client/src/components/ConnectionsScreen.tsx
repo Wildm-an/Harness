@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { Check, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Plug, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Copy, Globe, KeyRound, LoaderCircle, Monitor, Pencil, Play, Plug, Plus, RefreshCw, Square, Trash2, TriangleAlert } from "lucide-react";
 import { SecretInput } from "./SecretInput";
 import type { HostInfo } from "../daemon/protocol";
 import { describe, newConnectionId, validate, type Connection, type ConnectionKind } from "../lib/connections";
-import { isTauri } from "../lib/tauri";
+import { isTauri, SERVER_DAEMON_EVENT, SERVER_DAEMON_PORT, serverDaemon, type ServerInfo } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { useConfirm } from "./ConfirmDialog";
 
@@ -417,7 +417,10 @@ export function ConnectionsScreen({
         <ol>
           <li>
             Install the daemon on the remote computer, then start it:
-            <pre className="tool-pre">python -m harness_daemon --port 8765</pre>
+            <div className="server-command">
+              <pre className="tool-pre">python -m harness_daemon --port {SERVER_DAEMON_PORT}</pre>
+              {isTauri() && <ServerDaemonControl />}
+            </div>
           </li>
           <li>
             The daemon prints its token. The token is also in <code>~/.harness/daemon-token</code> on that computer.
@@ -430,5 +433,168 @@ export function ConnectionsScreen({
       </section>
       {confirm.dialog}
     </div>
+  );
+}
+
+type ServerState =
+  | { state: "stopped" }
+  | { state: "busy" }
+  | { state: "running"; info: ServerInfo }
+  | { state: "error"; message: string };
+
+/** "21:52" for today, else the date and the time. */
+function connectedAt(since: number): string {
+  const date = new Date(since);
+  const today = new Date().toDateString() === date.toDateString();
+  return today
+    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
+/**
+ * The play button of the start command: it starts the daemon of this app on this computer, for other
+ * computers. While it runs, "Show token" shows the token that the other computers need, "New token"
+ * replaces it, and a list shows the computers that are connected now.
+ */
+function ServerDaemonControl() {
+  const [server, setServer] = useState<ServerState>({ state: "busy" });
+  const [tokenShown, setTokenShown] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const acting = useRef(false); // A start, a stop, or a new token runs: the events do not change the state.
+  const confirm = useConfirm();
+
+  useEffect(() => {
+    let live = true;
+    let unlisten: (() => void) | null = null;
+    const refresh = () => {
+      if (acting.current) return;
+      serverDaemon("status").then(
+        (info) => live && !acting.current && setServer(info ? { state: "running", info } : { state: "stopped" }),
+        () => live && !acting.current && setServer({ state: "stopped" }),
+      );
+    };
+    refresh();
+    // A computer connects or disconnects, or "Stop remote daemon" in the tray menu.
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen(SERVER_DAEMON_EVENT, refresh).then((stop) => (live ? (unlisten = stop) : stop())),
+    );
+    return () => {
+      live = false;
+      unlisten?.();
+    };
+  }, []);
+
+  const run = async (action: "start" | "stop" | "new-token") => {
+    acting.current = true;
+    setServer({ state: "busy" });
+    if (action !== "new-token") setTokenShown(false);
+    try {
+      const info = await serverDaemon(action);
+      setServer(info ? { state: "running", info } : { state: "stopped" });
+    } catch (e) {
+      setServer({ state: "error", message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      acting.current = false;
+    }
+  };
+
+  const askNewToken = () =>
+    confirm.ask({
+      title: "Make a new token?",
+      text: "The daemon restarts with a new token. The computers that use the old token lose the connection, and they cannot connect again. Give the new token only to the computers that you trust.",
+      confirmLabel: "Make new token",
+      onConfirm: () => void run("new-token"),
+    });
+
+  const copy = (token: string) => {
+    void navigator.clipboard.writeText(token).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const running = server.state === "running";
+  return (
+    <>
+      <button
+        type="button"
+        className="icon-btn ghost server-command-btn"
+        onClick={() => void run(running ? "stop" : "start")}
+        disabled={server.state === "busy"}
+        aria-label={running ? "Stop remote daemon" : "Start the daemon on this computer"}
+        title={running ? "Stop remote daemon" : "Start on this computer"}
+      >
+        {server.state === "busy" ? (
+          <LoaderCircle size={14} className="spin" aria-hidden />
+        ) : running ? (
+          <Square size={13} aria-hidden />
+        ) : (
+          <Play size={14} aria-hidden />
+        )}
+      </button>
+      <div className="server-status">
+        {server.state === "running" ? (
+          <>
+            <span className="ok" role="status">
+              <Check size={14} aria-hidden /> The daemon runs on this computer, on port {server.info.port}. It stops when you quit
+              Harness.
+            </span>
+            <div className="server-token">
+              <button type="button" className="btn btn-small" onClick={() => setTokenShown((v) => !v)} aria-expanded={tokenShown}>
+                <KeyRound size={14} aria-hidden />
+                {tokenShown ? "Hide token" : "Show token"}
+              </button>
+              <button type="button" className="btn btn-small" onClick={askNewToken}>
+                <RefreshCw size={14} aria-hidden />
+                New token
+              </button>
+            </div>
+            {tokenShown && (
+              <span className="key-field server-token-field">
+                <input className="mono" readOnly value={server.info.token} aria-label="Token" onFocus={(e) => e.target.select()} />
+                <button
+                  type="button"
+                  className="icon-btn ghost key-field-btn"
+                  onClick={() => copy(server.info.token)}
+                  aria-label="Copy the token"
+                  title={copied ? "Copied" : "Copy the token"}
+                >
+                  {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
+                </button>
+              </span>
+            )}
+            <div className="server-clients">
+              <span className="server-clients-title" id="server-clients-title">
+                Connected computers ({server.info.connections.length})
+              </span>
+              {server.info.connections.length === 0 ? (
+                <span className="help">No computer is connected.</span>
+              ) : (
+                <ul aria-labelledby="server-clients-title">
+                  {server.info.connections.map((c) => (
+                    <li key={c.id}>
+                      <Monitor size={14} aria-hidden />
+                      <span className="server-client-name">{c.name ?? c.peer ?? "Unknown computer"}</span>
+                      <span className="server-client-desc">
+                        {[c.name && c.peer, c.app && `Harness ${c.app}`, `connected at ${connectedAt(c.since)}`]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        ) : server.state === "error" ? (
+          <span className="field-error" role="alert">
+            {server.message}
+          </span>
+        ) : (
+          <span className="help">The play button starts the daemon of this app on this computer. It stops when you quit Harness.</span>
+        )}
+      </div>
+      {confirm.dialog}
+    </>
   );
 }

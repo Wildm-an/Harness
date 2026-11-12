@@ -15,6 +15,61 @@ export async function localDaemonInfo(restart = false): Promise<DaemonInfo> {
   return invoke<DaemonInfo>(restart ? "restart_daemon" : "daemon_info");
 }
 
+/** The port of the server daemon: the port of the start command on the Computers page. */
+export const SERVER_DAEMON_PORT = 8765;
+
+/** The app sends this event after a start or a stop of the server daemon, also from the tray menu. */
+export const SERVER_DAEMON_EVENT = "server-daemon-changed";
+
+/** A computer that is connected to the server daemon now (`clients.py` of the daemon). */
+export interface ClientConnection {
+  id: number;
+  peer: string | null; // "address:port". Through an SSH tunnel it is 127.0.0.1.
+  name: string | null; // The computer name that the client sends. Null for an older client.
+  app: string | null; // The app version of the client.
+  since: number; // Milliseconds since 1970.
+}
+
+export interface ServerInfo extends DaemonInfo {
+  connections: ClientConnection[];
+}
+
+/**
+ * The server daemon: a daemon of this app on a fixed port, for other computers (Settings > Computers).
+ * It uses the token file, so its token stays the same. It stops when this app stops. "new-token"
+ * restarts it with a new token: the computers of the old token lose the connection.
+ */
+export async function serverDaemon(action: "start" | "new-token" | "status" | "stop"): Promise<ServerInfo | null> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  if (action === "start" || action === "new-token") {
+    return invoke<ServerInfo>("server_daemon_start", { port: SERVER_DAEMON_PORT, newToken: action === "new-token" });
+  }
+  if (action === "stop") {
+    await invoke("server_daemon_stop");
+    return null;
+  }
+  return invoke<ServerInfo | null>("server_daemon_status");
+}
+
+let identity: Promise<{ name?: string; app?: string }> | null = null;
+
+/**
+ * The name of this computer and the app version, for the auth message. A server daemon shows them
+ * on its Computers page. Empty in a normal browser.
+ */
+export function clientIdentity(): Promise<{ name?: string; app?: string }> {
+  if (!isTauri()) return Promise.resolve({});
+  identity ??= (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const [name, app] = await Promise.all([
+      invoke<string | null>("computer_name").catch(() => null),
+      appVersionOf().catch(() => null),
+    ]);
+    return { ...(name ? { name } : {}), ...(app ? { app } : {}) };
+  })();
+  return identity;
+}
+
 /** The wheel of the daemon of this app version (base64), for "Update daemon". */
 export async function daemonWheel(): Promise<{ filename: string; data: string }> {
   const { invoke } = await import("@tauri-apps/api/core");

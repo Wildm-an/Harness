@@ -1,4 +1,5 @@
 import type { ClientMessage, DaemonMessage, HostInfo } from "./protocol";
+import { clientIdentity } from "../lib/tauri";
 
 export interface Hello {
   version: string;
@@ -55,7 +56,13 @@ export class DaemonConnection {
         }
       }, AUTH_TIMEOUT_MS);
 
-      ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token } satisfies ClientMessage));
+      ws.onopen = () =>
+        void clientIdentity().then(
+          (client) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "auth", token, client } satisfies ClientMessage));
+          },
+          () => undefined,
+        );
       ws.onmessage = (event) => {
         // Any message shows that the connection is alive.
         this.aliveWaiters.forEach((fn) => fn());

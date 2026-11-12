@@ -15,6 +15,12 @@
 //!
 //! The development daemon writes its log to the terminal. The other daemons write it to
 //! `~/.harness/logs/daemon.log` (the log of the previous start is `daemon.log.1`).
+//!
+//! The server daemon (Settings > Computers, the play button) is a second daemon of the same command,
+//! for other computers. It listens on 127.0.0.1 with a fixed port, and it uses the token file
+//! (`~/.harness/daemon-token`), so the token stays the same after a restart. Its ready line has the
+//! token. It also stops when its stdin closes: it runs only while this app runs. Its log is
+//! `~/.harness/logs/server-daemon.log`.
 
 use serde::Serialize;
 use std::fs::File;
@@ -22,6 +28,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -37,9 +44,33 @@ pub struct DaemonInfo {
     pub token: String,
 }
 
+/// A client of the server daemon: a computer that is connected now (`clients.py` of the daemon).
+#[derive(Clone, Serialize, serde::Deserialize, Debug, PartialEq)]
+pub struct ClientConnection {
+    pub id: u64,
+    pub peer: Option<String>, // "address:port". Through an SSH tunnel it is 127.0.0.1.
+    pub name: Option<String>, // The computer name that the client sends. Null for an older client.
+    pub app: Option<String>,  // The app version of the client.
+    pub since: u64,           // Milliseconds since 1970.
+}
+
+/// The server daemon and its clients, for the Computers page.
+#[derive(Clone, Serialize)]
+pub struct ServerInfo {
+    pub host: String,
+    pub port: u16,
+    pub token: String,
+    pub connections: Vec<ClientConnection>,
+}
+
+/// Called after a client connects or disconnects, and after the server daemon stops by itself.
+pub type OnChange = Arc<dyn Fn() + Send + Sync>;
+
 struct Running {
     child: Child,
     info: DaemonInfo,
+    clients: Arc<Mutex<Vec<ClientConnection>>>,
+    ended: Arc<AtomicBool>, // The stdout of the daemon closed: the daemon stops.
 }
 
 #[derive(Clone, Default)]
@@ -66,7 +97,7 @@ impl Sidecar {
         }
         *guard = None;
         let resource_dir = self.resource_dir.lock().ok().and_then(|dir| dir.clone());
-        let running = spawn_daemon(resource_dir.as_deref())?;
+        let running = spawn(resource_dir.as_deref(), Mode::Local, None)?;
         let info = running.info.clone();
         *guard = Some(running);
         Ok(info)
@@ -75,17 +106,109 @@ impl Sidecar {
     /// Closes the stdin of the daemon, so that it stops its turns and servers. Kills it after a timeout.
     pub fn stop(&self) {
         let Ok(mut guard) = self.inner.lock() else { return };
-        let Some(mut running) = guard.take() else { return };
-        drop(running.child.stdin.take());
-        let deadline = Instant::now() + STOP_TIMEOUT;
-        while Instant::now() < deadline {
-            if !matches!(running.child.try_wait(), Ok(None)) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(50));
+        if let Some(running) = guard.take() {
+            stop_running(running);
         }
-        let _ = running.child.kill();
-        let _ = running.child.wait();
+    }
+}
+
+/// The server daemon: a daemon on a fixed port for other computers (Settings > Computers).
+#[derive(Clone, Default)]
+pub struct ServerDaemon {
+    inner: Arc<Mutex<Option<Running>>>,
+}
+
+impl ServerDaemon {
+    /// The running server daemon and its clients, or None.
+    pub fn status(&self) -> Option<ServerInfo> {
+        let mut guard = self.inner.lock().ok()?;
+        let running = guard.as_mut()?;
+        if !running.ended.load(Ordering::SeqCst) && matches!(running.child.try_wait(), Ok(None)) {
+            return Some(server_info(running));
+        }
+        *guard = None;
+        None
+    }
+
+    /// Starts the server daemon on `port`, or returns the one that runs. Blocks until it is ready.
+    /// `new_token`: stop the daemon that runs, and start it with a new token (`--new-token`). The
+    /// clients of the old token lose the connection, and they cannot connect again.
+    pub fn start(
+        &self,
+        resource_dir: Option<&Path>,
+        port: u16,
+        new_token: bool,
+        on_change: OnChange,
+    ) -> Result<ServerInfo, String> {
+        if new_token {
+            self.stop();
+        } else if let Some(info) = self.status() {
+            return Ok(info);
+        }
+        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
+        let running = spawn(resource_dir, Mode::Server { port, new_token }, Some(on_change))?;
+        let info = server_info(&running);
+        *guard = Some(running);
+        Ok(info)
+    }
+
+    pub fn stop(&self) {
+        let Ok(mut guard) = self.inner.lock() else { return };
+        if let Some(running) = guard.take() {
+            stop_running(running);
+        }
+    }
+}
+
+fn stop_running(mut running: Running) {
+    drop(running.child.stdin.take());
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    while Instant::now() < deadline {
+        if !matches!(running.child.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = running.child.kill();
+    let _ = running.child.wait();
+}
+
+fn server_info(running: &Running) -> ServerInfo {
+    let connections = running.clients.lock().map(|c| c.clone()).unwrap_or_default();
+    ServerInfo {
+        host: running.info.host.clone(),
+        port: running.info.port,
+        token: running.info.token.clone(),
+        connections,
+    }
+}
+
+/// The local daemon of this app, or the server daemon on a fixed port.
+#[derive(Clone, Copy)]
+enum Mode {
+    Local,
+    Server { port: u16, new_token: bool },
+}
+
+/// Applies one stdout line of the server daemon (`clients.py`) to the list. True if the list changed.
+fn apply_client_event(clients: &mut Vec<ClientConnection>, line: &str) -> bool {
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(line.trim()) else { return false };
+    match event.get("event").and_then(|e| e.as_str()) {
+        Some("connection.open") => match serde_json::from_value::<ClientConnection>(event) {
+            Ok(client) => {
+                clients.retain(|c| c.id != client.id);
+                clients.push(client);
+                true
+            }
+            Err(_) => false,
+        },
+        Some("connection.close") => {
+            let Some(id) = event.get("id").and_then(|i| i.as_u64()) else { return false };
+            let before = clients.len();
+            clients.retain(|c| c.id != id);
+            clients.len() != before
+        }
+        _ => false,
     }
 }
 
@@ -152,25 +275,41 @@ fn harness_home() -> Option<PathBuf> {
     }
 }
 
-/// Opens a new daemon log. Keeps the log of the previous start as `daemon.log.1`.
-fn open_log(logs: &Path) -> std::io::Result<(File, PathBuf)> {
+/// Opens a new daemon log `{name}.log`. Keeps the log of the previous start as `{name}.log.1`.
+fn open_log(logs: &Path, name: &str) -> std::io::Result<(File, PathBuf)> {
     std::fs::create_dir_all(logs)?;
-    let path = logs.join("daemon.log");
+    let path = logs.join(format!("{name}.log"));
     if path.exists() {
-        let _ = std::fs::rename(&path, logs.join("daemon.log.1"));
+        let _ = std::fs::rename(&path, logs.join(format!("{name}.log.1")));
     }
     Ok((File::create(&path)?, path))
 }
 
-fn spawn_daemon(resource_dir: Option<&Path>) -> Result<Running, String> {
-    let token = random_token()?;
+fn spawn(resource_dir: Option<&Path>, mode: Mode, on_change: Option<OnChange>) -> Result<Running, String> {
     let (mut cmd, log_to_terminal) = daemon_command(resource_dir)?;
-    // --prefer-port: the same port at each start when it is free, so the fire URL of a routine API
-    // trigger stays the same. Else the daemon takes a random port.
-    cmd.args(["--host", "127.0.0.1", "--port", "0", "--prefer-port", "47615", "--exit-on-stdin-eof"])
-        .env("HARNESS_TOKEN", &token)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped());
+    let token = match mode {
+        Mode::Local => {
+            let token = random_token()?;
+            // --prefer-port: the same port at each start when it is free, so the fire URL of a routine
+            // API trigger stays the same. Else the daemon takes a random port.
+            cmd.args(["--host", "127.0.0.1", "--port", "0", "--prefer-port", "47615"]).env("HARNESS_TOKEN", &token);
+            Some(token)
+        }
+        Mode::Server { port, new_token } => {
+            // No HARNESS_TOKEN: the daemon uses the token file, and the ready line has the token.
+            cmd.args(["--host", "127.0.0.1", "--port", &port.to_string(), "--report-connections"])
+                .env_remove("HARNESS_TOKEN");
+            if new_token {
+                cmd.arg("--new-token");
+            }
+            None
+        }
+    };
+    cmd.arg("--exit-on-stdin-eof").stdin(Stdio::piped()).stdout(Stdio::piped());
+    let log_name = match mode {
+        Mode::Local => "daemon",
+        Mode::Server { .. } => "server-daemon",
+    };
     // A release app on Windows has no console, so its stderr is not a valid handle.
     let log_hint = if log_to_terminal {
         cmd.stderr(Stdio::inherit());
@@ -178,7 +317,7 @@ fn spawn_daemon(resource_dir: Option<&Path>) -> Result<Running, String> {
     } else {
         let log = harness_home()
             .ok_or_else(|| "no home folder".to_string())
-            .and_then(|home| open_log(&home.join("logs")).map_err(|e| e.to_string()));
+            .and_then(|home| open_log(&home.join("logs"), log_name).map_err(|e| e.to_string()));
         match log {
             Ok((file, path)) => {
                 cmd.stderr(file);
@@ -201,16 +340,42 @@ fn spawn_daemon(resource_dir: Option<&Path>) -> Result<Running, String> {
     let stdout = child.stdout.take().ok_or("The daemon has no stdout.")?;
 
     // Read the ready line on a thread, so that a timeout is possible.
+    let clients: Arc<Mutex<Vec<ClientConnection>>> = Arc::default();
+    let ended = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        let result = reader.read_line(&mut line).map(|_| line);
-        let _ = tx.send(result);
-        // Keep the pipe empty, so that the daemon never blocks on a write.
-        let mut sink = Vec::new();
-        let _ = reader.read_to_end(&mut sink);
-    });
+    {
+        let clients = clients.clone();
+        let ended = ended.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            let result = reader.read_line(&mut line).map(|_| line);
+            let _ = tx.send(result);
+            // Keep the pipe empty, so that the daemon never blocks on a write. The server daemon
+            // reports its clients on stdout.
+            match on_change {
+                None => {
+                    let mut sink = Vec::new();
+                    let _ = reader.read_to_end(&mut sink);
+                }
+                Some(on_change) => {
+                    let mut line = String::new();
+                    while matches!(reader.read_line(&mut line), Ok(n) if n > 0) {
+                        let changed = clients.lock().map(|mut c| apply_client_event(&mut c, &line)).unwrap_or(false);
+                        if changed {
+                            on_change();
+                        }
+                        line.clear();
+                    }
+                    ended.store(true, Ordering::SeqCst);
+                    if let Ok(mut c) = clients.lock() {
+                        c.clear();
+                    }
+                    on_change();
+                }
+            }
+        });
+    }
 
     let line = match rx.recv_timeout(READY_TIMEOUT) {
         Ok(Ok(line)) if !line.trim().is_empty() => line,
@@ -231,9 +396,23 @@ fn spawn_daemon(resource_dir: Option<&Path>) -> Result<Running, String> {
         .and_then(|p| p.as_u64())
         .and_then(|p| u16::try_from(p).ok())
         .ok_or("The daemon ready line has no port.")?;
+    let token = match token {
+        Some(token) => token,
+        // A daemon that uses the token file puts the token in its ready line.
+        None => match ready.get("token").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
+            Some(token) => token.to_string(),
+            None => {
+                drop(child.stdin.take());
+                let _ = child.kill();
+                return Err("The daemon ready line has no token.".into());
+            }
+        },
+    };
     Ok(Running {
         child,
         info: DaemonInfo { host: "127.0.0.1".into(), port, token },
+        clients,
+        ended,
     })
 }
 
@@ -242,12 +421,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn client_events_update_the_list() {
+        let mut clients = Vec::new();
+        let open = r#"{"event": "connection.open", "id": 1, "peer": "127.0.0.1:5000", "name": "laptop", "app": "0.1.73", "since": 1700000000000}"#;
+        assert!(apply_client_event(&mut clients, open));
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].name.as_deref(), Some("laptop"));
+        let old = r#"{"event": "connection.open", "id": 2, "peer": null, "name": null, "app": null, "since": 1}"#;
+        assert!(apply_client_event(&mut clients, old));
+        assert!(!apply_client_event(&mut clients, "not json"));
+        assert!(!apply_client_event(&mut clients, r#"{"event": "ready", "port": 8765}"#));
+        assert!(apply_client_event(&mut clients, r#"{"event": "connection.close", "id": 1}"#));
+        assert!(!apply_client_event(&mut clients, r#"{"event": "connection.close", "id": 1}"#));
+        assert_eq!(clients.iter().map(|c| c.id).collect::<Vec<_>>(), vec![2]);
+    }
+
+    #[test]
     fn a_new_log_keeps_the_previous_log() {
         let logs = std::env::temp_dir().join(format!("harness-log-test-{}", random_token().unwrap()));
-        let (mut first, path) = open_log(&logs).unwrap();
+        let (mut first, path) = open_log(&logs, "daemon").unwrap();
         std::io::Write::write_all(&mut first, b"first start").unwrap();
         drop(first);
-        let (second, again) = open_log(&logs).unwrap();
+        let (second, again) = open_log(&logs, "daemon").unwrap();
         assert_eq!(path, again);
         assert_eq!(std::fs::read_to_string(logs.join("daemon.log.1")).unwrap(), "first start");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
