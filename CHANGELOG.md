@@ -3,6 +3,12 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.81 (2026-11-12)
+
+### Appearance
+
+- The corner radius is 4px, not 2px. Each element with rounded corners has the new radius.
+
 ## 0.1.80 (2026-11-12)
 
 ### Context
