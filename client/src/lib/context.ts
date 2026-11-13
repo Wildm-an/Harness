@@ -22,7 +22,21 @@ export function contextSourceText(source: string | undefined): string {
   }
   if (source === "settings") return "The context length comes from the project settings.";
   if (source === "providers.json") return "The context length comes from providers.json.";
+  if (source === "error message") return "The context length comes from an error message of the endpoint.";
+  if (source.endsWith(SAVED_SUFFIX)) {
+    const from = source.slice(0, -SAVED_SUFFIX.length);
+    const where = from === "error message" ? "an error message of the endpoint" : `the endpoint (${from})`;
+    return `The context length comes from an earlier check of ${where}. The harness saved it. The endpoint did not give it now.`;
+  }
   return `The context length comes from the endpoint (${source}).`;
+}
+
+/** The source of a context length that the daemon saved after an earlier check (model-contexts.json). */
+const SAVED_SUFFIX = " (saved)";
+
+/** The daemon warning "The context length of <model> is unknown. ..." (providers.resolve_context_length). */
+export function isUnknownContextWarning(text: string): boolean {
+  return /^The context length of .+ is unknown\./.test(text);
 }
 
 /** The reply to context.get: the parts of the next request, in tokens. */

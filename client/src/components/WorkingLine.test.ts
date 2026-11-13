@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentStep, formatElapsed, formatTokens, modelName, turnTokens, workingStatus } from "./WorkingLine";
+import { currentStep, formatElapsed, formatTokens, modelName, retryText, turnTokens, workingStatus } from "./WorkingLine";
 import { chatReducer, emptyChat, type ChatItem } from "../chat/state";
 
 describe("the working line", () => {
@@ -66,5 +66,18 @@ describe("the working line while the model thinks", () => {
   it("says Thinking, not Waiting", () => {
     expect(workingStatus([], "fake/glm-5.3-flash", true).text).toBe("Thinking…");
     expect(workingStatus([], "fake/glm-5.3-flash").text).toBe("Waiting for glm-5.3-flash…");
+  });
+});
+
+describe("the retries of a model call", () => {
+  const running = () => chatReducer(emptyChat, { type: "user", text: "hi", startsTurn: true });
+
+  it("shows the attempt until the model answers", () => {
+    let s = running();
+    s = chatReducer(s, { type: "daemon", msg: { type: "turn.retry", attempt: 2, max: 5, delay: 2, error: "Cannot connect." } });
+    expect(s.turn?.retry).toEqual({ attempt: 2, max: 5 });
+    expect(retryText(s.turn!.retry!)).toBe("Retrying (2/5)");
+    s = chatReducer(s, { type: "daemon", msg: { type: "token", text: "Hi" } });
+    expect(s.turn?.retry).toBeUndefined();
   });
 });

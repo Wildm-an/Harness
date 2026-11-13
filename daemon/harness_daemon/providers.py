@@ -33,7 +33,7 @@ import time
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import asyncio
 
@@ -75,7 +75,15 @@ def register_plugin_provider(name: str, entry: dict[str, Any]) -> Callable[[], N
 
 
 class ModelError(Exception):
-    pass
+    def __init__(self, message: str, *, reconnect: bool = False) -> None:
+        super().__init__(message)
+        # True: the endpoint did not answer, or a gateway in front of it did not reach the model server.
+        # The agent tries the request again some times (agent.MAX_CONNECT_RETRIES).
+        self.reconnect = reconnect
+
+
+# HTTP codes of a gateway or proxy that did not reach the model server: the server can come back.
+GATEWAY_CODES = {502, 503, 504}
 
 
 OPENROUTER_HOST = "openrouter.ai"
@@ -468,8 +476,24 @@ def openrouter_capabilities(entry: dict[str, Any]) -> list[str] | None:
 def context_from_entry(entry: dict[str, Any]) -> int | None:
     """The context length in one entry of GET /models: vLLM, OpenRouter, llama-server, and others."""
     meta = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
+    top = entry.get("top_provider") if isinstance(entry.get("top_provider"), dict) else {}  # OpenRouter.
+    metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}  # DeepInfra.
     return _positive_int(entry.get("max_model_len") or entry.get("context_length") or entry.get("context_window")
+                         or entry.get("max_context_length")  # Mistral.
+                         or entry.get("max_input_tokens") or entry.get("context_size") or entry.get("max_seq_len")
+                         or top.get("context_length") or metadata.get("context_length")
                          or meta.get("n_ctx") or meta.get("n_ctx_train"))
+
+
+def _litellm_contexts(data: Any) -> dict[str, int]:
+    """GET /model/info of a LiteLLM proxy: {"data": [{"model_name", "model_info": {"max_input_tokens"}}]}."""
+    found: dict[str, int] = {}
+    for m in _entries(data):
+        info = m.get("model_info") if isinstance(m.get("model_info"), dict) else {}
+        n = _positive_int(info.get("max_input_tokens"))  # Not max_tokens: often the output limit.
+        if n and m.get("model_name"):
+            found.setdefault(str(m["model_name"]), n)
+    return found
 
 
 @dataclass
@@ -481,6 +505,7 @@ class OpenAIContextSources:
     tgi: int | None = None  # GET /info of Text Generation Inference: max_total_tokens.
     listing: dict[str, int] = field(default_factory=dict)  # GET /models: model id -> context.
     listing_source: str = "model list"
+    litellm: dict[str, int] = field(default_factory=dict)  # GET /model/info of LiteLLM: model name -> context.
 
     def lookup(self, model: str) -> ContextInfo | None:
         if self.llama_server:
@@ -501,6 +526,8 @@ class OpenAIContextSources:
             return ContextInfo(self.tgi, "Text Generation Inference")
         if model in self.listing:
             return ContextInfo(self.listing[model], self.listing_source)
+        if model in self.litellm:
+            return ContextInfo(self.litellm[model], "LiteLLM model info")
         return None
 
 
@@ -518,11 +545,12 @@ async def openai_context_sources(client: httpx.AsyncClient, provider: Provider,
         return {"data": listing} if listing is not None else await _json(
             client, "GET", f"{provider.base_url}/models", headers=headers)
 
-    props, lmstudio, info, listed = await asyncio.gather(
+    props, lmstudio, info, listed, litellm = await asyncio.gather(
         _json(client, "GET", f"{provider.root_url}/props", headers=headers),
         _json(client, "GET", f"{provider.root_url}/api/v0/models", headers=headers),
         _json(client, "GET", f"{provider.root_url}/info", headers=headers),
         models(),
+        _json(client, "GET", f"{provider.base_url}/model/info", headers=headers),
     )
     sources = OpenAIContextSources()
     if isinstance(props, dict):
@@ -537,11 +565,19 @@ async def openai_context_sources(client: httpx.AsyncClient, provider: Provider,
         n = context_from_entry(m)
         if n and m.get("id"):
             sources.listing[str(m["id"])] = n
+    sources.litellm = _litellm_contexts(litellm)
     return sources
 
 
 async def _probe_openai(client: httpx.AsyncClient, provider: Provider, model: str) -> ContextInfo | None:
-    return (await openai_context_sources(client, provider)).lookup(model)
+    found = (await openai_context_sources(client, provider)).lookup(model)
+    if found or provider.kind == "openrouter":
+        return found
+    # GET /models/{id}: some servers give more fields for one model than in the list.
+    entry = await _json(client, "GET", f"{provider.base_url}/models/{quote(model, safe='')}",
+                        headers=_auth_headers(provider))
+    n = context_from_entry(entry) if isinstance(entry, dict) else None
+    return ContextInfo(n, "model entry") if n else None
 
 
 async def resolve_context_length(provider: Provider, model: str, settings: dict[str, Any]) -> ContextInfo:
@@ -710,7 +746,9 @@ class ModelClient:
                 self._send_stream_options = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             # A model with no effort levels can reject reasoning_effort. Try once more without it.
-            if "reasoning_effort" in kwargs:
+            # Not for a request that is too long: the agent uses the limit in the error (agent.py).
+            from .model_contexts import limit_from_error
+            if "reasoning_effort" in kwargs and not limit_from_error(str(e)):
                 log.info("%s rejected reasoning_effort=%s: %s", self.label, effort, e)
                 self._send_effort = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
@@ -723,9 +761,10 @@ class ModelClient:
                                          on_reasoning=on_reasoning)
             where = f"{self.provider.base_url} through SSH {self.provider.ssh.label}" if self.provider.ssh else self.provider.base_url
             log.warning("%s: no connection to %s: %r", self.label, where, e.__cause__ or e)
-            raise ModelError(f"Cannot connect to the model endpoint at {where}.") from e
+            raise ModelError(f"Cannot connect to the model endpoint at {where}.", reconnect=True) from e
         except openai.APIStatusError as e:
-            raise ModelError(f"The model endpoint returned HTTP {e.status_code}: {e.message}") from e
+            raise ModelError(f"The model endpoint returned HTTP {e.status_code}: {e.message}",
+                             reconnect=e.status_code in GATEWAY_CODES) from e
 
         opened = time.monotonic()
         first_reasoning: float | None = None

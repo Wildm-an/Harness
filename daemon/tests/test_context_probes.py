@@ -95,7 +95,7 @@ def test_contexts_of_a_model_list_use_one_request_per_source(server):
     }
     # The caller gave the model list, so the server gets no second /models request.
     paths = sorted(r.url.path for r in server["requests"])
-    assert paths == ["/api/v0/models", "/info", "/props"]
+    assert paths == ["/api/v0/models", "/info", "/props", "/v1/model/info"]
 
 
 def test_contexts_of_ollama_models(server):
@@ -155,3 +155,29 @@ def test_image_input_of_lm_studio_and_llama_server(server):
     assert images(provider(), "t") is False
     server["routes"] = {("GET", "/props"): {"modalities": {"vision": False}}}
     assert images(provider()) is False
+
+
+def test_one_model_entry_when_the_list_has_no_context(server):
+    server["routes"] = {("GET", "/v1/models"): {"data": [{"id": "org/m"}]},
+                        ("GET", "/v1/models/org/m"): {"id": "org/m", "max_model_len": 202752}}
+    info = resolve(provider(), "org/m")
+    assert (info.length, info.source) == (202752, "model entry")
+    assert any(r.url.raw_path == b"/v1/models/org%2Fm" for r in server["requests"])
+
+
+def test_litellm_model_info(server):
+    server["routes"] = {("GET", "/v1/model/info"): {"data": [
+        {"model_name": "m", "model_info": {"max_input_tokens": 128000, "max_tokens": 8192}}]}}
+    info = resolve(provider())
+    assert (info.length, info.source) == (128000, "LiteLLM model info")
+
+
+@pytest.mark.parametrize("entry", [
+    {"id": "m", "max_context_length": 32768},  # Mistral.
+    {"id": "m", "top_provider": {"context_length": 32768}},  # OpenRouter.
+    {"id": "m", "metadata": {"context_length": 32768}},  # DeepInfra.
+    {"id": "m", "max_input_tokens": 32768},
+])
+def test_more_model_list_fields(server, entry):
+    server["routes"] = {("GET", "/v1/models"): {"data": [entry]}}
+    assert resolve(provider()).length == 32768

@@ -1,5 +1,6 @@
 // Chat state. The reducer turns daemon events into items for the message list.
 
+import { isUnknownContextWarning } from "../lib/context";
 import type { AskQuestion, Decision, DaemonMessage, HistoryMessage, PermissionMode, PermissionRequest, PlanDecision, StopReason, ToolCardData, Usage } from "../daemon/protocol";
 
 export type ToolStatus = "running" | "done" | "error";
@@ -62,7 +63,11 @@ export interface TurnInfo {
   tokens: number;
   thinking?: boolean; // The model thinks now: no text and no tool call since its reasoning started.
   sendNow?: boolean; // "Send now" of a queued message stops the turn: the task list stays after it.
+  retry?: { attempt: number; max: number }; // The endpoint did not answer: the daemon tries again (turn.retry).
 }
+
+/** The events that show the model answers again: the working line stops to show "Retrying". */
+const ANSWERED = new Set<DaemonMessage["type"]>(["thinking", "token", "tool.start", "turn.usage"]);
 
 export interface ChatState {
   items: ChatItem[];
@@ -210,7 +215,10 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
 }
 
 function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
+  if (state.turn?.retry && ANSWERED.has(msg.type)) state = { ...state, turn: { ...state.turn, retry: undefined } };
   switch (msg.type) {
+    case "turn.retry":
+      return state.turn ? { ...state, turn: { ...state.turn, retry: { attempt: msg.attempt, max: msg.max } } } : state;
     case "thinking":
       return state.turn ? { ...state, turn: { ...state.turn, thinking: true } } : state;
     case "token": {
@@ -314,7 +322,10 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
       // The checks of the model endpoint finished after the open.
       const notices: ChatItem[] = msg.warnings.map((text) => ({ kind: "notice", id: nextId("notice"), level: "warning", text }));
       const context = state.context ? { ...state.context, length: msg.context_length, source: msg.context_source } : state.context;
-      return { ...state, items: notices.length ? [...state.items, ...notices] : state.items, context, imageInput: msg.image_input };
+      // A later check found the context length: the warning that it is unknown is not true now.
+      const known = !!msg.context_source && msg.context_source !== "default";
+      const kept = known ? state.items.filter((i) => !(i.kind === "notice" && isUnknownContextWarning(i.text))) : state.items;
+      return { ...state, items: notices.length ? [...kept, ...notices] : kept, context, imageInput: msg.image_input };
     }
     case "command.result": {
       const notices: ChatItem[] = [];

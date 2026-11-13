@@ -3,7 +3,7 @@
 // item in the sidebar opens it. Each row shows the name, a short description, and the status. A skill
 // row opens the skill. An MCP row opens its tools, its target, and its error.
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
   CircleCheck,
@@ -303,6 +303,7 @@ function McpRow({
   onRestart,
   onAuth,
   onOpenConnectors,
+  focusKey,
 }: {
   item: McpServerItem;
   live: boolean;
@@ -310,16 +311,24 @@ function McpRow({
   onRestart: () => void;
   onAuth: (action: McpAuthAction) => void;
   onOpenConnectors: () => void;
+  focusKey?: number; // A click on the failure popup of this server: open the row and show it.
 }) {
   // A failed server opens at once, so the error shows. A sign-in opens the row too.
   const [open, setOpen] = useState(item.state === "failed" || item.state === "authenticating");
   useEffect(() => {
     if (item.state === "authenticating") setOpen(true);
   }, [item.state]);
+  const rowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (focusKey === undefined) return;
+    setOpen(true);
+    rowRef.current?.scrollIntoView({ block: "center" });
+    rowRef.current?.querySelector<HTMLButtonElement>(".cap-row")?.focus({ preventScroll: true });
+  }, [focusKey]);
   const confirm = useConfirm();
   const status = MCP_STATUS[item.state];
   return (
-    <li className={`cap-item${open ? " open" : ""}`}>
+    <li ref={rowRef} className={`cap-item${open ? " open" : ""}`}>
       <div className="cap-row-wrap">
         <button type="button" className="cap-row" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
           <span className={`cap-icon${status === "failed" ? " bad" : hasConnectorLogo(item.connector) ? " cap-logo" : ""}`} aria-hidden>
@@ -1027,6 +1036,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   deviceCode,
   onConnector,
   onEditConfig,
+  focusMcp = null,
 }: {
   tab: CapTab;
   onTab: (tab: CapTab) => void;
@@ -1048,8 +1058,14 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   deviceCode: DeviceCode | null;
   onConnector: (action: ConnectorAction) => void;
   onEditConfig: () => void;
+  // The MCP server row to open and show, after a click on its failure popup. `key` changes with each click.
+  focusMcp?: { name: string; key: number } | null;
 }) {
   const [query, setQuery] = useState("");
+  // A click on a failure popup: the filter must not hide the row.
+  useEffect(() => {
+    if (focusMcp) setQuery("");
+  }, [focusMcp]);
   const [clickedSkill, setClickedSkill] = useState<string | null>(null); // The skill that loads (M17).
   const [skillGroup, setSkillGroup] = useState<SkillGroup | null>(null);
   const groupSkills = useMemo(() => (skills && skillGroup ? skillsOfGroup(skills, skillGroup) : []), [skills, skillGroup]);
@@ -1223,6 +1239,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
                       onRestart={() => onRestart(item.name)}
                       onAuth={onMcpAuth}
                       onOpenConnectors={() => onTab("connections")}
+                      focusKey={focusMcp?.name === item.name ? focusMcp.key : undefined}
                     />
                   ))}
                 </ul>

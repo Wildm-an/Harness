@@ -99,6 +99,28 @@ export interface ErrorToastItem {
   text: string;
   count: number; // The times that this text came while the popup shows.
   undo?: () => void; // An info popup with "Undo" after an action that has no question first (rule R7a).
+  open?: () => void; // A click on the popup opens the place of the problem, for example a failed MCP server.
+}
+
+/** Adds an error popup that opens the place of the problem on a click. The same text replaces the old popup. */
+export function addOpenToast(list: ErrorToastItem[], text: string, open: () => void, id: number): ErrorToastItem[] {
+  return [...list.filter((t) => t.text !== text), { id, text, count: 1, open }].slice(-MAX_ERROR_TOASTS);
+}
+
+/** The MCP servers that failed in `next` and did not fail in `previous` (the MCP states of the session). */
+export function newlyFailedMcp(
+  previous: { name: string; state: string }[] | null,
+  next: { name: string; state: string; error: string | null }[],
+): { name: string; error: string | null }[] {
+  const before = new Map((previous ?? []).map((i) => [i.name, i.state]));
+  return next.filter((i) => i.state === "failed" && before.get(i.name) !== "failed").map((i) => ({ name: i.name, error: i.error }));
+}
+
+/** The popup text of a failed MCP server: the name, and the first line of the error (at most 120 characters). */
+export function mcpFailureText(name: string, error: string | null): string {
+  const line = (error ?? "").split(/\r?\n/)[0].trim();
+  const short = line.length > 120 ? `${line.slice(0, 119)}…` : line;
+  return short ? `The MCP server ${name} did not connect: ${short}` : `The MCP server ${name} did not connect.`;
 }
 
 /** Adds the popup of an action that can be undone. A new one replaces an old undo popup: only the last action can be undone. */

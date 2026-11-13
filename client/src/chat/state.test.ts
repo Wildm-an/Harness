@@ -322,6 +322,21 @@ describe("the image input of the session model", () => {
     expect(s.items.at(-1)).toMatchObject({ kind: "notice", level: "warning", text: "The endpoint rejected the image." });
   });
 
+  it("removes the unknown context warning when a later check finds the length", () => {
+    const unknown = "The context length of glm-5.3-flash is unknown. The harness uses 8192 tokens. Set context_length in providers.json for this model.";
+    const first = chatReducer(load(null), {
+      type: "daemon",
+      msg: { type: "session.model_info", context_length: 8192, context_source: "default", image_input: null, warnings: [unknown] },
+    });
+    expect(first.items.some((i) => i.kind === "notice" && i.text === unknown)).toBe(true);
+    const found = chatReducer(first, {
+      type: "daemon",
+      msg: { type: "session.model_info", context_length: 202752, context_source: "model list", image_input: null, warnings: [] },
+    });
+    expect(found.items.some((i) => i.kind === "notice" && i.text === unknown)).toBe(false);
+    expect(found.context).toBeNull(); // load() has no context meter.
+  });
+
   it("changes after /model, and not after other commands", () => {
     const s = chatReducer(load(false), { type: "daemon", msg: { type: "command.result", name: "model", model: "box/llava", image_input: true } });
     expect(s.imageInput).toBe(true);

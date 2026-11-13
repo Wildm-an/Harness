@@ -225,3 +225,39 @@ def test_mcp_tool_call_needs_approval(daemon, project, fake_model):  # noqa: F81
     c.send({"type": "command", "name": "mcp", "args": ""})
     assert c.until("command.result")[0]["panel"] == "mcp"
     c.close()
+
+
+def test_a_failed_server_can_restart_during_a_turn(daemon, project, fake_model):  # noqa: F811
+    write_config(project / ".harness" / "mcp.json", {
+        "test": stdio_entry(),
+        "broken": {"command": "harness-no-such-command-xyz"},
+    })
+    fake_model.script({"tool_calls": [{"name": "mcp__test__add", "arguments": {"a": 1, "b": 1}}]}, {"text": "2."})
+    c = Client(daemon)
+    c.new_session(project)
+
+    def states(status):
+        return {i["name"]: i["state"] for i in status["items"]}
+    status = c.until("mcp", timeout=60)[0]
+    while "starting" in states(status).values():
+        status = c.until("mcp", timeout=60)[0]
+    assert states(status) == {"test": "connected", "broken": "failed"}
+    c.send({"type": "prompt", "text": "add 1 and 1"})
+    request = c.until("permission.request", timeout=60)[0]  # The turn runs and waits for the user.
+
+    # A connected server and "Reload all" stop the tools of the turn: not now.
+    c.send({"type": "mcp.restart", "name": "test"})
+    assert "A turn is running" in c.until("error")[0]["message"]
+    c.send({"type": "mcp.restart"})
+    assert "A turn is running" in c.until("error")[0]["message"]
+    # The failed server gives the turn no tools: it tries to connect again at once.
+    c.send({"type": "mcp.restart", "name": "broken"})
+    status, seen = c.until("mcp", timeout=60)
+    assert not any(m["type"] == "error" for m in seen)
+    while states(status)["broken"] == "starting":
+        status = c.until("mcp", timeout=60)[0]
+    assert states(status) == {"test": "connected", "broken": "failed"}
+
+    c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
+    c.until("turn.end", timeout=60)
+    c.close()

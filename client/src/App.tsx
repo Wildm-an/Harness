@@ -31,6 +31,7 @@ import type {
   Decision,
   DirListing,
   HostInfo,
+  McpServerItem,
   McpStatus,
   PluginsStatus,
   ProjectItem,
@@ -121,7 +122,7 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { overlayOpen } from "./lib/overlay";
-import { addErrorToast, addUndoToast, errorRoute, type ErrorToastItem } from "./lib/errorRoute";
+import { addErrorToast, addOpenToast, addUndoToast, errorRoute, mcpFailureText, newlyFailedMcp, type ErrorToastItem } from "./lib/errorRoute";
 import { waitingCardHint } from "./lib/cardKeys";
 import { ErrorToasts } from "./components/ErrorToasts";
 import { canStartPeek, peekGate } from "./lib/sidebarPeek";
@@ -418,6 +419,15 @@ export default function App() {
     (text: string, undo: () => void) => setErrorToasts((l) => addUndoToast(l, text, undo, ++errorToastId.current)),
     [],
   );
+  // The popup of an MCP server that did not connect. A click opens its row on the MCP servers tab.
+  const [mcpFocus, setMcpFocus] = useState<{ name: string; key: number } | null>(null);
+  const showMcpFailure = useCallback((name: string, error: string | null) => {
+    const open = () => {
+      openCapabilitiesRef.current("mcp");
+      setMcpFocus((f) => ({ name, key: (f?.key ?? 0) + 1 }));
+    };
+    setErrorToasts((l) => addOpenToast(l, mcpFailureText(name, error), open, ++errorToastId.current));
+  }, []);
   // The last submission that started a turn, for each session: "Try again" on an error card sends it again.
   const lastSubmission = useRef(new Map<string, Submission>());
   const filledText = useRef<string | null>(null); // The text of the last prompt.fill (a rewind or a fork).
@@ -509,8 +519,10 @@ export default function App() {
   const openCapabilitiesRef = useRef<(tab?: CapTab) => void>(() => {});
   // The tab of the Capabilities page. The page opens on the last tab.
   const [capsTab, setCapsTabState] = useState<CapTab>(() => toCapTab(loadPref("capabilitiesTab", "skills")));
+  const capsTabRef = useRef(capsTab); // For the daemon messages: the tab that the Capabilities page shows.
   const setCapsTab = (tab: CapTab) => {
     setCapsTabState(tab);
+    capsTabRef.current = tab;
     savePref("capabilitiesTab", tab);
   };
   const [instructions, setInstructions] = useState<string | null>(null);
@@ -680,6 +692,8 @@ export default function App() {
   const [webKeysSaved, setWebKeysSaved] = useState<Record<WebKeyProvider, boolean>>({ brave: false, tavily: false });
   // The MCP servers of the Capabilities page.
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
+  // The MCP states of the last "mcp" message, to find the servers that failed since then.
+  const mcpSeen = useRef<McpServerItem[] | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [connectors, setConnectors] = useState<ConnectorItem[] | null>(null);
   const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
@@ -1094,6 +1108,10 @@ export default function App() {
         }
         case "mcp": {
           const { type: _type, ...status } = msg;
+          // A server that did not connect: a popup, but not while the MCP servers tab shows the row.
+          const onTab = screenRef.current === "capabilities" && capsTabRef.current === "mcp";
+          if (!onTab) for (const f of newlyFailedMcp(mcpSeen.current, status.items)) showMcpFailure(f.name, f.error);
+          mcpSeen.current = status.items;
           setMcpStatus(status);
           setMcpBusy(status.items.some((i) => i.state === "starting"));
           return;
@@ -1113,6 +1131,7 @@ export default function App() {
           return;
         case "capabilities":
           setSkillItems(msg.skills);
+          mcpSeen.current = msg.mcp.items;
           setMcpStatus(msg.mcp);
           setMcpBusy(msg.mcp.items.some((i) => i.state === "starting"));
           setCapsLive(msg.live);
@@ -3655,6 +3674,7 @@ export default function App() {
             deviceCode={deviceCode}
             onConnector={connectorAction}
             onEditConfig={() => sendSafely({ type: "mcp.init" })}
+            focusMcp={mcpFocus}
             plugins={plugins}
             pluginsTab={
               <PluginsScreen
