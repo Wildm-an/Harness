@@ -3,6 +3,44 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.82 (2026-11-13)
+
+### Prompt box
+
+- A prompt that you did not send stays in the prompt box of its session, also after the app
+  closes. Its images stay too when they fit in the storage of the app.
+
+### Routines
+
+- The session of a routine run has the start time and the date in its title, for example
+  "Daily summary - (09:00 AM) 11/13/26".
+- The routine form has a "Time in the session title" switch. Off: the title is the name of the
+  routine.
+
+### Settings
+
+- General has a "Time format" setting: "12-hour (9:05 PM)" (the default) or "24-hour (21:05)".
+  The times in the app and in the routine run titles use it.
+
+### Models
+
+- Harness keeps each measured context length after a restart. A value in the settings or in
+  providers.json still wins.
+- Harness checks the model again when the API key of the provider arrives. Before, the check
+  without the key gave 8192 tokens and a warning.
+- When the model rejects a request because the context is too long, Harness reads the limit from
+  the error, keeps it, compacts the conversation, and sends the request again.
+- Harness reads the context length from more servers: LiteLLM, Mistral, DeepInfra, and more
+  fields of OpenRouter.
+- The "context length is unknown" warning goes away when a later check finds the value.
+- When the model server does not answer, or a gateway gives the error 502, 503, or 504, Harness
+  tries the call again up to 5 times. The working line shows "Retrying (n/5)".
+
+### MCP servers
+
+- A failed MCP server shows an error popup. A click opens its row on the MCP servers tab.
+- A failed MCP server can start again during a turn.
+
 ## 0.1.81 (2026-11-12)
 
 ### Appearance
