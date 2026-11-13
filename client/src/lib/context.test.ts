@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextRows, contextSourceText, formatTokens } from "./context";
+import { contextRows, contextSourceText, formatTokens, isUnknownContextWarning } from "./context";
 
 describe("the context length text", () => {
   it("formats token counts", () => {
@@ -19,6 +19,14 @@ describe("the context length text", () => {
     expect(contextSourceText("default")).toMatch(/uses a default/);
     expect(contextSourceText("providers.json")).toMatch(/providers.json/);
     expect(contextSourceText("llama-server")).toBe("The context length comes from the endpoint (llama-server).");
+    expect(contextSourceText("error message")).toMatch(/error message of the endpoint/);
+    expect(contextSourceText("model list (saved)")).toMatch(/earlier check of the endpoint \(model list\)\. The harness saved it/);
+    expect(contextSourceText("error message (saved)")).toMatch(/earlier check of an error message/);
+  });
+
+  it("finds the unknown context warning of the daemon", () => {
+    expect(isUnknownContextWarning("The context length of glm-5.3-flash is unknown. The harness uses 8192 tokens.")).toBe(true);
+    expect(isUnknownContextWarning("Ollama runs m with its default context (4096 tokens)")).toBe(false);
   });
 });
 

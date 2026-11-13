@@ -3,7 +3,8 @@
 // command, a failed request of a page, or an error of the Browser pane. They are in the toast stack,
 // so they stay clear of the Browser pane webview. A popup goes away after 8 seconds. The time stops
 // while the pointer or the focus is on it. The same stack shows the "Undo" popup of an action that
-// does not ask first (rule R7a): an info icon, the text, and "Undo".
+// does not ask first (rule R7a): an info icon, the text, and "Undo". A popup with `open` (a failed
+// MCP server) opens the place of the problem on a click, and closes.
 
 import { useEffect, useRef, useState } from "react";
 import { CircleAlert, Info, Undo2 } from "lucide-react";
@@ -45,14 +46,27 @@ function ErrorToast({ item, onClose }: { item: ErrorToastItem; onClose: () => vo
     >
       {undo ? <Info size={18} aria-hidden className="update-toast-icon" /> : <CircleAlert size={18} aria-hidden className="update-toast-icon" />}
       <div className="update-toast-text">
-        <span className="update-toast-body error-toast-body">
-          {item.text}
-          {item.count > 1 && (
-            <span className="notice-count" aria-label={`${item.count} times`}>
-              ×{item.count}
-            </span>
-          )}
-        </span>
+        {item.open ? (
+          <button
+            type="button"
+            className="update-toast-body error-toast-body error-toast-open"
+            onClick={() => {
+              onClose();
+              item.open?.();
+            }}
+          >
+            {item.text}
+          </button>
+        ) : (
+          <span className="update-toast-body error-toast-body">
+            {item.text}
+            {item.count > 1 && (
+              <span className="notice-count" aria-label={`${item.count} times`}>
+                ×{item.count}
+              </span>
+            )}
+          </span>
+        )}
       </div>
       {undo && (
         <button

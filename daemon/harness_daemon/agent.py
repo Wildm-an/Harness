@@ -33,6 +33,7 @@ from .permissions import Approver, PermissionGate
 from .plugins.host import (
     Hooks, PluginHost, RequestErrorEvent, RequestEvent, StepEvent, StreamEvent, ToolCall, TurnEvent, TurnStoppingEvent,
 )
+from . import model_contexts
 from .loop_guards import (
     MAX_STALL_NUDGES, STALL_NOTICE, STALL_NUDGE, is_stall, repair_tool_name, repaired_note, repeat_key, repeat_note,
 )
@@ -66,6 +67,10 @@ OnCompact = Callable[[int, "str | None"], None]
 
 INTERRUPTED = "The user interrupted the turn. The tool did not complete."
 MAX_REQUEST_RETRIES = 3  # The retries that request.error handlers can ask for, for each model call.
+# The endpoint did not answer (ModelError.reconnect): try the model call again after these delays, in
+# seconds, as Claude Code does. The working line shows "Retrying ({attempt}/{max})" (turn.retry).
+CONNECT_RETRY_DELAYS = (1, 2, 4, 8, 16)
+MAX_CONNECT_RETRIES = len(CONNECT_RETRY_DELAYS)
 # Tool search ("tool_search": "auto"): the MCP tools are sent by name only when their definitions are
 # larger than this number of tokens, or this part of the context. A model server reads the definitions
 # for each request: many MCP tools make each step slower.
@@ -1153,6 +1158,8 @@ class Agent:
                                    streamed: list[str], turn: int, step: int) -> Any:
         """One model call. request.error handlers can ask for a retry, up to MAX_REQUEST_RETRIES times."""
         attempt = 0
+        learned = False  # The error gave the context length one time already.
+        reconnects = 0
         while True:
             try:
                 return await client.stream(self.messages(), self.tool_schemas(), on_text, options=options,
@@ -1160,6 +1167,22 @@ class Agent:
             except ModelError as e:
                 if self.image_input is None and self._sends_user_images() and _content_error(e):
                     return await self._stream_without_images(client, options, on_text, e)
+                if not learned and await self._learn_context_limit(client, e):
+                    learned = True
+                    if self.context_tokens() >= COMPACT_AT * self.context_length and await self.compact("auto"):
+                        streamed.clear()
+                        continue  # The request is smaller now: send it again.
+                if e.reconnect and not streamed:  # Not after text: the user saw part of a reply.
+                    if reconnects < MAX_CONNECT_RETRIES:
+                        delay = CONNECT_RETRY_DELAYS[reconnects]
+                        reconnects += 1
+                        log.info("%s: %s Retry %d of %d in %d s.", client.label, e, reconnects, MAX_CONNECT_RETRIES, delay)
+                        await self.emit({"type": "turn.retry", "attempt": reconnects, "max": MAX_CONNECT_RETRIES,
+                                         "delay": delay, "error": str(e)})
+                        await asyncio.sleep(delay)  # An interrupt cancels the turn task, also here.
+                        continue
+                    if reconnects:
+                        raise ModelError(f"{e} The harness tried {reconnects + 1} times.") from e
                 attempt += 1
                 if not self.hooks.has("request.error") or attempt > MAX_REQUEST_RETRIES:
                     raise
@@ -1168,6 +1191,24 @@ class Agent:
                 if not event.retry:
                     raise
                 streamed.clear()
+
+    async def _learn_context_limit(self, client: ModelClient, error: ModelError) -> bool:
+        """The endpoint rejected a request that is too long, and the error gives the context length.
+        Use that length, and save it (model_contexts.py). A value of the settings or of providers.json wins.
+        Return True if the context length changed."""
+        limit = model_contexts.limit_from_error(str(error))
+        if not limit or limit == self.context_length or self.context_source in ("settings", "providers.json"):
+            return False
+        log.info("%s: the error gives the context length %d (was %d)", client.label, limit, self.context_length)
+        self.context_length = limit
+        self.context_source = model_contexts.ERROR_SOURCE
+        model_contexts.save(client.provider.name, client.provider.base_url, client.model, limit,
+                            model_contexts.ERROR_SOURCE)
+        if self.user_facing:
+            await self.emit({"type": "session.model_info", "context_length": limit,
+                             "context_source": self.context_source, "image_input": self.image_input,
+                             "warnings": []})
+        return True
 
     def _sends_user_images(self) -> bool:
         return any(m.get("role") == "user" and m.get("images") for m in self.history)

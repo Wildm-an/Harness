@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addErrorToast, errorKind, errorRoute, MAX_ERROR_TOASTS, type ErrorToastItem } from "./errorRoute";
+import { addErrorToast, addOpenToast, errorKind, errorRoute, MAX_ERROR_TOASTS, mcpFailureText, newlyFailedMcp, type ErrorToastItem } from "./errorRoute";
 import { addNotice, chatReducer, emptyChat, type ChatItem } from "../chat/state";
 import { retryTarget } from "../components/MessageList";
 
@@ -92,5 +92,33 @@ describe("errors in the chat", () => {
     expect(retryTarget(next.items)).toBeNull();
     const full = chatReducer(start, { type: "daemon", msg: { type: "error", message: "maximum context length is 8192 tokens" } });
     expect(retryTarget(full.items)).toBeNull();
+  });
+});
+
+describe("the popup of a failed MCP server", () => {
+  const item = (name: string, state: string, error: string | null = null) => ({ name, state, error });
+
+  it("finds only the servers that failed since the last states", () => {
+    expect(newlyFailedMcp(null, [item("github", "failed", "getaddrinfo failed"), item("mail", "connected")])).toEqual([
+      { name: "github", error: "getaddrinfo failed" },
+    ]);
+    const before = [item("github", "failed"), item("mail", "starting")];
+    expect(newlyFailedMcp(before, [item("github", "failed"), item("mail", "failed", "exit 1")])).toEqual([{ name: "mail", error: "exit 1" }]);
+    expect(newlyFailedMcp(before, [item("github", "connected"), item("mail", "connected")])).toEqual([]);
+  });
+
+  it("names the server and the first line of the error", () => {
+    expect(mcpFailureText("github", "[Errno 11001] getaddrinfo failed\nTraceback")).toBe(
+      "The MCP server github did not connect: [Errno 11001] getaddrinfo failed",
+    );
+    expect(mcpFailureText("github", null)).toBe("The MCP server github did not connect.");
+    expect(mcpFailureText("x", "e".repeat(200)).length).toBeLessThan(170);
+  });
+
+  it("opens the server on a click, and the same text replaces the old popup", () => {
+    const open = () => {};
+    const one = addOpenToast([], "The MCP server github did not connect.", open, 1);
+    const two = addOpenToast(one, "The MCP server github did not connect.", open, 2);
+    expect(two).toEqual([{ id: 2, text: "The MCP server github did not connect.", count: 1, open }]);
   });
 });

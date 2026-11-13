@@ -9555,6 +9555,26 @@ textarea.setting-textarea:disabled {
   overflow-y: auto;
 }
 
+/* A popup that opens the place of the problem on a click (a failed MCP server). */
+.error-toast .error-toast-open {
+  all: unset;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.error-toast .error-toast-open:hover {
+  text-decoration: underline;
+}
+
+.error-toast .error-toast-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .update-toast-text {
   flex: 1;
   min-width: 0;

@@ -61,6 +61,11 @@ export function workingStatus(items: ChatItem[], model: string, thinking = false
   return { tasks: running.length, text };
 }
 
+/** The label while the daemon tries the model call again: "Retrying (2/5)" (rule M16). */
+export function retryText(retry: { attempt: number; max: number }): string {
+  return `Retrying (${retry.attempt}/${retry.max})`;
+}
+
 /** The step of the task list of this turn that is in progress, or null. */
 export function currentStep(items: ChatItem[]): string | null {
   const plan = latestPlan(items);
@@ -86,7 +91,10 @@ export function WorkingLine({
   const mounted = useRef(Date.now()); // A turn with no start time (for example a skill) counts from here.
   const [open, setOpen] = useState(false);
 
-  const { tasks, text } = workingStatus(items, model, !!turn?.thinking);
+  const status = workingStatus(items, model, !!turn?.thinking);
+  const { tasks } = status;
+  // The endpoint did not answer: the daemon tries again (rule M16, as Claude Code).
+  const text = turn?.retry ? retryText(turn.retry) : status.text;
   const step = currentStep(items);
   // A question or a permission is more important than the step: the user must act.
   const label = step && !text.startsWith("Waiting for your") ? step : text;

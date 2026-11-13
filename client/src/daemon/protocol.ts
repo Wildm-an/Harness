@@ -1211,6 +1211,8 @@ export type DaemonMessage =
   | { type: "session.model_info"; context_length: number; context_source?: string; image_input: boolean | null; warnings: string[] }
   // The token counts of the turn so far, after each model reply.
   | { type: "turn.usage"; prompt_tokens: number; completion_tokens: number; last_prompt_tokens: number }
+  // The model endpoint did not answer. The daemon sends the request again after `delay` seconds.
+  | { type: "turn.retry"; attempt: number; max: number; delay: number; error: string }
   | { type: "fs.changed"; path: string; hash: string | null; by: "agent" | "external" }
   | {
       type: "command.result";

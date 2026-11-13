@@ -55,6 +55,7 @@ from .providers import (
     DEFAULT_CONTEXT_LENGTH,
     EFFORT_API,
     ContextInfo,
+    configured_context,
     ModelClient,
     endpoint,
     image_input,
@@ -72,7 +73,7 @@ from .tools.search import find_paths
 from .tools.share import artifact_page
 from .tools.visual import FRAME_CSP, FRAME_HTML
 from .tunnels import TUNNELS, TunnelError
-from . import trash, worktrees
+from . import model_contexts, trash, worktrees
 from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
@@ -821,12 +822,13 @@ class LiveSession:
     async def wait_for_mcp(self) -> None:
         """Before a turn: the MCP servers and the model checks of the open (check_model) finish first.
 
-        If the checks found no context length (the session uses the default), check again, at most one
-        time for each MODEL_RECHECK_EVERY: else a short server problem gives the session 8192 tokens.
+        If the checks found no context length (the session uses the default or a saved value), check again,
+        at most one time for each MODEL_RECHECK_EVERY: else a short server problem gives the session 8192 tokens.
         """
         task = self.model_task
         agent = self.session.agent if self.session is not None else None
-        if ((task is None or task.done()) and agent is not None and agent.context_source == "default"
+        if ((task is None or task.done()) and agent is not None
+                and (agent.context_source == "default" or agent.context_source.endswith(model_contexts.SAVED_SUFFIX))
                 and not agent.client.provider.unavailable and time.monotonic() >= self.next_model_check):
             self.next_model_check = time.monotonic() + MODEL_RECHECK_EVERY
             self.model_task = task = asyncio.create_task(self.check_model())
@@ -1210,10 +1212,19 @@ class Connection:
         if saved is not None:
             warnings, context, images = Connection._model_info(provider, model, settings, saved[1], saved[2], saved[3])
             return warnings, context, images, time.monotonic() - saved[0] < MODEL_CHECKS_TTL
-        configured = settings.get("context_length") or provider.context_length
-        context = ContextInfo(int(configured), "settings") if configured else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default")
+        context = Connection._known_context(provider, model, settings)
         warnings, context, images = Connection._model_info(provider, model, settings, None, context)
         return warnings, context, images, False
+
+    @staticmethod
+    def _known_context(provider, model: str, settings: dict[str, Any]) -> ContextInfo:
+        """The context length with no request: the settings, providers.json, the saved measurement
+        (model_contexts.py), or the default. The default has no warning: the checks give it."""
+        configured = _positive_setting(settings.get("context_length"))
+        if configured:
+            return ContextInfo(configured, "settings")
+        return (configured_context(provider, model) or _saved_context(provider, model)
+                or ContextInfo(DEFAULT_CONTEXT_LENGTH, "default"))
 
     @staticmethod
     def _model_info(provider, model: str, settings: dict[str, Any], caps: list[str] | None,
@@ -1240,8 +1251,7 @@ class Connection:
         try:
             reachable = await endpoint(provider)  # Opens the SSH tunnel of the provider, if it has one.
         except TunnelError as e:
-            configured = settings.get("context_length") or provider.context_length
-            context = ContextInfo(int(configured), "settings") if configured else ContextInfo(DEFAULT_CONTEXT_LENGTH, "default")
+            context = Connection._known_context(provider, model, settings)
             return [str(e)], context, image_input(provider, model, settings, None)
         # The checks send requests to the endpoint (up to a few seconds). A session switch uses the saved result.
         key = (provider.name, reachable.base_url, reachable.kind, model, settings.get("context_length"))
@@ -1256,11 +1266,18 @@ class Connection:
                     model_capabilities(reachable, model), resolve_context_length(reachable, model, settings),
                     _listed_image_input(reachable, model)))
                 CHECKS_RUNNING[key] = running
-                running.add_done_callback(lambda _: CHECKS_RUNNING.pop(key, None))
+                # A new key clears CHECKS_RUNNING (providers.keys): remove only this check.
+                running.add_done_callback(lambda done: CHECKS_RUNNING.pop(key, None) if CHECKS_RUNNING.get(key) is done else None)
             caps, context, listed = await asyncio.shield(running)
-            # No context length from the endpoint (a timeout, for example): do not keep the default. The next
-            # check asks again, and a good result of an earlier check stays.
-            if context.source != "default":
+            if context.source == "default":
+                # No context length from the endpoint (a timeout, or no API key yet): use the value that an
+                # earlier check measured, if the daemon saved one.
+                context = _saved_context(provider, model) or context
+            else:
+                model_contexts.save(provider.name, provider.base_url, model, context.length, context.source)
+            # Keep only a new measurement in memory. The next check asks again, and a good result of an
+            # earlier check stays.
+            if _measured_now(context):
                 MODEL_CHECKS[key] = (time.monotonic(), caps, context, listed)
                 MODEL_CHECKS[("last", provider.name, provider.base_url, model, settings.get("context_length"))] = (time.monotonic(), caps, context, listed)
         return Connection._model_info(provider, model, settings, caps, context, listed)
@@ -1816,6 +1833,25 @@ def _project_ref(storage: Storage, cwd: Path) -> dict[str, str] | None:
     """The saved project of a session folder: its id and name."""
     found = storage.find_project(str(cwd))
     return {"id": found["id"], "name": found["name"]} if found else None
+
+
+def _positive_setting(value: Any) -> int | None:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _saved_context(provider, model: str) -> ContextInfo | None:
+    """The context length that an earlier check measured and saved (model_contexts.py), or None."""
+    saved = model_contexts.lookup(provider.name, provider.base_url, model)
+    return ContextInfo(saved[0], model_contexts.saved_source(saved[1])) if saved else None
+
+
+def _measured_now(context: ContextInfo) -> bool:
+    """A context length that the endpoint gave now: not the default, and not a saved value."""
+    return context.source != "default" and not context.source.endswith(model_contexts.SAVED_SUFFIX)
 
 
 def _acp_id(provider_name: str | None, model: str | None) -> str | None:
@@ -2524,8 +2560,11 @@ async def on_mcp_list(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_mcp_restart(conn: Connection, msg: dict[str, Any]) -> None:
     """Read mcp.json again and connect again: one server ("name"), or all servers (no name)."""
     manager = _require_mcp(conn)
-    conn.require_idle()
     name = msg.get("name") if isinstance(msg.get("name"), str) else None
+    # A restart stops the tool calls of a connected server, and "Reload all" stops all servers: not during a
+    # turn. A server that is not connected (failed, stopped) gives the turn no tools: it can connect again now.
+    if name is None or manager.is_connected(name):
+        conn.require_idle()
 
     async def work() -> None:
         await manager.restart(name)
@@ -3554,8 +3593,23 @@ async def on_providers_keys(conn: Connection, msg: dict[str, Any]) -> None:
     changed = provider_config.set_client_keys(keys)
     MODEL_CHECKS.clear()
     if changed:
+        CHECKS_RUNNING.clear()  # A check that runs now has the old key.
         _refresh_session_provider(conn, changed)
+        _recheck_session_model(conn, changed)
     await _send_providers(conn)
+
+
+def _recheck_session_model(conn: Connection, names: list[str]) -> None:
+    """The key of the provider of the session arrived after the open. The checks of the open had no key,
+    so they can have found no context length: check the model again with the key."""
+    live = conn.current
+    agent = live.session.agent if live is not None and live.session is not None else None
+    if agent is None or isinstance(agent, AcpAgent) or agent.client.provider.name not in names:
+        return
+    if live.model_task is not None and not live.model_task.done():
+        live.model_task.cancel()  # It runs with no key.
+    live.next_model_check = time.monotonic() + MODEL_RECHECK_EVERY
+    live.model_task = asyncio.create_task(live.check_model())
 
 
 @handler("providers.test")

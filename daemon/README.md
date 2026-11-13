@@ -48,9 +48,16 @@ The daemon finds the context length of a model in this order:
    - llama-server: `/props` (`n_ctx`).
    - LM Studio: `/api/v0/models` (`loaded_context_length` of a loaded model, else `max_context_length` with a warning: LM Studio can load the model with a smaller context).
    - Text Generation Inference: `/info` (`max_total_tokens`).
-   - The model list `/models`: `max_model_len` (vLLM), `context_length` (OpenRouter), `context_window`, or `meta.n_ctx`.
+   - The model list `/models`: `max_model_len` (vLLM), `context_length` (OpenRouter, Together, Fireworks), `context_window` (Groq), `max_context_length` (Mistral), `metadata.context_length` (DeepInfra), `max_input_tokens`, or `meta.n_ctx`.
+   - LiteLLM: `/model/info` (`max_input_tokens`).
+   - One model: `/models/{id}`, if the other sources give no value.
    - OpenRouter: only the model list (`context_length`).
-4. The default: 8192 tokens, with a warning.
+4. A value that an earlier check measured. The daemon writes each measured value to `~/.harness/model-contexts.json`, so the value stays after a restart. The daemon uses it when the endpoint gives no value now, for example when the server is slow, or when the client did not send the API key yet. The source shows as, for example, "model list (saved)".
+5. The default: 8192 tokens, with a warning.
+
+The daemon checks the model again when the client sends the API key of the provider, and before a turn while the session uses the default or a saved value (at most one time each minute).
+
+If the endpoint rejects a request because it is too long, and the error message gives the limit (for example "maximum context length is 131072 tokens"), the daemon uses that limit, saves it, compacts the conversation, and sends the request again one time. A value in the settings or in `providers.json` does not change.
 
 The client shows the source of the value in the tooltip of the context meter. The connection test on the Connections screen shows the context length of each model (Ollama: the first 40 models).
 
