@@ -125,13 +125,14 @@ def test_a_file_that_the_user_writes_is_a_routine(tmp_path, project):
 
 def test_the_session_title_of_a_run(tmp_path, project):
     when = dt.datetime(2026, 11, 3, 7, 5)
-    assert routine_files.run_title({"name": "Daily check"}, when) == "Daily check - (07:05 AM) 11/03/26"
-    assert routine_files.run_title({"name": "Daily check"}, when, "24h") == "Daily check - (07:05) 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when) == "Daily check - 7:05 AM | 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when, "24h") == "Daily check - 07:05 | 11/03/26"
     evening = when.replace(hour=19)
-    assert routine_files.run_title({"name": "Daily check"}, evening, "12h") == "Daily check - (07:05 PM) 11/03/26"
-    assert routine_files.run_title({"name": "Daily check"}, evening, "24h") == "Daily check - (19:05) 11/03/26"
-    assert routine_files.run_title({"name": "Daily check"}, when.replace(hour=0), None) == "Daily check - (12:05 AM) 11/03/26"
-    assert routine_files.run_title({"name": "Daily check"}, when.replace(hour=12), "12h") == "Daily check - (12:05 PM) 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, evening, "12h") == "Daily check - 7:05 PM | 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, evening, "24h") == "Daily check - 19:05 | 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when.replace(hour=0), None) == "Daily check - 12:05 AM | 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when.replace(hour=12), "12h") == "Daily check - 12:05 PM | 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when.replace(hour=22), "12h") == "Daily check - 10:05 PM | 11/03/26"
     assert routine_files.run_title({"name": "Daily check", "time_in_title": False}, when) == "Daily check"
 
     storage = Storage(tmp_path / "h.db")
@@ -349,7 +350,7 @@ def test_the_time_format_setting(daemon, project, fake_model):  # noqa: F811
     done = _until_run(c, "done")
     c.send({"type": "session.list"})
     row = next(s for s in c.until("sessions")[0]["items"] if s["id"] == done["session_id"])
-    assert re.fullmatch(r"Daily check - \(\d\d:\d\d\) \d\d/\d\d/\d\d", row["title"])
+    assert re.fullmatch(r"Daily check - \d\d:\d\d \| \d\d/\d\d/\d\d", row["title"])
     c.close()
 
 
@@ -376,7 +377,7 @@ def test_run_now_starts_a_session_and_all_clients_see_it(daemon, project, fake_m
     sessions = b.until("sessions")[0]["items"]
     row = next(s for s in sessions if s["id"] == done["session_id"])
     assert row["routine_id"] == item["id"]
-    assert re.fullmatch(r"Daily check - \(\d\d:\d\d [AP]M\) \d\d/\d\d/\d\d", row["title"])
+    assert re.fullmatch(r"Daily check - (1[0-2]|[1-9]):\d\d [AP]M \| \d\d/\d\d/\d\d", row["title"])
 
     b.send({"type": "session.resume", "session_id": done["session_id"]})
     ready = b.until("session.ready")[0]

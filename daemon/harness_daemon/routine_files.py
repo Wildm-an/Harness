@@ -120,16 +120,17 @@ def render(item: dict[str, Any]) -> str:
 
 
 def run_title(item: dict[str, Any], when: dt.datetime, time_format: Any = "12h") -> str:
-    """The title of the session of a run: "Daily summary - (09:00 AM) 11/13/26", or only the name when
+    """The title of the session of a run: "Daily summary - 9:05 AM | 11/13/26", or only the name when
     ``time_in_title`` is off. The time is the start of the run, in local time. ``time_format`` is the
-    user setting (Settings > General > "Time format"): "24h" gives "(09:00)", all other values 12-hour time."""
+    user setting (Settings > General > "Time format"): "24h" gives "09:05", all other values 12-hour
+    time with no leading zero."""
     if item.get("time_in_title", True) is False:
         return item["name"]
     if time_format == "24h":
         clock = f"{when:%H:%M}"
-    else:  # %p depends on the locale: AM and PM are always in English, as in the app.
-        clock = f"{when:%I:%M} {'AM' if when.hour < 12 else 'PM'}"
-    return f"{item['name']} - ({clock}) {when:%m/%d/%y}"
+    else:  # %p and %-I depend on the platform and the locale: AM and PM are always in English, as in the app.
+        clock = f"{when.hour % 12 or 12}:{when:%M} {'AM' if when.hour < 12 else 'PM'}"
+    return f"{item['name']} - {clock} | {when:%m/%d/%y}"
 
 
 def write(path: Path, item: dict[str, Any]) -> None:
