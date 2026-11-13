@@ -3,6 +3,14 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.83 (2026-11-13)
+
+### Routines
+
+- The session title of a routine run has no parentheses, and a "|" separates the time and the
+  date, for example "Daily summary - 9:05 AM | 11/13/26".
+- 12-hour time has no leading zero: "9:05 AM", not "09:05 AM".
+
 ## 0.1.82 (2026-11-13)
 
 ### Prompt box
