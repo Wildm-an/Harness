@@ -46,7 +46,9 @@ Harness connects to these services only after you add them or turn them on:
   first start. The harness then sends your prompts and project files to its own model service, under its
   own privacy policy.
 - **The agent browser.** The agent browser opens the servers of the project. It opens other sites
-  only after you allow them. Chromium downloads only when you run `harness-daemon --install-browser`.
+  only after you allow them. The headless agent browser needs Chromium for Playwright. When the agent
+  uses it and the matching Chromium is not installed, the daemon downloads Chromium (about 150 MB)
+  from the Playwright download servers. You can also start the download with `harness-daemon --install-browser`.
 - **The Browser pane, the terminal, and the agent tools.** These open the addresses and run the
   commands that you or the agent ask for, after the approvals of your permission settings.
 - **The Windows installer.** If WebView2 is not installed, the installer downloads it from Microsoft.

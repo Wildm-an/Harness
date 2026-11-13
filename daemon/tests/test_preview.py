@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from harness_daemon.agent import Agent
-from harness_daemon.browser import AgentBrowser, BrowserError
+from harness_daemon.browser import AgentBrowser, BrowserError, ChromiumInstall, chromium_hint
 from harness_daemon.config import load_settings
 from harness_daemon.context import estimate_tokens
 from harness_daemon.launch import save_launch
@@ -33,8 +33,12 @@ def app_command(port: int) -> str:
 @pytest.fixture(scope="module")
 def chromium():
     """Skip the browser tests if Playwright or its Chromium is not installed."""
+    class NoDownload(ChromiumInstall):  # The tests do not download Chromium.
+        def request(self) -> str:
+            return chromium_hint()
+
     async def probe() -> None:
-        browser = AgentBrowser(lambda url: False)
+        browser = AgentBrowser(lambda url: False, chromium=NoDownload())
         try:
             await browser.navigate("about:blank")
         finally:

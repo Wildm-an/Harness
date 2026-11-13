@@ -57,9 +57,96 @@ INSTALL_HINT = (
     "The agent browser needs Playwright on the daemon computer. Install it with: "
     "pip install playwright, then: python -m playwright install chromium"
 )
+INSTALL_TIMEOUT = 900  # Seconds. The download is about 150 MB.
+INSTALL_OUTPUT = 600  # The characters of installer output in a failure message.
+
+
+def install_command() -> str:
+    argv = frozen.install_browser_argv()
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+
+
 def chromium_hint() -> str:
-    command = subprocess.list2cmdline(frozen.install_browser_argv()) if os.name == "nt"         else shlex.join(frozen.install_browser_argv())
-    return f"Chromium for Playwright is not installed on the daemon computer. Install it with: {command}"
+    return f"Chromium for Playwright is not installed on the daemon computer. Install it with: {install_command()}"
+
+
+class ChromiumInstall:
+    """The download of the Chromium revision that the bundled Playwright needs.
+
+    A Harness update can bring a new Playwright that needs a new Chromium revision. The first
+    launch that fails starts the download in a background thread, and the agent gets a status
+    message. Only one download runs at a time, for all sessions. Playwright removes the old
+    revisions that no Playwright on the computer uses (its ``.links`` folder).
+    """
+
+    def __init__(self, argv: Callable[[], list[str]] = frozen.install_browser_argv):
+        self._argv = argv
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._started = 0.0
+        self._error: str | None = None  # The failure of the last download. The next request reports it.
+        self.installed = False  # True after a download that succeeded.
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def request(self) -> str:
+        """Start the download if it does not run. Return the status message for the agent."""
+        with self._lock:
+            if self.running:
+                seconds = int(time.monotonic() - self._started)
+                return ("The daemon downloads Chromium for Playwright now (about 150 MB, "
+                        f"{seconds} seconds so far). Wait about one minute, then do the browser action again.")
+            if self._error is not None:
+                error, self._error = self._error, None
+                return (f"The download of Chromium for Playwright failed: {error}\n"
+                        "The next browser action starts the download again. "
+                        f"You can also install it by hand with: {install_command()}")
+            if self.installed:
+                # The download succeeded, but Playwright does not find Chromium. Do not download again.
+                return f"The daemon downloaded Chromium, but Playwright does not find it. {chromium_hint()}"
+            self._started = time.monotonic()
+            self._thread = threading.Thread(target=self._run, name="chromium-install", daemon=True)
+            self._thread.start()
+            return ("Chromium for Playwright is not installed on the daemon computer. The daemon started "
+                    "the download now (about 150 MB). Wait about one minute, then do the browser action again.")
+
+    def wait(self, timeout: float | None = None) -> None:
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+
+    def _run(self) -> None:
+        argv = self._argv()
+        log.info("Chromium for Playwright is not installed. Download: %s", argv)
+        kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, encoding="utf-8", errors="replace", timeout=INSTALL_TIMEOUT, **kwargs)
+        except subprocess.TimeoutExpired:
+            self._fail(f"it did not finish in {INSTALL_TIMEOUT // 60} minutes.")
+            return
+        except OSError as e:
+            self._fail(str(e))
+            return
+        if done.returncode != 0:
+            output = (done.stdout or "").strip()[-INSTALL_OUTPUT:]
+            self._fail(f"exit code {done.returncode}. {output}".strip())
+            return
+        log.info("Chromium for Playwright is installed.")
+        with self._lock:
+            self.installed = True
+
+    def _fail(self, error: str) -> None:
+        log.warning("The download of Chromium for Playwright failed: %s", error)
+        with self._lock:
+            self._error = error
+
+
+CHROMIUM = ChromiumInstall()
 STALE_REF = "The element reference {ref} is not on the page. The page changed. Take a new snapshot with preview_snapshot."
 
 
@@ -310,8 +397,9 @@ ELEMENT_KIND_JS = """(el) => ({
 class AgentBrowser:
     """One headless Chromium page. All public methods are coroutines of the caller loop."""
 
-    def __init__(self, allow_url: Callable[[str], bool]):
+    def __init__(self, allow_url: Callable[[str], bool], chromium: ChromiumInstall | None = None):
         self.allow_url = allow_url
+        self.chromium = chromium or CHROMIUM
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -380,7 +468,7 @@ class AgentBrowser:
                 await self._pw.stop()
                 self._pw = None
                 if "Executable doesn't exist" in str(e) or "playwright install" in str(e):
-                    raise BrowserError(chromium_hint()) from None
+                    raise BrowserError(self.chromium.request()) from None
                 raise BrowserError(f"The agent browser did not start: {e}") from None
             self._context = await self._browser.new_context(viewport=VIEWPORT)
             self._context.on("page", self._adopt)
