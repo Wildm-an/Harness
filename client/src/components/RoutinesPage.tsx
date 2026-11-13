@@ -28,6 +28,7 @@ import { ConfirmDialog, useConfirm } from "./ConfirmDialog";
 import { ModeMenu } from "./ModeMenu";
 import { ModelMenu, type ModelList } from "./ModelMenu";
 import { Switch } from "./ProvidersScreen";
+import { formatClock, formatTime, timeFormat } from "../lib/timeFormat";
 
 // -- the schedule ---------------------------------------------------------------------------------
 
@@ -88,10 +89,10 @@ export function cronToSchedule(cron: string): ScheduleChoice {
   return day === null ? custom : { ...custom, kind: "weekly", minute, hour, day: day % 7 };
 }
 
-/** The schedule in words, for the list rows: "Every weekday at 09:00". */
+/** The schedule in words, for the list rows: "Every weekday at 9:00 AM", in the time format of the settings. */
 export function describeSchedule(cron: string): string {
   const c = cronToSchedule(cron);
-  const time = `${pad(c.hour)}:${pad(c.minute)}`;
+  const time = formatClock(c.hour, c.minute);
   switch (c.kind) {
     case "hourly":
       return c.minute === 0 ? "Every hour" : `Every hour at :${pad(c.minute)}`;
@@ -106,10 +107,10 @@ export function describeSchedule(cron: string): string {
   }
 }
 
-/** A time for the rows: "Today at 09:00", "Tomorrow at 09:00", or the date. */
+/** A time for the rows: "Today at 9:00 AM", "Tomorrow at 9:00 AM", or the date. */
 export function formatWhen(epoch: number, now: number = Date.now() / 1000): string {
   const d = new Date(epoch * 1000);
-  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const time = formatTime(d);
   const day = (t: Date) => new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
   const diff = Math.round((day(d) - day(new Date(now * 1000))) / 86_400_000);
   if (diff === 0) return `Today at ${time}`;
@@ -193,6 +194,7 @@ export interface RoutineDraft {
   permission_mode: PermissionMode;
   schedule: ScheduleChoice;
   enabled: boolean;
+  time_in_title: boolean;
 }
 
 export type DraftErrors = Partial<Record<"name" | "prompt" | "cwd" | "schedule", string>>;
@@ -207,6 +209,7 @@ export function newDraft(projects: ProjectItem[], mode: PermissionMode = "defaul
     permission_mode: mode,
     schedule: cronToSchedule("0 9 * * 1-5"),
     enabled: true,
+    time_in_title: true,
   };
 }
 
@@ -219,6 +222,7 @@ export function draftOf(item: RoutineItem): RoutineDraft {
     permission_mode: item.permission_mode,
     schedule: cronToSchedule(item.schedule),
     enabled: item.enabled,
+    time_in_title: item.time_in_title !== false,
   };
 }
 
@@ -243,6 +247,7 @@ export function fieldsOf(d: RoutineDraft): RoutineFields {
     permission_mode: d.permission_mode,
     schedule: scheduleToCron(d.schedule),
     enabled: d.enabled,
+    time_in_title: d.time_in_title,
   };
 }
 
@@ -544,6 +549,17 @@ function RoutineForm({
         <div className="field routine-enabled">
           <span className="field-label">Run on the schedule</span>
           <Switch checked={d.enabled} label="Run on the schedule" onChange={(enabled) => update({ enabled })} />
+        </div>
+        <div className="field">
+          <div className="routine-enabled">
+            <span className="field-label">Time in the session title</span>
+            <Switch checked={d.time_in_title} label="Time in the session title" onChange={(time_in_title) => update({ time_in_title })} />
+          </div>
+          <p className="help">
+            {d.time_in_title
+              ? `Each run gets the title "${d.name.trim() || "Name"} - (${timeFormat() === "24h" ? "hh:mm" : "hh:mm AM"}) mm/dd/yy", with the time the run started.`
+              : `Each run gets the title "${d.name.trim() || "Name"}".`}
+          </p>
         </div>
         {error && (
           <p className="form-error" role="alert">

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import datetime as dt
 import getpass
 import hashlib
 import hmac
@@ -73,7 +74,7 @@ from .tools.search import find_paths
 from .tools.share import artifact_page
 from .tools.visual import FRAME_CSP, FRAME_HTML
 from .tunnels import TUNNELS, TunnelError
-from . import model_contexts, trash, worktrees
+from . import model_contexts, routine_files, trash, worktrees
 from .worktrees import WorktreeError
 from .launch import load_launch, propose, save_launch
 from .references import expand_references, session_ids
@@ -1674,8 +1675,9 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
     assert session is not None
     # The mode of the routine, in memory only: the project settings file does not change.
     session.agent.settings["permission_mode"] = routine["permission_mode"]
-    session.title = routine["name"]
-    headless.storage.update_session(session.id, title=routine["name"], routine_id=routine["id"])
+    title = routine_files.run_title(routine, dt.datetime.now(), load_settings(None).get("time_format"))
+    session.title = title
+    headless.storage.update_session(session.id, title=title, routine_id=routine["id"])
     session.disable_offer()  # No user watches the run: the task stays in the routine session.
     live.on_waiting = lambda waiting: report("waiting" if waiting else "running")
     live.routine_id = routine["id"]
@@ -3088,9 +3090,13 @@ def _routine_fields(msg: dict[str, Any]) -> dict[str, Any]:
     mode = msg.get("permission_mode") or "default"
     if mode not in MODES:
         raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
-    return {"name": name[:200], "prompt": prompt, "cwd": str(_project_dir(msg.get("cwd"))),
-            "provider": msg.get("provider") or None, "model": msg.get("model") or None,
-            "permission_mode": mode, "schedule": schedule, "enabled": bool(msg.get("enabled", True))}
+    fields = {"name": name[:200], "prompt": prompt, "cwd": str(_project_dir(msg.get("cwd"))),
+              "provider": msg.get("provider") or None, "model": msg.get("model") or None,
+              "permission_mode": mode, "schedule": schedule, "enabled": bool(msg.get("enabled", True))}
+    # No value: a saved routine keeps its value, and a new routine gets the default (on).
+    if "time_in_title" in msg:
+        fields["time_in_title"] = bool(msg["time_in_title"])
+    return fields
 
 
 @handler("routines.list")
@@ -3795,6 +3801,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "tool_search": (str,),  # MCP tools by name only until the model loads them: auto, on, or off (agent.py).
     "auto_archive_days": (int,),  # "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
+    "time_format": (str,),  # "Time format": 12h (the default) or 24h. The app and the routine run titles use it.
     "auto_memory": (bool,),
     "memory_sensitive": (bool,),
     "chat_search": (bool,),
@@ -3860,6 +3867,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
                                 f"{', '.join(s.id for s in output_styles.all_styles())}.")
         if key == "tool_search" and value not in ("auto", "on", "off"):
             raise ProtocolError("'tool_search' must be one of: auto, on, off.")
+        if key == "time_format" and value not in ("12h", "24h"):
+            raise ProtocolError("'time_format' must be one of: 12h, 24h.")
         if key == "web_search" and value not in WEB_PROVIDERS:
             raise ProtocolError(f"'web_search' must be one of: {', '.join(WEB_PROVIDERS)}.")
         if key == "web_search_url" and isinstance(value, str) and value.strip():

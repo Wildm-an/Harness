@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS routine_runs (
 );
 """
 
-ROUTINE_FIELDS = ("name", "prompt", "cwd", "model", "permission_mode", "schedule", "enabled")
+ROUTINE_FIELDS = ("name", "prompt", "cwd", "model", "permission_mode", "schedule", "enabled", "time_in_title")
 
 
 def path_key(path: str) -> str:
@@ -502,7 +502,7 @@ class Storage:
             taken = {p.stem for p in self.routines_dir.glob(f"*{routine_files.SUFFIX}")} if self.routines_dir.is_dir() else set()
             routine_id = _unique(routine_files.slug(str(values.get("name") or "")), taken)
             item = {"name": "", "prompt": "", "cwd": "", "model": None, "permission_mode": "default",
-                    "schedule": "", "enabled": True, **values}
+                    "schedule": "", "enabled": True, "time_in_title": True, **values}
             fire_now = True
         else:
             old = self.get_routine(routine_id)

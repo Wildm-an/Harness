@@ -237,7 +237,10 @@ export interface UserSettings {
   // The search provider of the web_search tool (daemon web.py). "off": the agent has no web_search tool.
   web_search?: WebSearchProvider;
   web_search_url?: string | null; // The SearXNG server.
+  time_format?: TimeFormat; // "Time format": "12h" (default) or "24h". The app times and the routine run titles use it.
 }
+
+export type TimeFormat = "12h" | "24h";
 
 export type WebSearchProvider = "duckduckgo" | "brave" | "tavily" | "searxng" | "off";
 
@@ -457,6 +460,9 @@ export interface RoutineFields {
   permission_mode: PermissionMode;
   schedule: string; // A cron expression in the local time of the daemon computer.
   enabled: boolean;
+  // The session title of a run has the start time and the date: "Daily summary - (09:00) 11/13/26".
+  // A routine file with no value has it on.
+  time_in_title: boolean;
 }
 
 export interface RoutineItem extends RoutineFields {

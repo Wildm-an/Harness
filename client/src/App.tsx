@@ -209,6 +209,7 @@ import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore, sessionPrUrls } from "./lib
 import { FolderMenu } from "./components/FolderMenu";
 import { SessionTitle } from "./components/SessionTitle";
 import type { SessionActions } from "./components/SessionRow";
+import { setTimeFormat, toTimeFormat, useTimeFormat } from "./lib/timeFormat";
 
 type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines";
 
@@ -568,6 +569,7 @@ export default function App() {
   // The Settings dialog (Ctrl+,): General, Local Models, Providers, and Computers.
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  useTimeFormat(); // A change of "Time format" shows the times again in the new format.
   const [startHarness, setStartHarness] = useState<SessionHarness | null>(null); // The operating harness of new sessions.
   const [storageOpen, setStorageOpen] = useState(false); // Settings > General > Storage > Manage.
   useEffect(() => {
@@ -596,6 +598,7 @@ export default function App() {
       conn.onMessage((msg) => {
         if (msg.type === "user_settings") {
           setUserSettings(msg.values);
+          setTimeFormat(toTimeFormat(msg.values.time_format)); // An older daemon has no value: 12-hour time.
           setStartHarness(msg.harness ?? null);
           setUserSettingsInfo({ path: msg.path, version: msg.version });
           // A change of the preferred models changes the name on the "Default model" chip.
@@ -3637,6 +3640,7 @@ export default function App() {
                 permission_mode: item.permission_mode,
                 schedule: item.schedule,
                 enabled,
+                time_in_title: item.time_in_title !== false,
               })
             }
             onRequestRuns={(id) => sendSafely({ type: "routines.runs", id })}

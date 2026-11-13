@@ -36,6 +36,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "chat_search": True,  # The conversation_search tool: the agent searches the past sessions of the project.
     "web_search": "duckduckgo",  # The search provider of web_search (web.py): duckduckgo, brave, tavily, searxng, or off.
     "web_search_url": None,  # The URL of a SearXNG server, for "searxng".
+    "time_format": "12h",  # "12h" (9:05 AM) or "24h" (09:05): the times of the app and the routine run titles.
     "output_style": "default",  # The output style of the agent (output_styles.py): a built-in id or a custom style file.
     "instructions_thinking": None,
     "instructions_research": None,
