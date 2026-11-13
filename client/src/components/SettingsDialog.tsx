@@ -780,6 +780,19 @@ export function GeneralSettings({
 
       {/* The rows of the daemon settings show gray bars until the values arrive (rule R8). */}
       <RowsPending.Provider value={connected && values === null}>
+      {/* A daemon setting: the daemon also writes the time in the titles of routine runs. */}
+      <Row label="Time format" help="The times in the app, and the time in the titles of routine runs." htmlFor="setting-time-format">
+        <select
+          id="setting-time-format"
+          value={values?.time_format === "24h" ? "24h" : "12h"}
+          disabled={off}
+          onChange={(e) => set({ time_format: e.target.value === "24h" ? "24h" : "12h" })}
+        >
+          <option value="12h">12-hour (9:05 PM)</option>
+          <option value="24h">24-hour (21:05)</option>
+        </select>
+      </Row>
+
       <h3 className="settings-section">The agent</h3>
       {!connected && <p className="help settings-note">Connect to a computer to change the settings of its daemon.</p>}
 

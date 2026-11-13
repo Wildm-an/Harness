@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, RoutineItem } from "../daemon/protocol";
 import { placeOf } from "../layout/history";
+import { setTimeFormat } from "../lib/timeFormat";
 import { activity, canRunNow, checkDraft, copyName, cronToSchedule, curlExample, describeSchedule, fieldsOf, fireUrl, formatWhen, newDraft, routineFile, runState, scheduleToCron } from "./RoutinesPage";
 
 const routine = (extra: Partial<RoutineItem> = {}): RoutineItem => ({
@@ -14,6 +15,7 @@ const routine = (extra: Partial<RoutineItem> = {}): RoutineItem => ({
   permission_mode: "default",
   schedule: "0 9 * * *",
   enabled: true,
+  time_in_title: true,
   created_at: 1,
   updated_at: 1,
   last_fire_at: 1,
@@ -48,9 +50,9 @@ describe("the schedule", () => {
   it("describes a schedule in words", () => {
     expect(describeSchedule("0 * * * *")).toBe("Every hour");
     expect(describeSchedule("5 * * * *")).toBe("Every hour at :05");
-    expect(describeSchedule("30 9 * * *")).toBe("Every day at 09:30");
-    expect(describeSchedule("0 8 * * 1-5")).toBe("Every weekday at 08:00");
-    expect(describeSchedule("0 8 * * 1")).toBe("Every Monday at 08:00");
+    expect(describeSchedule("30 9 * * *")).toBe("Every day at 9:30 AM");
+    expect(describeSchedule("0 8 * * 1-5")).toBe("Every weekday at 8:00 AM");
+    expect(describeSchedule("0 20 * * 1")).toBe("Every Monday at 8:00 PM");
     expect(describeSchedule("0 9 1 * *")).toBe("Cron: 0 9 1 * *");
   });
 });
@@ -68,6 +70,11 @@ describe("the form", () => {
   it("starts a new routine in the default permission mode of the settings", () => {
     expect(newDraft(projects).permission_mode).toBe("default");
     expect(newDraft(projects, "acceptEdits").permission_mode).toBe("acceptEdits");
+  });
+
+  it("puts the run time in the session title by default, and keeps the choice", () => {
+    expect(fieldsOf(newDraft(projects)).time_in_title).toBe(true);
+    expect(fieldsOf({ ...newDraft(projects), time_in_title: false }).time_in_title).toBe(false);
   });
 
   it("finds the errors", () => {
@@ -126,9 +133,20 @@ describe("the state of a routine", () => {
 
   it("formats times near today", () => {
     const now = new Date(2026, 10, 4, 12, 0).getTime() / 1000;
-    expect(formatWhen(new Date(2026, 10, 4, 9, 5).getTime() / 1000, now)).toBe("Today at 09:05");
-    expect(formatWhen(new Date(2026, 10, 5, 9, 0).getTime() / 1000, now)).toBe("Tomorrow at 09:00");
-    expect(formatWhen(new Date(2026, 10, 3, 23, 0).getTime() / 1000, now)).toBe("Yesterday at 23:00");
+    expect(formatWhen(new Date(2026, 10, 4, 9, 5).getTime() / 1000, now)).toBe("Today at 9:05 AM");
+    expect(formatWhen(new Date(2026, 10, 5, 9, 0).getTime() / 1000, now)).toBe("Tomorrow at 9:00 AM");
+    expect(formatWhen(new Date(2026, 10, 3, 23, 0).getTime() / 1000, now)).toBe("Yesterday at 11:00 PM");
+  });
+
+  it("uses the 24-hour time of the settings", () => {
+    setTimeFormat("24h");
+    try {
+      const now = new Date(2026, 10, 4, 12, 0).getTime() / 1000;
+      expect(formatWhen(new Date(2026, 10, 3, 23, 0).getTime() / 1000, now)).toBe("Yesterday at 23:00");
+      expect(describeSchedule("0 8 * * 1-5")).toBe("Every weekday at 08:00");
+    } finally {
+      setTimeFormat("12h");
+    }
   });
 
   it("is a place in the history", () => {
