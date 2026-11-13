@@ -557,7 +557,7 @@ function RoutineForm({
           </div>
           <p className="help">
             {d.time_in_title
-              ? `Each run gets the title "${d.name.trim() || "Name"} - (${timeFormat() === "24h" ? "hh:mm" : "hh:mm AM"}) mm/dd/yy", with the time the run started.`
+              ? `Each run gets the title "${d.name.trim() || "Name"} - ${timeFormat() === "24h" ? "hh:mm" : "h:mm AM"} | mm/dd/yy", with the time the run started.`
               : `Each run gets the title "${d.name.trim() || "Name"}".`}
           </p>
         </div>
