@@ -117,26 +117,117 @@ export function insertCommand(text: string, caret: number, start: number, name: 
 
 const MAX_HEIGHT_PX = 280;
 
-// The unsent text of each prompt box key (session). It is kept while the app runs.
+// The unsent text of each prompt box key (session). localStorage keeps it when the app closes.
 const drafts = new Map<string, string>();
 // The unsent attachments of each prompt box key, as the text.
 const draftAttachments = new Map<string, PromptAttachment[]>();
+// The time of the last change to the draft of each key. The newest drafts stay in localStorage.
+const draftTimes = new Map<string, number>();
 // The inserts and the attachments that a prompt box used (see the "insert" and "attach" props).
 const appliedInserts = new WeakSet<object>();
 
+// Not a "harness." key: prefs.ts copies those keys to a file at each change.
+export const DRAFTS_STORAGE_KEY = "harness-drafts";
+export const MAX_STORED_DRAFTS = 50;
+const STORE_DELAY_MS = 300;
+type StoredDraft = { text?: string; attachments?: PromptAttachment[]; at: number };
+
+function storage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+let loaded = false;
+/** Read the drafts of the last run from localStorage, one time. */
+function loadDrafts(): void {
+  if (loaded) return;
+  loaded = true;
+  const store = storage();
+  if (!store) return;
+  try {
+    const saved = JSON.parse(store.getItem(DRAFTS_STORAGE_KEY) ?? "{}") as Record<string, StoredDraft>;
+    for (const [key, d] of Object.entries(saved)) {
+      if (drafts.has(key) || draftAttachments.has(key)) continue;
+      if (typeof d?.text === "string" && d.text) drafts.set(key, d.text);
+      if (Array.isArray(d?.attachments) && d.attachments.length) draftAttachments.set(key, d.attachments);
+      draftTimes.set(key, typeof d?.at === "number" ? d.at : 0);
+    }
+  } catch {
+    // A bad value: start with no drafts.
+  }
+  // Write the newest text before the window closes.
+  window.addEventListener("pagehide", storeDrafts);
+  window.addEventListener("beforeunload", storeDrafts);
+}
+
+/** The stored form of the newest drafts. withImages false: no pasted images (they can be large). */
+export function storedDrafts(withImages: boolean): Record<string, StoredDraft> {
+  const keys = [...new Set([...drafts.keys(), ...draftAttachments.keys()])]
+    .sort((a, b) => (draftTimes.get(b) ?? 0) - (draftTimes.get(a) ?? 0))
+    .slice(0, MAX_STORED_DRAFTS);
+  const out: Record<string, StoredDraft> = {};
+  for (const key of keys) {
+    const text = drafts.get(key);
+    const attachments = (draftAttachments.get(key) ?? []).filter((a) => withImages || !a.image);
+    if (!text && attachments.length === 0) continue;
+    out[key] = { ...(text ? { text } : {}), ...(attachments.length ? { attachments } : {}), at: draftTimes.get(key) ?? 0 };
+  }
+  return out;
+}
+
+let storeTimer: ReturnType<typeof setTimeout> | undefined;
+/** Write the drafts to localStorage now. If the images do not fit, write the drafts without them. */
+function storeDrafts(): void {
+  clearTimeout(storeTimer);
+  storeTimer = undefined;
+  const store = storage();
+  if (!store) return;
+  try {
+    store.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(storedDrafts(true)));
+  } catch {
+    try {
+      store.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(storedDrafts(false)));
+    } catch {
+      // Ignore: the drafts stay in memory while the app runs.
+    }
+  }
+}
+
+function draftChanged(key: string): void {
+  draftTimes.set(key, Date.now());
+  clearTimeout(storeTimer);
+  storeTimer = setTimeout(storeDrafts, STORE_DELAY_MS);
+}
+
 export function saveDraft(key: string, text: string): void {
+  loadDrafts();
+  if ((drafts.get(key) ?? "") === text) return;
   if (text) drafts.set(key, text);
   else drafts.delete(key);
+  draftChanged(key);
 }
 
 export function draftOf(key: string): string {
+  loadDrafts();
   return drafts.get(key) ?? "";
 }
 
 /** Keep the unsent attachments of a prompt box key. The box of that key shows them. */
 export function saveDraftAttachments(key: string, list: PromptAttachment[]): void {
+  loadDrafts();
+  const old = draftAttachments.get(key);
+  if (old === list || (!old && list.length === 0)) return;
   if (list.length) draftAttachments.set(key, list);
   else draftAttachments.delete(key);
+  draftChanged(key);
+}
+
+function draftAttachmentsOf(key: string): PromptAttachment[] {
+  loadDrafts();
+  return draftAttachments.get(key) ?? [];
 }
 
 export function PromptBox({
@@ -208,14 +299,14 @@ export function PromptBox({
   onSubmit: (s: Submission) => boolean;
   onInterrupt: () => void;
 }) {
-  const [text, setText] = useState(() => (draftKey !== null ? drafts.get(draftKey) ?? "" : ""));
+  const [text, setText] = useState(() => (draftKey !== null ? draftOf(draftKey) : ""));
   // A new key (another session) shows the draft of that session. The draft of the old session stays.
-  const [attachments, setAttachments] = useState<PromptAttachment[]>(() => (draftKey !== null ? draftAttachments.get(draftKey) ?? [] : []));
+  const [attachments, setAttachments] = useState<PromptAttachment[]>(() => (draftKey !== null ? draftAttachmentsOf(draftKey) : []));
   const [shownKey, setShownKey] = useState(draftKey);
   if (draftKey !== shownKey) {
     setShownKey(draftKey);
-    setText(draftKey !== null ? drafts.get(draftKey) ?? "" : "");
-    setAttachments(draftKey !== null ? draftAttachments.get(draftKey) ?? [] : []);
+    setText(draftKey !== null ? draftOf(draftKey) : "");
+    setAttachments(draftKey !== null ? draftAttachmentsOf(draftKey) : []);
   }
   useEffect(() => {
     if (shownKey !== null) saveDraft(shownKey, text);
