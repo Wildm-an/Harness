@@ -11,6 +11,7 @@ import { Markdown } from "./Markdown";
 import { Row, Switch } from "./SettingsDialog";
 import { isTauri } from "../lib/tauri";
 import { checkAtStart, checkForUpdate, installUpdate, lastChecked, setCheckAtStart, useUpdateState, type UpdateState } from "../lib/updater";
+import { formatTime } from "../lib/timeFormat";
 
 /** The number of versions that the changelog shows first, and that each "Show more" adds. */
 export const CHANGELOG_STEP = 5;
@@ -43,7 +44,7 @@ export interface UpdateHero {
 
 /** "Today, 9:41 AM", "Yesterday, 9:41 AM", or "Nov 10, 9:41 AM". */
 export function checkedText(at: number, now = Date.now()): string {
-  const time = new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const time = formatTime(new Date(at));
   const day = (t: number) => new Date(t).toDateString();
   if (day(at) === day(now)) return `Today, ${time}`;
   if (day(at) === day(now - 24 * 60 * 60 * 1000)) return `Yesterday, ${time}`;

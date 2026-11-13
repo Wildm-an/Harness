@@ -9,7 +9,9 @@ import time
 
 import pytest
 
-from harness_daemon import trash
+import re
+
+from harness_daemon import routine_files, trash
 from harness_daemon.routines import RoutineScheduler, next_fire
 from harness_daemon.storage import Storage
 
@@ -39,7 +41,7 @@ def test_routine_storage(tmp_path, project):
     path = tmp_path / "routines" / "daily-check.md"
     text = path.read_text(encoding="utf-8")
     assert text.startswith("---\nname: Daily check\nschedule: '*/5 * * * *'\n")
-    assert "enabled: true\n---\nCheck the project\n" in text
+    assert "enabled: true\ntime_in_title: true\n---\nCheck the project\n" in text
     routine = storage.get_routine(rid)
     assert routine["name"] == "Daily check" and routine["enabled"] is True and routine["last_fire_at"]
     assert routine["error"] is None
@@ -118,6 +120,33 @@ def test_a_file_that_the_user_writes_is_a_routine(tmp_path, project):
         assert scheduler.tick() == ["by-hand"]  # A file with a problem does not run.
 
     asyncio.run(main())
+    storage.close()
+
+
+def test_the_session_title_of_a_run(tmp_path, project):
+    when = dt.datetime(2026, 11, 3, 7, 5)
+    assert routine_files.run_title({"name": "Daily check"}, when) == "Daily check - (07:05 AM) 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when, "24h") == "Daily check - (07:05) 11/03/26"
+    evening = when.replace(hour=19)
+    assert routine_files.run_title({"name": "Daily check"}, evening, "12h") == "Daily check - (07:05 PM) 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, evening, "24h") == "Daily check - (19:05) 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when.replace(hour=0), None) == "Daily check - (12:05 AM) 11/03/26"
+    assert routine_files.run_title({"name": "Daily check"}, when.replace(hour=12), "12h") == "Daily check - (12:05 PM) 11/03/26"
+    assert routine_files.run_title({"name": "Daily check", "time_in_title": False}, when) == "Daily check"
+
+    storage = Storage(tmp_path / "h.db")
+    rid = _routine(storage, project)
+    path = tmp_path / "routines" / f"{rid}.md"
+    assert "time_in_title: true\n" in path.read_text(encoding="utf-8")
+    assert storage.get_routine(rid)["time_in_title"] is True
+    storage.save_routine({"time_in_title": False}, rid)
+    assert "time_in_title: false\n" in path.read_text(encoding="utf-8")
+    assert storage.get_routine(rid)["time_in_title"] is False
+    storage.save_routine({"enabled": False}, rid)  # A save with no value keeps the value.
+    assert storage.get_routine(rid)["time_in_title"] is False
+    # A file with no value (an older file, or a file that the user writes) has it on.
+    path.write_text(f"---\nname: Old\nschedule: 0 8 * * *\ncwd: {project}\n---\nHi\n", encoding="utf-8")
+    assert storage.get_routine(rid)["time_in_title"] is True
     storage.close()
 
 
@@ -304,6 +333,26 @@ def _save(c: Client, project, **extra) -> dict:
     return next(i for i in msg["items"] if i["id"] == msg["saved"])
 
 
+def test_the_time_format_setting(daemon, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "user_settings.get"})
+    assert c.until("user_settings")[0]["values"]["time_format"] == "12h"  # The default.
+    c.send({"type": "user_settings.set", "values": {"time_format": "am/pm"}})
+    assert "must be one of: 12h, 24h" in c.until("error")[0]["message"]
+    c.send({"type": "user_settings.set", "values": {"time_format": "24h"}})
+    assert c.until("user_settings")[0]["values"]["time_format"] == "24h"
+
+    fake_model.script({"text": "Done."})
+    item = _save(c, project)
+    c.send({"type": "routines.run", "id": item["id"]})
+    done = _until_run(c, "done")
+    c.send({"type": "session.list"})
+    row = next(s for s in c.until("sessions")[0]["items"] if s["id"] == done["session_id"])
+    assert re.fullmatch(r"Daily check - \(\d\d:\d\d\) \d\d/\d\d/\d\d", row["title"])
+    c.close()
+
+
 def _until_run(c: Client, status: str, timeout: float = 20) -> dict:
     while True:
         msg = c.until("routine.run", timeout)[0]
@@ -326,7 +375,8 @@ def test_run_now_starts_a_session_and_all_clients_see_it(daemon, project, fake_m
     b.send({"type": "session.list"})
     sessions = b.until("sessions")[0]["items"]
     row = next(s for s in sessions if s["id"] == done["session_id"])
-    assert row["routine_id"] == item["id"] and row["title"] == "Daily check"
+    assert row["routine_id"] == item["id"]
+    assert re.fullmatch(r"Daily check - \(\d\d:\d\d [AP]M\) \d\d/\d\d/\d\d", row["title"])
 
     b.send({"type": "session.resume", "session_id": done["session_id"]})
     ready = b.until("session.ready")[0]

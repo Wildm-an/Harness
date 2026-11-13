@@ -10,6 +10,7 @@ body is the prompt::
     model: ollama/qwen3
     permission_mode: default
     enabled: true
+    time_in_title: true
     ---
     Summarize the commits of the last day.
 
@@ -19,6 +20,7 @@ routine. The run history and the scheduler state stay in the database (storage.p
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 import re
 from pathlib import Path
@@ -59,7 +61,7 @@ def read(path: Path) -> dict[str, Any]:
     """The routine of a file. A file with a problem gets an "error" text, and the scheduler skips it."""
     item: dict[str, Any] = {"id": path.stem, "name": path.stem, "prompt": "", "cwd": "", "provider": None,
                             "model": None, "permission_mode": "default", "schedule": "", "enabled": False,
-                            "error": None}
+                            "time_in_title": True, "error": None}
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
@@ -82,6 +84,7 @@ def read(path: Path) -> dict[str, Any]:
         permission_mode=str(data.get("permission_mode") or "default"),
         schedule=" ".join(str(data.get("schedule") or "").split()),
         enabled=data.get("enabled", True) is not False,
+        time_in_title=data.get("time_in_title", True) is not False,
     )
     item["error"] = problem(item)
     if item["error"]:
@@ -111,8 +114,22 @@ def render(item: dict[str, Any]) -> str:
         front["model"] = item["model"]
     front["permission_mode"] = item.get("permission_mode") or "default"
     front["enabled"] = bool(item.get("enabled", True))
+    front["time_in_title"] = item.get("time_in_title", True) is not False
     head = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=1000)
     return f"---\n{head}---\n{item['prompt'].strip()}\n"
+
+
+def run_title(item: dict[str, Any], when: dt.datetime, time_format: Any = "12h") -> str:
+    """The title of the session of a run: "Daily summary - (09:00 AM) 11/13/26", or only the name when
+    ``time_in_title`` is off. The time is the start of the run, in local time. ``time_format`` is the
+    user setting (Settings > General > "Time format"): "24h" gives "(09:00)", all other values 12-hour time."""
+    if item.get("time_in_title", True) is False:
+        return item["name"]
+    if time_format == "24h":
+        clock = f"{when:%H:%M}"
+    else:  # %p depends on the locale: AM and PM are always in English, as in the app.
+        clock = f"{when:%I:%M} {'AM' if when.hour < 12 else 'PM'}"
+    return f"{item['name']} - ({clock}) {when:%m/%d/%y}"
 
 
 def write(path: Path, item: dict[str, Any]) -> None:

@@ -18,6 +18,7 @@ import { FileCard } from "./FileCard";
 import { isVisualItem, visualOf } from "../lib/visual";
 import { useEnterMotion } from "../lib/motion";
 import type { TurnInfo } from "../chat/state";
+import { formatDateTime } from "../lib/timeFormat";
 
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
@@ -137,8 +138,6 @@ export function groupTools(items: ChatItem[], previous?: Map<string, ToolItem[]>
   return out;
 }
 
-// One formatter for the hover time of all user messages: a new Intl formatter for each render is slow.
-const fullTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 const NOTICE_ICONS = { error: CircleAlert, warning: TriangleAlert, info: Info };
 
@@ -364,7 +363,7 @@ const UserMessage = memo(function UserMessage({ item, running, read, onRewind, o
             <span className="msg-sep" aria-hidden>
               |
             </span>
-            <span className="msg-time" title={fullTime.format(new Date(item.ts))}>
+            <span className="msg-time" title={formatDateTime(new Date(item.ts))}>
               {relativeTime(item.ts)}
             </span>
           </>

@@ -10,6 +10,7 @@ import { artifactUrl, fileKind, KIND_LABEL, openTarget, useCardActions, type Fil
 import { openExternal, openFileInApp, revealInExplorer } from "../lib/tauri";
 import { formatBytes } from "./StorageDialog";
 import { splitPath } from "./FileCard";
+import { formatDateTime } from "../lib/timeFormat";
 
 const ICONS: Record<FileKind, typeof File> = {
   pdf: FileText,
@@ -74,7 +75,7 @@ function ArtifactCard({ card }: { card: Extract<ToolCardData, { type: "artifact"
   const actions = useCardActions();
   const url = actions?.daemonBase ? artifactUrl(actions.daemonBase, card.id) : null;
   const open = () => url && actions?.openInBrowser(url);
-  const updated = card.updated ? new Date(card.updated * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
+  const updated = card.updated ? formatDateTime(new Date(card.updated * 1000)) : "";
   return (
     <div className="file-card artifact-card" role="group" aria-label={`Artifact ${card.title}`}>
       <button type="button" className="file-card-main" onClick={open} disabled={!url} title="Open in the Browser pane">

@@ -15,6 +15,7 @@ import {
 import { isTauri, SERVER_DAEMON_EVENT, SERVER_DAEMON_PORT, serverDaemon, type ServerInfo } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { useConfirm } from "./ConfirmDialog";
+import { formatDateTime, formatTime } from "../lib/timeFormat";
 
 const ICONS = { local: Monitor, direct: Globe, ssh: KeyRound };
 
@@ -513,13 +514,11 @@ type ServerState =
   | { state: "running"; info: ServerInfo }
   | { state: "error"; message: string };
 
-/** "21:52" for today, else the date and the time. */
+/** "9:52 PM" for today, else the date and the time, in the time format of the settings. */
 function connectedAt(since: number): string {
   const date = new Date(since);
   const today = new Date().toDateString() === date.toDateString();
-  return today
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  return today ? formatTime(date) : formatDateTime(date);
 }
 
 /**
