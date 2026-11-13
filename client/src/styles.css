@@ -85,7 +85,7 @@
   /* The corner radius: one value for all elements with rounded corners (the user asked for this,
      UI_RULES 11.4). The other tokens stay as names, with the same value. Circles (dots, the radio
      button, avatars, color swatches) keep 50%. */
-  --radius-sm: 2px;
+  --radius-sm: 4px;
   --radius: var(--radius-sm);
   --radius-lg: var(--radius-sm);
   --radius-xl: var(--radius-sm);
@@ -7708,7 +7708,7 @@ input.tree-rename-input[aria-invalid="true"] {
   width: 28px;
   height: 24px;
   border: none;
-  border-radius: 1px;
+  border-radius: 2px; /* The 4px corner of .segmented, less its 2px padding. */
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;

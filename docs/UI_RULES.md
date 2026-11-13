@@ -154,7 +154,7 @@ Claude shows skills and connectors on separate tabs of its "Customize" page. The
 
 ### 5.1 Layout
 
-- **C1.** The prompt box is one card with a large radius. Claude uses `--cds-radius-composer` (14px in comfortable density). Harness uses `--prompt-radius` (2px, the one corner radius of the app, see section 11.4). The text area grows to `min(24rem, 40svh)`.
+- **C1.** The prompt box is one card with a large radius. Claude uses `--cds-radius-composer` (14px in comfortable density). Harness uses `--prompt-radius` (4px, the one corner radius of the app, see section 11.4). The text area grows to `min(24rem, 40svh)`.
 - **C2.** The action row inside the card, left to right: the "+" button, the text area, then Send / Stop at the right.
 - **C3.** The "chin" bar under the card, left to right: the permission mode picker; then, at the right, the model picker (with effort), then the context ring.
 - **C3a.** The chips under the prompt box (mode, project, model) are text with no border and no arrow. On hover and while the menu is open, the full chip gets the hover background (the user asked for this). The model chip has no icon: it shows the model name, a bar, then the effort level, for example "qwen3 | High" (the user asked for the bar). It has the same text color as the other chips under the prompt box (the user asked for this). Its class is `model-button`: the `model-chip` class of the Providers page has other colors.
@@ -227,7 +227,7 @@ Harness has no "+" button now. Add it.
 
 ### 6.1 Messages
 
-- **M1.** The user message is a bubble with a light tint. On hover it shows a toolbar, in this order: "Copy message", "Rewind to here", "Fork from here", then the time. The bubble has the corner radius of the prompt box (`--prompt-radius`, 2px; the user asked for this). The bubble is tight on its words (the user asked for this): 7px of space above and below the text, 10px at the left and the right, and a line height of 1.5. The images of a message have the same radius.
+- **M1.** The user message is a bubble with a light tint. On hover it shows a toolbar, in this order: "Copy message", "Rewind to here", "Fork from here", then the time. The bubble has the corner radius of the prompt box (`--prompt-radius`, 4px; the user asked for this). The bubble is tight on its words (the user asked for this): 7px of space above and below the text, 10px at the left and the right, and a line height of 1.5. The images of a message have the same radius.
 - **M1b.** In place of the check icon of the Claude app ("Read by Claude"), the toolbar of a user message shows the text "Read" or "Sent", then "|", then the time (the user asked for this). "Sent": the turn runs and nothing came after the message yet (no reply, no tool call, no card). "Read": all other messages. The tip of "Read" is "Read by the agent".
 - **M1a.** The round button that scrolls to the bottom shows three moving dots while the agent works. On hover it shows a down arrow, the jump to the agent, and the button gets a highlight: a lighter fill and a brighter ring (the user asked for both). The button shows only when the end of the chat is out of view: while the agent works, the working line; else the bottom of the chat (the user asked for this). A scroll up stops the follow, but the button stays hidden while the working line is in view.
 - **M1c.** A click that opens a dropdown in the chat (a tool row, a tool group, the working line, the task list, a visual, or a menu such as the ⋯ of a card) scrolls the chat down so the opened part is in view, with 12px of room (the user asked for this). The chat scrolls only as far as needed, never up, and the clicked row stays in view (`revealScroll` in `MessageList.tsx`).
@@ -695,7 +695,7 @@ Rules:
 | Gap xs / sm / md / lg / xl | 6 / 8 / 12 / 20 / 32px | 8 / 12 / 16 / 28 / 40px |
 
 - **T7.** Use these steps. Do not use other padding values.
-- **T7a.** Harness has one corner radius: 2px (the user asked for this: each element with rounded corners has the radius of the buttons). The value is `--radius-sm`. The tokens `--radius`, `--radius-lg`, `--radius-xl`, `--prompt-radius`, and `--side-radius` stay as names for their elements, and each has the value of `--radius-sm`. Use a token. Do not write a radius value in a rule:
+- **T7a.** Harness has one corner radius: 4px (the user asked for this: each element with rounded corners has the radius of the buttons). The value is `--radius-sm`. The tokens `--radius`, `--radius-lg`, `--radius-xl`, `--prompt-radius`, and `--side-radius` stay as names for their elements, and each has the value of `--radius-sm`. Use a token. Do not write a radius value in a rule:
 
   | Token | Elements |
   |---|---|
@@ -705,7 +705,7 @@ Rules:
   | `--prompt-radius` | the prompt box and the user message |
   | `--side-radius` | the sidebar rows |
 
-  A pill shape (`999px`) is in use only for a switch: a switch is round, with a round knob (the user asked for this). A chip, a status pill, a badge, and a meter have the 2px radius. The x of an attachment is square with the 2px radius. A circle keeps `50%`: the scroll-to-bottom button (the user asked for a circle), a status dot, the radio button, an avatar, a color swatch, the switch knob, and the circle of a plan step. A segmented button, inside a 2px corner, has 1px.
+  A pill shape (`999px`) is in use only for a switch: a switch is round, with a round knob (the user asked for this). A chip, a status pill, a badge, and a meter have the 4px radius. The x of an attachment is square with the 4px radius. A circle keeps `50%`: the scroll-to-bottom button (the user asked for a circle), a status dot, the radio button, an avatar, a color swatch, the switch knob, and the circle of a plan step. A segmented button, inside a 4px corner with 2px of padding, has 2px.
 - **T8.** The app default density is comfortable.
 
 ### 11.5 Depth and motion
