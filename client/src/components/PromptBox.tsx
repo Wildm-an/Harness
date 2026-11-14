@@ -132,6 +132,29 @@ export function commandLinks(text: string, commands: readonly CommandItem[] | nu
   return parts;
 }
 
+/** A link is one block, as in Claude Code: Backspace at its end or in it, or Delete at its start or in it, removes
+ * the full link. Return the new text and caret, or null when the key does not touch a link (or text is selected). */
+export function deleteLink(
+  parts: readonly PromptPart[],
+  start: number,
+  end: number,
+  key: "Backspace" | "Delete",
+): { text: string; caret: number } | null {
+  if (start !== end) return null;
+  let at = 0;
+  for (const p of parts) {
+    const from = at;
+    const to = at + p.text.length;
+    at = to;
+    if (!p.command) continue;
+    if (key === "Backspace" ? start > from && start <= to : start >= from && start < to) {
+      const text = parts.map((q) => q.text).join("");
+      return { text: text.slice(0, from) + text.slice(to), caret: from };
+    }
+  }
+  return null;
+}
+
 /** Replace the "/query" at ``start`` with "/name ". Return the new text and the new caret. */
 export function insertCommand(text: string, caret: number, start: number, name: string): { text: string; caret: number } {
   const after = text.slice(caret);
@@ -605,6 +628,15 @@ export function PromptBox({
       e.preventDefault();
       setAttachments((list) => list.slice(0, -1));
       return;
+    }
+    if ((e.key === "Backspace" || e.key === "Delete") && hasLinks && !e.altKey && !e.metaKey) {
+      const next = deleteLink(parts, e.currentTarget.selectionStart, e.currentTarget.selectionEnd, e.key);
+      if (next) {
+        e.preventDefault();
+        pendingCaret.current = next.caret;
+        change(next.text, next.caret);
+        return;
+      }
     }
     if (onAddFiles && isAddFilesShortcut(e.nativeEvent)) {
       e.preventDefault();

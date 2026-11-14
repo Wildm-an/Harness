@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commandLinks, draftOf, saveDraft, splitAttachmentLines, withAttachments } from "./PromptBox";
+import { commandLinks, deleteLink, draftOf, saveDraft, splitAttachmentLines, withAttachments } from "./PromptBox";
 import type { CommandItem } from "../daemon/protocol";
 
 describe("the unsent prompt of a session", () => {
@@ -85,6 +85,25 @@ describe("a skill name in the prompt shows as a link", () => {
     expect(links("/nope")).toEqual([]);
     expect(links("see src/ui-ux-pro-max")).toEqual([]);
     expect(links("/ui-ux-pro-max/x")).toEqual([]);
+  });
+
+  it("removes the full link on Backspace at its end or in it", () => {
+    const parts = commandLinks("Use /asd-ste100 now", [item("asd-ste100", true)]);
+    expect(deleteLink(parts, 15, 15, "Backspace")).toEqual({ text: "Use  now", caret: 4 });
+    expect(deleteLink(parts, 8, 8, "Backspace")).toEqual({ text: "Use  now", caret: 4 });
+    expect(deleteLink(parts, 4, 4, "Backspace")).toBeNull(); // Before the "/": a normal Backspace.
+    expect(deleteLink(parts, 16, 16, "Backspace")).toBeNull(); // After the space.
+  });
+
+  it("removes the full link on Delete at its start or in it", () => {
+    const parts = commandLinks("Use /asd-ste100 now", [item("asd-ste100", true)]);
+    expect(deleteLink(parts, 4, 4, "Delete")).toEqual({ text: "Use  now", caret: 4 });
+    expect(deleteLink(parts, 15, 15, "Delete")).toBeNull();
+  });
+
+  it("does not change a selection", () => {
+    const parts = commandLinks("/asd-ste100", [item("asd-ste100", true)]);
+    expect(deleteLink(parts, 0, 5, "Backspace")).toBeNull();
   });
 
   it("has one plain part with no list", () => {
