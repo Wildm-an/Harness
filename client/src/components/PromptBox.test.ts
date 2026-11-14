@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { draftOf, saveDraft, splitAttachmentLines, withAttachments } from "./PromptBox";
+import { commandLinks, draftOf, saveDraft, splitAttachmentLines, withAttachments } from "./PromptBox";
+import type { CommandItem } from "../daemon/protocol";
 
 describe("the unsent prompt of a session", () => {
   it("stays with the session where the user typed it", () => {
@@ -49,5 +50,44 @@ describe("a prompt with attached context", () => {
 
   it("changes nothing with no attachment", () => {
     expect(withAttachments({ kind: "prompt", text: "Hi" }, [])).toEqual({ kind: "prompt", text: "Hi" });
+  });
+});
+
+describe("a skill name in the prompt shows as a link", () => {
+  const item = (name: string, skill: boolean): CommandItem => ({
+    name,
+    description: `${name} text`,
+    "argument-hint": "",
+    source: skill ? "user" : "built-in",
+    builtin: !skill,
+    ...(skill ? { path: `/skills/${name}/SKILL.md` } : {}),
+  });
+  const commands = [item("ui-ux-pro-max", true), item("pdf-viewer:open", true), item("clear", false)];
+  const links = (text: string) => commandLinks(text, commands).filter((p) => p.command).map((p) => p.text);
+
+  it("marks a known skill at the start and in the middle of the prompt", () => {
+    expect(links("/ui-ux-pro-max")).toEqual(["/ui-ux-pro-max"]);
+    expect(links("Use /ui-ux-pro-max and /pdf-viewer:open now")).toEqual(["/ui-ux-pro-max", "/pdf-viewer:open"]);
+  });
+
+  it("keeps all the text in the parts", () => {
+    const text = "Fix it\n/ui-ux-pro-max  please";
+    expect(commandLinks(text, commands).map((p) => p.text).join("")).toBe(text);
+  });
+
+  it("marks a built-in command only at the start", () => {
+    expect(links("/clear")).toEqual(["/clear"]);
+    expect(links("then /clear")).toEqual([]);
+  });
+
+  it("does not mark a partial name, an unknown name, or a path", () => {
+    expect(links("/ui-ux")).toEqual([]);
+    expect(links("/nope")).toEqual([]);
+    expect(links("see src/ui-ux-pro-max")).toEqual([]);
+    expect(links("/ui-ux-pro-max/x")).toEqual([]);
+  });
+
+  it("has one plain part with no list", () => {
+    expect(commandLinks("/ui-ux-pro-max", null)).toEqual([{ text: "/ui-ux-pro-max" }]);
   });
 });
