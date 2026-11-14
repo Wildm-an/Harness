@@ -153,7 +153,7 @@ import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
-import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
+import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen, onOpenNewSession } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
@@ -1696,6 +1696,24 @@ export default function App() {
     let stop: (() => void) | null = null;
     let live = true;
     void onNotificationOpen((id) => openFromNotice.current(id)).then((s) => (live ? (stop = s) : s()));
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
+
+  // The window was hidden in the tray, and the user opened it (the tray icon, the tray menu, the taskbar
+  // icon): the app shows a new session, as Ctrl+N does. A running turn continues in the background.
+  const openNewFromTray = useRef<() => void>(() => undefined);
+  openNewFromTray.current = () => {
+    if (status !== "open") return;
+    setSettingsPage(null);
+    showStartRef.current();
+  };
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let live = true;
+    void onOpenNewSession(() => openNewFromTray.current()).then((s) => (live ? (stop = s) : s()));
     return () => {
       live = false;
       stop?.();

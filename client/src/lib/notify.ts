@@ -51,6 +51,16 @@ export async function onNotificationOpen(fn: (sessionId: string) => void): Promi
   return listen<string>(NOTIFICATION_OPEN_EVENT, (e) => fn(e.payload));
 }
 
+/** The event of an open of the window from the tray: the window was hidden (open_main in src-tauri lib.rs). */
+export const OPEN_NEW_SESSION_EVENT = "open-new-session";
+
+/** Calls ``fn`` when the user opens the hidden window. Returns a function that stops it. */
+export async function onOpenNewSession(fn: () => void): Promise<() => void> {
+  if (!isTauri()) return () => undefined;
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen(OPEN_NEW_SESSION_EVENT, () => fn());
+}
+
 /** Shows a Windows notification. A click shows the app and opens ``sessionId`` (src-tauri lib.rs).
  * Nothing happens outside the desktop app or with no permission. */
 async function show(title: string, body?: string, sessionId?: string): Promise<void> {
