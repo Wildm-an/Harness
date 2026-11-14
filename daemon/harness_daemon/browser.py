@@ -59,6 +59,10 @@ INSTALL_HINT = (
 )
 INSTALL_TIMEOUT = 900  # Seconds. The download is about 150 MB.
 INSTALL_OUTPUT = 600  # The characters of installer output in a failure message.
+# Seconds. The first browser action waits this long for the download, then opens the page. Some MCP
+# clients of the other harnesses (acp_mcp.py) stop a tool call after 60 seconds.
+INSTALL_WAIT = 50
+INSTALL_POLL = 0.25
 
 
 def install_command() -> str:
@@ -77,6 +81,9 @@ class ChromiumInstall:
     launch that fails starts the download in a background thread, and the agent gets a status
     message. Only one download runs at a time, for all sessions. Playwright removes the old
     revisions that no Playwright on the computer uses (its ``.links`` folder).
+
+    The browser action that starts the download waits for it (``INSTALL_WAIT``). A slow download
+    gives the agent a status message, and the agent does the action again later.
     """
 
     def __init__(self, argv: Callable[[], list[str]] = frozen.install_browser_argv):
@@ -111,6 +118,25 @@ class ChromiumInstall:
             self._thread.start()
             return ("Chromium for Playwright is not installed on the daemon computer. The daemon started "
                     "the download now (about 150 MB). Wait about one minute, then do the browser action again.")
+
+    async def install(self, wait: float = INSTALL_WAIT) -> str | None:
+        """Start the download if it does not run, and wait for it.
+
+        Return None when the download finished in the wait: launch Chromium again.
+        Else return the status message for the agent.
+        """
+        status = self.request()
+        if not self.running:
+            return status  # A failure, or a Chromium that Playwright does not find.
+        deadline = time.monotonic() + wait
+        while self.running and time.monotonic() < deadline:
+            await asyncio.sleep(INSTALL_POLL)
+        if self.running:
+            return self.request()
+        with self._lock:
+            if self.installed and self._error is None:
+                return None
+        return self.request()  # The failure of this download.
 
     def wait(self, timeout: float | None = None) -> None:
         thread = self._thread
@@ -462,20 +488,33 @@ class AgentBrowser:
             except ImportError:
                 raise BrowserError(INSTALL_HINT) from None
             self._pw = await async_playwright().start()
-            try:
-                self._browser = await self._pw.chromium.launch(headless=True)
-            except Exception as e:  # noqa: BLE001 - Playwright raises its own Error type.
-                await self._pw.stop()
-                self._pw = None
-                if "Executable doesn't exist" in str(e) or "playwright install" in str(e):
-                    raise BrowserError(self.chromium.request()) from None
-                raise BrowserError(f"The agent browser did not start: {e}") from None
+            self._browser = await self._launch()
             self._context = await self._browser.new_context(viewport=VIEWPORT)
             self._context.on("page", self._adopt)
             await self._context.route("**/*", self._route)
         page = await self._context.new_page()
         self._adopt(page)
         return page
+
+    async def _launch(self) -> Any:
+        """Launch Chromium. A missing Chromium revision starts the download, and the launch waits for it."""
+        downloaded = False
+        while True:
+            try:
+                return await self._pw.chromium.launch(headless=True)
+            except Exception as e:  # noqa: BLE001 - Playwright raises its own Error type.
+                missing = "Executable doesn't exist" in str(e) or "playwright install" in str(e)
+                status = None
+                if missing and not downloaded:
+                    status = await self.chromium.install()
+                    downloaded = True
+                    if status is None:
+                        continue  # The download finished. Launch again.
+                elif missing:
+                    status = self.chromium.request()
+                await self._pw.stop()
+                self._pw = None
+                raise BrowserError(status or f"The agent browser did not start: {e}") from None
 
     def _adopt(self, page: Any) -> None:
         """Watch a page. A new page (for example, a link with target=_blank) becomes the active page."""

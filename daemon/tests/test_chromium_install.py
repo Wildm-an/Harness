@@ -93,3 +93,75 @@ def test_a_missing_revision_starts_the_download(monkeypatch):
 
     asyncio.run(run())
     assert Install.requests == 1
+
+
+def test_the_wait_returns_when_the_download_finishes(tmp_path):
+    argv = script(tmp_path, "import time\ntime.sleep(0.3)\n")
+    install = ChromiumInstall(lambda: argv)
+    assert asyncio.run(install.install(wait=30)) is None
+    assert install.installed
+
+
+def test_a_slow_download_gives_the_status(tmp_path):
+    gate = tmp_path / "go"
+    argv = script(tmp_path, f"import pathlib, time\nwhile not pathlib.Path({str(gate)!r}).exists(): time.sleep(0.05)\n")
+    install = ChromiumInstall(lambda: argv)
+    status = asyncio.run(install.install(wait=0.5))
+    assert status is not None and "downloads Chromium for Playwright now" in status
+    gate.write_text("", encoding="utf-8")
+    install.wait(30)
+
+
+def test_the_wait_reports_a_failed_download(tmp_path):
+    argv = script(tmp_path, "print('no disk space')\nraise SystemExit(4)\n")
+    install = ChromiumInstall(lambda: argv)
+    status = asyncio.run(install.install(wait=30))
+    assert status is not None and "failed: exit code 4" in status and "no disk space" in status
+
+
+class FakePlaywright:
+    """A Playwright whose first launch fails with a missing revision."""
+
+    def __init__(self, failures: int):
+        self.failures = failures
+        self.launches = 0
+        self.stopped = False
+        self.chromium = self
+
+    async def launch(self, **kwargs):
+        self.launches += 1
+        if self.launches <= self.failures:
+            raise Exception("BrowserType.launch: Executable doesn't exist at C:/ms-playwright/chromium-1254/chrome.exe")
+        return "browser"
+
+    async def stop(self):
+        self.stopped = True
+
+
+class FinishedInstall(ChromiumInstall):
+    """A download that finishes in the wait."""
+
+    calls = 0
+
+    async def install(self, wait: float = 0) -> str | None:
+        FinishedInstall.calls += 1
+        self.installed = True
+        return None
+
+
+def test_the_launch_continues_after_the_download():
+    browser = AgentBrowser(lambda url: True, chromium=FinishedInstall())
+    pw = FakePlaywright(failures=1)
+    browser._pw = pw
+    assert asyncio.run(browser._launch()) == "browser"
+    assert pw.launches == 2 and not pw.stopped
+
+
+def test_no_second_download_when_chromium_is_still_missing():
+    FinishedInstall.calls = 0
+    browser = AgentBrowser(lambda url: True, chromium=FinishedInstall())
+    pw = FakePlaywright(failures=2)
+    browser._pw = pw
+    with pytest.raises(BrowserError, match="does not find it"):
+        asyncio.run(browser._launch())
+    assert FinishedInstall.calls == 1 and pw.stopped and browser._pw is None
