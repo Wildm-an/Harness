@@ -19,9 +19,9 @@ These parts exist now. The plan uses them.
 | File tools | `tools/base.py`: `ToolContext.cwd`, `resolve` | The file tools work on the host folder. A bind mount makes the same files show in the container. |
 | Tray | `client/src-tauri/src/lib.rs`: `make_tray` | The daemon continues when the window closes, if "Keep running in the background" is on. |
 | Keep awake | `keepawake.py` | The computer stays awake while an agent works. |
-| No sandbox now | `auto_mode.py:13` | The container is the sandbox that this file says Harness does not have. |
+| Local sandbox | `sandbox.py`, `docs/SANDBOX.md` | `sandbox.py` holds the sandbox policy of interactive `bash` (Seatbelt on macOS, bubblewrap on Linux). Docker is one more backend of `wrap`, for Dispatch only. |
 
-Name conflict: `agents.py` holds the subagent types. The new modules use the names `sandbox.py` and `dispatch.py`.
+Name conflict: `agents.py` holds the subagent types. `sandbox.py` exists now: it holds the policy and the local backends. Put the Docker functions of phase 1 in a new module `sandbox_docker.py` and add them as a backend of `wrap`. The Dispatch module is `dispatch.py`.
 
 ## 3. Decisions (defaults)
 
@@ -40,7 +40,7 @@ The plan uses these defaults. Change them before phase 1 if they are wrong.
 
 ### Phase 1: Sandbox module (daemon)
 
-Make `daemon/harness_daemon/sandbox.py`.
+Make `daemon/harness_daemon/sandbox_docker.py`. Use the policy of `sandbox.py` (`SandboxPolicy`): the container backend gets the same write roots and network rule.
 
 - `docker_status()`: return "missing", "stopped", or "ready". Use `docker info`.
 - `start_docker()`: start Docker Desktop. Wait at most 120 seconds for "ready".
@@ -49,11 +49,11 @@ Make `daemon/harness_daemon/sandbox.py`.
 - `shell_info(name)`: return `ShellInfo("bash", ("docker", "exec", "-i", "-w", "/workspace", name, "bash", "-lc"))`.
 - `orphans()`: list the containers with the label `harness.agent` that have no agent in the database.
 
-Tests: `daemon/tests/test_sandbox.py`. Use a fake `docker` command. Do not need Docker in CI.
+Tests: `daemon/tests/test_sandbox_docker.py`. Use a fake `docker` command. Do not need Docker in CI.
 
 ### Phase 2: Agent copy of the project
 
-Add these functions to `sandbox.py`, or to a new `agent_copy.py`.
+Add these functions to `sandbox_docker.py`, or to a new `agent_copy.py`.
 
 1. Clone the project: `git clone --local <project> ~/.harness/agents/<id>/workspace`.
 2. Make the branch `harness/agent-<id>` in the clone.

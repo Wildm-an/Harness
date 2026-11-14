@@ -1,0 +1,2 @@
+# The prompt snapshots must have the same bytes on Windows, macOS, and Linux.
+daemon/tests/snapshots/** text eol=lf

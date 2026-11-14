@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from untag import untag
 from harness_daemon.mcp_client import McpManager, load_mcp_config, tool_name
 from harness_daemon.permissions import rule_matches
 from harness_daemon.tools import ToolError
@@ -113,13 +114,13 @@ def test_stdio_server_tools_results_and_list_changes(harness_home, project, monk
         assert add.parameters["required"] == ["a", "b"] and "title" not in add.parameters
 
         result = await add.run({"a": 2, "b": 3}, None)
-        assert (result.output, result.is_error) == ("5", False)
+        assert (untag(result.output), result.is_error) == ("5", False)
         failed = await tools["mcp__test__fail"].run({}, None)
         assert failed.is_error and "fail" in failed.output
         picture = await tools["mcp__test__picture"].run({}, None)
         assert picture.image.startswith("data:image/png;base64,") and "[An image: image/png]" in picture.output
         secret = await tools["mcp__test__secret"].run({}, None)
-        assert secret.output == "from-config"  # The env of the config goes over the env of the daemon.
+        assert untag(secret.output) == "from-config"  # The env of the config goes over the env of the daemon.
 
         # tools/list_changed: the new tool comes to the agent.
         assert "mcp__test__late" not in tools
@@ -128,12 +129,13 @@ def test_stdio_server_tools_results_and_list_changes(harness_home, project, monk
         while "mcp__test__late" not in {t.name for t in box["tools"]} and time.time() < deadline:
             await asyncio.sleep(0.1)
         late = next(t for t in box["tools"] if t.name == "mcp__test__late")
-        assert (await late.run({}, None)).output == "late tool"
+        assert untag((await late.run({}, None)).output) == "late tool"
 
         # A restart of one server connects again.
         await manager.restart("test")
         assert manager.servers["test"].state == "connected"
-        assert (await next(t for t in box["tools"] if t.name == "mcp__test__echo").run({"text": "hi"}, None)).output == "hi"
+        echo = next(t for t in box["tools"] if t.name == "mcp__test__echo")
+        assert untag((await echo.run({"text": "hi"}, None)).output) == "hi"
         items = manager.items()
         assert [i["state"] for i in items["items"]] == ["connected", "failed", "disabled"]
         assert items["items"][0]["tools"][0]["agent_name"].startswith("mcp__test__")
@@ -163,7 +165,7 @@ def test_http_server(harness_home, project):
         async def body(manager: McpManager, box: dict) -> None:
             assert manager.servers["remote"].state == "connected", manager.servers["remote"].error
             echo = next(t for t in box["tools"] if t.name == "mcp__remote__echo")
-            assert (await echo.run({"text": "over http"}, None)).output == "over http"
+            assert untag((await echo.run({"text": "over http"}, None)).output) == "over http"
 
         run_manager(project, body)
     finally:
@@ -206,7 +208,7 @@ def test_mcp_tool_call_needs_approval(daemon, project, fake_model):  # noqa: F81
     c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_always"})
     end, seen = c.until("turn.end", timeout=60)
     result = next(m for m in seen if m["type"] == "tool.result")
-    assert result["output"] == "5" and not result["is_error"]
+    assert untag(result["output"]) == "5" and not result["is_error"]
     tools = {t["function"]["name"] for t in fake_model.requests[0]["tools"]}
     assert "mcp__test__add" in tools
     assert "mcp__test__add" in json.loads((project / ".harness" / "settings.json").read_text())["allow"]
@@ -215,7 +217,7 @@ def test_mcp_tool_call_needs_approval(daemon, project, fake_model):  # noqa: F81
     c.send({"type": "prompt", "text": "add 4 and 4"})
     end, seen = c.until("turn.end", timeout=60)
     assert not any(m["type"] == "permission.request" for m in seen)
-    assert next(m for m in seen if m["type"] == "tool.result")["output"] == "8"
+    assert next(m for m in seen if m["type"] == "tool.result")["output"].startswith("<external-content-") and untag(next(m for m in seen if m["type"] == "tool.result")["output"]) == "8"
 
     c.send({"type": "mcp.list"})
     listing = c.until("mcp")[0]

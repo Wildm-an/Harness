@@ -15,12 +15,55 @@ from __future__ import annotations
 
 import re
 from collections.abc import Collection
+from dataclasses import dataclass
 
-# The model name substrings of each block (the lists of Hermes Agent).
-TOOL_USE_MODELS = ("gpt", "codex", "gemini", "gemma", "grok", "glm", "qwen", "deepseek")
-EXECUTION_MODELS = ("gpt", "codex", "grok", "deepseek", "kimi", "qwen", "glm", "minimax", "mimo", "mistral")
-GOOGLE_MODELS = ("gemini", "gemma")
-KIMI_MODELS = ("kimi", "moonshot")
+
+@dataclass(frozen=True)
+class Family:
+    id: str
+    pattern: re.Pattern[str]
+
+
+def _family(id: str, names: str) -> Family:
+    # A name matches only as a whole word part: "gptq" (a quantization) is not "gpt". A digit can follow.
+    return Family(id, re.compile(rf"(?<![a-z0-9])(?:{names})(?![a-z])"))
+
+
+# The model families, in order: the first match wins. The lists follow Hermes Agent.
+FAMILIES: tuple[Family, ...] = (
+    _family("claude", "claude"),
+    _family("gpt", "gpt|chatgpt|codex"),
+    _family("gemini", "gemini"),
+    _family("gemma", "gemma"),
+    _family("grok", "grok"),
+    _family("glm", "glm"),
+    _family("qwen", "qwen|qwq"),
+    _family("deepseek", "deepseek"),
+    _family("kimi", "kimi|moonshot|moonshotai"),
+    _family("minimax", "minimax"),
+    _family("mimo", "mimo"),
+    _family("mistral", "mistral|mistralai"),
+)
+FAMILY_IDS = tuple(f.id for f in FAMILIES)
+
+# The prompt blocks of each family, in order. A family that is not here (or no family) gets no block.
+FAMILY_BLOCKS: dict[str, tuple[str, ...]] = {
+    "claude": ("claude_comments",),
+    "gpt": ("gpt_style", "tool_use", "execution"),
+    "gemini": ("tool_use", "google"),
+    "gemma": ("tool_use", "google"),
+    "grok": ("tool_use", "execution"),
+    "glm": ("tool_use", "execution"),
+    "qwen": ("tool_use", "execution"),
+    "deepseek": ("tool_use", "execution"),
+    "kimi": ("execution", "kimi"),
+    "minimax": ("execution",),
+    "mimo": ("execution",),
+    "mistral": ("execution",),
+}
+# Families that get the "frontier" scaffold tier when they are not small. A tier gates scaffolds, for
+# example the task list reminders (task_reminders). docs/PROMPT_LEDGER.md records the reason of each gate.
+FRONTIER_FAMILIES = ("claude", "gpt", "gemini")
 SMALL_MODEL_BILLIONS = 14  # A model with at most this many billion parameters gets one tool call for each reply.
 
 PARALLEL_TOOL_CALLS = """\
@@ -34,7 +77,7 @@ SMALL_MODEL_TOOL_CALLS = """\
 Tool calls:
 - Make one tool call in each reply. Wait for its result before you make the next call.
 - When a result is useful, use it for the next step. Do not search again in a loop.
-- If the request is not clear, ask the user before you read files or make changes."""
+- If the request can mean two different tasks, ask the user which one before you change files."""
 
 # Hermes Agent TOOL_USE_ENFORCEMENT_GUIDANCE.
 TOOL_USE_ENFORCEMENT = """\
@@ -52,20 +95,20 @@ EXECUTION_DISCIPLINE = """\
 <tool_persistence>
 - Use tools when they make the result more correct, more complete, or better supported.
 - Do not stop early when one more tool call would make the result much better.
-- If a tool gives an empty, partial, or very narrow result, try a broader or different query before you decide.
+- If a tool gives an empty or partial result, try one different query before you decide.
 - Continue to call tools until the task is complete and you checked the result.
 </tool_persistence>
 
-<mandatory_tool_use>
-Do not answer these from memory or from mental calculation. Use a tool:
-- Arithmetic and calculations: use bash.
+<facts_from_tools>
+Get these facts from a tool, because your memory of them can be wrong or old:
+- Calculations with large numbers or many steps: use bash.
 - Hashes, encodings, and checksums: use bash.
-- The current time and date: use bash.
+- The current time: use bash. The Environment section gives the date.
 - System state (operating system, CPU, memory, disk, ports, processes): use bash.
 - File contents, sizes, and line counts: use read or grep.
 - Git history, branches, and diffs: use bash.
 Your memory and the instructions of the user describe the user. They do not describe the computer that you run on.
-</mandatory_tool_use>
+</facts_from_tools>
 
 <act_dont_ask>
 When a question has one clear default meaning, act on it. Do not ask the user first. For example:
@@ -85,7 +128,7 @@ Before your final answer, check these items:
 - Correctness: the result satisfies each requirement.
 - Grounding: tool output or the given context supports each fact.
 - Format: the result has the format that the user asked for.
-- Safety: before a step with side effects (file writes, commands, API calls), confirm its scope.
+- Scope: each file write, command, and API call stays in the scope of the request.
 - Completion: "done" means that you checked each requirement that the user named, not only some of them.
 </verification>
 
@@ -108,9 +151,9 @@ does not match a format.
 </missing_context>"""
 
 TOOL_LINES = {
-    "- Arithmetic and calculations: use bash.\n": ("bash",),
+    "- Calculations with large numbers or many steps: use bash.\n": ("bash",),
     "- Hashes, encodings, and checksums: use bash.\n": ("bash",),
-    "- The current time and date: use bash.\n": ("bash",),
+    "- The current time: use bash. The Environment section gives the date.\n": ("bash",),
     "- System state (operating system, CPU, memory, disk, ports, processes): use bash.\n": ("bash",),
     "- File contents, sizes, and line counts: use read or grep.\n": ("read", "grep"),
     "- Git history, branches, and diffs: use bash.\n": ("bash",),
@@ -151,6 +194,17 @@ KIMI_RULES = """\
 - Reply in the language of the user.
 - Do not run git commit, git push, git reset, git rebase, or other git changes unless the user asks for them."""
 
+KIMI_WRITE_PHRASE = "use the write and edit tools"
+
+
+def kimi_rules(tool_names: Collection[str] | None = None) -> str:
+    """KIMI_RULES. With edit_tool "apply_patch" the agent has apply_patch in place of write and edit."""
+    names = set(tool_names or ())
+    if "apply_patch" in names and "edit" not in names:
+        return KIMI_RULES.replace(KIMI_WRITE_PHRASE, "use the apply_patch tool")
+    return KIMI_RULES
+
+
 # opencode anthropic.txt (v2). Claude gets no enforcement block.
 CLAUDE_COMMENTS = """\
 # Code comments
@@ -166,9 +220,49 @@ def _name(model: str) -> str:
     return model.split("/", 1)[-1].lower()
 
 
-def _has(model: str, names: tuple[str, ...]) -> bool:
-    name = _name(model)
-    return any(n in name for n in names)
+def model_family(model: str, override: str | None = None) -> str | None:
+    """The family id of a model label ("provider/model"), or None.
+
+    The last path segment counts first: "openai/gpt-5" is gpt. If it matches no family, the segment before it
+    counts: "mistralai/codestral-2508" is mistral. The provider name (the first segment) never counts.
+    ``override``: the "family" of the model in providers.json, a family id or "none".
+    """
+    if override is not None:
+        return override if override in FAMILY_IDS else None
+    segments = _name(model).split("/")
+    for segment in (segments[-1], *reversed(segments[:-1])):
+        for family in FAMILIES:
+            if family.pattern.search(segment):
+                return family.id
+    return None
+
+
+def scaffold_tier(model: str, family: str | None) -> str:
+    """"small", "frontier", or "standard". A small model has a size of at most SMALL_MODEL_BILLIONS in its name."""
+    if is_small_model(model):
+        return "small"
+    if family in FRONTIER_FAMILIES and "gpt-oss" not in _name(model):
+        return "frontier"
+    return "standard"
+
+
+# The task list reminders, and the tiers that get each one with task_reminders "auto". All tiers get all
+# reminders until the evaluation set (daemon/evals) shows which tier does not need one.
+REMINDER_TIERS: dict[str, tuple[str, ...]] = {
+    "plan_start": ("small", "standard", "frontier"),
+    "plan_steer": ("small", "standard", "frontier"),
+    "plan_open": ("small", "standard", "frontier"),
+    "plan_stale": ("small", "standard", "frontier"),
+}
+
+
+def reminder_on(name: str, tier: str, setting: str | None) -> bool:
+    """The setting "task_reminders": "auto" (by tier, the default), "on", or "off"."""
+    if setting == "off":
+        return False
+    if setting == "on":
+        return True
+    return tier in REMINDER_TIERS.get(name, (tier,))
 
 
 def is_small_model(model: str) -> bool:
@@ -187,19 +281,20 @@ def execution_discipline(tool_names: Collection[str] | None) -> str:
     return text
 
 
-def model_guidance(model: str, tool_names: Collection[str] | None = None) -> list[str]:
-    """The prompt blocks for the model family, in order. Empty for a model with no known faults."""
-    if _has(model, ("claude",)):
-        return [CLAUDE_COMMENTS]
-    blocks: list[str] = []
-    if _has(model, ("gpt", "codex")):
-        blocks.append(GPT_WORKING_STYLE)
-    if _has(model, TOOL_USE_MODELS):
-        blocks.append(TOOL_USE_ENFORCEMENT)
-    if _has(model, GOOGLE_MODELS):
-        blocks.append(GOOGLE_RULES)
-    elif _has(model, EXECUTION_MODELS):
-        blocks.append(execution_discipline(tool_names))
-    if _has(model, KIMI_MODELS):
-        blocks.append(KIMI_RULES)
-    return blocks
+def model_guidance(model: str, tool_names: Collection[str] | None = None, family: str | None = None,
+                   ablate: Collection[str] = ()) -> list[str]:
+    """The prompt blocks for the model family, in order. Empty for a model with no known faults.
+
+    ``family``: a family id that replaces the match of the name (the providers.json override).
+    ``ablate``: block ids to leave out, for an evaluation run (the setting "prompt_ablate").
+    """
+    family = family if family is not None else model_family(model)
+    texts = {
+        "claude_comments": lambda: CLAUDE_COMMENTS,
+        "gpt_style": lambda: GPT_WORKING_STYLE,
+        "tool_use": lambda: TOOL_USE_ENFORCEMENT,
+        "execution": lambda: execution_discipline(tool_names),
+        "google": lambda: GOOGLE_RULES,
+        "kimi": lambda: kimi_rules(tool_names),
+    }
+    return [texts[block]() for block in FAMILY_BLOCKS.get(family or "", ()) if block not in ablate]

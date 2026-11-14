@@ -16,6 +16,7 @@ from harness_daemon import mcp_auth
 from harness_daemon.config import ConfigError
 from harness_daemon.mcp_client import McpManager, load_mcp_config
 
+from untag import untag
 from test_mcp import PYTHON, SERVER, free_port, write_config
 
 
@@ -175,7 +176,7 @@ def test_sign_in_with_the_browser(harness_home, project, oauth_server):
         s = manager.servers["remote"]
         assert s.state == "connected", s.error
         echo = next(t for t in box["tools"] if t.name == "mcp__remote__echo")
-        assert (await echo.run({"text": "signed in"}, None)).output == "signed in"
+        assert untag((await echo.run({"text": "signed in"}, None)).output) == "signed in"
         assert manager.items()["items"][0]["signed_in"] is True
 
         # The tokens stay: a new connection needs no sign-in.

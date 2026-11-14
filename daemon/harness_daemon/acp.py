@@ -46,6 +46,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .auto_mode import SafetyMatch, bypass_safety_rules, hard_rule, safety_match
+from .permissions import PROTECTED_ASK, SAFETY_ASK, SAFETY_BLOCK
 from . import __version__, acp_mcp, acp_models
 from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
 from .acp_terminal import TerminalError, TerminalHost
@@ -804,13 +806,26 @@ class AcpAgent(Agent):
         await self._start_call(call)
         name, args = self._view(call)
         mode = self._mode_setting()
-        if mode == "bypassPermissions":
-            return selected(pick("allow_once", "allow_always"))
-        if mode == "acceptEdits" and call.kind == "edit":
-            return selected(pick("allow_once", "allow_always"))
         if mode == "plan" and call.kind in ("edit", "delete", "move"):
             return selected(pick("reject_once", "reject_always"))
-        always = pick("allow_always")
+        # The safety rules of Harness apply to the external harness too (permissions.py): a hard rule match or an
+        # edit of a protected path does not get the automatic answer of bypassPermissions or acceptEdits.
+        match = self._safety_match(name, args)
+        reason = None
+        if match is not None:
+            setting = bypass_safety_rules() if mode == "bypassPermissions" else "ask"
+            if match.kind == "hard" and setting == "block":
+                return selected(pick("reject_once", "reject_always"))
+            if (match.kind == "hard" and setting == "off") or (match.kind == "protected" and mode == "bypassPermissions"):
+                match = None
+            else:
+                reason = (SAFETY_ASK.format(label=match.label) if match.kind == "hard"
+                          else PROTECTED_ASK.format(path=args.get("path")))
+        if match is None and mode == "bypassPermissions":
+            return selected(pick("allow_once", "allow_always"))
+        if match is None and mode == "acceptEdits" and call.kind == "edit":
+            return selected(pick("allow_once", "allow_always"))
+        always = pick("allow_always") if match is None else None  # A safety question has no "Always allow".
         request: dict[str, Any] = {
             "request_id": uuid.uuid4().hex,
             "tool": name,
@@ -820,6 +835,8 @@ class AcpAgent(Agent):
             "rule": f"{self.harness.name}: {call.title or name}" if always is not None else None,
             "remember": self.harness.name if always is not None else None,
         }
+        if reason:
+            request["reason"] = reason
         decision = await self.gate.approver(request)
         if self._cancelling:
             return {"outcome": {"outcome": "cancelled"}}
@@ -888,10 +905,25 @@ class AcpAgent(Agent):
             await self._changed(str(path))
         return None
 
+    def _safety_match(self, name: str, args: dict[str, Any]) -> SafetyMatch | None:
+        """A hard rule match of a command, or an edit of a protected path (auto_mode.safety_match)."""
+        if name == "bash":
+            return safety_match("bash", str(args.get("command") or ""))
+        if name == "edit" and isinstance(args.get("path"), str):
+            path = Path(args["path"])
+            rel = relpath(self.cwd, path) if path.is_absolute() else args["path"]
+            return safety_match("edit", rel)
+        return None
+
     def _terminal_create(self, params: dict[str, Any]) -> dict[str, Any]:
         command = " ".join([str(params.get("command") or ""), *[str(a) for a in params.get("args") or []]]).strip()
         if command and self.gate.rules.denies("bash", command):
             raise AcpError(f"A deny rule of the project settings blocks the command: {command}")
+        # A terminal of the harness has no question card. A hard rule match is blocked, unless the user turned
+        # the rules off for bypass mode ("bypass_safety_rules": "off" in ~/.harness/settings.json).
+        label = hard_rule("bash", command) if command else None
+        if label and not (self._mode_setting() == "bypassPermissions" and bypass_safety_rules() == "off"):
+            raise AcpError(SAFETY_BLOCK.format(label=label))
         terminal = self.terminals.create(params)
         return {"terminalId": terminal.id}
 
@@ -900,7 +932,8 @@ class AcpAgent(Agent):
         call_id = f"harness_{uuid.uuid4().hex[:12]}"
         snapshot = await asyncio.to_thread(before_call, self.cwd, name, args)
         result = await self._execute(name, args, None, call_id)
-        result.output = truncate(result.output, int(self.settings["max_output_chars"]))
+        if not result.limited:
+            result.output = truncate(result.output, int(self.settings["max_output_chars"]))
         created = await asyncio.to_thread(created_files, self.cwd, snapshot, result.changed_paths)
         # The harness reports the call itself, after this reply. Its tool row gets the cards (_end_call).
         if result.card or created:

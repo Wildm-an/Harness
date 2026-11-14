@@ -106,6 +106,25 @@ def test_no_tool_call_limit(harness_home, project, fake_model):
     assert types(events).count("tool.start") == 3
 
 
+def test_long_command_output_keeps_its_tail_and_exit_code(harness_home, project, fake_model, monkeypatch):
+    from harness_daemon.tools.shell import CommandResult
+
+    lines = "\n".join(f"line {i}" for i in range(5000)) + "\nLAST LINE"
+
+    async def fake_run(command, cwd, shell, timeout, **kwargs):  # kwargs: env and sandbox.
+        return CommandResult(output=lines, returncode=1, timed_out=False)
+
+    monkeypatch.setattr("harness_daemon.tools.bash.run_command", fake_run)
+    fake_model.script({"tool_calls": [{"name": "bash", "arguments": {"command": "make test"}}]}, {"text": "Failed."})
+    agent, events, _ = make_agent(project, max_output_chars=2000)
+    asyncio.run(agent.run_turn("run the tests"))
+    output = next(e for e in events if e["type"] == "tool.result")["output"]
+    # The tool keeps the head and the tail. The agent must not cut the result a second time from the end.
+    assert "line 0" in output and "LAST LINE" in output
+    assert output.rstrip().endswith("[Exit code: 1]")
+    assert "characters were removed from the middle" in output
+
+
 def test_bad_arguments_and_unknown_tool_go_back_to_the_model(harness_home, project, fake_model):
     fake_model.script(
         {"tool_calls": [{"name": "read", "arguments": "{not json"}, {"name": "fly_to_the_moon", "arguments": {}}]},
@@ -257,3 +276,80 @@ def test_reasoning_stays_out_of_other_models(harness_home, project, fake_model):
     assert asyncio.run(agent.run_turn("read hello.py")) == "end"
     assert agent.history[1]["reasoning_content"] == "Some thoughts."  # Kept, for a later DeepSeek model.
     assert all("reasoning_content" not in m for m in fake_model.requests[1]["messages"])
+
+
+def test_the_tool_call_limit_ends_with_a_final_report(harness_home, project, fake_model):
+    call = {"name": "read", "arguments": {"path": "hello.py"}}
+    fake_model.script({"tool_calls": [call]}, {"tool_calls": [call, call]},
+                      {"text": "Two reads are done. One is left."})
+    agent, events, _ = make_agent(project, max_tool_calls=2)
+    assert asyncio.run(agent.run_turn("loop")) == "max_tool_calls"
+    assert agent.history[-1] == {"role": "assistant", "content": "Two reads are done. One is left."}
+    report_request = fake_model.requests[-1]
+    assert report_request["tool_choice"] == "none"
+    assert report_request["tools"] == fake_model.requests[0]["tools"]  # The same tools: the cache prefix stays.
+    assert "reached the limit of 2 tool calls" in report_request["messages"][-1]["content"]
+
+
+def test_the_final_report_ignores_tool_calls(harness_home, project, fake_model):
+    call = {"name": "read", "arguments": {"path": "hello.py"}}
+    fake_model.script({"tool_calls": [call]}, {"tool_calls": [call]}, {"tool_calls": [call]})
+    agent, events, _ = make_agent(project, max_tool_calls=1)
+    assert asyncio.run(agent.run_turn("loop")) == "max_tool_calls"
+    assert types(events).count("tool.start") == 1  # The tool call of the report reply did not run.
+    assert any(e["type"] == "notice" and "no final report" in e["text"] for e in events)
+
+
+def test_a_failed_final_report_keeps_the_stop_reason(harness_home, project, fake_model):
+    call = {"name": "read", "arguments": {"path": "hello.py"}}
+    fake_model.script({"tool_calls": [call, call]}, {"error": "overloaded", "status": 400})
+    agent, events, _ = make_agent(project, max_tool_calls=1)
+    assert asyncio.run(agent.run_turn("loop")) == "max_tool_calls"
+    assert any(e["type"] == "notice" and "final report failed" in e["text"] for e in events)
+
+
+def test_the_time_budget_ends_the_turn_with_a_report(harness_home, project, fake_model, monkeypatch):
+    import harness_daemon.agent as agent_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(agent_module.time, "monotonic", lambda: clock[0])
+    call = {"name": "read", "arguments": {"path": "hello.py"}}
+    fake_model.script({"tool_calls": [call]}, {"text": "One read is done."})
+    agent, events, _ = make_agent(project, max_turn_minutes=1)
+    original = agent._execute
+
+    async def slow(*args, **kwargs):
+        clock[0] += 61  # The tool call takes more than the budget.
+        return await original(*args, **kwargs)
+
+    agent._execute = slow
+    assert asyncio.run(agent.run_turn("go")) == "max_time"
+    assert agent.history[-1]["content"] == "One read is done."
+    assert "time budget of 1 minutes" in fake_model.requests[-1]["messages"][-1]["content"]
+
+
+def test_the_wait_for_the_user_does_not_use_the_time_budget(harness_home, project, fake_model, monkeypatch):
+    import harness_daemon.agent as agent_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(agent_module.time, "monotonic", lambda: clock[0])
+
+    async def emit(event):
+        return None
+
+    async def slow_user(request):
+        clock[0] += 3600  # The user answers the permission card after one hour.
+        return "allow_once"
+
+    provider, model = resolve_model("fake/test-model")
+    settings = load_settings(project)
+    settings["max_turn_minutes"] = 1
+    agent = Agent(cwd=project, client=ModelClient(provider, model), emit=emit, approver=slow_user, settings=settings)
+    fake_model.script({"tool_calls": [{"name": "bash", "arguments": {"command": "echo hi"}}]}, {"text": "Done."})
+    assert asyncio.run(agent.run_turn("go")) == "end"
+
+
+def test_no_time_budget_by_default(harness_home, project):
+    agent, _, _ = make_agent(project)
+    agent._turn_clock = -1e9
+    assert agent._over_time() is False

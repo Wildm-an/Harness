@@ -39,6 +39,8 @@ You can also edit the file by hand. If the file does not exist, the daemon uses 
 
 For OpenRouter (`"kind": "openrouter"`, or any `openrouter.ai` URL), give the model as `openrouter/<author>/<model>`, for example `openrouter/anthropic/claude-sonnet-4.5`. The daemon reads the context length, the tool support, and the image input of each model from the OpenRouter model list. It keeps the list for 10 minutes. The connection test also checks the API key with `/key`, because OpenRouter sends the model list with no key.
 
+The model name selects the prompt blocks of a model family (`model_prompts.py`, `docs/PROMPT_LEDGER.md`): for example `gpt-5.5` gets the GPT blocks, and `qwen2.5-coder:7b` gets the Qwen blocks. A model with a name that does not show its family can get one with `"family"`: `"models": { "my-finetune": { "family": "qwen" } }`. The value is a family id (`claude`, `gpt`, `gemini`, `gemma`, `grok`, `glm`, `qwen`, `deepseek`, `kimi`, `minimax`, `mimo`, `mistral`) or `"none"`.
+
 The daemon finds the context length of a model in this order:
 
 1. `context_length` in the settings.
@@ -94,6 +96,12 @@ python scripts/ws_client.py --port <port> --token <token> --cwd /path/to/project
 ```
 
 The daemon prints `{"event": "ready", "port": ..., "token": ...}` on start. Use these values in the client.
+
+Write the transcript of a session (all messages and the run records) as JSON. The script opens the database read-only. `--no-content` leaves out the text, the arguments, and the output, for a bug report:
+
+```bash
+python scripts/export_transcript.py --session <id> --no-content --out transcript.json
+```
 
 ## Package the sidecar
 
@@ -151,6 +159,14 @@ python -m pytest
 
 The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do not need a real model. The agent browser tests need Chromium for Playwright. Without it, pytest skips them.
 
+`tests/snapshots/` holds the system prompt of each model family and the tool list (`tests/test_prompt_snapshots.py`). A change of a prompt text or a tool description fails this test and shows a diff. After an intended change, write the new snapshots and add them to the same commit:
+
+```bash
+HARNESS_UPDATE_SNAPSHOTS=1 python -m pytest tests/test_prompt_snapshots.py
+```
+
+`tests/test_prefix_stability.py` checks that the system message and the tool list stay the same in a session. The prompt cache of the endpoint needs the same request start.
+
 ## Files
 
 | File | Function |
@@ -169,8 +185,8 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 | `harness_daemon/preview.py` | The preview host of a session: the servers, the agent browser, and the URL allow list. |
 | `harness_daemon/tunnels.py` | SSH tunnels to model endpoints. |
 | `harness_daemon/skills.py` | The skill loader, the frontmatter parser, and the argument substitution. |
-| `harness_daemon/context.py` | Context control: the token estimate, the summary, and the trim of old tool outputs. |
-| `harness_daemon/prompt.py` | The system prompt and the project instruction file (`HARNESS.md`, then `CLAUDE.md`). |
+| `harness_daemon/context.py` | Context control: the token estimate, the summary, and the trim of old tool outputs. A `PreCompact` hook adds instructions to the summary request. After a summary the agent gets a state note. The prompt date stays fixed until a new context starts: a date change goes to the agent in a note. |
+| `harness_daemon/prompt.py` | The system prompt, the project instruction file (`HARNESS.md`, then `AGENTS.md`, then `CLAUDE.md`), and the user instruction file (`~/.harness/HARNESS.md`, `~/.harness/AGENTS.md`, or `~/.claude/CLAUDE.md`). |
 | `harness_daemon/permissions.py` | Permission rules and the permission gate. |
 | `harness_daemon/server.py` | The WebSocket server and the message handlers. |
 | `harness_daemon/storage.py` | SQLite storage for sessions and messages. |
@@ -222,17 +238,29 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 
 | Key | Default | Function |
 |---|---|---|
-| `max_tool_calls` | `250` | The maximum number of tool calls in one turn. |
+| `max_tool_calls` | `250` | The maximum number of tool calls in one turn. At the limit, the model gets one more call with no tools, for a report of the work that is done and the work that is left. |
+| `verify_command` | none | For the project file `.harness/settings.json`: a command that checks the work, for example `npm test`. It runs when the agent ends a turn that changed files. On a failure the agent gets the end of the output and continues, 5 times at most in a turn (the same limit as the `Stop` hook). On a pass the agent gets nothing. The command gets `HARNESS_CHANGED_FILES` (one relative path on each line). A deny rule of the project stops it, and in auto mode a hard rule. A worktree with no value uses the command of its project. It also runs before the recap box of `wrap_up`: on a failure the box does not show, and the agent gets the failure. Settings > Your Harness > Project instructions > "Verify command" sets it. |
+| `verify_timeout` | `300` | Seconds for the verify command. A command that takes longer is stopped, and the turn ends. |
+| `max_turn_minutes` | `0` | The time budget of a turn, in minutes. `0`: no budget. The time that waits for the user does not count. At the budget, the turn ends with a report, as at the tool call limit. |
 | `limit_tool_calls` | `true` | `false` turns off the tool call limit: a turn ends only when the model stops, or the user stops it. |
 | `bash_timeout` | `120` | The default `bash` timeout, in seconds. |
 | `bash_max_timeout` | `600` | The maximum `bash` timeout that the model can request. |
-| `max_output_chars` | `20000` | Tool output above this length is truncated. |
+| `max_output_chars` | `20000` | Tool output above this length is truncated. The full output goes to a file in `~/.harness/projects/<project>/<session>/tool-results/`, and the cut note names it. The agent can read the file. A session delete removes the files, and files older than 30 days go at the hourly check. |
+| `env_scrub` | `{"enabled": true}` | Only in `~/.harness/settings.json`. The commands that the agent runs (bash, background tasks, ACP terminals, the verify command) do not get secret environment variables: names that end with `_API_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD`, and similar, the `api_key_env` names of `providers.json`, and values that look like a key. `"keep": ["GH_TOKEN"]` keeps a name. `"remove": [...]` adds names. `"enabled": false` turns the scrub off. `HARNESS_TOKEN` never reaches a command. |
+| `sandbox` | `{"enabled": false}` | Only in `~/.harness/settings.json`. The sandbox of the `bash` tool, with the Claude Code keys (`enabled`, `failIfUnavailable`, `autoAllowBashIfSandboxed`, `allowUnsandboxedCommands`, `excludedCommands`, `network`, `filesystem`). A sandboxed command has no network, unless `network.allowedDomains` has a domain: then it connects through a proxy of the daemon to the allowed domains only (macOS; Linux needs `socat`). It writes only in the project folder and the session temp folder. macOS uses Seatbelt, and Linux uses bubblewrap. Windows has no sandbox yet. See `docs/SANDBOX.md`. |
+| `task_reminders` | `"auto"` | The `[Harness: ...]` reminders to show and update the task list. `"auto"` gives them by the model tier (small, standard, frontier: `scaffold_tier` in `model_prompts.py`). Today each tier gets each reminder, until the evaluation set shows which tier does not need one. `"on"` or `"off"` for all models. |
+| `prompt_ablate` | none | Only for an evaluation run: a list of prompt part and block ids to leave out (the "Id" column of `docs/PROMPT_LEDGER.md`). |
+| `edit_tolerant_match` | `true` | When `old_string` of `edit` is not in the file, the tool tries a match that ignores whitespace at the line ends, then one constant change of indentation (also tabs and spaces). It needs exactly one match and whole lines. The result tells the agent the lines that it replaced. `false` turns it off. |
+| `read_before_edit` | `true` | `edit` and `write` reject a change to a file that the agent did not read in this session, or that changed on disk after the read. The error tells the agent to read the file. A partial read counts. A file that the agent wrote needs no new read. |
+| `edit_tool` | `"edit"` | The tool that changes files. `"edit"`: `edit` and `write`. `"apply_patch"`: one `apply_patch` tool (the patch format of OpenAI Codex) takes the place of `edit`, and `write` goes. The prompt and the `bash` description then name `apply_patch`. One patch can add, delete, update, and move several files. The permission gate checks each path. `"auto"`: `apply_patch` for the model families in `APPLY_PATCH_FAMILIES` (`tools/apply_patch.py`). The list stays empty until an eval shows a gain. The Settings dialog has no row for it. |
 | `shell` | auto | The shell for `bash`. On Windows, the default is Git Bash, then PowerShell. |
 | `default_model` | none | The model for a `session.new` message with no model. |
 | `context_length` | none | The context length for all models. See the order above. |
 | `ripgrep` | `rg` on the PATH | The ripgrep binary for `glob` and `grep`. Without ripgrep, the tools use a Python search that does not apply `.gitignore`. |
 | `auto_verify` | `false` | The agent checks the app with the preview tools after each change to the user interface. The Servers pane of the client changes this value in the project settings. |
-| `permission_mode` | `default` | `default` (ask), `acceptEdits` (file changes in the project run), `plan` (no file changes: the agent makes a plan), or `bypassPermissions` (every action runs). The deny rules apply in all modes. The client changes this value with the mode menu or Shift+Tab. |
+| `permission_mode` | `default` | `default` (ask), `acceptEdits` (file changes in the project run), `plan` (no file changes: the agent makes a plan), `auto` (a model checks each action, `docs/AUTO_MODE.md`), or `bypassPermissions` (every action runs, except a match of a safety rule). The deny rules and the safety rules apply in all modes. The client changes this value with the mode menu or Shift+Tab, and the daemon saves it in `~/.harness/permission_modes.json`, outside the repository. That value wins over the project file. A project file cannot set `bypassPermissions`. |
+| `auto_review` | `false` | A read-only subagent with a new context reviews the diffs of a turn with `auto_review_min_lines` (default `200`) changed lines or more, before the turn ends. Its findings go to the agent as a note, in the same limit of 5 as the verify gate. Settings > General > "Review large changes". |
+| `allow_bypass_permissions` | `false` | User file only. The switch "Allow bypass permissions mode". Off: no session runs in `bypassPermissions`, and the client hides the mode. |
 
 
 ## MCP servers

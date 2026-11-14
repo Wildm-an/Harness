@@ -16,6 +16,8 @@ LIMIT = 160  # Characters. A Windows notification shows about two lines.
 # client shows no notification.
 STOPS = {
     "max_tool_calls": "Stopped at the tool call limit of the turn.",
+    "max_time": "Stopped at the time budget of the turn.",
+    "loop": "Stopped: the agent repeated the same tool calls.",
     "denied": "Stopped: a permission request was denied.",
     "blocked": "A hook or a plugin stopped the turn.",
 }

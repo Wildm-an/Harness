@@ -641,18 +641,61 @@ async def model_contexts(provider: Provider, models: list[str],
 class ModelResponse:
     text: str
     tool_calls: list[dict[str, str]] = field(default_factory=list)
-    usage: dict[str, int] | None = None
+    # The usage of the endpoint. Counts are int. Some fields are objects, for example prompt_tokens_details.
+    usage: dict[str, Any] | None = None
     finish_reason: str | None = None
     reasoning: str | None = None  # The reasoning_content of the reply (DeepSeek thinking mode).
+    # Milliseconds from the request start: first_byte_ms (the stream opened), first_token_ms (the first text or
+    # reasoning). records.py stores them.
+    timing: dict[str, int | None] | None = None
+
+    @property
+    def cached_tokens(self) -> int | None:
+        """The prompt tokens that the endpoint read from its cache, or None."""
+        return cached_tokens(self.usage)
+
+
+def cached_tokens(usage: dict[str, Any] | None) -> int | None:
+    """The prompt tokens that the endpoint read from its cache. None: the endpoint does not report it.
+
+    The fields of the providers: OpenAI and most compatible servers (prompt_tokens_details.cached_tokens),
+    DeepSeek (prompt_cache_hit_tokens), and the Anthropic form (cache_read_input_tokens).
+    """
+    if not usage:
+        return None
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
+        return details["cached_tokens"]
+    for key in ("prompt_cache_hit_tokens", "cache_read_input_tokens"):
+        if isinstance(usage.get(key), int):
+            return usage[key]
+    return None
 
 
 OnText = Callable[[str], Awaitable[None]]
+
+# finish_reason values of OpenAI-compatible servers that mean "the output limit cut the reply".
+FINISH_LENGTH = ("length", "max_tokens", "model_length")
+
+
+def finish_kind(reason: str | None) -> str:
+    """The kind of a finish_reason: "length" (the output limit cut the reply), "filter", or "other"."""
+    value = (reason or "").lower()
+    if value in FINISH_LENGTH:
+        return "length"
+    if value == "content_filter":
+        return "filter"
+    return "other"
 
 
 log = logging.getLogger(__name__)
 # One INFO line for each model request in the daemon log: the size, and the time to the first byte, the first
 # reasoning, the first answer, and the end. A slow model server then shows in the log.
 timing = logging.getLogger("harness.timing")
+
+
+def _or_dash(value: Any) -> Any:
+    return "-" if value is None else value
 timing.setLevel(logging.INFO)
 
 # The effort levels of the model menu (setting "effort"), and the reasoning_effort value of the API.
@@ -673,6 +716,7 @@ class ModelClient:
         self._send_stream_options = True
         # False after the endpoint rejected a request with reasoning_effort: the model has no effort levels.
         self._send_effort = True
+        self._send_tool_choice = True  # False after a server rejected tool_choice.
 
     async def _openai(self) -> AsyncOpenAI:
         """The API client for the current address and event loop.
@@ -736,6 +780,9 @@ class ModelClient:
             kwargs["reasoning_effort"] = effort
         if tools:
             kwargs["tools"] = tools
+            # tool_choice "none": a reply with no tool call, with the same tool list (the prompt cache stays).
+            if options and options.get("tool_choice") and self._send_tool_choice:
+                kwargs["tool_choice"] = options["tool_choice"]
         if self._send_stream_options:
             kwargs["stream_options"] = {"include_usage": True}
         try:
@@ -744,6 +791,9 @@ class ModelClient:
             # Some servers reject stream_options. Try once more without it.
             if self._send_stream_options and "stream_options" in str(e):
                 self._send_stream_options = False
+                return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
+            if "tool_choice" in kwargs and "tool_choice" in str(e):
+                self._send_tool_choice = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             # A model with no effort levels can reject reasoning_effort. Try once more without it.
             # Not for a request that is too long: the agent uses the limit in the error (agent.py).
@@ -773,7 +823,7 @@ class ModelClient:
         reasoning_parts: list[str] = []
         slots: dict[int, dict[str, str]] = {}
         index_map: dict[int, int] = {}
-        usage: dict[str, int] | None = None
+        usage: dict[str, Any] | None = None
         finish: str | None = None
         try:
             async for chunk in stream:
@@ -807,9 +857,10 @@ class ModelClient:
             await stream.close()
             since = lambda t: f"{t - started:.2f}s" if t is not None else "-"  # noqa: E731
             timing.info("model %s: %d messages, %d tools | first byte %s, first reasoning %s, first answer %s, end %s | "
-                        "prompt %s, completion %s tokens", self.label, len(messages), len(tools), since(opened),
-                        since(first_reasoning), since(first_answer), since(time.monotonic()),
-                        (usage or {}).get("prompt_tokens", "?"), (usage or {}).get("completion_tokens", "?"))
+                        "prompt %s (cached %s), completion %s tokens | finish %s", self.label, len(messages), len(tools),
+                        since(opened), since(first_reasoning), since(first_answer), since(time.monotonic()),
+                        (usage or {}).get("prompt_tokens", "?"), _or_dash(cached_tokens(usage)),
+                        (usage or {}).get("completion_tokens", "?"), finish or "-")
 
         calls = []
         for key in sorted(slots):
@@ -821,7 +872,12 @@ class ModelClient:
                 "name": slot["name"],
                 "arguments": slot["arguments"],
             })
-        return ModelResponse("".join(text_parts), calls, usage, finish, "".join(reasoning_parts) or None)
+        firsts = [t for t in (first_reasoning, first_answer) if t is not None]
+        times = {  # Not "timing": that is the logger of this module.
+            "first_byte_ms": round((opened - started) * 1000),
+            "first_token_ms": round((min(firsts) - started) * 1000) if firsts else None,
+        }
+        return ModelResponse("".join(text_parts), calls, usage, finish, "".join(reasoning_parts) or None, times)
 
 
 def _merge_tool_call_delta(slots: dict[int, dict[str, str]], index_map: dict[int, int], tc: Any) -> None:

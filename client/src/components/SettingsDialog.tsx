@@ -9,7 +9,8 @@ import { RowsPending, useRowsPending } from "./Skeleton";
 import { Switch } from "./Switch";
 import { Boxes, Cable, FileCog, Monitor, Moon, Palette, RefreshCw, RotateCcw, Rows2, Rows4, Settings, Sun, TriangleAlert, UserRound, Workflow, X, type LucideIcon } from "lucide-react";
 import { SecretInput } from "./SecretInput";
-import type { NewTaskPrompt, PermissionMode, UserSettings, WebSearchProvider } from "../daemon/protocol";
+import type { NewTaskPrompt, PermissionMode, SandboxStatus, UserSettings, WebSearchProvider } from "../daemon/protocol";
+import { SandboxSetting } from "./SandboxSetting";
 import type { WebKeyProvider } from "../lib/providerKeys";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
@@ -55,6 +56,7 @@ import { CHAT_WIDTHS, IDE_PRESETS, TERMINAL_HEIGHTS, ideOptions, setIdeOptions }
 import { IdeSketch } from "./IdeSketch";
 import { DEFAULT_IDE_OPTIONS, type IdeLayoutOptions } from "../layout/model";
 import { MODES } from "./ModeMenu";
+import { shownModes } from "../lib/bypass";
 import { isTauri } from "../lib/tauri";
 import { useLinksInPane } from "../lib/openLink";
 import { compareVersions } from "../lib/version";
@@ -714,10 +716,14 @@ export function GeneralSettings({
   onSaveWebKey,
   onSet,
   onManageStorage,
+  sandbox,
+  onSetSandbox,
   dictation,
 }: {
   dictation?: ReactNode; // The Dictation section (DictationSettings.tsx). The app gives it: it needs the model list.
   onManageStorage?: () => void; // Opens the Storage dialog. Absent: not connected.
+  sandbox?: SandboxStatus | null; // The "sandbox" of the user_settings message. null: loading or an older daemon.
+  onSetSandbox?: (enabled: boolean) => void; // Sends sandbox.set. Absent: no "Local sandbox" row.
   error: string | null; // The daemon did not save a setting.
   webKeys?: Record<WebKeyProvider, boolean>; // The web search API keys in the keychain.
   onSaveWebKey?: (provider: WebKeyProvider, key: string | null) => void;
@@ -806,13 +812,28 @@ export function GeneralSettings({
           disabled={off}
           onChange={(e) => set({ permission_mode: e.target.value as PermissionMode })}
         >
-          {MODES.map((m) => (
+          {shownModes(MODES, values?.allow_bypass_permissions === true, values?.permission_mode).map((m) => (
             <option key={m.mode} value={m.mode}>
               {m.label}
             </option>
           ))}
         </select>
       </Row>
+
+      <Row
+        label="Allow bypass permissions mode"
+        help="Shows Bypass permissions in the mode menus. In that mode the agent runs each action with no question. The deny rules and the safety rules still apply. A project file cannot turn it on."
+      >
+        <Switch
+          checked={values?.allow_bypass_permissions === true}
+          label="Allow bypass permissions mode"
+          disabled={off}
+          onChange={(on) => set(on ? { allow_bypass_permissions: true } : { allow_bypass_permissions: false, ...(values?.permission_mode === "bypassPermissions" ? { permission_mode: "default" } : {}) })}
+        />
+      </Row>
+
+      {/* The label of the Claude app. The daemon writes sandbox.enabled in the user settings file only. */}
+      {onSetSandbox && <SandboxSetting status={sandbox} disabled={off} onSet={onSetSandbox} />}
 
       <Row label="Prompt suggestions" help="After a turn, the model suggests the next prompt. Tab puts it in the box.">
         <Switch checked={values?.prompt_suggestions ?? true} label="Prompt suggestions" disabled={off} onChange={(on) => set({ prompt_suggestions: on })} />
@@ -862,6 +883,10 @@ export function GeneralSettings({
 
       <Row label="Check the app after UI changes" help="The agent opens the preview and checks each change to the UI.">
         <Switch checked={values?.auto_verify ?? false} label="Check the app after UI changes" disabled={off} onChange={(on) => set({ auto_verify: on })} />
+      </Row>
+
+      <Row label="Review large changes" help="After a large change, a read-only subagent with a new context reviews the diff before the turn ends. Uses more tokens.">
+        <Switch checked={values?.auto_review ?? false} label="Review large changes" disabled={off} onChange={(on) => set({ auto_review: on })} />
       </Row>
 
       <Row label="Tool calls in a turn" help="The agent stops after this many tool calls, and asks to continue." htmlFor="setting-tool-calls">
@@ -1162,7 +1187,7 @@ export function TextAreaField({ id, value, placeholder, disabled, rows = 3, onSa
   );
 }
 
-function TextField({ id, value, placeholder, disabled, maxLength, onSave }: {
+export function TextField({ id, value, placeholder, disabled, maxLength, onSave }: {
   id: string;
   value: string;
   placeholder?: string;

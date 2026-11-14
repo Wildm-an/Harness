@@ -14,7 +14,8 @@ class WriteTool(Tool):
         "Create a file, or replace all the content of a file. The folders are created if necessary.\n\n"
         "Usage notes:\n"
         "- To change part of an existing file, use edit. Edit is safer, and the diff is smaller.\n"
-        "- Before you replace an existing file, read it.\n"
+        "- Before you replace an existing file, read it. The tool rejects a replace of a file that you did not "
+        "read in this session.\n"
         "- Do not create documentation or README files unless the user asks for them.\n"
         "- Do not use bash with echo or a redirect (>) to create a file. Use this tool."
     )
@@ -40,6 +41,8 @@ class WriteTool(Tool):
         data = path.read_bytes()
         if is_binary(data):
             raise ToolError(f"{args['path']} is a binary file. The write tool does not replace binary files.")
+        if ctx.reads is not None:
+            ctx.reads.check(path, data, str(args["path"]), replace=True)
         before = data.decode("utf-8", errors="replace")
         # Keep Windows line endings in a file that has them.
         if "\r\n" in before and "\r\n" not in content:
@@ -56,6 +59,8 @@ class WriteTool(Tool):
         path, before, after = self._plan(args, ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(after.encode("utf-8"))
+        if ctx.reads is not None:
+            ctx.reads.note(path, after.encode("utf-8"))
         rel = relpath(ctx.cwd, path)
         lines = after.count("\n") + (0 if after.endswith("\n") or not after else 1)
         verb = "Created" if before is None else "Replaced the content of"

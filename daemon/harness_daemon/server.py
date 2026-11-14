@@ -28,12 +28,16 @@ from typing import Any, Awaitable, Callable
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
+from .tool_output import prune_outputs, remove_session_outputs, session_output_dir
 from . import __version__
 from .agent import Agent
 from . import acp_harnesses, acp_install, acp_models
 from . import acp_mcp
 from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client
-from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
+from .config import (
+    BYPASS, ConfigError, bypass_allowed, harness_home, load_settings, project_settings_path, read_json, store_mode,
+    write_json,
+)
 from .osname import os_name
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, MODES, PermissionRules
@@ -100,7 +104,9 @@ from .titles import MAX_TITLE_TRIES, summarize_title
 # The first turn waits this many seconds for the model title (wait_title). A slow model does not stop the chat.
 TITLE_WAIT = 15
 from .agents import agent_folders, discover_agents
-from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import
+from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import, project_root
+from .verify import VERIFY_MAX_TIMEOUT
+from .sandbox import sandbox_status, set_enabled as set_sandbox_enabled
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
 from .web import set_key as set_web_key
 
@@ -670,10 +676,8 @@ class LiveSession:
         """The user accepted a plan in this mode: save it as the mode picker does, and tell the client."""
         session = self.session
         assert session is not None
-        path = project_settings_path(session.cwd)
-        data = read_json(path, {})
-        data["permission_mode"] = mode
-        write_json(path, data)
+        _check_bypass(mode)
+        store_mode(session.cwd, mode)
         session.agent.reload_settings(load_settings(session.cwd))
         values = {k: session.agent.settings.get(k) for k in CLIENT_SETTINGS}
         values["permission_mode"] = _permission_mode(session.agent.settings)
@@ -770,6 +774,7 @@ class LiveSession:
         session.agent.on_mode = self.set_mode
         if session.agent.command_hooks is not None:
             session.agent.command_hooks.session_id = session.id  # The hooks get it on stdin.
+        session.agent.set_output_dir(session_output_dir(session.project_dir, session.id))
         self.terminal = TerminalHost(session.cwd, self.send,
                                      on_exit=lambda: asyncio.ensure_future(self.conn.close_if_done(self)))
         # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
@@ -1658,6 +1663,7 @@ def take_session(conn: Connection, session_id: str) -> LiveSession | None:
 # The text of a run that failed, by the stop reason of its turn (agent.py), when no error event came.
 RUN_STOPS = {
     "denied": "A permission request was denied.",
+    "loop": "The agent repeated the same tool calls with no progress.",
     "blocked": "A hook or a plugin stopped the turn.",
     "interrupted": "The turn was stopped.",
     "error": "The model request failed.",
@@ -1674,7 +1680,7 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
     session = live.session
     assert session is not None
     # The mode of the routine, in memory only: the project settings file does not change.
-    session.agent.settings["permission_mode"] = routine["permission_mode"]
+    session.agent.settings["permission_mode"] = _allowed_mode(routine["permission_mode"])
     title = routine_files.run_title(routine, dt.datetime.now(), load_settings(None).get("time_format"))
     session.title = title
     headless.storage.update_session(session.id, title=title, routine_id=routine["id"])
@@ -1695,7 +1701,7 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
         await asyncio.wait({task})  # It does not raise when a window stops the turn.
     live.on_waiting = None
     stop = outcome.get("stop")
-    if stop in ("end", "max_tool_calls"):
+    if stop in ("end", "max_tool_calls", "max_time"):
         report("done")
     else:
         report("failed", error=live.last_error or RUN_STOPS.get(stop or "", "The turn did not end."))
@@ -1725,7 +1731,7 @@ async def start_child_session(parent: Session, title: str, prompt: str, worktree
         raise ToolError(str(e)) from None
     session = live.session
     assert session is not None
-    session.agent.settings["permission_mode"] = mode
+    session.agent.settings["permission_mode"] = _allowed_mode(mode)
     session.title = title
     headless.storage.update_session(session.id, title=title)
     headless.live[session.id] = live
@@ -1798,6 +1804,7 @@ async def archive_inactive(storage: Storage, now: float | None = None) -> list[s
     changes that are not in a commit. The archive of a clean worktree session removes its folder, as
     a manual archive does. The windows get the new session list.
     """
+    await asyncio.to_thread(prune_outputs, now)  # The hourly check also removes old tool output files.
     days = load_settings(None).get("auto_archive_days")
     if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
         return []
@@ -1961,23 +1968,16 @@ async def create_session(conn: Connection, cwd: Path, provider: str | None, mode
         # The mode of the start page. It is a project setting, as with settings.set.
         if mode not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
-        path = project_settings_path(cwd)
-        data = read_json(path, {})
-        if (data.get("permission_mode") or "default") != mode:
-            data["permission_mode"] = mode
-            write_json(path, data)
+        _check_bypass(mode)
+        store_mode(cwd, mode)
     worktree = None
     if wt_arg is not None:
         try:
             worktree = await asyncio.to_thread(worktrees.create, cwd, wt_arg.get("base"))
         except WorktreeError as e:
             raise ProtocolError(str(e)) from None
-        if mode is not None:  # The agent reads the settings of the worktree folder.
-            path = project_settings_path(Path(worktree["path"]))
-            data = read_json(path, {})
-            if (data.get("permission_mode") or "default") != mode:
-                data["permission_mode"] = mode
-                write_json(path, data)
+        if mode is not None:  # The agent reads the mode of the worktree folder.
+            store_mode(Path(worktree["path"]), mode)
     live = LiveSession(conn)
     try:
         agent, warnings = await conn.make_agent(live, Path(worktree["path"]) if worktree else cwd, provider, model)
@@ -2154,6 +2154,7 @@ async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
     worktree = worktrees.loads(row.get("worktree"))
     if worktree:
         await asyncio.to_thread(worktrees.remove, worktree)
+    await asyncio.to_thread(remove_session_outputs, Path(row["cwd"]), session_id)
     conn.storage.delete_session(session_id)
     await conn.send({"type": "session.deleted", "id": session_id})
     if row.get("routine_id") and ROUTINES.scheduler is not None:
@@ -3090,6 +3091,7 @@ def _routine_fields(msg: dict[str, Any]) -> dict[str, Any]:
     mode = msg.get("permission_mode") or "default"
     if mode not in MODES:
         raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+    _check_bypass(mode)
     fields = {"name": name[:200], "prompt": prompt, "cwd": str(_project_dir(msg.get("cwd"))),
               "provider": msg.get("provider") or None, "model": msg.get("model") or None,
               "permission_mode": mode, "schedule": schedule, "enabled": bool(msg.get("enabled", True))}
@@ -3747,6 +3749,21 @@ async def on_context_get(conn: Connection, msg: dict[str, Any]) -> None:
     await conn.send({"type": "context.usage", **session.agent.context_breakdown()})
 
 
+BYPASS_OFF = ("Bypass permissions mode is off. Turn on \"Allow bypass permissions mode\" in Settings > General "
+              "first.")
+
+
+def _check_bypass(mode: str) -> None:
+    """Bypass needs the switch "Allow bypass permissions mode" of the user settings file (UI rule C12)."""
+    if mode == BYPASS and not bypass_allowed():
+        raise ProtocolError(BYPASS_OFF)
+
+
+def _allowed_mode(mode: str) -> str:
+    """The mode of a routine or a started session: bypass becomes default while the switch is off."""
+    return "default" if mode == BYPASS and not bypass_allowed() else mode
+
+
 def _permission_mode(settings: dict[str, Any]) -> str:
     """The mode of the settings. An unknown mode, for example "auto" of an older version, is "default"."""
     mode = settings.get("permission_mode")
@@ -3773,10 +3790,16 @@ async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"'{key}' must be a {kind.__name__}.")
         if key == "permission_mode" and value not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
-    path = project_settings_path(session.cwd)
-    data = read_json(path, {})
-    data.update(changes)
-    write_json(path, data)
+        if key == "permission_mode":
+            _check_bypass(value)
+    mode = changes.pop("permission_mode", None)
+    if mode is not None:  # The mode goes to the store of the user, not to the repository (change 4-D).
+        store_mode(session.cwd, mode)
+    if changes:
+        path = project_settings_path(session.cwd)
+        data = read_json(path, {})
+        data.update(changes)
+        write_json(path, data)
     session.agent.reload_settings(load_settings(session.cwd))
     await _send_settings(conn, session)
 
@@ -3785,10 +3808,13 @@ async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
 # of the daemon use them, and a project settings file can change them for one project.
 USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "permission_mode": (str,),
+    "allow_bypass_permissions": (bool,),
+    "auto_review": (bool,),
     "prompt_suggestions": (bool,),
     "auto_verify": (bool,),
     "max_tool_calls": (int,),
     "limit_tool_calls": (bool,),
+    "max_turn_minutes": (int,),
     "bash_timeout": (int,),
     "terminal_shell": (str, type(None)),
     "subagents": (bool,),
@@ -3814,7 +3840,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "dictation_cleanup": (bool,),  # Settings > General > Dictation: a model cleans the dictated text (dictation.py).
     "dictation_model": (str, type(None)),  # The cleanup model: "provider/model", of a provider or a local model.
 }
-USER_INT_LIMITS = {"max_tool_calls": (1, 500), "bash_timeout": (1, 3600)}
+USER_INT_LIMITS = {"max_tool_calls": (1, 500), "bash_timeout": (1, 3600), "max_turn_minutes": (0, 1440)}
 USER_TEXT_LIMIT = 10_000  # The maximum length of an agent instruction setting, in characters.
 
 
@@ -3830,6 +3856,7 @@ async def _send_user_settings(conn: Connection) -> None:
     spec = acp_harnesses.find(harness_id) if isinstance(harness_id, str) and harness_id         and harness_id != acp_harnesses.BUILTIN_ID else None
     await conn.send({"type": "user_settings", "path": str(_user_settings_path()), "version": __version__,
                      "values": {k: values.get(k) for k in USER_SETTINGS},
+                     "sandbox": await asyncio.to_thread(sandbox_status),
                      "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id)}
                      if spec is not None else None})
 
@@ -3837,6 +3864,17 @@ async def _send_user_settings(conn: Connection) -> None:
 @handler("user_settings.get")
 async def on_user_settings_get(conn: Connection, msg: dict[str, Any]) -> None:
     """The user settings for the General page. It needs no session."""
+    await _send_user_settings(conn)
+
+
+@handler("sandbox.set")
+async def on_sandbox_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """Settings > General > "Local sandbox": {"enabled": bool}. It writes sandbox.enabled in the user settings
+    file only (sandbox.py). The answer is user_settings with the new "sandbox" status."""
+    enabled = msg.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ProtocolError("'enabled' must be true or false.")
+    await asyncio.to_thread(set_sandbox_enabled, enabled)
     await _send_user_settings(conn)
 
 
@@ -3855,6 +3893,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"The type of '{key}' must be {' or '.join('null' if k is type(None) else k.__name__ for k in kinds)}.")
         if key == "permission_mode" and value not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+        if key == "permission_mode" and value == BYPASS and changes.get("allow_bypass_permissions") is not True:
+            _check_bypass(value)
         if key == "auto_archive_days" and value not in ARCHIVE_DAYS:
             raise ProtocolError(f"'auto_archive_days' must be one of: {', '.join(map(str, ARCHIVE_DAYS))}.")
         if key == "new_task_prompt" and value not in NEW_TASK_CHOICES:
@@ -4207,6 +4247,70 @@ async def on_project_instructions_set(conn: Connection, msg: dict[str, Any]) -> 
     await _send_project_note(conn, msg, cwd, saved=True)
 
 
+# Settings > Your Harness > Project instructions > Verify command: the keys of the project settings file
+# (.harness/settings.json) that the app can change. The verify gate (verify.py) reads them.
+PROJECT_SETTING_KEYS = ("verify_command", "verify_timeout")
+
+
+def _project_settings(cwd: Path) -> dict[str, Any]:
+    data = read_json(project_settings_path(cwd), {})
+    data = data if isinstance(data, dict) else {}
+    return {key: data.get(key) for key in PROJECT_SETTING_KEYS}
+
+
+async def _send_project_settings(conn: Connection, msg: dict[str, Any], cwd: Path, **extra: Any) -> None:
+    values = await asyncio.to_thread(_project_settings, cwd)
+    await conn.send({"type": "project_settings", "cwd": msg["cwd"], "path": str(project_settings_path(cwd)),
+                     "settings": values, **extra})
+
+
+@handler("project_settings.get")
+async def on_project_settings_get(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_project_settings(conn, msg, _project_note_cwd(msg))
+
+
+@handler("project_settings.set")
+async def on_project_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """Change keys of the project settings file: {"cwd", "settings": {key: value or null}}. Only the keys of
+    PROJECT_SETTING_KEYS. Null or an empty text removes a key. The open sessions of the project reload."""
+    cwd = _project_note_cwd(msg)
+    changes = msg.get("settings")
+    if not isinstance(changes, dict) or not changes or set(changes) - set(PROJECT_SETTING_KEYS):
+        raise ProtocolError(f"'settings' must be an object with the keys {', '.join(PROJECT_SETTING_KEYS)}.")
+    command = changes.get("verify_command")
+    if command is not None and (not isinstance(command, str) or len(command) > 2000 or "\n" in command.strip()):
+        raise ProtocolError("'verify_command' must be one line of text, 2000 characters or less.")
+    timeout = changes.get("verify_timeout")
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int)
+                                or not 1 <= timeout <= VERIFY_MAX_TIMEOUT):
+        raise ProtocolError(f"'verify_timeout' must be a number of seconds from 1 "
+                            f"to {VERIFY_MAX_TIMEOUT}.")
+    path = project_settings_path(cwd)
+
+    def save() -> None:
+        data = read_json(path, {})
+        data = data if isinstance(data, dict) else {}
+        for key, value in changes.items():
+            value = value.strip() if isinstance(value, str) else value
+            if value in (None, ""):
+                data.pop(key, None)
+            else:
+                data[key] = value
+        write_json(path, data)
+
+    try:
+        await asyncio.to_thread(save)
+    except OSError as e:
+        raise ProtocolError(f"The project settings were not saved: {e}") from None
+    root = project_root(cwd)
+    for live in conn.live.values():
+        agent = live.session.agent if live.session is not None else None
+        reload = getattr(agent, "reload_settings", None)  # An ACP harness has no verify gate.
+        if reload is not None and project_root(live.session.cwd) == root:
+            reload(load_settings(live.session.cwd))
+    await _send_project_settings(conn, msg, cwd, saved=True)
+
+
 @handler("disk.usage")
 async def on_disk_usage(conn: Connection, msg: dict[str, Any]) -> None:
     """The disk space of Harness on the daemon computer, for Settings > General > Storage."""
@@ -4265,6 +4369,26 @@ async def on_memory_import(conn: Connection, msg: dict[str, Any]) -> None:
     except MemoryStoreError as e:
         raise ProtocolError(str(e)) from None
     await _send_memory(conn, msg, store, changed=True, imported=count)
+
+
+@handler("session.export")
+async def on_session_export(conn: Connection, msg: dict[str, Any]) -> None:
+    """The transcript of a session as JSON (base64): all messages and the run records (transcript.py).
+    ``content`` false removes the text, the arguments, and the output. ``images`` true keeps the image data."""
+    from .transcript import export_transcript
+
+    current = conn.current.session if conn.current is not None else None
+    session_id = msg.get("session_id") or (current.id if current is not None else None)
+    if not isinstance(session_id, str) or conn.storage.get_session(session_id) is None:
+        raise ProtocolError(f"Unknown session: {session_id}")
+    content = msg.get("content") is not False
+    data = await asyncio.to_thread(export_transcript, conn.storage, session_id, content=content,
+                                   images=msg.get("images") is True)
+    text = json.dumps(data, ensure_ascii=False, indent=1)
+    suffix = "" if content else "-metadata"
+    await conn.send({"type": "session.export", "session_id": session_id,
+                     "name": f"harness-transcript-{session_id[:8]}{suffix}.json",
+                     "data": base64.b64encode(text.encode("utf-8")).decode("ascii")})
 
 
 @handler("memory.export")
@@ -4532,7 +4656,7 @@ async def on_fs_dirs(conn: Connection, msg: dict[str, Any]) -> None:
         "parent": str(parent) if parent else None,
         "items": items,
         "roots": _roots(),
-        "is_project": any((folder / marker).exists() for marker in (".git", "HARNESS.md", "CLAUDE.md", "package.json", "pyproject.toml")),
+        "is_project": any((folder / marker).exists() for marker in (".git", "HARNESS.md", "AGENTS.md", "CLAUDE.md", "package.json", "pyproject.toml")),
     })
 
 

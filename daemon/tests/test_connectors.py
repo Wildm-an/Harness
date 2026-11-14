@@ -16,6 +16,7 @@ from harness_daemon.mcp_client import McpManager, load_mcp_config
 
 from test_mcp import PYTHON, write_config
 from test_mcp_auth import oauth_server  # noqa: F401 - the fake server fixture
+from untag import untag
 from test_server import Client, daemon  # noqa: F401 - the daemon fixture
 
 
@@ -117,7 +118,7 @@ def test_the_mcp_server_uses_the_token(harness_home, project, fake_github):
             await manager.restart("github")
             assert manager.servers["github"].state == "connected", manager.servers["github"].error
             echo = next(t for t in box["tools"] if t.name == "mcp__github__echo")
-            assert (await echo.run({"text": "via connector"}, None)).output == "via connector"
+            assert untag((await echo.run({"text": "via connector"}, None)).output) == "via connector"
 
             # A token that the service refuses.
             mcp_auth.update_record(connectors.record_key("github"), token="revoked")

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +16,44 @@ from .shell import ShellInfo
 
 class ToolError(Exception):
     """A tool failure. The message goes to the model as an error result."""
+
+
+NOT_READ = ("You did not read {path} in this session. Read it with the read tool, then send this edit again. "
+            "The harness needs the read, so that your edit uses the current text of the file.")
+NOT_READ_WRITE = ("{path} exists, and you did not read it in this session. Read it with the read tool before you "
+                  "replace it, so that you do not remove content that you did not see. To change part of the file, "
+                  "use edit.")
+CHANGED_SINCE_READ = ("{path} changed after you read it. Read it again, then send this edit again. Your copy of the "
+                      "text is old.")
+
+
+@dataclass
+class ReadState:
+    """The files that the agent read or wrote in this session, with a hash of the bytes that it saw.
+
+    edit and write check it: a change to a file that the agent did not read, or that changed on disk after the
+    read, is rejected with an error that states the fix. A partial read (offset and limit) counts: the exact
+    match of edit proves that the agent saw the text that it replaces.
+    """
+
+    files: dict[str, str] = field(default_factory=dict)
+
+    @staticmethod
+    def _key(path: Path) -> str:
+        return os.path.normcase(str(path.resolve()))
+
+    def note(self, path: Path, data: bytes) -> None:
+        self.files[self._key(path)] = hashlib.sha256(data).hexdigest()
+
+    def check(self, path: Path, data: bytes, shown: str, replace: bool = False) -> None:
+        seen = self.files.get(self._key(path))
+        if seen is None:
+            raise ToolError((NOT_READ_WRITE if replace else NOT_READ).format(path=shown))
+        if seen != hashlib.sha256(data).hexdigest():
+            raise ToolError(CHANGED_SINCE_READ.format(path=shown))
+
+    def forget(self) -> None:
+        self.files.clear()
 
 
 @dataclass
@@ -34,6 +76,12 @@ class ToolContext:
     set_mode: Any = None
     # A function that returns the model of the session ("provider/model"), for example for routine_create.
     model: Any = None
+    # The files that the agent read (ReadState). None: edit and write do not check reads, for example in a test.
+    reads: ReadState | None = None
+    # True: the agent changes files with apply_patch, not with edit and write (setting "edit_tool").
+    patch_mode: bool = False
+    # The folder for the full output of a cut result (tool_output.py). None: the cut text is lost.
+    output_dir: Path | None = None
 
     def resolve(self, path: Any, read_only: bool = False) -> Path:
         try:
@@ -53,6 +101,11 @@ class ToolResult:
     created: list[str] = field(default_factory=list)  # New PDF and Word files, for the chat cards (created.py).
     card: dict[str, Any] | None = None  # A card for the chat: files that the agent sent, or an artifact (share.py).
     stop_turn: bool = False  # The turn stops after this result, for example when the user rejects a plan.
+    # True: the tool applied the output limit itself (head and tail, or pages). The agent must not cut the
+    # output again, because a second cut from the end removes the tail, the exit code, and the paging hint.
+    limited: bool = False
+    # The verify command result of the turn, on a wrap_up result: the client shows it in the box.
+    verify: dict[str, Any] | None = None
 
 
 @dataclass
@@ -65,6 +118,13 @@ class Approval:
     example, ``preview_start`` uses the ``server(<command>)`` rules of the dev servers.
     ``input`` replaces the tool arguments in the request to the user, if the arguments do
     not show what the tool does. For example, ``preview_start`` shows the server command.
+    ``sandboxed`` is for a bash command while the sandbox is ready (sandbox.py): True if the command runs in
+    the sandbox, False if it runs outside. None: the sandbox is off or not available.
+    ``sandbox_escape`` is True if the model asked to run the command outside the sandbox
+    (``dangerouslyDisableSandbox``).
+    ``keys`` is for a call that changes several files (apply_patch): all the paths. The gate checks each
+    path: a deny rule, a safety rule, or a protected path for one path applies to the call. An allow rule
+    must match each path. Empty: the gate checks ``key`` only. An empty ``rule`` gives no "Always allow".
     """
 
     key: str
@@ -72,6 +132,13 @@ class Approval:
     diff: str | None = None
     tool: str | None = None
     input: dict[str, Any] | None = None
+    sandboxed: bool | None = None
+    sandbox_escape: bool = False
+    keys: tuple[str, ...] = ()
+
+    def all_keys(self) -> tuple[str, ...]:
+        """The values that the rules check: ``keys``, or ``key`` when ``keys`` is empty."""
+        return self.keys or (self.key,)
 
 
 class Tool:
@@ -131,7 +198,8 @@ def get_bool(args: dict[str, Any], key: str, default: bool = False) -> bool:
     return bool(value)
 
 
-def truncate(text: str, limit: int, keep_tail: bool = False) -> str:
+def truncate(text: str, limit: int, keep_tail: bool = False, spill_dir: Path | None = None) -> str:
+    """Cut text to ``limit`` characters. With ``spill_dir``, the full text goes to a file that the note names."""
     if len(text) <= limit:
         return text
     removed = len(text) - limit
@@ -142,7 +210,25 @@ def truncate(text: str, limit: int, keep_tail: bool = False) -> str:
     else:
         body = text[:limit]
         where = "from the end"
+    from ..tool_output import spill
+
+    path = spill(spill_dir, text)
+    more = (f" The full output is in the file {path}. Use read with offset and limit, or grep, to see more."
+            if path is not None else "")
     return (
         f"{body}\n\n[Output truncated. The full output has {len(text)} characters. "
-        f"{removed} characters were removed {where}.]"
+        f"{removed} characters were removed {where}.{more}]"
     )
+
+
+def external(text: str, source: str) -> str:
+    """Text from outside the project (a web page, search results, an MCP result) in a tag that names its source.
+
+    The model reads the tag as a boundary: the text in it is data, not instructions (the base prompt says so).
+    The random suffix stops a page that writes its own closing tag. One layer of defense, not a guarantee.
+    """
+    tag = f"external-content-{secrets.token_hex(4)}"
+    clean = re.sub(r"[\"<>\r\n]", " ", source)[:200].strip()
+    body = text.replace("external-content", "external_content")
+    opening = f'<{tag} source="{clean}">'
+    return f"{opening}\n{body}\n</{tag}>"

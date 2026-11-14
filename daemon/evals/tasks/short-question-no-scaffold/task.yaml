@@ -1,0 +1,14 @@
+id: short-question-no-scaffold
+behavior: effort_fits_request
+polarity: no_act
+pair: multifile-rename
+turns:
+  - "What does retry() in net.py do? Answer in one sentence."
+permission_mode: default
+approvals: {default: deny}
+timeout_s: 180
+checks:
+  # A short question needs a read and an answer: no plan, no command, and no file change.
+  - {type: tool_not_called, name: [edit, write, bash, update_plan]}
+  - {type: max_tool_calls, n: 3}
+  - {type: unchanged}

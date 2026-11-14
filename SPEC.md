@@ -104,7 +104,11 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Messages are JSON. Each message
 3. If the model returns tool calls, run them in order.
 4. Append the tool results to the messages.
 5. Repeat until the model returns no tool calls, or the user sends `interrupt`.
-6. Set a maximum of 50 tool calls for each turn. Make this value configurable.
+6. Set a maximum of 250 tool calls for each turn (`max_tool_calls`). Make this value configurable. At the limit, or at the time budget (`max_turn_minutes`), make one more model call with no tools for a report to the user.
+7. When the output limit of the model cuts a reply (`finish_reason` `length`), ask the model to continue, 3 times at most in sequence. A cut tool call does not run. The model gets a note to send a smaller call (`loop_guards.py`).
+8. When the turn changed files and the project sets `verify_command`, run it before the turn ends. On a failure, send the end of the output to the agent and continue (`verify.py`). Also run it before the recap box of `wrap_up`. On a failure, do not show the box.
+9. Add a note to a tool result after 8 edits of one file in a turn, and after 6 alternating calls with the same arguments. After 3 strong reminders, ask the user to stop or continue. A subagent has no user, so it stops with stop reason `loop` and writes a report (`loop_guards.py`).
+10. When a tool first touches a folder below the project folder that has an instruction file (`HARNESS.md`, `AGENTS.md`, or `CLAUDE.md`), send that file to the agent in a note. Do not change the system prompt.
 
 ### 5.2 Tools
 
@@ -117,6 +121,7 @@ Keep the tool set small. Small local models make more errors with many tools.
 | `grep` | Searches file contents. Uses `ripgrep` if it is available. | No |
 | `edit` | Replaces an exact string in a file. | Yes |
 | `write` | Creates or overwrites a file. | Yes |
+| `apply_patch` | Adds, deletes, updates, or moves files with one patch in the Codex format. Only with the setting `edit_tool: "apply_patch"`, in place of `edit` and `write`. The default is `edit`. | Yes, for each file of the patch |
 | `bash` | Runs a shell command in the project folder. | Yes |
 | `skill` | Loads the body of a skill. | No |
 | `preview_*` | Controls servers and the agent browser. See section 8.7. | Some |
@@ -139,7 +144,10 @@ Rules:
 ### 5.4 Project instruction file
 
 - At session start, read `HARNESS.md` in the project root.
-- If `HARNESS.md` does not exist, read `CLAUDE.md`.
+- If `HARNESS.md` does not exist, read `AGENTS.md`, then `CLAUDE.md`. Only the first file that exists counts.
+- A worktree with no instruction file uses the file of its project.
+- Also read the instruction file of the user for all projects: `~/.harness/HARNESS.md`, `~/.harness/AGENTS.md`, or `~/.claude/CLAUDE.md`. All agents get it, also a subagent.
+- The base prompt states the order of authority: the user message, the project instructions of the settings, the project file, the instructions for all projects, the memory.
 - Put the file contents in the system prompt.
 
 ### 5.5 Context control
@@ -539,7 +547,7 @@ Rules:
 - The daemon binds to `127.0.0.1` by default.
 - The daemon requires a token on every connection.
 - Do not expose the daemon port to the internet.
-- `bash` runs in the project folder. An optional Docker sandbox mode runs `bash` in a container.
+- `bash` runs in the project folder. An optional sandbox (`sandbox` in `~/.harness/settings.json`, off by default) limits writes to the project and blocks the network except the allowed domains: Seatbelt on macOS, bubblewrap on Linux. Windows has no sandbox yet. See `docs/SANDBOX.md`.
 - Store API keys and the Hugging Face token in the operating system keychain through Tauri. Do not store them in plain text.
 - The Browser pane runs in a separate webview. Pages in it cannot call Tauri commands.
 - The daemon forwards only the server ports from `launch.json`.

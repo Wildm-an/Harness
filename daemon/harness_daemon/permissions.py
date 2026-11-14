@@ -17,15 +17,32 @@ Rule forms:
 
 A deny rule has priority over an allow rule.
 
+A call that changes several files (apply_patch) has one key for each path (``Approval.keys``). The gate checks
+each path: a deny rule, a hard rule, or a protected path for one path applies to the call. An allow rule or an
+auto mode fast path must hold for each path. The tool name is ``edit``, so plan mode and acceptEdits treat the
+call as an edit.
+
 Permission modes (the ``permission_mode`` setting, as in Claude Code):
 
 - ``default``: ask the user for each action that no rule allows.
 - ``acceptEdits``: file changes in the project (edit, write) run with no question.
-- ``plan``: file changes are blocked. The agent reads and makes a plan.
+- ``plan``: file changes are blocked, also when a rule or a hook allows them. The agent reads and makes a plan.
 - ``auto``: a model checks each action that no rule decides (auto_mode.py, docs/AUTO_MODE.md).
-- ``bypassPermissions``: every action runs with no question.
+- ``bypassPermissions``: every action runs with no question, except a match of a safety rule.
 
-The deny rules apply in all modes.
+The deny rules apply in all modes. The safety rules (auto_mode.safety_match) also apply in all modes:
+- A hard rule match (sudo, download and run, critical deletion, secret exfiltration, a change of the
+  permission settings) asks the user with no "Always allow". Allow rules do not skip the question.
+  Auto mode blocks it. ``bypass_safety_rules`` in ~/.harness/settings.json sets the bypass behavior.
+- An edit of a protected path (.git, .github, .harness, .env, and others) asks the user with no "Always
+  allow", also in acceptEdits. It runs in bypassPermissions. The model checks it in auto mode.
+
+The sandbox rule (sandbox.py, docs/SANDBOX.md) comes after the deny rules, the plan mode block, and the safety
+rules. While the sandbox is ready and ``autoAllowBashIfSandboxed`` is true, a sandboxed bash command runs with no
+question in default and acceptEdits, and with no model check in auto mode. Plan mode asks as before. A bash command
+outside the sandbox (an excluded command, a background task, or ``dangerouslyDisableSandbox``) follows the allow
+rules, else the user decides: the question says that the command runs outside the sandbox. With
+``allowUnsandboxedCommands`` false, a call with ``dangerouslyDisableSandbox`` gets a text, and the turn continues.
 """
 
 from __future__ import annotations
@@ -45,11 +62,15 @@ from .auto_mode import (
     MAX_TOTAL_BLOCKS,
     AutoModeError,
     AutoReviewer,
+    SafetyMatch,
+    bypass_safety_rules,
     fast_path,
     hard_rule,
     is_broad_rule,
+    safety_match,
 )
 from .config import project_settings_path, read_json, write_json
+from .sandbox import sandbox_config
 from .tools import Approval, Tool
 
 RULE_RE = re.compile(r"([A-Za-z0-9_\-]+\*?)(?:\((.*)\))?", re.S)
@@ -57,10 +78,21 @@ SHELL_OPERATORS = re.compile(r"[;&|`\n<>]|\$\(")
 
 DECISIONS = ("allow_once", "allow_always", "deny")
 MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
-EDIT_TOOLS = ("edit", "write")
+# office_edit approves as "edit" (Approval.tool). Its name is here as a second guard.
+EDIT_TOOLS = ("edit", "write", "office_edit")
 
 PLAN_BLOCK = ("Plan mode is on, so you cannot change files. Read and search the project, then call "
               "exit_plan_mode with your plan. The user approves the plan to start the work.")
+SAFETY_ASK = ("A safety rule needs your approval [{label}]. Allow rules and the permission mode do not skip "
+              "this question.")
+PROTECTED_ASK = ("{path} is a protected path. It holds settings, hooks, or repository state. Allow rules and "
+                 "Accept edits do not skip this question.")
+SAFETY_BLOCK = ("Blocked by a safety rule [{label}]. This call did not run. Do not try to get the same result in "
+                "another way. Tell the user what you need.")
+OUTSIDE_SANDBOX_ASK = "This command runs outside the sandbox."
+SANDBOX_ESCAPE_BLOCK = ("The settings do not allow commands outside the sandbox (sandbox.allowUnsandboxedCommands is "
+                        "false). This call did not run. Run the command without dangerouslyDisableSandbox, or tell "
+                        "the user what you need.")
 
 # The approver gets a request and returns one of DECISIONS.
 Approver = Callable[[dict[str, Any]], Awaitable[str]]
@@ -142,20 +174,44 @@ class PermissionGate:
         # Rules for the current turn: the allowed-tools of the skills that run in it.
         self.turn_allow: list[str] = []
         self.auto: AutoReviewer | None = None  # The checks of auto mode. The agent sets it.
+        # The last decision: ("allow" | "deny" | "block", source). The run records store it (records.py).
+        self.last: tuple[str, str] | None = None
+        self._source: str | None = None
 
     async def check(self, tool: Tool, args: dict[str, Any], approval: Approval | None,
-                    force: str | None = None) -> bool | str:
+                    force: str | None = None, preapproved: bool = False) -> bool | str:
+        """The decision for one call (see _check). ``self.last`` gets the decision and the rule or the
+        person that made it, for example ("deny", "deny_rule") or ("deny", "user")."""
+        self._source = None
+        result = await self._check(tool, args, approval, force, preapproved)
+        decision = "allow" if result is True else "deny" if result is False else "block"
+        self.last = (decision, self._source or "unknown")
+        return result
+
+    def _from(self, source: str, result: Any) -> Any:
+        self._source = source
+        return result
+
+    async def _check(self, tool: Tool, args: dict[str, Any], approval: Approval | None,
+                     force: str | None = None, preapproved: bool = False) -> bool | str:
         """True: run the action. False: the user denied it, and the turn stops.
 
         A text: the mode blocked the action. The text goes to the agent, and the turn continues.
         ``force``: a plugin asked for approval of this call, with this reason. The user decides,
         also when a rule or the mode allows the call. A deny rule still denies it.
+        ``preapproved``: a PreToolUse hook allowed the call. The deny rules, the plan mode block, and the
+        safety rules still apply. The allow rules, the mode, and the question do not.
+
+        The order: deny rules, the plan mode block of file changes, the safety rules (hard rules and
+        protected paths), then the mode and the allow rules. A rule with no exception comes first.
         """
         if force is not None:
             key = approval.key if approval is not None else json.dumps(args, sort_keys=True, ensure_ascii=False)[:500]
             name = (approval.tool if approval is not None else None) or tool.name
-            if self.rules.denies(name, key):
-                return False
+            keys = approval.all_keys() if approval is not None else (key,)
+            if any(self.rules.denies(name, k) for k in keys):
+                return self._from("deny_rule", False)
+            self._source = "plugin_ask"
             decision = await self.approver({
                 "request_id": uuid.uuid4().hex,
                 "tool": tool.name,
@@ -166,40 +222,91 @@ class PermissionGate:
             })
             return decision in ("allow_once", "allow_always")
         if not tool.needs_approval or approval is None:
-            return True
+            return self._from("no_approval", True)
         name = approval.tool or tool.name
-        if self.rules.denies(name, approval.key):
-            return False
+        keys = approval.all_keys()  # A call that changes several files (apply_patch) has one key for each path.
+        if any(self.rules.denies(name, key) for key in keys):
+            return self._from("deny_rule", False)
         mode = self.mode()  # An unknown mode, for example a mode of an older version, is "default".
+        if mode == "plan" and name in EDIT_TOOLS:
+            # Before the allow rules: an allow rule or a hook must not change files in plan mode.
+            return self._from("mode:plan", PLAN_BLOCK)
+        # The first path that a safety rule catches. A hard rule has priority over a protected path.
+        found = [(key, m) for key in keys if (m := safety_match(name, key)) is not None]
+        key, match = next((f for f in found if f[1].kind == "hard"), found[0] if found else (approval.key, None))
+        if match is not None:
+            decided = await self._safety(tool, args, approval, mode, match, key)
+            if decided is not None:
+                return decided
+        sandbox = sandbox_config() if approval.sandboxed is not None else None
+        if sandbox is not None and approval.sandbox_escape and not sandbox["allowUnsandboxedCommands"]:
+            return self._from("sandbox:locked", SANDBOX_ESCAPE_BLOCK)
+        if preapproved:
+            return self._from("hook", True)
         if mode == "bypassPermissions":
-            return True
+            return self._from("mode:bypassPermissions", True)
         if mode == "auto" and self.auto is not None:
             return await self._auto_check(tool, name, args, approval)
-        if self.rules.allows(name, approval.key):
-            return True
-        if any(rule_matches(r, name, approval.key) for r in (*self.session_allow, *self.turn_allow)):
-            return True
-        if name in EDIT_TOOLS:
-            if mode == "plan":
-                return PLAN_BLOCK
-            if mode == "acceptEdits":
-                return True
-        return await self._ask(tool, args, approval)
+        if all(self.rules.allows(name, key) for key in keys):
+            return self._from("allow_rule", True)
+        if all(any(rule_matches(r, name, key) for r in (*self.session_allow, *self.turn_allow)) for key in keys):
+            return self._from("session_rule", True)
+        if name in EDIT_TOOLS and mode == "acceptEdits":
+            return self._from("mode:acceptEdits", True)
+        if (approval.sandboxed is True and sandbox is not None and sandbox["autoAllowBashIfSandboxed"]
+                and mode in ("default", "acceptEdits")):
+            # The sandbox limits the command: no network, and writes only in the allowed folders.
+            return self._from("sandbox", True)
+        return await self._ask(tool, args, approval,
+                               note=OUTSIDE_SANDBOX_ASK if approval.sandboxed is False else None)
 
-    async def _ask(self, tool: Tool, args: dict[str, Any], approval: Approval, note: str | None = None) -> bool:
-        """Ask the user. ``note`` tells why auto mode asks: the client shows it as the reason."""
+    async def _safety(self, tool: Tool, args: dict[str, Any], approval: Approval, mode: str,
+                      match: SafetyMatch, key: str | None = None) -> bool | str | None:
+        """The decision for a call that a safety rule catches. None: the normal checks decide.
+
+        Auto mode keeps its own checks: a hard rule blocks, and the model checks a protected path.
+        bypassPermissions changes protected paths with no question, as in Claude Code. A hard rule match
+        asks there too, unless ~/.harness/settings.json sets "bypass_safety_rules" to "block" or "off".
+        """
+        if mode == "auto" and self.auto is not None:
+            # The checks of auto mode, also for a call that a hook allowed: a hard rule blocks, and the
+            # model checks a protected path (fast_path is False for it).
+            return await self._auto_check(tool, approval.tool or tool.name, args, approval)
+        if match.kind == "protected":
+            if mode == "bypassPermissions":
+                return None
+            return await self._ask(tool, args, approval, note=PROTECTED_ASK.format(path=key or approval.key), always=False,
+                                   source="protected:user")
+        if mode == "bypassPermissions":
+            setting = bypass_safety_rules()
+            if setting == "off":
+                return None
+            if setting == "block":
+                return self._from("safety:block", SAFETY_BLOCK.format(label=match.label))
+        return await self._ask(tool, args, approval, note=SAFETY_ASK.format(label=match.label), always=False,
+                               source="safety:user")
+
+    async def _ask(self, tool: Tool, args: dict[str, Any], approval: Approval, note: str | None = None,
+                   always: bool = True, source: str = "user") -> bool:
+        """Ask the user. ``note`` tells why the gate asks: the client shows it as the reason.
+
+        ``always`` False sends no rule, so the card has no "Always allow": a safety question asks each time.
+        """
         request: dict[str, Any] = {
             "request_id": uuid.uuid4().hex,
             "tool": tool.name,
             "input": approval.input if approval.input is not None else args,
             "diff": approval.diff,
-            "rule": approval.rule,
+            "rule": approval.rule if always and approval.rule else None,
         }
         if note:
             request["reason"] = note
         decision = await self.approver(request)
+        self._source = source
         if decision == "allow_always":
-            self.rules.add_allow(approval.rule)
+            if always and approval.rule:
+                self.rules.add_allow(approval.rule)
+                self._source = f"{source}_always"
             return True
         return decision == "allow_once"
 
@@ -207,15 +314,20 @@ class PermissionGate:
         """Auto mode: the hard rules, the narrow allow rules, the fast paths, then the model."""
         auto = self.auto
         assert auto is not None
-        label = hard_rule(name, approval.key)
+        keys = approval.all_keys()
+        label = next((found for key in keys if (found := hard_rule(name, key))), None)
         if label:
+            self._source = "auto:hard_rule"
             return BLOCK_MESSAGE.format(rule=label, reason="A fixed rule of auto mode blocks this action. The user "
                                                              "can run it in another permission mode.")
         allow = [r for r in self.rules.read()["allow"] if not is_broad_rule(r)]
-        if any(rule_matches(r, name, approval.key) for r in (*allow, *self.session_allow, *self.turn_allow)):
-            return True
-        if fast_path(name, approval.key) or getattr(tool, "read_only", False):
-            return True
+        if all(any(rule_matches(r, name, key) for r in (*allow, *self.session_allow, *self.turn_allow)) for key in keys):
+            return self._from("auto:allow_rule", True)
+        if all(fast_path(name, key) for key in keys) or getattr(tool, "read_only", False):
+            return self._from("auto:fast_path", True)
+        if approval.sandboxed is True and sandbox_config()["autoAllowBashIfSandboxed"]:
+            # The sandbox limits the command, so the model does not check it.
+            return self._from("auto:sandbox", True)
         shown = approval.input if isinstance(approval.input, dict) else args
         try:
             verdict = await auto.review(name, shown, approval.key)
@@ -223,14 +335,15 @@ class PermissionGate:
             auto.failures += 1
             if auto.failures >= MAX_FAILURES:
                 auto.failures = 0
-                return await self._ask(tool, args, approval, note=f"Auto mode could not check this action ({e}).")
-            return FAILURE_MESSAGE.format(error=e)
+                return await self._ask(tool, args, approval, note=f"Auto mode could not check this action ({e}).",
+                                       source="auto:user")
+            return self._from("auto:failure", FAILURE_MESSAGE.format(error=e))
         auto.failures = 0
         if verdict.decision == "allow":
             auto.consecutive_blocks = 0
-            return True
+            return self._from("auto:classifier", True)
         if verdict.decision == "ask":
-            return await self._ask(tool, args, approval, note=f"Auto mode asks you: {verdict.reason}")
+            return await self._ask(tool, args, approval, note=f"Auto mode asks you: {verdict.reason}", source="auto:user")
         auto.consecutive_blocks += 1
         auto.total_blocks += 1
         if auto.consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS or auto.total_blocks >= MAX_TOTAL_BLOCKS:
@@ -240,5 +353,5 @@ class PermissionGate:
                 auto.total_blocks = 0
             return await self._ask(tool, args, approval, note=(
                 f"Auto mode blocked this action [{verdict.rule}]: {verdict.reason} It blocked several actions, "
-                "so it asks you."))
-        return BLOCK_MESSAGE.format(rule=verdict.rule, reason=verdict.reason)
+                "so it asks you."), source="auto:user")
+        return self._from("auto:classifier", BLOCK_MESSAGE.format(rule=verdict.rule, reason=verdict.reason))

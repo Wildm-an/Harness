@@ -71,7 +71,72 @@ CREATE TABLE IF NOT EXISTS routine_runs (
     status TEXT NOT NULL,  -- running, waiting, done, failed, skipped.
     error TEXT
 );
+-- Run records (records.py): counts, times, hashes, and stop data. No prompt text, arguments, or tool output.
+CREATE TABLE IF NOT EXISTS turns (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    message_id TEXT,  -- The id of the user message of the turn.
+    agent TEXT,  -- NULL: the main agent. Else the label of the subagent.
+    origin TEXT,  -- NULL: the user. "task": a note of a background task.
+    permission_mode TEXT,
+    harness_version TEXT,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    stop_reason TEXT,  -- end, max_tool_calls, denied, interrupted, error, blocked, daemon_stopped, and later values.
+    steps INTEGER,
+    tool_calls INTEGER
+);
+CREATE TABLE IF NOT EXISTS model_requests (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_id TEXT,
+    step INTEGER,
+    agent TEXT,
+    purpose TEXT NOT NULL,  -- turn, compact, classifier, title, suggestion, side.
+    provider TEXT NOT NULL,
+    provider_kind TEXT,
+    model TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    duration_ms INTEGER,
+    first_byte_ms INTEGER,
+    first_token_ms INTEGER,
+    system_hash TEXT,
+    tools_hash TEXT,
+    message_count INTEGER,
+    tool_count INTEGER,
+    prompt_tokens INTEGER,  -- NULL: the endpoint did not report it.
+    completion_tokens INTEGER,
+    cached_tokens INTEGER,
+    reasoning_tokens INTEGER,
+    finish_reason TEXT,
+    error TEXT,  -- NULL: the request gave a reply.
+    usage TEXT  -- The raw usage JSON of the endpoint.
+);
+CREATE TABLE IF NOT EXISTS tool_calls (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_id TEXT,
+    step INTEGER,
+    agent TEXT,
+    call_id TEXT,
+    name TEXT NOT NULL,
+    called_name TEXT,  -- The name that the model sent, if the harness repaired it.
+    started_at REAL NOT NULL,
+    duration_ms INTEGER,
+    result_class TEXT NOT NULL,
+    decision TEXT,
+    decision_source TEXT,
+    output_chars INTEGER,
+    truncated INTEGER
+);
 """
+
+REQUEST_COLUMNS = ("session_id", "turn_id", "step", "agent", "purpose", "provider", "provider_kind", "model",
+                   "started_at", "duration_ms", "first_byte_ms", "first_token_ms", "system_hash", "tools_hash",
+                   "message_count", "tool_count", "prompt_tokens", "completion_tokens", "cached_tokens",
+                   "reasoning_tokens", "finish_reason", "error", "usage")
+TOOL_COLUMNS = ("session_id", "turn_id", "step", "agent", "call_id", "name", "called_name", "started_at",
+                "duration_ms", "result_class", "decision", "decision_source", "output_chars", "truncated")
+TURN_COLUMNS = ("id", "session_id", "message_id", "agent", "origin", "permission_mode", "harness_version",
+                "started_at")
 
 ROUTINE_FIELDS = ("name", "prompt", "cwd", "model", "permission_mode", "schedule", "enabled", "time_in_title")
 
@@ -291,6 +356,8 @@ class Storage:
         self.db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         self.db.execute("DELETE FROM checkpoints WHERE session_id = ?", (session_id,))
         self.db.execute("DELETE FROM routine_runs WHERE session_id = ?", (session_id,))
+        for table in ("turns", "model_requests", "tool_calls"):
+            self.db.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))  # noqa: S608 - fixed names.
         self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self.db.commit()
 
@@ -320,6 +387,11 @@ class Storage:
         )
         return [json.loads(r[0]) for r in rows]
 
+    def all_messages(self, session_id: str) -> list[dict[str, Any]]:
+        """All the messages of a session, also those before the last /clear or summary (the transcript export)."""
+        rows = self.db.execute("SELECT data FROM messages WHERE session_id = ? ORDER BY seq", (session_id,))
+        return [json.loads(r[0]) for r in rows]
+
     def search_chats(self, project: str, query: str, exclude: str | None = None, limit: int = 5,
                      snippets: int = 3) -> list[dict[str, Any]]:
         """The past sessions of a project with user or agent text that has the words of ``query``.
@@ -344,32 +416,58 @@ class Storage:
         for row in rows:
             if path_key(str(project_root(Path(row["cwd"])))) != key:
                 continue
-            sql = "SELECT data FROM messages WHERE session_id = ?" + (f" AND ({like})" if like else "") + " ORDER BY seq"
-            matches: list[tuple[int, str, str]] = []
-            found: set[str] = set()
-            for (data,) in self.db.execute(sql, (row["id"], *params)):
-                try:
-                    message = json.loads(data)
-                except ValueError:
-                    continue
-                role = message.get("role")
-                if role not in ("user", "assistant"):
-                    continue
-                content = message.get("display") or message.get("content")
-                if isinstance(content, list):
-                    content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
-                text = " ".join(str(content or "").split())
-                lower = text.lower()
-                present = [w for w in words if w in lower]
-                if present:
-                    found.update(present)
-                    matches.append((len(present), role, _snippet(text, lower.find(present[0]))))
+            found, matches = self._message_hits(row["id"], words, like, params)
             if matches:
-                matches.sort(key=lambda m: -m[0])
                 hits.append({"id": row["id"], "title": row["title"], "updated_at": row["updated_at"], "score": len(found),
                              "snippets": [{"role": r, "text": t} for _, r, t in matches[:snippets]]})
         hits.sort(key=lambda h: (-h["score"], -h["updated_at"]))
         return hits[:limit]
+
+    def _message_hits(self, session_id: str, words: list[str], like: str, params: list[str],
+                      before_seq: int | None = None) -> tuple[set[str], list[tuple[int, str, str]]]:
+        """The user and agent messages of a session with the words: the words found, and (count, role, snippet)
+        for each message, the best first. ``before_seq``: only messages before this seq."""
+        sql = "SELECT data FROM messages WHERE session_id = ?" + (f" AND ({like})" if like else "")
+        args: list[Any] = [session_id, *params]
+        if before_seq is not None:
+            sql += " AND seq < ?"
+            args.append(before_seq)
+        matches: list[tuple[int, str, str]] = []
+        found: set[str] = set()
+        for (data,) in self.db.execute(sql + " ORDER BY seq", args):
+            try:
+                message = json.loads(data)
+            except ValueError:
+                continue
+            role = message.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = message.get("display") or message.get("content")
+            if isinstance(content, list):
+                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+            text = " ".join(str(content or "").split())
+            lower = text.lower()
+            present = [w for w in words if w in lower]
+            if present:
+                found.update(present)
+                matches.append((len(present), role, _snippet(text, lower.find(present[0]))))
+        matches.sort(key=lambda m: -m[0])
+        return found, matches
+
+    def search_removed(self, session_id: str, query: str, snippets: int = 3) -> dict[str, Any] | None:
+        """The messages of this session that a summary or /clear removed from the context, with the words."""
+        session = self.get_session(session_id)
+        words = [w.lower() for w in query.split() if w.strip()][:8]
+        if session is None or not words or not session["context_start"]:
+            return None
+        ascii_words = [w for w in words if w.isascii()]
+        like = " OR ".join("data LIKE ? ESCAPE '\\'" for _ in ascii_words)
+        params = ["%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for w in ascii_words]
+        found, matches = self._message_hits(session_id, words, like, params, before_seq=session["context_start"])
+        if not matches:
+            return None
+        return {"id": session_id, "title": "This session, older messages", "updated_at": session["updated_at"],
+                "score": len(found), "snippets": [{"role": r, "text": t} for _, r, t in matches[:snippets]]}
 
     def truncate_context(self, session_id: str, keep: int) -> None:
         """Delete the messages of the current context after the first ``keep`` messages (a rewind)."""
@@ -581,6 +679,47 @@ class Storage:
                                "session_id IN (SELECT id FROM sessions)) ORDER BY started_at DESC, rowid DESC "
                                "LIMIT ?", (routine_id, limit))
         return [dict(r) for r in rows]
+
+    # -- run records (records.py) -----------------------------------------------------------------------
+
+    def start_turn(self, session_id: str, row: dict[str, Any]) -> None:
+        values = {**row, "session_id": session_id}
+        self.db.execute(f"INSERT INTO turns ({', '.join(TURN_COLUMNS)}) VALUES ({', '.join('?' * len(TURN_COLUMNS))})",
+                        tuple(values.get(c) for c in TURN_COLUMNS))
+        self.db.commit()
+
+    def end_turn(self, turn_id: str, stop_reason: str, steps: int, tool_calls: int) -> None:
+        self.db.execute("UPDATE turns SET ended_at = ?, stop_reason = ?, steps = ?, tool_calls = ? WHERE id = ?",
+                        (time.time(), stop_reason, steps, tool_calls, turn_id))
+        self.db.commit()
+
+    def end_open_turns(self) -> None:
+        """At the start of the daemon: a turn that did not end stopped with the old daemon."""
+        self.db.execute("UPDATE turns SET stop_reason = 'daemon_stopped', ended_at = ? WHERE ended_at IS NULL",
+                        (time.time(),))
+        self.db.commit()
+
+    def add_model_request(self, session_id: str, row: dict[str, Any]) -> None:
+        values = {**row, "session_id": session_id}
+        self.db.execute(
+            f"INSERT INTO model_requests ({', '.join(REQUEST_COLUMNS)}) VALUES ({', '.join('?' * len(REQUEST_COLUMNS))})",
+            tuple(values.get(c) for c in REQUEST_COLUMNS))
+        self.db.commit()
+
+    def add_tool_call(self, session_id: str, row: dict[str, Any]) -> None:
+        values = {**row, "session_id": session_id}
+        # No commit: the next model request row commits it. A turn can make 250 calls.
+        self.db.execute(f"INSERT INTO tool_calls ({', '.join(TOOL_COLUMNS)}) VALUES ({', '.join('?' * len(TOOL_COLUMNS))})",
+                        tuple(values.get(c) for c in TOOL_COLUMNS))
+
+    def session_records(self, session_id: str) -> dict[str, list[dict[str, Any]]]:
+        """The run records of a session, oldest first."""
+        out: dict[str, list[dict[str, Any]]] = {}
+        for table, order in (("turns", "started_at"), ("model_requests", "rowid"), ("tool_calls", "rowid")):
+            rows = self.db.execute(f"SELECT * FROM {table} WHERE session_id = ? ORDER BY {order}",  # noqa: S608
+                                   (session_id,)).fetchall()
+            out[table] = [dict(r) for r in rows]
+        return out
 
     def end_open_runs(self) -> None:
         """At the start of the daemon: a run that did not end stopped with the old daemon."""

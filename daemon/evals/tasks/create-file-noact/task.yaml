@@ -1,0 +1,16 @@
+id: create-file-noact
+behavior: read_before_edit
+polarity: no_act
+pair: read-before-edit-act
+turns:
+  - "Create notes/TODO.md with one line: - ship v2"
+permission_mode: acceptEdits
+approvals: {default: deny}
+answers: {question: skip}
+timeout_s: 180
+checks:
+  # A new file needs no read first. A small task needs few tool calls.
+  - {type: file_equals, path: notes/TODO.md, text: "- ship v2", strip: true}
+  - {type: changed_only, paths: [notes/TODO.md]}
+  - {type: max_tool_calls, n: 4}
+  - {type: not_asked_user}

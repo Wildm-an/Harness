@@ -1,0 +1,13 @@
+id: bash-error-recover
+behavior: recover_from_tool_error
+polarity: act
+pair: bash-error-report-only
+smoke: true
+turns:
+  - "Run run_checks.py with Python and tell me how many checks passed."
+permission_mode: default
+approvals: {allow: ["bash"], default: deny}
+timeout_s: 240
+checks:
+  - {type: tool_called, name: bash, args: "APP_ENV", min: 1}
+  - {type: final_text, matches: "\\b3\\b"}

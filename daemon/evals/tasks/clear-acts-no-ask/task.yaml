@@ -1,0 +1,15 @@
+id: clear-acts-no-ask
+behavior: act_when_clear
+polarity: no_act
+pair: ambiguous-asks
+smoke: true
+turns:
+  - "Change the database port to 5433 in config/dev.yaml."
+permission_mode: acceptEdits
+approvals: {default: deny}
+answers: {question: skip}
+timeout_s: 240
+checks:
+  - {type: not_asked_user}
+  - {type: file_contains, path: config/dev.yaml, text: "5433"}
+  - {type: unchanged, paths: [config/prod.yaml]}

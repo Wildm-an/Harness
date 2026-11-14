@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import Any
 
 # Names that models trained on other harnesses use, and the Harness tool for each.
@@ -73,10 +73,15 @@ REPEAT_FIRST = 3  # The count of the first, short reminder.
 REPEAT_STRONG = 5  # From this count, each repeat gets the strong reminder.
 
 
-def repeat_key(name: str, args: dict[str, Any] | None, output: str) -> str:
-    """The key of a call and its result. The "description" argument is only for the user."""
+def call_key(name: str, args: dict[str, Any] | None) -> str:
+    """The key of a call with no result. The "description" argument is only for the user."""
     shown = {k: v for k, v in (args or {}).items() if k != "description"}
-    text = json.dumps([name, shown], sort_keys=True, default=str) + "\0" + output
+    return json.dumps([name, shown], sort_keys=True, default=str)
+
+
+def repeat_key(name: str, args: dict[str, Any] | None, output: str) -> str:
+    """The key of a call and its result."""
+    text = call_key(name, args) + "\0" + output
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
@@ -92,12 +97,106 @@ def repeat_note(name: str, count: int) -> str | None:
     return None
 
 
+# Many edits of one file in one turn. Failed edits count too: repeated failed edits are a loop sign.
+EDIT_NOTE_EVERY = 8  # A tunable value: no source gives a tested number.
+EDIT_NOTE = ("[You changed {path} {count} times in this turn. Many small changes to one file can show that the "
+             "approach does not work. Read the file again and check the whole change. Then continue, or try a "
+             "different approach.]")
+
+
+def edit_note(path: str, count: int) -> str | None:
+    """The note at each multiple of EDIT_NOTE_EVERY edits of one file, or None."""
+    return EDIT_NOTE.format(path=path, count=count) if count and count % EDIT_NOTE_EVERY == 0 else None
+
+
+# Two calls in turn (A B A B) with the same arguments and changing results.
+ALTERNATE_CYCLES = 3  # The note fires at 3 cycles (6 calls), then at each second call. A tunable value.
+ALTERNATE_NOTE = ("[You alternate between two tool calls, {a} and {b}, with the same arguments. You made {count} "
+                  "such calls in sequence. They do not make progress. Read the latest results. Then choose a "
+                  "different action, or finish the task.]")
+
+
+def alternation(keys: Sequence[str]) -> int:
+    """The length of the newest run of the form A B A B with two different keys, else 0."""
+    if len(keys) < 2 or keys[-1] == keys[-2]:
+        return 0
+    pair = (keys[-1], keys[-2])
+    count = 2
+    for i in range(len(keys) - 3, -1, -1):
+        if keys[i] != pair[(len(keys) - 1 - i) % 2]:
+            break
+        count += 1
+    return count
+
+
+def alternate_due(run: int) -> bool:
+    """True at 3 cycles (6 calls), then at each second call."""
+    return run >= 2 * ALTERNATE_CYCLES and run % 2 == 0
+
+
+# After repeated strong reminders the Harness asks the user, or ends a subagent with a report.
+LOOP_ASK_AFTER = 3  # Strong repeat notes and alternation notes. A tunable value.
+LOOP_QUESTION = "The agent repeats the same tool calls with no progress. What must it do?"
+LOOP_STOP = "Stop the turn"
+LOOP_CONTINUE = "Continue"
+LOOP_CLOSE = "Not run. The turn stopped, because the agent repeated the same tool calls."
+LOOP_CONTINUE_NOTE = ("[Harness: You repeated the same tool calls with no progress. The user lets you continue. "
+                      "Change your approach: the same calls will give the same results.]")
+LOOP_ANSWER_NOTE = ("[Harness: You repeated the same tool calls with no progress. The Harness asked the user. "
+                    "The user answered: {answer}]")
+LOOP_REPORT_NOTE = ("[Harness: This turn repeated the same tool calls with no progress, so it ends now. This is your "
+                    "last reply of the turn, and it cannot run a tool. Write a short report: the work that is done, "
+                    "the problem that stopped you, and the next step.]")
+
+
 # The stall nudge: a short reply that says what the model will do now, with no tool call.
 MAX_STALL_NUDGES = 2  # The nudges for each turn.
 MAX_STALL_CHARS = 500  # A longer reply is a report, not a stall.
 STALL_NUDGE = ("[Harness: Your reply said what you will do next, but it made no tool call. "
                "Do that step now with a tool call. If the task is complete, give your final answer to the user.]")
 STALL_NOTICE = "The model said what it will do next but made no tool call. The Harness asked it to continue."
+
+# A reply that the output limit of the model cut (finish_reason "length").
+MAX_CUT_REPLIES = 3  # Continuations in sequence. A tunable value: no source gives a tested number.
+CUT_REPLY_NOTE = ("[Harness: Your last reply stopped at the output limit of the model, so it is not complete. "
+                  "Continue from the exact point where it stopped. Do not repeat text that you already wrote. "
+                  "If you were about to call a tool, call it now with short arguments.]")
+CUT_EMPTY_NOTE = ("[Harness: Your last reply reached the output limit of the model before it gave text or a tool "
+                  "call. Use less reasoning. Give a short reply now, or make one small tool call.]")
+CUT_CALL_ERROR = ("The output limit of the model cut this {name} call, so its arguments are not complete. The call "
+                  "did not run. Send a smaller call. For a large file, write the first part with write, then add "
+                  "each next part with edit.")
+CUT_CALL_MAYBE = ("The arguments of this {name} call are not valid JSON: {error}. They stop before the JSON is "
+                  "complete, so the output limit possibly cut the call. The call did not run. Send a smaller call. "
+                  "For a large file, write the first part with write, then add each next part with edit.")
+CUT_NOTICE = "The model reply stopped at the output limit. The Harness asked the model to continue."
+FILTER_NOTICE = "The model provider filtered this reply (finish reason {reason}). The reply can be incomplete."
+CUT_LIMIT_ERROR = ("The model reply stopped at the output limit {count} times in sequence, so the turn stopped. "
+                   "Raise the output limit of the model server, or ask for smaller steps.")
+
+
+# The limits of a turn: the tool call limit (max_tool_calls) and the time budget (max_turn_minutes).
+# At a limit the agent gets one more model call with no tools, for a report to the user.
+LIMIT_CLOSE = "Not run. This turn reached the limit of {limit} tool calls."
+LIMIT_REPORT_NOTE = ("[Harness: This turn reached the limit of {limit} tool calls, so it ends now. This is your last "
+                     "reply of the turn, and it cannot run a tool. Write a short report for the user: the work that is "
+                     "done, the work that is left, and the next step.]")
+TIME_CLOSE = "Not run. This turn reached its time budget of {minutes} minutes."
+TIME_REPORT_NOTE = ("[Harness: This turn reached its time budget of {minutes} minutes, so it ends now. This is your "
+                    "last reply of the turn, and it cannot run a tool. Write a short report for the user: the work "
+                    "that is done, the work that is left, and the next step.]")
+NO_FINAL_REPORT = "The model gave no final report."
+FINAL_REPORT_FAILED = "The final report failed: {error}"
+
+
+def json_ends_early(raw: str) -> bool:
+    """True for JSON that stops before its end, as when the output limit cuts a tool call."""
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as e:
+        return e.msg.startswith("Unterminated string") or e.pos >= len(raw.rstrip())
+    return False
+
 
 _INTENT = r"(?:i will|i'll|i am going to|i'm going to|let me|let's|i need to|i should)"
 _STALL_PATTERNS = (

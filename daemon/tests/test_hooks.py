@@ -157,3 +157,27 @@ def test_a_hook_gets_the_project_folder_in_the_environment(project):
         {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": command}]}]}}))
     outcome = asyncio.run(CommandHooks(project, shell).run("SessionStart", {}))
     assert outcome.context == [str(project)]
+
+
+def test_a_pre_compact_hook_runs_and_adds_instructions(harness_home, project, fake_model):
+    folder = setup_hooks(project, {"PreCompact": {"stdout": "Keep the names of the API routes."}}, {"PreCompact": ""})
+    fake_model.script({"text": "One."}, {"text": "Two."}, {"text": "The summary."})
+    agent, events, _ = make_agent(project)
+    asyncio.run(agent.run_turn("first"))
+    asyncio.run(agent.run_turn("second"))
+    assert asyncio.run(agent.compact("manual")) is True
+    calls = [e for e in logged(folder) if e["hook_event_name"] == "PreCompact"]
+    assert len(calls) == 1 and calls[0]["trigger"] == "manual" and "context_length" in calls[0]
+    request = fake_model.requests[-1]["messages"][-1]["content"]
+    assert "Instructions of the user for this summary:" in request and "Keep the names of the API routes." in request
+    assert agent.summary == "The summary."
+
+
+def test_a_pre_compact_block_does_not_stop_the_summary(harness_home, project, fake_model):
+    setup_hooks(project, {"PreCompact": {"exit": 2, "stderr": "No summary now."}}, {"PreCompact": ""})
+    fake_model.script({"text": "One."}, {"text": "Two."}, {"text": "The summary."})
+    agent, events, _ = make_agent(project)
+    asyncio.run(agent.run_turn("first"))
+    asyncio.run(agent.run_turn("second"))
+    assert asyncio.run(agent.compact("manual")) is True
+    assert any(e["type"] == "notice" and "cannot stop the summary: No summary now." in e["text"] for e in events)

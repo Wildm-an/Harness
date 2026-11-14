@@ -56,6 +56,10 @@ Harness connects to these services only after you add them or turn them on:
   from the Playwright download servers. You can also start the download with `harness-daemon --install-browser`.
 - **The Browser pane, the terminal, and the agent tools.** These open the addresses and run the
   commands that you or the agent ask for, after the approvals of your permission settings.
+- **The sandbox.** With the sandbox on (`docs/SANDBOX.md`, off by default), a `bash` command has no
+  network. If you add domains to `sandbox.network.allowedDomains`, the command connects to those domains
+  only, through a local proxy of the daemon. The proxy keeps no log. It keeps only the names of the
+  blocked hosts, for the note to the agent.
 - **The Windows installer.** If WebView2 is not installed, the installer downloads it from Microsoft.
   Windows 11 has WebView2.
 
@@ -63,6 +67,22 @@ Harness connects to these services only after you add them or turn them on:
 
 The daemon listens only on `127.0.0.1` (your own computer). A daemon that you start by hand with
 `--host` can listen on other addresses. It then shows a warning.
+
+## Run records on your computer
+
+The daemon keeps run records in its local database (`~/.harness/harness.db`, `daemon/harness_daemon/records.py`). They help to find the cause of a change in agent behavior or token use. Harness does not send them anywhere.
+
+| Table | One row for each | Data |
+|---|---|---|
+| `turns` | Turn of a session | The start and end time, the stop reason, the permission mode, the number of steps and tool calls, the Harness version. |
+| `model_requests` | Request to a model | The purpose (turn, summary, auto mode check), the provider and the model, the times, the token counts that the endpoint reported, the finish reason, an error text, and a hash of the system prompt and of the tool list. |
+| `tool_calls` | Tool call | The tool name, the time, the result class (for example ok, denied, or tool error), the permission decision and the rule or person that made it, and the output size. |
+
+The rows hold no prompt text, no tool arguments, and no tool output. The same database already holds the messages of each session. A session delete also deletes its run records.
+
+## Full tool output on your computer
+
+When a tool result is longer than `max_output_chars`, the model gets the cut text, and the full output goes to a file in `~/.harness/projects/<project>/<session>/tool-results/`. The file can hold what a command printed, also secrets. A session delete removes the files. The daemon removes files older than 30 days.
 
 ## Privacy policies of third-party services
 

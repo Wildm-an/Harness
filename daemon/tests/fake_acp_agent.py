@@ -12,6 +12,7 @@ The prompt text selects the script:
 - "mcpcard": two send_file calls of the Harness MCP server. The agent reports the first one as a tool call
   ("call_m"), and does not report the second one.
 - "/review <x>": the command of the agent.
+- "sudo": a command "sudo make install" that asks for permission, then a reply with the outcome.
 - "env": a reply with the arguments and some environment variables of the agent, as JSON (acp_models.py).
 
 The agent has two models ("fast" and "smart") and one command ("review"). "hello" sends a usage update.
@@ -171,6 +172,16 @@ def script(rid: int, params: dict) -> None:
             update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "failed",
                          "content": [{"type": "content", "content": {"type": "text", "text": "Rejected."}}]})
             chunk(sid, f"Not allowed: {outcome}.")
+    elif text == "sudo":
+        update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call_s", "title": "sudo make install", "kind": "execute",
+                     "status": "pending", "rawInput": {"command": "sudo make install"}})
+        answer = ask("session/request_permission", {"sessionId": sid, "toolCall": {"toolCallId": "call_s"}, "options": [
+            {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
+            {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+        ]})
+        outcome = (answer.get("result") or {}).get("outcome") or {}
+        update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call_s", "status": "completed"})
+        chunk(sid, f"outcome={outcome.get('optionId')}")
     elif text == "wait":
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call_w", "title": "sleep", "kind": "execute",
                      "status": "in_progress", "rawInput": {"command": ["bash", "-lc", "sleep 30"]}})

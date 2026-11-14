@@ -45,10 +45,10 @@ class Session:
         # The state before the last rewind, for "Undo rewind". A new turn, /clear, or a summary removes it.
         self.rewind_undo: dict[str, Any] | None = None
         agent.on_compact = self.on_compact
+        agent.on_record = self.record
         agent.on_checkpoint = lambda message_id, path, content: storage.add_checkpoint(self.id, message_id, path, content)
         # "Search and reference chats": the agent can search the other sessions of the project.
-        agent.enable_chat_search(lambda query, limit: storage.search_chats(
-            str(self.project_dir), query, exclude=self.id, limit=limit))
+        agent.enable_chat_search(self.search_chats)
         # start_session: the agent starts a nested session, with this session as its parent.
         if CHILD_STARTER is not None:
             starter = CHILD_STARTER
@@ -58,6 +58,24 @@ class Session:
         agent.enable_session_context(
             self.session_list_note, self.read_session, self.find_other,
             (lambda target, prompt: sender(self, target, prompt)) if sender is not None else None)
+
+    def search_chats(self, query: str, limit: int) -> list[dict[str, Any]]:
+        """conversation_search: the removed messages of this session first (a summary replaced them), then the
+        other sessions of the project."""
+        own = self.storage.search_removed(self.id, query)
+        others = self.storage.search_chats(str(self.project_dir), query, exclude=self.id, limit=limit)
+        return ([own] if own else []) + others[:max(limit - (1 if own else 0), 0)]
+
+    def record(self, kind: str, row: dict[str, Any]) -> None:
+        """Store a run record of the agent (records.py)."""
+        if kind == "turn_start":
+            self.storage.start_turn(self.id, row)
+        elif kind == "turn_end" and row.get("id"):
+            self.storage.end_turn(row["id"], row["stop_reason"], row["steps"], row["tool_calls"])
+        elif kind == "request":
+            self.storage.add_model_request(self.id, row)
+        elif kind == "tool":
+            self.storage.add_tool_call(self.id, row)
 
     # -- the other sessions of the project ------------------------------------------------
 

@@ -1,7 +1,7 @@
 // Chat state. The reducer turns daemon events into items for the message list.
 
 import { isUnknownContextWarning } from "../lib/context";
-import type { AskQuestion, Decision, DaemonMessage, HistoryMessage, PermissionMode, PermissionRequest, PlanDecision, StopReason, ToolCardData, Usage } from "../daemon/protocol";
+import type { AskQuestion, Decision, DaemonMessage, HistoryMessage, PermissionMode, PermissionRequest, PlanDecision, StopReason, ToolCardData, Usage, VerifyInfo } from "../daemon/protocol";
 
 export type ToolStatus = "running" | "done" | "error";
 
@@ -21,6 +21,7 @@ export type ChatItem =
       agent?: string; // The forked skill that runs this tool in a subagent.
       ts?: number; // The end time of the call (epoch ms), for the step times of the task list.
       approval?: Decision; // Display only (foldCards in MessageList): the answer to the permission card of the call.
+      verify?: VerifyInfo; // On a wrap_up call: the verify command result that the box shows.
     }
   | {
       kind: "permission";
@@ -113,6 +114,8 @@ const STOP_NOTICES: Partial<Record<StopReason, string>> = {
   interrupted: "The turn was interrupted.",
   denied: "The tool call was denied. The agent waits for your instructions.",
   max_tool_calls: "The turn stopped at the tool call limit.",
+  max_time: "The turn stopped at its time budget.",
+  loop: "The turn stopped, because the agent repeated the same tool calls.",
   blocked: "A plugin or a hook ended the turn.",
 };
 
@@ -206,7 +209,7 @@ export function historyToItems(history: HistoryMessage[]): ChatItem[] {
       const index = lastRunningTool(items, msg.tool_call_id);
       if (index >= 0) {
         const status: ToolStatus = msg.is_error ? "error" : "done";
-        items[index] = { ...(items[index] as ToolItem), output: msg.content, status, diff: msg.diff, image: msg.image, ts: msg.ts ? msg.ts * 1000 : undefined };
+        items[index] = { ...(items[index] as ToolItem), output: msg.content, status, diff: msg.diff, image: msg.image, ts: msg.ts ? msg.ts * 1000 : undefined, verify: msg.verify };
         items.splice(index + 1, 0, ...fileCards(msg.tool_call_id, msg.created, msg.card));
       }
     }
@@ -252,6 +255,7 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         diff: msg.diff,
         image: msg.image,
         ts: Date.now(),
+        verify: msg.verify,
       };
       items.splice(index + 1, 0, ...fileCards(msg.id, msg.created, msg.card));
       return { ...state, items };

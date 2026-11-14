@@ -3,6 +3,7 @@ import { Check, ClipboardList, FilePenLine, RefreshCw, ShieldCheck, ShieldOff, t
 import type { PermissionMode } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
+import { shownModes, useAllowBypass } from "../lib/bypass";
 
 // The labels and descriptions of the Claude desktop mode menu (docs/UI_RULES.md C11). The chip under the prompt box shows the label.
 export const MODES: { mode: PermissionMode; label: string; help: string; icon: LucideIcon }[] = [
@@ -42,6 +43,7 @@ export function ModeMenu({ mode, onChange, up = true }: {
   const ref = useRef<HTMLDivElement>(null);
   useOverlay(open);
   const current = MODES.find((m) => m.mode === mode) ?? MODES[0];
+  const allowBypass = useAllowBypass(); // UI rule C12.
   const Icon = current.icon;
 
   useEffect(() => {
@@ -83,7 +85,7 @@ export function ModeMenu({ mode, onChange, up = true }: {
       {open && (
         <div className={`menu model-dropdown${up ? " up" : ""} mode-dropdown`} role="menu" aria-label="Mode">
           <div className="menu-heading">Mode</div>
-          {MODES.map((m) => {
+          {shownModes(MODES, allowBypass, mode).map((m) => {
             const ItemIcon = m.icon;
             return (
               <button

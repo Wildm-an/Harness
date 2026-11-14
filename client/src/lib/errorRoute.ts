@@ -47,6 +47,7 @@ const VIEW = new Set([
   "git.diff", // The Changes pane.
   "disk.usage", // The Storage dialog.
   "user_settings.set", // Settings > General.
+  "sandbox.set", // Settings > General > "Local sandbox".
   "dictation.cleanup", // The microphone button: one popup, with the raw text in the box (DictationButton.tsx).
   // Settings > Local models (cookbook/useCookbook.ts).
   "hf.token",
@@ -66,6 +67,7 @@ const VIEW_PREFIXES = [
   "harnesses.", // Settings > Operating Harness.
   "memory.", // Settings > Your Harness.
   "project_instructions.", // Settings > Your Harness.
+  "project_settings.", // Settings > Your Harness > Verify command.
   "output_styles.", // Settings > Your Harness.
   "cookbook.",
   "serve.",

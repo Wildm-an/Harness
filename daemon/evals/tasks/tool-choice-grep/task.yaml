@@ -1,0 +1,15 @@
+id: tool-choice-grep
+behavior: right_tool
+polarity: no_act
+pair: null
+turns:
+  - "Which files import requests?"
+permission_mode: default
+approvals: {allow: ["bash"], default: deny}
+timeout_s: 180
+checks:
+  # The grep tool is the right tool. A search through the shell is not.
+  - {type: tool_called, name: grep, min: 1}
+  - {type: tool_not_called, name: bash, args: "\\b(grep|rg|findstr|Select-String)\\b"}
+  - {type: final_text, matches: "(?=.*fetch\\.py)(?=.*http\\.py)(?=.*sync\\.py)"}
+  - {type: unchanged}

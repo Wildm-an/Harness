@@ -44,6 +44,20 @@ def test_daemon_process_prints_ready_and_serves(harness_home, project, fake_mode
         proc.wait(timeout=10)
 
 
+def test_the_env_token_does_not_reach_child_processes(monkeypatch):
+    from harness_daemon.__main__ import take_env_token
+
+    monkeypatch.setenv("HARNESS_TOKEN", "sidecar-token")
+    assert take_env_token() == "sidecar-token"
+    assert "HARNESS_TOKEN" not in os.environ
+    child = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.environ.get('HARNESS_TOKEN'))"],
+        capture_output=True, text=True, check=True,
+    )
+    assert child.stdout.strip() == "None"
+    assert take_env_token() is None
+
+
 def test_daemon_stops_when_stdin_closes(harness_home, project, fake_model):
     env = dict(os.environ, HARNESS_TOKEN="sidecar-token", HARNESS_HOME=str(harness_home))
     proc = subprocess.Popen(

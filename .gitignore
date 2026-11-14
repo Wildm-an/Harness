@@ -22,3 +22,6 @@ client/src-tauri/binaries/
 
 # The object files of the HarnessUI NSIS plugin (client/src-tauri/nsis/plugin/build.cmd)
 client/src-tauri/nsis/plugin/obj/
+
+# The results of eval runs (daemon/evals). Commit only a summary as a baseline.
+daemon/evals/results/

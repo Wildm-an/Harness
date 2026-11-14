@@ -16,6 +16,7 @@ from harness_daemon.mail_server import Account, Mail, MailError
 from harness_daemon.mcp_client import McpManager, load_mcp_config
 
 import fake_mail
+from untag import untag
 from test_server import Client, daemon  # noqa: F401 - the daemon fixture
 
 USER, PASSWORD = "pat@example.com", "app-pass-1234"
@@ -233,7 +234,7 @@ def test_the_mail_server_over_mcp(harness_home, project, mailbox):
             assert {"mcp__email__search_messages", "mcp__email__read_message", "mcp__email__send_message"} <= names
             search = next(t for t in box["tools"] if t.name == "mcp__email__search_messages")
             result = await search.run({"sender": "bob"}, None)
-            assert json.loads(result.output)[0]["subject"] == "Invoice 42"
+            assert json.loads(untag(result.output))[0]["subject"] == "Invoice 42"
             delete = next(t for t in box["tools"] if t.name == "mcp__email__delete_message")
             failed = await delete.run({"uid": 999, "folder": "Trash"}, None)
             assert failed.is_error and "already in the trash" in failed.output

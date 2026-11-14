@@ -94,6 +94,38 @@ def test_auto_compaction_keeps_the_last_four_turns(harness_home, project, fake_m
     assert end["type"] == "turn.end" and end["usage"]["context_length"] == agent.context_length
 
 
+def test_a_compaction_in_a_turn_moves_the_turn_start(harness_home, project, fake_model):
+    agent, _, _ = make_agent(project, old_turns(6))
+    agent.context_length = int(agent.context_tokens() / 0.8)
+    fake_model.script({"text": "The user asked six questions."}, {"text": "Done."})
+    asyncio.run(agent.run_turn("Question 6"))
+    # The plan reminders read the calls of the turn from _turn_start. It must be the user message of this turn.
+    assert agent.history[agent._turn_start]["content"] == "Question 6"
+
+
+def test_clear_drops_the_queued_harness_notes(harness_home, project, fake_model):
+    agent, _, _ = make_agent(project, old_turns(1))
+    agent._harness_notes.append("[Harness: an old note]")
+    agent.clear()
+    assert agent._harness_notes == [] and agent.history == []
+
+
+def test_the_fake_model_scripts_the_finish_reason_and_the_usage(harness_home, fake_model):
+    provider, model = resolve_model("fake/m")
+    client = ModelClient(provider, model)
+
+    async def ignore(_text):
+        return None
+
+    fake_model.script({"text": "cut", "finish": "length", "cached_tokens": 64, "completion_tokens": 7},
+                      {"text": "no usage", "finish": None, "no_usage": True})
+    first = asyncio.run(client.stream([{"role": "user", "content": "a"}], [], ignore))
+    second = asyncio.run(client.stream([{"role": "user", "content": "b"}], [], ignore))
+    assert first.finish_reason == "length" and first.usage["completion_tokens"] == 7
+    assert first.usage["prompt_tokens_details"]["cached_tokens"] == 64
+    assert second.finish_reason is None and second.usage is None
+
+
 def test_large_tool_outputs_are_trimmed_when_a_summary_cannot_help(harness_home, project, fake_model):
     history = [
         {"role": "user", "content": "read it"},
@@ -190,3 +222,73 @@ def test_context_breakdown_counts_tool_results_as_messages(daemon, project, harn
     assert parts["messages"] > 200
     assert sum(parts.values()) == usage["tokens"]
     c.close()
+
+
+def plan_turns():
+    """Old turns with a task list that has open steps and two edits, then short turns."""
+    plan = json.dumps({"items": [{"content": "Fix the parser", "status": "completed"},
+                                 {"content": "Add tests", "status": "in_progress"},
+                                 {"content": "Update the docs", "status": "pending"}]})
+    history = [
+        {"role": "user", "content": "Question 0: " + "x" * 800},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "p1", "type": "function", "function": {"name": "update_plan", "arguments": plan}},
+            {"id": "e1", "type": "function", "function": {"name": "edit", "arguments": '{"path": "src/a.py"}'}},
+            {"id": "e2", "type": "function", "function": {"name": "write", "arguments": '{"path": "src/b.py"}'}},
+            {"id": "e3", "type": "function", "function": {"name": "edit", "arguments": '{"path": "src/bad.py"}'}}]},
+        {"role": "tool", "tool_call_id": "p1", "content": "ok"},
+        {"role": "tool", "tool_call_id": "e1", "content": "ok"},
+        {"role": "tool", "tool_call_id": "e2", "content": "ok"},
+        {"role": "tool", "tool_call_id": "e3", "content": "not found", "is_error": True},
+        {"role": "assistant", "content": "Working."},
+    ]
+    return history + old_turns(5)
+
+
+def test_compaction_adds_a_state_note(harness_home, project, fake_model):
+    agent, events, compactions = make_agent(project, plan_turns())
+    agent.context_length = int(agent.context_tokens() / 0.8)
+    fake_model.script({"text": "A summary."}, {"text": "Done."})
+    asyncio.run(agent.run_turn("next question"))
+    note = fake_model.requests[1]["messages"][-1]["content"]
+    # The note joins the user message of the turn (messages() merges harness notes into it), after the plan note.
+    assert note.startswith("next question\n\n") and "[Harness: A summary replaced the older messages" in note
+    assert "- Add tests (in progress)" in note and "- Update the docs" in note and "Fix the parser" not in note
+    assert "- src/b.py" in note and "- src/a.py" in note and "src/bad.py" not in note  # A failed edit does not count.
+    assert fake_model.requests[1]["messages"][0]["content"].count("A summary.") == 1
+
+
+def test_no_state_note_without_state(harness_home, project, fake_model):
+    agent, _, _ = make_agent(project, old_turns(6))
+    agent.context_length = int(agent.context_tokens() / 0.8)
+    fake_model.script({"text": "A summary."}, {"text": "Done."})
+    asyncio.run(agent.run_turn("Question 6"))
+    assert not any("A summary replaced" in str(m.get("content")) for m in fake_model.requests[1]["messages"])
+
+
+def test_a_manual_compaction_note_goes_with_the_next_prompt(harness_home, project, fake_model):
+    agent, _, _ = make_agent(project, plan_turns())
+    agent.context_length = 200_000  # No second, automatic summary in the turn.
+    fake_model.script({"text": "A summary."}, {"text": "Done."})
+    assert asyncio.run(agent.compact("manual"))
+    assert not any("A summary replaced" in str(m.get("content")) for m in agent.history)  # No message yet.
+    asyncio.run(agent.run_turn("go on"))
+    last = fake_model.requests[1]["messages"][-1]["content"]
+    assert last.startswith("go on\n\n[Harness: A summary replaced the older messages")
+
+
+def test_conversation_search_finds_the_removed_messages_of_this_session(tmp_path):
+    from harness_daemon.storage import Storage
+
+    storage = Storage(tmp_path / "s.db")
+    sid = storage.create_session(str(tmp_path), "fake", "m")
+    storage.append_messages(sid, [{"role": "user", "content": "The codename is BLUEBIRD."},
+                                  {"role": "assistant", "content": "Noted."},
+                                  {"role": "user", "content": "next"}])
+    assert storage.search_removed(sid, "bluebird") is None  # Nothing was removed yet.
+    storage.db.execute("UPDATE sessions SET context_start = 2 WHERE id = ?", (sid,))
+    storage.db.commit()
+    hit = storage.search_removed(sid, "bluebird")
+    assert hit["title"] == "This session, older messages" and "BLUEBIRD" in hit["snippets"][0]["text"]
+    assert storage.search_removed(sid, "next") is None  # A message in the context is not a removed message.
+    storage.close()

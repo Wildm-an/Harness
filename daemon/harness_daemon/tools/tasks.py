@@ -83,8 +83,9 @@ class TaskOutputTool(Tool):
             await _host(ctx).wait(task, wait)
         if task.ended_at is not None:
             task.noted = True  # The agent knows now: the next prompt does not tell it again.
-        output = truncate(task.new_output().rstrip("\n"), ctx.settings["max_output_chars"], keep_tail=True)
-        return ToolResult(f"{output or '(no new output)'}\n[{_status(task)}]")
+        output = truncate(task.new_output().rstrip("\n"), ctx.settings["max_output_chars"], keep_tail=True,
+                          spill_dir=ctx.output_dir)
+        return ToolResult(f"{output or '(no new output)'}\n[{_status(task)}]", limited=True)
 
 
 class TaskStopTool(Tool):
@@ -317,10 +318,15 @@ class AgentTool(Tool):
         from ..agents import discover_agents
 
         types = "\n".join(f"- {a.name}: {a.description}" for a in discover_agents(ctx.cwd).values())
-        return ("Give a task to a subagent with a new context. It returns a report. Use it for a search or a "
-                "review of many files, or for independent work. With run_in_background, you can continue your "
-                "work while the subagent runs. Do not do the same work at the same time. Several agents in one "
-                "step run at the same time. Select the agent type with subagent_type:\n" + types)
+        return ("Give a task to a subagent with a new context. It returns a report.\n"
+                "Cost: a subagent does not see this conversation. It reads the files again, so it uses more tokens "
+                "and more time than the same work in this conversation.\n"
+                "Use it when the result is worth that cost: a search or a review of many files when you do not need "
+                "their full text, or independent work that can run while you continue.\n"
+                "Do not use it for a task of a few tool calls, or for files that you already read.\n"
+                "With run_in_background, you can continue your work while the subagent runs. Do not do the same "
+                "work at the same time. Several agents in one step run at the same time. Select the agent type with "
+                "subagent_type:\n" + types)
 
     def schema(self, ctx: ToolContext) -> dict[str, Any]:
         from ..agents import discover_agents

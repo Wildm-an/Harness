@@ -45,7 +45,7 @@ from . import __version__
 from . import connectors, mcp_auth
 from .config import ConfigError, harness_home, read_json
 from .mcp_auth import AUTH_TIMEOUT, AuthCancelled, AuthRequired, OAuthConfig
-from .tools.base import Approval, Tool, ToolContext, ToolError, ToolResult
+from .tools.base import Approval, Tool, ToolContext, ToolError, ToolResult, external, truncate
 
 log = logging.getLogger("harness.mcp")
 
@@ -807,8 +807,14 @@ class McpTool(Tool):
         return Approval(key=json.dumps(args, sort_keys=True, ensure_ascii=False), rule=self.name)
 
     async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-        result = await self.manager.call(self.server, self.remote_name, args)
-        return convert_result(result)
+        result = convert_result(await self.manager.call(self.server, self.remote_name, args))
+        # The limit first, then the tag: a cut must not remove the closing tag.
+        limit = int((ctx.settings if ctx is not None else {}).get("max_output_chars") or 20_000)
+        folder = ctx.output_dir if ctx is not None else None
+        result.output = external(truncate(result.output, limit, spill_dir=folder),
+                                 f"mcp {self.server} {self.remote_name}")
+        result.limited = True
+        return result
 
 
 def convert_result(result: Any) -> ToolResult:

@@ -58,7 +58,9 @@
           "libdbus-1-3"
         ],
         "recommends": [
-          "openssh-client"
+          "openssh-client",
+          "bubblewrap",
+          "socat"
         ]
       },
       "rpm": {

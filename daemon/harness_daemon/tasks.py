@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .tools.shell import ShellInfo, _kill_tree
+from .tools.shell import ShellInfo, _kill_tree, command_env, shell_argv
 
 MAX_TASKS = 10  # Running tasks of one session.
 MAX_KEPT_OUTPUT = 256 * 1024  # Characters. The start of a long output goes away.
@@ -162,20 +162,14 @@ class TaskHost:
         """Start a command: a "shell" task, or a "monitor" task. A monitor stops after ``timeout`` seconds."""
         self._check_room()
         self._loop = asyncio.get_running_loop()
-        env = dict(os.environ)
-        env.setdefault("PAGER", "cat")
-        env.setdefault("GIT_PAGER", "cat")
-        # Python writes UTF-8, as the output is read: else Windows Python writes the code page, and
-        # a script that prints a character outside it (for example "→") fails.
-        env.setdefault("PYTHONIOENCODING", "utf-8")
         kwargs: dict[str, Any] = {"cwd": str(self.cwd), "stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
-                                  "stderr": subprocess.STDOUT, "env": env}
+                                  "stderr": subprocess.STDOUT, "env": command_env()}
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)
         else:
             kwargs["start_new_session"] = True
         try:
-            proc = subprocess.Popen([*self.shell.argv, command], **kwargs)
+            proc = subprocess.Popen(shell_argv(self.shell, command), **kwargs)
         except OSError as e:
             raise TaskError(f"The command did not start: {e}") from e
         task = BackgroundTask(id=f"task-{uuid.uuid4().hex[:6]}", command=command, description=description.strip(),

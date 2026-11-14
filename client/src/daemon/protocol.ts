@@ -2,7 +2,7 @@
 
 export type Decision = "allow_once" | "allow_always" | "deny";
 
-export type StopReason = "end" | "max_tool_calls" | "denied" | "interrupted" | "error" | "blocked"; // blocked: a plugin ended the turn.
+export type StopReason = "end" | "max_tool_calls" | "max_time" | "loop" | "denied" | "interrupted" | "error" | "blocked"; // blocked: a plugin ended the turn. max_time: the time budget (max_turn_minutes). loop: the agent repeated the same tool calls.
 
 export interface Usage {
   prompt_tokens: number;
@@ -10,6 +10,21 @@ export interface Usage {
   last_prompt_tokens: number;
   context_tokens: number; // The size of the next request (estimate).
   context_length: number;
+}
+
+// The verify command of the project (daemon verify.py): its last run in the turn.
+export interface VerifyInfo {
+  command: string;
+  status: "passed" | "failed" | "timeout" | "blocked";
+  exit_code: number | null;
+  seconds: number;
+  runs: number;
+}
+
+// Settings > Your Harness > Project instructions: the keys of <project>/.harness/settings.json that the app changes.
+export interface ProjectSettings {
+  verify_command: string | null;
+  verify_timeout: number | null;
 }
 
 // Messages in the OpenAI chat format, as the daemon stores them.
@@ -27,7 +42,7 @@ export type HistoryMessage =
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   // created: the new PDF and Word files of the call. The chat shows a card with "Open" for each one.
-  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string; created?: string[]; ts?: number; card?: ToolCardData };
+  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string; created?: string[]; ts?: number; card?: ToolCardData; verify?: VerifyInfo };
 
 export interface PermissionRequest {
   request_id: string;
@@ -209,10 +224,13 @@ export interface ClientSettings {
 /** The user settings of the daemon (~/.harness/settings.json): the General page of the Settings dialog. */
 export interface UserSettings {
   permission_mode: PermissionMode;
+  auto_review?: boolean; // "Review large changes": a read-only subagent reviews a large change (daemon verify.py).
+  allow_bypass_permissions?: boolean; // "Allow bypass permissions mode" (UI rule C12). Off: no bypass mode.
   prompt_suggestions: boolean;
   auto_verify: boolean;
   max_tool_calls: number;
   limit_tool_calls?: boolean; // false: no tool call limit.
+  max_turn_minutes?: number; // The time budget of a turn. 0: no budget.
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
   subagents?: boolean; // false: the agent cannot start subagents (the agent tool).
@@ -243,6 +261,14 @@ export interface UserSettings {
 }
 
 export type TimeFormat = "12h" | "24h";
+
+/** The sandbox of the bash tool on the daemon computer (daemon sandbox.py sandbox_status, docs/SANDBOX.md). */
+export interface SandboxStatus {
+  state: "off" | "unavailable" | "ready";
+  backend: string; // "seatbelt", "bubblewrap", "windows", or "none".
+  reason: string;
+  available?: boolean; // The system has a backend. false in the "off" state: the reason tells why.
+}
 
 export type WebSearchProvider = "duckduckgo" | "brave" | "tavily" | "searxng" | "off";
 
@@ -876,6 +902,7 @@ export type ClientMessage =
   | { type: "browser.result"; call_id: string; tab?: string; result?: Record<string, unknown>; error?: string }
   | { type: "user_settings.get" } // It needs no session.
   | { type: "user_settings.set"; values: Partial<UserSettings> } // null removes the terminal shell.
+  | { type: "sandbox.set"; enabled: boolean } // Settings > General > "Local sandbox": sandbox.enabled of the user file.
   | { type: "term.input"; id: string; data: string }
   | { type: "term.resize"; id: string; cols: number; rows: number }
   | { type: "session.list"; cwd?: string; limit?: number }
@@ -906,6 +933,9 @@ export type ClientMessage =
   // Settings > Your Harness > Project instructions. cwd: the project folder. text null: no instructions.
   | { type: "project_instructions.get"; cwd: string }
   | { type: "project_instructions.set"; cwd: string; text: string | null }
+  // The keys of the project settings file that the app can change. null or "": remove the key.
+  | { type: "project_settings.get"; cwd: string }
+  | { type: "project_settings.set"; cwd: string; settings: Partial<ProjectSettings> }
   | { type: "memory.list"; cwd: string }
   | { type: "memory.save"; cwd: string; name: string; old_name?: string; description: string; memory_type: MemoryType; content: string }
   | { type: "memory.delete"; cwd: string; name: string }
@@ -1061,7 +1091,7 @@ export type DaemonMessage =
       context_length: number;
       context_source?: string; // Where the context length came from, for example "Ollama num_ctx".
       context_tokens: number;
-      instructions: string | null; // HARNESS.md or CLAUDE.md, if the project has one.
+      instructions: string | null; // HARNESS.md, AGENTS.md, or CLAUDE.md, if the project has one.
       files_token: string | null; // Project files for the Browser pane: /files/<token>/<path>.
       project: { id: string; name: string } | null; // The saved project of the session folder.
       worktree?: SessionWorktree | null; // The session works in this git worktree. cwd is in it.
@@ -1107,7 +1137,8 @@ export type DaemonMessage =
   | ({ type: "task" } & TaskDetail)
   | { type: "keep_awake"; on: boolean; active: boolean } // active: the computer stays awake now.
   // harness: the operating harness of new sessions (Settings > Operating Harness). null: the built-in loop.
-  | { type: "user_settings"; values: UserSettings; path: string; version: string; harness?: SessionHarness | null }
+  // sandbox: the sandbox of the bash tool (Settings > General > "Local sandbox"). An older daemon does not send it.
+  | { type: "user_settings"; values: UserSettings; path: string; version: string; harness?: SessionHarness | null; sandbox?: SandboxStatus }
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)
@@ -1167,6 +1198,8 @@ export type DaemonMessage =
   | { type: "dictation.cleaned"; id: string; text: string; cleaned: boolean; model?: string; error?: string }
   // The instructions of a project from the settings. path: the file on the daemon computer. saved: after a set.
   | { type: "project_instructions"; cwd: string; path: string; text: string | null; saved?: boolean }
+  // The project settings file (.harness/settings.json) of a project. saved: after a set.
+  | { type: "project_settings"; cwd: string; path: string; settings: ProjectSettings; saved?: boolean }
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
@@ -1199,10 +1232,10 @@ export type DaemonMessage =
   | { type: "thinking" } // The model thinks (its reasoning streams). The working line shows "Thinking…".
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
-  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[]; card?: ToolCardData }
+  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[]; card?: ToolCardData; verify?: VerifyInfo }
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
-  | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
+  | { type: "turn.end"; usage: Usage; stop_reason: StopReason; verify?: VerifyInfo }
   // A steer message went into the history. text: the text that the user sees.
   | { type: "steer.taken"; id: string; text: string; origin?: "task" }
   // A turn that the daemon started, with no prompt: the notes of background tasks (origin "task").

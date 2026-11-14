@@ -1,0 +1,3 @@
+database:
+  host: db.internal
+  port: 5432

@@ -146,7 +146,7 @@ When you turn a row on or off in the Plugins screen, Harness writes `disabled` t
 
 ## Security
 
-Plugin code runs in the daemon process. It has the same rights as the daemon. It is not in a sandbox. Install only plugins that you trust.
+Plugin code runs in the daemon process. It has the same rights as the daemon. It is not in a sandbox: the bash sandbox (`docs/SANDBOX.md`) limits only the commands of the `bash` tool, not plugins, hooks, or MCP servers. Install only plugins that you trust.
 
 ## Limits
 

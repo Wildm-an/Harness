@@ -13,6 +13,7 @@ import { DECIDED } from "../lib/decisions";
 const LABELS: Record<string, string> = {
   read: "Read",
   edit: "Update",
+  apply_patch: "Update",
   write: "Write",
   office_edit: "Office edit",
   glob: "Glob",

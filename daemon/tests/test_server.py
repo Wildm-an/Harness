@@ -1126,7 +1126,10 @@ def test_plan_approval_changes_the_mode_and_starts_the_work(daemon, project, fak
     assert settings["permission_mode"] == "acceptEdits"
     c.until("turn.end")
     assert "'hey'" in (project / "hello.py").read_text()  # acceptEdits: the edit ran with no question.
-    assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "acceptEdits"
+    # The mode goes to the store of the user (change 4-D). The project file of the repository stays the same.
+    from harness_daemon.config import stored_mode
+    assert stored_mode(project) == "acceptEdits"
+    assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "plan"
     # The tool list stays the same in each mode. A note tells the model that plan mode is off.
     assert "exit_plan_mode" in [t["function"]["name"] for t in fake_model.requests[-1]["tools"]]
     assert any("Plan mode is off" in str(m.get("content")) for m in fake_model.requests[-2]["messages"])
@@ -1253,3 +1256,36 @@ def test_split_view_connection_takes_a_running_session(daemon, project, fake_mod
     main.send({"type": "session.adopt", "session_id": first["session_id"]})
     assert main.until("session.adopted")[0]["moved"] is False
     main.close()
+
+
+def test_project_settings_set_the_verify_command(daemon, harness_home, project, fake_model):
+    python = sys.executable.replace("\\", "/")
+    fake_model.script(
+        {"tool_calls": [{"name": "edit", "arguments": {"path": "hello.py", "old_string": "'hello'",
+                                                        "new_string": "'hi'"}}]},
+        {"text": "Done."})
+    c = Client(daemon)
+    cwd = str(project)
+    c.new_session(project)
+    c.send({"type": "project_settings.get", "cwd": cwd})
+    got = c.until("project_settings")[0]
+    assert got["settings"] == {"verify_command": None, "verify_timeout": None}
+    command = f'"{python}" -c "print(1)"'
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"verify_command": f"  {command} ",
+                                                                      "verify_timeout": 60}})
+    got = c.until("project_settings")[0]
+    assert got["saved"] is True and got["settings"] == {"verify_command": command, "verify_timeout": 60}
+    assert json.loads((project / ".harness" / "settings.json").read_text())["verify_command"] == command
+    # The open session reloads: the next turn that changes a file runs the command.
+    c.send({"type": "prompt", "text": "change it"})
+    request = c.until("permission.request")[0]
+    c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
+    events = c.until("turn.end")
+    assert events[0]["verify"]["status"] == "passed"
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"permission_mode": "bypassPermissions"}})
+    assert "'settings' must be an object" in c.until("error")[0]["message"]
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"verify_timeout": 0}})
+    assert "verify_timeout" in c.until("error")[0]["message"]
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"verify_command": "", "verify_timeout": None}})
+    assert c.until("project_settings")[0]["settings"] == {"verify_command": None, "verify_timeout": None}
+    assert "verify_command" not in json.loads((project / ".harness" / "settings.json").read_text())

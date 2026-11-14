@@ -4,7 +4,8 @@ The ``hooks`` key of ``~/.harness/settings.json`` and of ``<project>/.harness/se
 
     { "hooks": {
         "PreToolUse": [ { "matcher": "Bash|Edit", "hooks": [ { "type": "command", "command": "...", "timeout": 60 } ] } ],
-        "PostToolUse": [...], "UserPromptSubmit": [...], "Stop": [...], "SessionStart": [...] } }
+        "PostToolUse": [...], "UserPromptSubmit": [...], "Stop": [...], "SessionStart": [...],
+        "PreCompact": [...] } }
 
 The events:
 
@@ -17,10 +18,13 @@ The events:
 - ``PostToolUse``: after a tool call. Exit code 2 or ``{"decision": "block"}`` gives the reason to the agent.
 - ``Stop``: the agent is about to end its turn. Exit code 2 or ``{"decision": "block"}`` makes it
   continue, with the reason as a message.
+- ``PreCompact``: before a summary of the old messages (``trigger``: ``auto`` or ``manual``). The output
+  goes to the summary request as instructions of the user. A block cannot stop the summary: the client
+  shows the reason as a warning.
 
 A hook gets the event as JSON on stdin: ``hook_event_name``, ``cwd``, ``session_id``,
-``permission_mode``, and for the event ``prompt``, ``tool_name``, ``tool_input``, ``tool_response``, or
-``stop_hook_active``. ``tool_name`` is the Claude Code name (``Bash``, ``Edit``) when the tool has one,
+``permission_mode``, and for the event ``prompt``, ``tool_name``, ``tool_input``, ``tool_response``,
+``stop_hook_active``, or ``trigger``, ``custom_instructions``, ``context_tokens``, and ``context_length``. ``tool_name`` is the Claude Code name (``Bash``, ``Edit``) when the tool has one,
 and ``harness_tool_name`` is the Harness name. A matcher is a regular expression for one of these names.
 The command runs in the shell of the session with the environment variables ``HARNESS_PROJECT_DIR``
 and ``CLAUDE_PROJECT_DIR``. Exit code 0 is a success. Other exit codes are errors that do not block.
@@ -40,11 +44,11 @@ from pathlib import Path
 from typing import Any
 
 from .config import harness_home, project_settings_path, read_json
-from .tools.shell import ShellInfo, _kill_tree
+from .tools.shell import ShellInfo, _kill_tree, shell_argv
 
 log = logging.getLogger("harness.hooks")
 
-EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
+EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "PreCompact")
 TOOL_EVENTS = ("PreToolUse", "PostToolUse")
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 600
@@ -54,6 +58,7 @@ BLOCK_EXIT = 2
 # The Claude Code names of the Harness tools, so that hooks for Claude Code also match here.
 CLAUDE_NAMES = {
     "bash": "Bash", "read": "Read", "edit": "Edit", "write": "Write", "glob": "Glob", "grep": "Grep",
+    "apply_patch": "Edit",
     "web_fetch": "WebFetch", "web_search": "WebSearch", "agent": "Task", "skill": "Skill",
     "update_plan": "TodoWrite", "ask_user_question": "AskUserQuestion", "exit_plan_mode": "ExitPlanMode",
     "task_output": "BashOutput", "task_stop": "KillShell", "office_edit": "Edit",
@@ -171,7 +176,7 @@ class CommandHooks:
         stdin = json.dumps(body, ensure_ascii=False, default=str)
         env = {**os.environ, "HARNESS_PROJECT_DIR": str(self.cwd), "CLAUDE_PROJECT_DIR": str(self.cwd)}
         results = await asyncio.gather(*(asyncio.to_thread(
-            _run, [*self.shell.argv, h.command], stdin, self.cwd, env, h.timeout) for h in hooks))
+            _run, shell_argv(self.shell, h.command), stdin, self.cwd, env, h.timeout) for h in hooks))
         for hook, (code, out, err, timed_out) in zip(hooks, results):
             if timed_out:
                 outcome.errors.append(f"The {event} hook timed out after {hook.timeout} s: {hook.command}")
@@ -195,7 +200,7 @@ class CommandHooks:
             except ValueError:
                 data = None
         if not isinstance(data, dict):
-            if out and event in ("SessionStart", "UserPromptSubmit"):
+            if out and event in ("SessionStart", "UserPromptSubmit", "PreCompact"):
                 outcome.context.append(out)
             return
         specific = data.get("hookSpecificOutput") if isinstance(data.get("hookSpecificOutput"), dict) else {}

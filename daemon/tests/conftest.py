@@ -19,6 +19,24 @@ def no_bundled_skills(tmp_path, monkeypatch):
     monkeypatch.setattr(skills, "BUNDLED_SKILLS_DIR", tmp_path / "no-bundled-skills")
 
 
+@pytest.fixture(autouse=True)
+def isolated_homes(tmp_path, monkeypatch):
+    """No test reads the real ~/.harness or ~/.claude: for example the user instruction file ~/.claude/CLAUDE.md.
+    The harness_home fixture sets its own folders after this one."""
+    monkeypatch.setenv("HARNESS_HOME", str(tmp_path / "isolated-harness-home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "isolated-claude-home"))
+
+
+@pytest.fixture(autouse=True)
+def no_read_check(monkeypatch):
+    """Most scripted tests edit a file with no read call first. test_read_check.py turns the check on.
+
+    The product default is on (config.DEFAULT_SETTINGS["read_before_edit"]).
+    """
+    from harness_daemon import config
+    monkeypatch.setitem(config.DEFAULT_SETTINGS, "read_before_edit", False)
+
+
 @pytest.fixture(scope="session")
 def fake_model_server():
     server = FakeModel().start()

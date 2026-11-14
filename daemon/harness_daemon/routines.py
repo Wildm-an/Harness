@@ -118,6 +118,7 @@ class RoutineScheduler:
 
     def start(self) -> None:
         self.storage.end_open_runs()  # Runs of an old daemon did not end.
+        self.storage.end_open_turns()  # The same for the run records of turns.
         self._loop_task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
