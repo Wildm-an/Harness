@@ -47,6 +47,7 @@ const VIEW = new Set([
   "git.diff", // The Changes pane.
   "disk.usage", // The Storage dialog.
   "user_settings.set", // Settings > General.
+  "dictation.cleanup", // The microphone button: one popup, with the raw text in the box (DictationButton.tsx).
   // Settings > Local models (cookbook/useCookbook.ts).
   "hf.token",
   "hf.search",

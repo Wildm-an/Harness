@@ -5,6 +5,8 @@ import { isAddFilesShortcut } from "../lib/fileRefs";
 import { busySend, type BusySend } from "./SettingsDialog";
 import { imageFiles, imageToDataUrl, MAX_IMAGES } from "../lib/images";
 import { shortTip } from "./Tooltips";
+import { DictationButton, isDictationKey, type DictationControls, type DictationStatus } from "./DictationButton";
+import { DictationMeter } from "./DictationWave";
 import {
   filterSessions,
   insertMention,
@@ -349,11 +351,20 @@ export function PromptBox({
   const [mentionActive, setMentionActive] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState<number | null>(null); // The start of a closed "@" token.
   const pendingCaret = useRef<number | null>(null);
+  // Dictation: the microphone button at the right of Send. Its status ("Listening 0:05") shows under the box, at the
+  // left of the sound wave. A box with no row under it shows the status in the box.
+  const dictation = useRef<DictationControls>(null);
+  const [dictation_, setDictationStatus] = useState<DictationStatus | null>(null);
+  const dictationStatus = dictation_?.text ?? null;
+  const statusInBox = below ? null : dictationStatus;
 
   // The row under the box (the mode and the model): when their names do not fit side by side, the
   // row shows only their icons. It shows the names again when the width that they need is free.
   const belowRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
+  // The meter changes the room in the row under the box: measure the row again when it comes and goes.
+  const metering = dictation_ !== null;
+  useLayoutEffect(() => setCompact(false), [metering]);
   const neededWidth = useRef(0);
   const checkBelow = useRef(() => {});
   checkBelow.current = () => {
@@ -486,6 +497,18 @@ export function PromptBox({
     if (mentionDismissed !== null && value[mentionDismissed] !== "@") setMentionDismissed(null);
   };
 
+  /** Put dictated text at the caret, with a space before and after it when the box text needs one. */
+  const insertDictation = (spoken: string) => {
+    const el = area.current;
+    const current = el?.value ?? text;
+    const before = current.slice(0, el ? el.selectionStart : current.length);
+    const after = current.slice(el ? el.selectionEnd : current.length);
+    const added = `${before && !/\s$/.test(before) ? " " : ""}${spoken}${after && !/^\s/.test(after) ? " " : ""}`;
+    pendingCaret.current = before.length + added.length;
+    change(before + added + after);
+    el?.focus();
+  };
+
   /** Replace the "@query" with the reference of the item. */
   const chooseMention = (item: MentionItem) => {
     if (!mention) return;
@@ -528,6 +551,16 @@ export function PromptBox({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Ctrl+Shift+Space dictates. Esc drops a recording.
+    if (isDictationKey(e.nativeEvent)) {
+      e.preventDefault();
+      if (!e.repeat) dictation.current?.press();
+      return;
+    }
+    if (e.key === "Escape" && dictation.current?.cancel()) {
+      e.preventDefault();
+      return;
+    }
     // Backspace at the start of the box removes the last chip, as in the Claude app.
     if (e.key === "Backspace" && attachments.length && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
       e.preventDefault();
@@ -764,7 +797,9 @@ export function PromptBox({
             value={text}
             disabled={disabled}
             placeholder={
-              answerHint
+              statusInBox
+                ? statusInBox
+                : answerHint
                 ? answerHint
                 : running
                 ? `${BUSY_HINTS[busySend()]} Esc stops the agent.`
@@ -786,6 +821,11 @@ export function PromptBox({
             }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onKeyDown={onKeyDown}
+            onFocus={() => dictation.current?.focused()}
+            onKeyUp={(e) => {
+              // "Hold to record": the release of the key stops a long press. The release of Shift or Ctrl stops it too.
+              if (e.code === "Space" || e.key === "Shift" || e.key === "Control" || e.key === "Meta") dictation.current?.release();
+            }}
             spellCheck={false}
             role="combobox"
             aria-autocomplete="list"
@@ -798,6 +838,15 @@ export function PromptBox({
               <kbd>Tab</kbd>
             </span>
           )}
+          {statusInBox && text && (
+            <span className="dictation-status" aria-hidden>
+              {statusInBox}
+            </span>
+          )}
+          {/* A screen reader hears each state one time: not each second of the timer or each percent of the download. */}
+          <span className="sr-only" aria-live="polite">
+            {dictationStatus?.replace(/ (\d+:\d\d|\d+%)$/, "") ?? ""}
+          </span>
           {/* In line with the text. When the text grows, the buttons stay at the bottom right. During a turn
               Stop always shows (rule C7). With text, Send shows next to it: Enter queues the message. While a card
               waits, Esc answers the card, so the tip of Stop has no key. */}
@@ -824,11 +873,15 @@ export function PromptBox({
               {busy ? <LoaderCircle size={16} className="spin" aria-hidden /> : <CornerDownLeft size={16} aria-hidden />}
             </button>
           )}
+          {/* The microphone, at the right of Send (rule C2a). A right-click opens its menu. */}
+          <DictationButton ref={dictation} disabled={disabled} onText={insertDictation} onStatus={setDictationStatus} />
       </div>
       </div>
       {below && (
         <div className={`prompt-below${compact ? " compact" : ""}`} ref={belowRef}>
           {below}
+          {/* The status and the sound wave, at the left of the model (rule C2a). */}
+          {dictation_ && <DictationMeter status={dictation_.text} listening={dictation_.listening} />}
         </div>
       )}
     </div>

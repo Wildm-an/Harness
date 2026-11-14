@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Dictation: the microphone button of the prompt box records the voice of the user. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Harness uses the microphone when you dictate a prompt. The speech is changed to text on this computer.</string>
+</dict>
+</plist>

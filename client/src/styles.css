@@ -7546,6 +7546,142 @@ input.tree-rename-input[aria-invalid="true"] {
   color: var(--danger);
 }
 
+/* Dictation: the microphone at the right of Send (UI_RULES C2a). Its menu opens above it, at the right edge. */
+.dictation {
+  position: relative;
+  flex: none;
+  display: flex;
+  margin-bottom: calc((var(--prompt-h) - 28px) / 2);
+}
+
+.prompt-box .icon-btn.dictation-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  touch-action: none;
+  transition: opacity var(--duration) var(--ease-out), background var(--duration) var(--ease-out), box-shadow var(--duration) var(--ease-out);
+}
+
+.prompt-box .icon-btn.dictation-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.prompt-box .icon-btn.dictation-btn.active {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* While it records, the microphone has the accent fill, as in the Claude app. */
+.prompt-box .icon-btn.dictation-btn.recording,
+.prompt-box .icon-btn.dictation-btn.recording:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--accent-fill);
+  color: var(--accent-text);
+}
+
+/* The sound wave in the row under the box: after the left part, at the left of the model (CSS order). */
+.prompt-below > * {
+  order: 2;
+}
+
+.prompt-below > :first-child {
+  order: 0;
+}
+
+/* It gives up its room first (a large shrink factor), so the chips keep their names. Its items go from the right,
+   and an item that does not fit wraps to the second line, which does not show: the status text goes before the wave. */
+.prompt-below > .dictation-meter {
+  order: 1;
+  display: flex;
+  flex: 0 1000 auto;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+  min-width: 0;
+  height: 18px;
+  margin-left: auto;
+  margin-right: 8px;
+  overflow: hidden;
+}
+
+/* A narrow row: the chips show only their icons, and the meter shows only the wave. */
+.prompt-below.compact .dictation-meter-status {
+  display: none;
+}
+
+/* While it records, the wave always shows: 20 bars of 2px with gaps of 3px. */
+.prompt-below > .dictation-meter.listening {
+  min-width: 97px;
+}
+
+.dictation-meter-status {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dictation-wave {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+}
+
+.dictation-wave span {
+  width: 2px;
+  min-height: 3px;
+  border-radius: 1px;
+  background: var(--text-muted);
+  transition: height 80ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dictation-wave span {
+    transition: none;
+  }
+}
+
+.dictation-status {
+  flex: none;
+  align-self: flex-end;
+  margin-bottom: calc((var(--prompt-h) - 18px) / 2);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.setting-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.menu.dictation-menu {
+  width: min(320px, calc(100vw - 32px));
+}
+
+.menu.dictation-menu button {
+  min-height: 32px;
+}
+
+.menu.dictation-menu .switch {
+  cursor: inherit;
+}
+
+.menu.dictation-languages {
+  max-height: min(360px, 60vh);
+}
+
 /* ---------- split layout and side panes ---------- */
 
 .side-pane {
