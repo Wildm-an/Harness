@@ -108,7 +108,7 @@ The script builds the folder `build/sidecar/dist/harness-daemon/` (PyInstaller "
 
 The packaged daemon has no `python` command:
 
-- `harness-daemon --install-browser` installs Chromium for the agent browser. The bundle has the Playwright driver, but not Chromium.
+- `harness-daemon --install-browser` installs Chromium for the agent browser. The bundle has the Playwright driver, but not Chromium. When the agent browser starts and its Chromium revision is not installed, the daemon runs this download in the background and tells the agent to wait.
 - The Cookbook runs the host script on "This computer" with `harness-daemon --python-stdin`. A `python` in the `local` entry of `hosts.json` replaces it.
 - On macOS and Linux, the daemon reads `PATH` from the login shell of the user, because a desktop app gets only the system `PATH`. The daemon also gives the original `LD_LIBRARY_PATH` to its child processes.
 
