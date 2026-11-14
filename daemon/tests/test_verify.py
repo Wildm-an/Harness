@@ -174,3 +174,55 @@ def test_wrap_up_with_a_passing_command_names_it(harness_home, project, fake_mod
 
 def events_call_id(events, name):
     return next(e["id"] for e in events if e["type"] == "tool.start" and e["name"] == name)
+
+
+# -- 5d: the optional review of a large change ---------------------------------------------------------------
+
+from harness_daemon.verify import changed_lines, review_note  # noqa: E402
+
+BIG = "".join(f"line {i}\n" for i in range(30))
+
+
+def test_changed_lines_and_the_note():
+    assert changed_lines(["--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n context\n"]) == 2
+    assert review_note("NO FINDINGS") is None and review_note("") is None
+    assert review_note("x.py:3 wrong sign").startswith("[Harness: A reviewer with a new context")
+
+
+def _big_edit(project):
+    (project / "big.py").write_text(BIG)
+    return {"name": "write", "arguments": {"path": "big.py", "content": BIG.replace("line", "row")}}
+
+
+def test_a_large_change_gets_a_review_with_findings(harness_home, project, fake_model):
+    fake_model.script({"tool_calls": [_big_edit(project)]}, {"text": "Done."},
+                      {"tool_calls": [{"name": "read", "arguments": {"path": "big.py"}}]},
+                      {"text": "big.py:1 the rename breaks the callers."},
+                      {"text": "I checked the finding. No caller exists."})
+    agent, events, _ = make_agent(project, permission_mode="acceptEdits", auto_review=True, auto_review_min_lines=10)
+    assert asyncio.run(agent.run_turn("rename the lines")) == "end"
+    review = fake_model.requests[2]["messages"]
+    assert "You review a code change that another agent made" in review[0]["content"]
+    assert "rename the lines" in review[-1]["content"] and "+row 0" in review[-1]["content"]
+    assert {t["function"]["name"] for t in fake_model.requests[2]["tools"]} <= {"read", "glob", "grep"}
+    note = str(fake_model.requests[4]["messages"][-1]["content"])
+    assert "A reviewer with a new context read your changes" in note and "breaks the callers" in note
+    assert any(e["type"] == "notice" and "reviewer subagent" in e["text"] for e in events)
+
+
+def test_no_review_for_a_small_change_or_when_off(harness_home, project, fake_model):
+    fake_model.script({"tool_calls": [_big_edit(project)]}, {"text": "Done."})
+    agent, _, _ = make_agent(project, permission_mode="acceptEdits")  # auto_review is off by default.
+    asyncio.run(agent.run_turn("rename"))
+    assert len(fake_model.requests) == 2
+    fake_model.script({"tool_calls": [EDIT]}, {"text": "Done."})
+    agent, _, _ = make_agent(project, permission_mode="acceptEdits", auto_review=True)
+    asyncio.run(agent.run_turn("small"))
+    assert len(fake_model.requests) == 4  # 2 lines changed: under the minimum of 200.
+
+
+def test_no_findings_add_nothing(harness_home, project, fake_model):
+    fake_model.script({"tool_calls": [_big_edit(project)]}, {"text": "Done."}, {"text": "NO FINDINGS"})
+    agent, _, _ = make_agent(project, permission_mode="acceptEdits", auto_review=True, auto_review_min_lines=10)
+    assert asyncio.run(agent.run_turn("rename")) == "end"
+    assert len(fake_model.requests) == 3

@@ -224,6 +224,8 @@ export interface ClientSettings {
 /** The user settings of the daemon (~/.harness/settings.json): the General page of the Settings dialog. */
 export interface UserSettings {
   permission_mode: PermissionMode;
+  auto_review?: boolean; // "Review large changes": a read-only subagent reviews a large change (daemon verify.py).
+  allow_bypass_permissions?: boolean; // "Allow bypass permissions mode" (UI rule C12). Off: no bypass mode.
   prompt_suggestions: boolean;
   auto_verify: boolean;
   max_tool_calls: number;
@@ -257,6 +259,14 @@ export interface UserSettings {
 }
 
 export type TimeFormat = "12h" | "24h";
+
+/** The sandbox of the bash tool on the daemon computer (daemon sandbox.py sandbox_status, docs/SANDBOX.md). */
+export interface SandboxStatus {
+  state: "off" | "unavailable" | "ready";
+  backend: string; // "seatbelt", "bubblewrap", "windows", or "none".
+  reason: string;
+  available?: boolean; // The system has a backend. false in the "off" state: the reason tells why.
+}
 
 export type WebSearchProvider = "duckduckgo" | "brave" | "tavily" | "searxng" | "off";
 
@@ -890,6 +900,7 @@ export type ClientMessage =
   | { type: "browser.result"; call_id: string; tab?: string; result?: Record<string, unknown>; error?: string }
   | { type: "user_settings.get" } // It needs no session.
   | { type: "user_settings.set"; values: Partial<UserSettings> } // null removes the terminal shell.
+  | { type: "sandbox.set"; enabled: boolean } // Settings > General > "Local sandbox": sandbox.enabled of the user file.
   | { type: "term.input"; id: string; data: string }
   | { type: "term.resize"; id: string; cols: number; rows: number }
   | { type: "session.list"; cwd?: string; limit?: number }
@@ -1123,7 +1134,8 @@ export type DaemonMessage =
   | ({ type: "task" } & TaskDetail)
   | { type: "keep_awake"; on: boolean; active: boolean } // active: the computer stays awake now.
   // harness: the operating harness of new sessions (Settings > Operating Harness). null: the built-in loop.
-  | { type: "user_settings"; values: UserSettings; path: string; version: string; harness?: SessionHarness | null }
+  // sandbox: the sandbox of the bash tool (Settings > General > "Local sandbox"). An older daemon does not send it.
+  | { type: "user_settings"; values: UserSettings; path: string; version: string; harness?: SessionHarness | null; sandbox?: SandboxStatus }
   | ({ type: "settings" } & ClientSettings)
   | { type: "providers"; items: ProviderItem[]; path: string; exists: boolean }
   | ({ type: "providers.test" } & ProviderTestResult)

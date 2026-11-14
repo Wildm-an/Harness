@@ -382,6 +382,9 @@ def classifier_input(agent: Agent, tool: str, args: dict[str, Any], key: str) ->
     if tool in ("edit", "write"):
         path = agent.cwd / key
         facts = {"path": key, "exists": path.exists(), "protected": is_protected_path(key)}
+    elif tool == "apply_patch" and isinstance(args.get("paths"), list):  # One patch can change several files.
+        facts = {"files": [{"path": p, "exists": (agent.cwd / p).exists(), "protected": is_protected_path(p)}
+                           for p in args["paths"] if isinstance(p, str)][:25]}
     pending = {"tool": tool, "args": redact(args), "facts": facts}
     return {
         "workspace_root": str(agent.cwd),

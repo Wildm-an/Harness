@@ -58,6 +58,7 @@ BLOCK_EXIT = 2
 # The Claude Code names of the Harness tools, so that hooks for Claude Code also match here.
 CLAUDE_NAMES = {
     "bash": "Bash", "read": "Read", "edit": "Edit", "write": "Write", "glob": "Glob", "grep": "Grep",
+    "apply_patch": "Edit",
     "web_fetch": "WebFetch", "web_search": "WebSearch", "agent": "Task", "skill": "Skill",
     "update_plan": "TodoWrite", "ask_user_question": "AskUserQuestion", "exit_plan_mode": "ExitPlanMode",
     "task_output": "BashOutput", "task_stop": "KillShell", "office_edit": "Edit",

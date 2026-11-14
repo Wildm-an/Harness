@@ -37,7 +37,7 @@ SERVER_NAME = "harness"
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 # The tools that the other harness has itself, and the tools that need the model or the chat of Harness.
 HIDDEN_TOOLS = {
-    "read", "glob", "grep", "edit", "write", "bash", "web_search", "web_fetch", "update_plan", "wrap_up",
+    "read", "glob", "grep", "edit", "write", "apply_patch", "bash", "web_search", "web_fetch", "update_plan", "wrap_up",
     "ask_user_question", "exit_plan_mode", "skill", "tool_search", "agent", "offer_session", "start_session",
     "show_visual",
 }

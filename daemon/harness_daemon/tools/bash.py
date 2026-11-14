@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import sandbox
+from .. import sandbox, sandbox_proxy
 from .base import Approval, Tool, ToolContext, ToolError, ToolResult, get_bool, get_int, truncate
 from .shell import command_env, run_command
 
@@ -12,12 +12,22 @@ ESCAPE_PARAMETER = {
     "description": "Run the command outside the sandbox. Use it only after the sandbox caused a failure. The user "
                    "approves each command outside the sandbox. Optional.",
 }
-SANDBOX_HINT = ("[The command ran in the sandbox: no network, and writes only in the project folder and the temp "
-                "folder. If the sandbox caused the failure, run the command again with dangerouslyDisableSandbox: "
-                "true. The user then approves it.]")
-SANDBOX_HINT_LOCKED = ("[The command ran in the sandbox: no network, and writes only in the project folder and the "
-                       "temp folder. If the sandbox caused the failure, tell the user. The settings do not allow "
-                       "commands outside the sandbox.]")
+SANDBOX_HINT_TEXT = ("[The command ran in the sandbox: {network}, and writes only in the project folder and the temp "
+                     "folder. If the sandbox caused the failure, run the command again with dangerouslyDisableSandbox: "
+                     "true. The user then approves it.]")
+SANDBOX_HINT_LOCKED_TEXT = ("[The command ran in the sandbox: {network}, and writes only in the project folder and "
+                            "the temp folder. If the sandbox caused the failure, tell the user. The settings do not "
+                            "allow commands outside the sandbox.]")
+NO_NETWORK = "no network"
+PROXY_NETWORK = "network only to the domains in sandbox.network.allowedDomains, through the proxy of HTTP_PROXY"
+SANDBOX_HINT = SANDBOX_HINT_TEXT.format(network=NO_NETWORK)
+SANDBOX_HINT_LOCKED = SANDBOX_HINT_LOCKED_TEXT.format(network=NO_NETWORK)
+BLOCKED_LINE = ("[The sandbox blocked the network connection to {hosts}. The host is not in "
+                "sandbox.network.allowedDomains, or it is in sandbox.network.deniedDomains. Only the user can change "
+                "these settings in ~/.harness/settings.json.]")
+NO_PATCH_COMMAND = ("This shell has no apply_patch command. Use the edit tool to change a file, and the write tool "
+                    "to create one.")
+PATCH_IS_A_TOOL = "apply_patch is a tool, not a shell command. Call the apply_patch tool with the patch as its input."
 UNAVAILABLE_ERROR = ("The sandbox is on, but it is not available: {reason} The setting sandbox.failIfUnavailable is "
                      "true, so the command did not run. Tell the user.")
 
@@ -72,7 +82,8 @@ class BashTool(Tool):
             "- Read a file: use read, not cat, head, tail, or Get-Content.",
             "- Find files by name: use glob, not find, ls, or dir.",
             "- Find text in files: use grep, not grep, rg, findstr, or Select-String.",
-            "- Change a file: use edit or write, not sed, awk, echo, or a redirect (>).",
+            f"- Change a file: use {'apply_patch' if ctx.patch_mode else 'edit or write'}, not sed, awk, echo, or a "
+            "redirect (>).",
             "- Talk to the user: write text in your reply, not echo.",
             "",
             "Usage notes:",
@@ -94,7 +105,9 @@ class BashTool(Tool):
         if status["state"] == "ready":
             then = ("run the command again with dangerouslyDisableSandbox: true. The user then approves it."
                     if config["allowUnsandboxedCommands"] else "tell the user.")
-            lines.append("- The command runs in a sandbox: it has no network, and it can write only in the project "
+            network = ("it can connect only to the domains in sandbox.network.allowedDomains, through the proxy of "
+                       "HTTP_PROXY and HTTPS_PROXY" if sandbox.network_mode(config) == "proxy" else "it has no network")
+            lines.append(f"- The command runs in a sandbox: {network}, and it can write only in the project "
                          f"folder and the temp folder. If the sandbox blocks a necessary action, {then}")
         if shell == "powershell":
             lines.append("- This is Windows PowerShell 5.1: && and || do not work. Use ; to run commands in sequence.")
@@ -112,8 +125,7 @@ class BashTool(Tool):
         command = self._command(args)
         if command.lstrip().startswith("apply_patch"):
             # Models trained on Codex send apply_patch as a shell command. Tell them which tool to use.
-            raise ToolError("This shell has no apply_patch command. Use the edit tool to change a file, and the "
-                            "write tool to create one.")
+            raise ToolError(PATCH_IS_A_TOOL if ctx.patch_mode else NO_PATCH_COMMAND)
         config, status = self._sandbox()
         if config["enabled"] and status["state"] == "unavailable" and config["failIfUnavailable"]:
             raise ToolError(UNAVAILABLE_ERROR.format(reason=status["reason"]))
@@ -139,18 +151,23 @@ class BashTool(Tool):
         policy = None
         if status["state"] == "ready" and self._in_sandbox(command, args, config):
             policy = sandbox.prepare_run(ctx.cwd, ctx.output_dir, config)
-        env = command_env(sandbox.sandbox_env(policy)) if policy is not None else None
-        result = await run_command(command, ctx.cwd, ctx.shell, timeout, env=env, sandbox=policy)
+        # With allowed domains, a proxy in the daemon runs while the command runs (sandbox_proxy.py).
+        async with sandbox_proxy.network_for(policy, config) as (policy, proxy):
+            env = command_env(sandbox.sandbox_env(policy)) if policy is not None else None
+            result = await run_command(command, ctx.cwd, ctx.shell, timeout, env=env, sandbox=policy)
         output = result.output.rstrip("\n") or "(no output)"
         # Keep the end of long command output. Errors are usually at the end.
         output = truncate(output, ctx.settings["max_output_chars"], keep_tail=True, spill_dir=ctx.output_dir)
+        if proxy is not None and proxy.blocked:
+            output += "\n" + BLOCKED_LINE.format(hosts=", ".join(proxy.blocked))
         if result.timed_out:
             return ToolResult(f"{output}\n[The command timed out after {timeout} seconds and was stopped.]",
                               is_error=True, limited=True)
         if result.returncode:
             hint = ""
             if policy is not None:
-                hint = "\n" + (SANDBOX_HINT if config["allowUnsandboxedCommands"] else SANDBOX_HINT_LOCKED)
+                text = SANDBOX_HINT_TEXT if config["allowUnsandboxedCommands"] else SANDBOX_HINT_LOCKED_TEXT
+                hint = "\n" + text.format(network=PROXY_NETWORK if policy.network == "proxy" else NO_NETWORK)
             return ToolResult(f"{output}\n[Exit code: {result.returncode}]{hint}", is_error=True, limited=True)
         return ToolResult(output, limited=True)
 

@@ -63,14 +63,21 @@ def test_a_project_settings_file_cannot_change_the_sandbox(project):
 # -- status --------------------------------------------------------------------------------------------------
 
 
-def test_the_status_is_off_by_default():
+def test_the_status_is_off_by_default(monkeypatch):
+    monkeypatch.setattr(sandbox, "_backend_problem", lambda backend: None)
     status = sandbox.sandbox_status()
-    assert status["state"] == "off" and "sandbox.enabled" in status["reason"]
+    assert status["state"] == "off" and "sandbox.enabled" in status["reason"] and status["available"] is True
+
+
+def test_the_off_state_gives_the_reason_when_no_backend_can_run():
+    status = sandbox.sandbox_status({"enabled": False}, platform="win32")
+    assert status == {"state": "off", "backend": "windows", "reason": sandbox.WINDOWS_REASON, "available": False}
 
 
 def test_windows_is_unavailable_with_a_reason():
     status = sandbox.sandbox_status({"enabled": True}, platform="win32")
-    assert status == {"state": "unavailable", "backend": "windows", "reason": sandbox.WINDOWS_REASON}
+    assert status == {"state": "unavailable", "backend": "windows", "reason": sandbox.WINDOWS_REASON,
+                      "available": False}
 
 
 def test_macos_is_unavailable_with_no_sandbox_exec(monkeypatch):
@@ -94,7 +101,8 @@ def test_linux_is_unavailable_when_bwrap_is_missing(tmp_path, monkeypatch):
     (tmp_path / "empty").mkdir()
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     status = sandbox.sandbox_status({"enabled": True}, platform="linux")
-    assert status == {"state": "unavailable", "backend": "bubblewrap", "reason": sandbox.NO_BWRAP}
+    assert status == {"state": "unavailable", "backend": "bubblewrap", "reason": sandbox.NO_BWRAP,
+                      "available": False}
 
 
 def test_linux_is_ready_with_a_working_bwrap(tmp_path, monkeypatch):

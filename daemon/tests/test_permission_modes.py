@@ -106,7 +106,9 @@ def test_session_new_sets_the_mode_of_the_start_page(daemon, project, fake_model
     c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model", "permission_mode": "auto"})
     ready = c.until("session.ready")[0]
     assert ready["permission_mode"] == "auto"
-    assert json.loads((project / ".harness" / "settings.json").read_text())["permission_mode"] == "auto"
+    from harness_daemon.config import stored_mode
+    assert stored_mode(project) == "auto"  # The store of the user, not the repository (change 4-D).
+    assert not (project / ".harness" / "settings.json").exists()
     c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model", "permission_mode": "yolo"})
     assert "must be one of" in c.until("error")[0]["message"]
     c.close()
@@ -190,3 +192,40 @@ def test_a_hook_allow_does_not_skip_a_safety_rule(project):
     tool, approval = BASH
     assert asyncio.run(g.gate.check(tool, {}, approval, preapproved=True)) is True
     assert len(g.asked) == 1  # An ordinary call that the hook allows runs with no question.
+
+
+# -- 4-D: the mode store outside the repository, and the bypass switch ----------------------------------------
+
+def test_a_project_file_cannot_set_bypass(harness_home, project):
+    from harness_daemon.config import load_settings, store_mode
+
+    (project / ".harness").mkdir(exist_ok=True)
+    (project / ".harness" / "settings.json").write_text(json.dumps({"permission_mode": "bypassPermissions",
+                                                                     "allow_bypass_permissions": True}))
+    assert load_settings(project)["permission_mode"] == "default"
+    store_mode(project, "bypassPermissions")
+    assert load_settings(project)["permission_mode"] == "default"  # The switch is off.
+    (harness_home / "settings.json").write_text(json.dumps({"allow_bypass_permissions": True}))
+    assert load_settings(project)["permission_mode"] == "bypassPermissions"
+    store_mode(project, "plan")
+    assert load_settings(project)["permission_mode"] == "plan"  # The store has priority over the project file.
+
+
+def test_bypass_needs_the_switch(daemon, harness_home, project, fake_model):  # noqa: F811
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model",
+            "permission_mode": "bypassPermissions"})
+    assert "Allow bypass permissions mode" in c.until("error")[0]["message"]
+    c.send({"type": "user_settings.set", "values": {"permission_mode": "bypassPermissions"}})
+    assert "Allow bypass permissions mode" in c.until("error")[0]["message"]
+    c.send({"type": "user_settings.set", "values": {"allow_bypass_permissions": True}})
+    assert c.until("user_settings")[0]["values"]["allow_bypass_permissions"] is True
+    c.send({"type": "session.new", "cwd": str(project), "model": "fake/test-model",
+            "permission_mode": "bypassPermissions"})
+    assert c.until("session.ready")[0]["permission_mode"] == "bypassPermissions"
+    c.send({"type": "user_settings.set", "values": {"allow_bypass_permissions": False}})
+    c.until("user_settings")
+    c.send({"type": "settings.get"})
+    assert c.until("settings")[0]["permission_mode"] == "default"  # Off again: the session leaves bypass.
+    c.close()

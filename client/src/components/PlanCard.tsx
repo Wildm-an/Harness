@@ -10,6 +10,7 @@ import { Markdown } from "./Markdown";
 import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
 import { useCardKeys } from "../lib/cardKeys";
 import { MODES } from "./ModeMenu";
+import { useAllowBypass } from "../lib/bypass";
 
 // The names of the mode menu, so that the card and the menu use one word for one mode (audit C7).
 const MODE_NAMES: Partial<Record<PermissionMode, string>> = Object.fromEntries(MODES.map((m) => [m.mode, m.label]));
@@ -33,6 +34,7 @@ export const PlanCard = memo(function PlanCard({
   const [revising, setRevising] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [menu, setMenu] = useState(false);
+  const allowBypass = useAllowBypass(); // UI rule C12.
   const actions = useRef<HTMLDivElement>(null);
   const decideRef = useRef(onDecide);
   decideRef.current = onDecide;
@@ -156,9 +158,11 @@ export const PlanCard = memo(function PlanCard({
                   <button type="button" role="menuitem" className="menu-item" onClick={() => decide("accept", "auto")}>
                     Accept and auto mode
                   </button>
-                  <button type="button" role="menuitem" className="menu-item" onClick={() => decide("accept", "bypassPermissions")}>
-                    Accept and bypass permissions
-                  </button>
+                  {allowBypass && (
+                    <button type="button" role="menuitem" className="menu-item" onClick={() => decide("accept", "bypassPermissions")}>
+                      Accept and bypass permissions
+                    </button>
+                  )}
                 </div>
               )}
             </span>

@@ -78,6 +78,8 @@ class ToolContext:
     model: Any = None
     # The files that the agent read (ReadState). None: edit and write do not check reads, for example in a test.
     reads: ReadState | None = None
+    # True: the agent changes files with apply_patch, not with edit and write (setting "edit_tool").
+    patch_mode: bool = False
     # The folder for the full output of a cut result (tool_output.py). None: the cut text is lost.
     output_dir: Path | None = None
 
@@ -120,6 +122,9 @@ class Approval:
     the sandbox, False if it runs outside. None: the sandbox is off or not available.
     ``sandbox_escape`` is True if the model asked to run the command outside the sandbox
     (``dangerouslyDisableSandbox``).
+    ``keys`` is for a call that changes several files (apply_patch): all the paths. The gate checks each
+    path: a deny rule, a safety rule, or a protected path for one path applies to the call. An allow rule
+    must match each path. Empty: the gate checks ``key`` only. An empty ``rule`` gives no "Always allow".
     """
 
     key: str
@@ -129,6 +134,11 @@ class Approval:
     input: dict[str, Any] | None = None
     sandboxed: bool | None = None
     sandbox_escape: bool = False
+    keys: tuple[str, ...] = ()
+
+    def all_keys(self) -> tuple[str, ...]:
+        """The values that the rules check: ``keys``, or ``key`` when ``keys`` is empty."""
+        return self.keys or (self.key,)
 
 
 class Tool:

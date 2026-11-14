@@ -9,6 +9,12 @@ The backends put a prefix before the shell arguments (wrap):
 - Linux: bubblewrap (``bwrap``).
 - Windows: no backend yet. sandbox_status gives "unavailable", and commands run with no sandbox.
 
+The network is off in the sandbox. When sandbox.network.allowedDomains has a domain, the bash tool starts a proxy
+in the daemon for each command (sandbox_proxy.py). HTTP_PROXY and HTTPS_PROXY point to it. The proxy checks each
+host against allowedDomains and deniedDomains. On macOS, the profile allows only the connection to the proxy port.
+On Linux, the command has its own network namespace: socat in the sandbox connects a local port to the Unix socket
+of the proxy. With no socat, the network stays off on Linux.
+
 The sandbox applies to the foreground commands of the bash tool only. Background tasks, hooks, MCP servers,
 plugins, dev servers, and the terminal pane run with no sandbox.
 """
@@ -28,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import ConfigError, harness_home, read_json
+from .config import ConfigError, harness_home, read_json, write_json
 
 # The defaults are the Claude Code defaults. The sandbox is off until the user sets "enabled" to true.
 SANDBOX_DEFAULTS: dict[str, Any] = {
@@ -60,6 +66,10 @@ CACHE_DIRS = (".npm", ".cache", "Library/Caches", ".cargo/registry", ".cargo/git
 
 OFF_REASON = "The sandbox is off. Set sandbox.enabled to true in ~/.harness/settings.json to turn it on."
 READY_REASON = "Commands of the bash tool run in the sandbox: no network, and writes only in the allowed folders."
+READY_PROXY_REASON = ("Commands of the bash tool run in the sandbox: network only to the allowed domains, and writes "
+                      "only in the allowed folders.")
+NO_SOCAT_REASON = ("Commands of the bash tool run in the sandbox: no network, and writes only in the allowed folders. "
+                   "Install socat to use sandbox.network.allowedDomains.")
 WINDOWS_REASON = "Harness has no sandbox for Windows yet. Commands run with no sandbox."
 OTHER_REASON = "Harness has no sandbox for this system. Commands run with no sandbox."
 NO_SEATBELT = f"{SEATBELT_PROGRAM} is not on this computer. Commands run with no sandbox."
@@ -82,9 +92,13 @@ class SandboxPolicy:
     deny_write: tuple[str, ...] = ()
     deny_read: tuple[str, ...] = ()
     allow_read: tuple[str, ...] = ()
-    network: str = "off"  # "off" or "on". The domain list through a proxy comes later.
+    network: str = "off"  # "off", "proxy" (only through the proxy of sandbox_proxy.py), or "on".
     allow_local_binding: bool = False  # macOS: a server on localhost can run.
     temp_dir: str | None = None  # The temp folder of the session. TMPDIR, TMP, and TEMP point to it.
+    # network "proxy": the port of the proxy in the sandbox. On Linux, socat listens on this port in the sandbox
+    # and connects to the Unix socket ``proxy_socket`` of the proxy.
+    proxy_port: int | None = None
+    proxy_socket: str | None = None
 
 
 # -- the settings --------------------------------------------------------------------------------------------
@@ -121,6 +135,20 @@ def sandbox_config() -> dict[str, Any]:
     except ConfigError:
         settings = {}
     return normalize_config(settings.get("sandbox") if isinstance(settings, dict) else None)
+
+
+def set_enabled(enabled: bool) -> None:
+    """Write sandbox.enabled in ~/.harness/settings.json (Settings > Local sandbox). The other keys stay.
+
+    Only the user file: a project file cannot change the sandbox. Raises ConfigError if the file is not valid JSON.
+    """
+    path = harness_home() / "settings.json"
+    data = read_json(path, {})
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} must hold a JSON object.")
+    box = data.get("sandbox") if isinstance(data.get("sandbox"), dict) else {}
+    data["sandbox"] = {**box, "enabled": bool(enabled)}
+    write_json(path, data)
 
 
 # -- the status ----------------------------------------------------------------------------------------------
@@ -169,16 +197,46 @@ def _backend_problem(backend: str) -> str | None:
     return WINDOWS_REASON if backend == "windows" else OTHER_REASON
 
 
-def sandbox_status(config: dict[str, Any] | None = None, platform: str | None = None) -> dict[str, str]:
-    """{"state": "ready" | "unavailable" | "off", "backend": ..., "reason": ...} for the daemon computer."""
+def _find_socat() -> str | None:
+    return shutil.which("socat")
+
+
+def network_mode(config: dict[str, Any], platform: str | None = None) -> str:
+    """The network of a sandboxed command: "proxy" (only the allowed domains) or "off".
+
+    "proxy" needs a domain in network.allowedDomains, and a backend that can limit the network to the proxy:
+    Seatbelt, or bubblewrap with socat.
+    """
+    if not (config.get("network") or {}).get("allowedDomains"):
+        return "off"
+    backend = backend_for(platform)
+    if backend == "seatbelt" or (backend == "bubblewrap" and _find_socat() is not None):
+        return "proxy"
+    return "off"
+
+
+def sandbox_status(config: dict[str, Any] | None = None, platform: str | None = None) -> dict[str, Any]:
+    """{"state": "ready" | "unavailable" | "off", "backend": ..., "reason": ..., "available": bool} for the daemon
+    computer.
+
+    "available": the system has a backend. In the "off" state with no backend, the reason tells why, so that the
+    Settings row can show it. The "off" state does not start bwrap: it only looks for the program.
+    """
     config = sandbox_config() if config is None else config
     backend = backend_for(platform)
     if not config.get("enabled"):
-        return {"state": "off", "backend": backend, "reason": OFF_REASON}
+        if backend == "bubblewrap":
+            problem = None if _find_bwrap() is not None else NO_BWRAP
+        else:
+            problem = _backend_problem(backend)
+        return {"state": "off", "backend": backend, "reason": problem or OFF_REASON, "available": problem is None}
     problem = _backend_problem(backend)
     if problem is not None:
-        return {"state": "unavailable", "backend": backend, "reason": problem}
-    return {"state": "ready", "backend": backend, "reason": READY_REASON}
+        return {"state": "unavailable", "backend": backend, "reason": problem, "available": False}
+    reason = READY_REASON
+    if (config.get("network") or {}).get("allowedDomains"):
+        reason = READY_PROXY_REASON if network_mode(config, platform) == "proxy" else NO_SOCAT_REASON
+    return {"state": "ready", "backend": backend, "reason": reason, "available": True}
 
 
 # -- the policy ----------------------------------------------------------------------------------------------
@@ -296,10 +354,19 @@ def prepare_run(cwd: Path, output_dir: Path | None, config: dict[str, Any]) -> S
 
 
 def sandbox_env(policy: SandboxPolicy) -> dict[str, str]:
-    """The extra environment of a sandboxed command: the temp folder of the session."""
-    if not policy.temp_dir:
-        return {}
-    return {"TMPDIR": policy.temp_dir, "TMP": policy.temp_dir, "TEMP": policy.temp_dir}
+    """The extra environment of a sandboxed command: the temp folder of the session, and with the network
+    "proxy", the proxy variables. Programs that read these variables (curl, git, pip, npm, and others) then
+    connect through the proxy. Programs that do not read them get no network."""
+    env: dict[str, str] = {}
+    if policy.temp_dir:
+        env.update({"TMPDIR": policy.temp_dir, "TMP": policy.temp_dir, "TEMP": policy.temp_dir})
+    if policy.network == "proxy" and policy.proxy_port:
+        url = f"http://127.0.0.1:{policy.proxy_port}"
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            env[name] = url
+        env["NO_PROXY"] = env["no_proxy"] = "localhost,127.0.0.1,::1"
+        env["NODE_USE_ENV_PROXY"] = "1"  # Node 24 and later: fetch uses the proxy variables.
+    return env
 
 
 # -- excluded commands ---------------------------------------------------------------------------------------
@@ -349,6 +416,9 @@ def seatbelt_profile(policy: SandboxPolicy) -> str:
             lines += ['(allow network-bind (local ip "localhost:*"))',
                       '(allow network-inbound (local ip "localhost:*"))',
                       '(allow network-outbound (remote ip "localhost:*"))']
+        if policy.network == "proxy" and policy.proxy_port:
+            # Only the connection to the proxy. The proxy checks the host.
+            lines.append(f'(allow network-outbound (remote ip "localhost:{int(policy.proxy_port)}"))')
     lines.append("(deny file-write*)")
     allowed = [f"  (subpath {_sb_string(p)})" for p in policy.write_roots]
     allowed += ['  (literal "/dev/null")', '  (literal "/dev/zero")', '  (literal "/dev/stdout")',
@@ -390,14 +460,43 @@ def bwrap_args(policy: SandboxPolicy, exists: Callable[[str], bool] = os.path.ex
     return args
 
 
+# Linux with the network "proxy": the command has its own network namespace with only "lo". This script runs in
+# the sandbox before the command. socat listens on 127.0.0.1:<port> and connects each connection to the Unix
+# socket of the proxy, which is outside the namespace. The script waits until socat listens (at most 2 seconds),
+# runs the command, stops socat, and gives the exit code of the command. The arguments: socat, the socket path,
+# the port, then the command.
+LINUX_BRIDGE_SCRIPT = (
+    'socat=$1; sock=$2; port=$3; shift 3\n'
+    '"$socat" TCP-LISTEN:"$port",bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:"$sock" </dev/null >/dev/null 2>&1 &\n'
+    'bridge=$!\n'
+    'i=0\n'
+    'while [ "$i" -lt 100 ] && ! "$socat" -u OPEN:/dev/null TCP:127.0.0.1:"$port" >/dev/null 2>&1; do\n'
+    '  i=$((i + 1)); sleep 0.02\n'
+    'done\n'
+    '"$@"\n'
+    'code=$?\n'
+    'kill "$bridge" 2>/dev/null\n'
+    'exit "$code"\n'
+)
+LINUX_PROXY_PORT = 3128  # The port of the bridge in the network namespace of the command.
+
+
 def wrap(argv: list[str], policy: SandboxPolicy, platform: str | None = None,
          exists: Callable[[str], bool] = os.path.exists, is_dir: Callable[[str], bool] = os.path.isdir) -> list[str]:
     """The process arguments that run ``argv`` in the sandbox of the platform."""
-    if policy.network not in ("off", "on"):
-        raise SandboxError(f"The network setting {policy.network!r} is not available yet.")
+    if policy.network not in ("off", "on", "proxy"):
+        raise SandboxError(f"The network setting {policy.network!r} is not known.")
     backend = backend_for(platform)
     if backend == "seatbelt":
+        if policy.network == "proxy" and not policy.proxy_port:
+            raise SandboxError("The network setting 'proxy' needs the port of the proxy.")
         return [SEATBELT_PROGRAM, "-p", seatbelt_profile(policy), *argv]
     if backend == "bubblewrap":
-        return [_find_bwrap() or "bwrap", *bwrap_args(policy, exists, is_dir), "--", *argv]
+        prefix = [_find_bwrap() or "bwrap", *bwrap_args(policy, exists, is_dir), "--"]
+        if policy.network != "proxy":
+            return [*prefix, *argv]
+        if not (policy.proxy_socket and policy.proxy_port):
+            raise SandboxError("The network setting 'proxy' needs the socket and the port of the proxy.")
+        return [*prefix, "/bin/sh", "-c", LINUX_BRIDGE_SCRIPT, "harness-sandbox", _find_socat() or "socat",
+                policy.proxy_socket, str(int(policy.proxy_port)), *argv]
     raise SandboxError(WINDOWS_REASON if backend == "windows" else OTHER_REASON)

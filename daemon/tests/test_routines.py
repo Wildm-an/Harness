@@ -443,6 +443,11 @@ def test_a_run_continues_when_the_window_closes(daemon, project, fake_model):  #
         {"tool_calls": [{"name": "bash", "arguments": {"command": "echo late"}}]},
         {"text": "Done late."},
     )
+    import json
+
+    from harness_daemon.config import harness_home
+    # Bypass needs the switch "Allow bypass permissions mode" of the user file (change 4-D).
+    (harness_home() / "settings.json").write_text(json.dumps({"allow_bypass_permissions": True}))
     item = _save(a, project, permission_mode="bypassPermissions")
     a.send({"type": "routines.run", "id": item["id"]})
     a.until("routine.run")

@@ -42,9 +42,9 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][\w.-]{0,63}$")
 # The Claude Code tool names, and the Harness tools that they are.
 CLAUDE_TOOLS: dict[str, tuple[str, ...]] = {
     "read": ("read",),
-    "write": ("write",),
-    "edit": ("edit", "office_edit"),
-    "multiedit": ("edit",),
+    "write": ("write", "apply_patch"),
+    "edit": ("edit", "office_edit", "apply_patch"),
+    "multiedit": ("edit", "apply_patch"),
     "glob": ("glob",),
     "grep": ("grep",),
     "ls": ("glob",),

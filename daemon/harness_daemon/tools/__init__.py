@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .apply_patch import APPLY_PATCH_FAMILIES, ApplyPatchTool, uses_patch
 from .base import Approval, ReadState, Tool, ToolContext, ToolError, ToolResult, truncate
 from .bash import BashTool
 from .document import ShowDocumentTool
@@ -26,6 +27,8 @@ def default_tools() -> list[Tool]:
 
 
 __all__ = [
+    "APPLY_PATCH_FAMILIES",
+    "ApplyPatchTool",
     "Approval",
     "BashTool",
     "EditTool",
@@ -48,6 +51,7 @@ __all__ = [
     "detect_shell",
     "preview_tools",
     "truncate",
+    "uses_patch",
     "UpdatePlanTool",
     "WrapUpTool",
     "WebFetchTool",

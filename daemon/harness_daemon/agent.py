@@ -57,6 +57,8 @@ from .auto_mode import hard_rule
 from .verify import (
     BLOCKED_NOTICE, FAIL_NOTICE, LIMIT_NOTICE, PASS_NOTICE, START_NOTICE, TIMEOUT_NOTICE, VERIFY_TAIL_CHARS,
     WRAP_UP_FAILED, VerifyResult, failure_note, run_verify, verify_command, verify_timeout, wrap_up_output,
+    REVIEW_FAILED_NOTICE, REVIEW_MIN_LINES, REVIEW_PROMPT, REVIEW_START_NOTICE, changed_lines, review_note,
+    review_request,
 )
 from .records import recorded_stream
 from .providers import (
@@ -82,8 +84,10 @@ from .tools import (
     preview_tools,
     truncate,
 )
+from .tools.apply_patch import ApplyPatchTool, uses_patch
 from .tools.interact import AskUserQuestionTool, ExitPlanModeTool
 from .agents import DEFAULT_TYPE as DEFAULT_AGENT_TYPE, AgentType, discover_agents
+from .tools.apply_patch import parse_patch
 from .hooks import CommandHooks, HookOutcome
 from .memory import MemoryStore
 from .tools.chats import ConversationSearchTool
@@ -133,11 +137,14 @@ _KEEP = object()  # set_client: keep the image input.
 OnCheckpoint = Callable[[str, str, "bytes | None"], None]
 
 # The tools that change files. A checkpoint keeps the file content before the change.
-FILE_TOOLS = ("edit", "write", "office_edit")  # Rewind keeps the file before these tools change it.
+FILE_TOOLS = ("edit", "write", "office_edit", "apply_patch")  # Rewind keeps the file before these tools change it.
 
 IMAGE_MESSAGE = "The image from the {tool} tool call:"
 
 # Events of a subagent that the client does not get. The subagent report replaces its text.
+# The internal agent type of the optional review (verify.py): read-only tools that need no approval.
+REVIEW_TYPE = AgentType("review", "Reviews a large change of the turn.", REVIEW_PROMPT, ("read", "glob", "grep"),
+                        source="internal")
 SUBAGENT_HIDDEN_EVENTS = {"token", "turn.end", "turn.usage", "context.compacted", "command.result"}
 
 FORK_REPORT_REQUEST = (
@@ -211,6 +218,10 @@ class Agent:
             tool_list.append(SkillTool(self.skills, self._activate_skill, self.run_fork))
         self.tools = {t.name: t for t in tool_list}
         self._tool_rank: dict[str, int] = {}  # The fixed place of each tool in the request (_tool_order).
+        # The edit and write tools, while apply_patch has their place (_sync_edit_tools).
+        self._edit_pair: dict[str, Tool] = {n: self.tools[n] for n in ("edit", "write") if n in self.tools}
+        self._patch_tool = ApplyPatchTool()
+        self._sync_edit_tools()
         # Tool search: MCP tools that the request sends by name only, until the model loads them.
         self._loaded_tools: list[str] = []  # In the order of the loads.
         self._tool_search = ToolSearchTool(lambda: {n: self.tools[n] for n in self._deferrable()}, self._load_tools)
@@ -293,6 +304,7 @@ class Agent:
         self._verify_result: Any = None
         self._verify_runs = 0
         self._verify_passed = False  # A run passed earlier in this session.
+        self._reviewed = False  # The optional review ran in this turn (auto_review).
         self._verify_blocked_told = False
         self.on_changed: Callable[[list[str]], None] | None = None  # A subagent tells its parent.
         self._turn_start = 0  # The history index of the user message of the turn.
@@ -359,6 +371,7 @@ class Agent:
             self.ctx.image_input = self.image_input is True
             self._sync_preview_tools()
         self._sync_tool_search()  # The context length decides it ("auto").
+        self._sync_edit_tools()  # "edit_tool": "auto" depends on the model family.
         self._rebuild_prompt(new_context=True)
 
     def enable_tasks(self, host: Any) -> None:
@@ -620,6 +633,7 @@ class Agent:
         self._sync_chat_tool()
         self._sync_tool_search()
         self._sync_read_check()
+        self._sync_edit_tools()
         self._rebuild_prompt()
 
     def reload_project_note(self) -> None:
@@ -635,6 +649,35 @@ class Agent:
             self.ctx.reads = None
         elif self.ctx.reads is None:
             self.ctx.reads = ReadState()
+
+    def _sync_edit_tools(self) -> None:
+        """The setting "edit_tool": in patch mode, apply_patch takes the place of edit, and write goes.
+
+        One tool then changes files, with no overlap. apply_patch takes the place and the rank of edit
+        (_tool_order), so the other tools keep their place in the request. The default "edit" changes nothing.
+        """
+        if "edit" not in self._edit_pair:
+            return  # A tool list with no edit tool, for example a test or a read-only subagent.
+        patch = uses_patch(self.settings.get("edit_tool"), model_family(self.client.label, self._family_override()))
+        self.ctx.patch_mode = patch
+        if patch == (ApplyPatchTool.name in self.tools):
+            return
+        tools: dict[str, Tool] = {}
+        for name, tool in self.tools.items():
+            if patch and name == "edit":
+                tools[ApplyPatchTool.name] = self._patch_tool
+            elif not patch and name == ApplyPatchTool.name:
+                tools.update(self._edit_pair)
+            elif not (patch and name in self._edit_pair):
+                tools[name] = tool
+        self.tools.clear()
+        self.tools.update(tools)
+        rank: dict[str, Any] = self._tool_rank
+        if patch and "edit" in rank:
+            rank.setdefault(ApplyPatchTool.name, rank["edit"])
+        elif not patch and ApplyPatchTool.name in rank:
+            rank.setdefault("edit", rank[ApplyPatchTool.name])
+            rank.setdefault("write", rank[ApplyPatchTool.name] + 0.5)
 
     def clear(self) -> None:
         """Start a new context: no history and no summary."""
@@ -853,6 +896,7 @@ class Agent:
         self._turn_clock, self._waited = time.monotonic(), 0.0
         self._turn_changed, self._stop_continuations = set(), 0
         self._verify_result, self._verify_runs = None, 0
+        self._reviewed = False
         report_note: str | None = None  # At a limit: the note of the final model call with no tools.
         calls_used = 0
         streamed: list[str] = []
@@ -952,6 +996,12 @@ class Agent:
                     if verify is not None and verify.status == "failed":
                         self._stop_continuations += 1
                         new_messages = [self._add_harness_note(failure_note(verify, self._verify_passed))]
+                        continue
+                    # The optional review of a large change (auto_review), after a pass or with no command.
+                    review = await self._run_review() if verify is None or verify.status == "passed" else None
+                    if review:
+                        self._stop_continuations += 1
+                        new_messages = [self._add_harness_note(review)]
                         continue
                     # The task list of the turn has open steps: one more step for the closing update_plan.
                     close_note = self._plan_close_note(origin, ended=True)
@@ -1111,6 +1161,13 @@ class Agent:
         if hooks is None or not hooks.has(event):
             return None
         tool_input = dict(args)
+        if name == "apply_patch":  # A hook gets the files of the patch, as file_paths.
+            try:
+                ops = parse_patch(str(args.get("input") or args.get("patch") or ""))
+                tool_input["file_paths"] = [str(self.ctx.resolve(p, read_only=True))
+                                            for op in ops for p in (op.path, op.move_to) if p]
+            except ToolError:
+                pass
         if isinstance(args.get("path"), str):
             try:
                 tool_input.setdefault("file_path", str(self.ctx.resolve(args["path"], read_only=True)))
@@ -1125,12 +1182,13 @@ class Agent:
 
     # -- plugin events of the loop ----------------------------------------------------------------
 
-    def _checkpoint(self, args: dict[str, Any]) -> None:
-        """Keep the content of the file before an edit or write tool changes it."""
+    def _checkpoint(self, args: dict[str, Any], key: str | None = None) -> None:
+        """Keep the content of the file before an edit or write tool changes it. ``key``: a path of
+        Approval.keys, for a tool that changes several files (apply_patch)."""
         if self.on_checkpoint is None or self.message_id is None:
             return
         try:
-            path = self.ctx.resolve(args.get("path"))
+            path = self.ctx.resolve(key if key is not None else args.get("path"))
         except ToolError:
             return  # The tool gives the error.
         try:
@@ -1751,6 +1809,34 @@ class Agent:
         self._harness_notes.append(note)
         return None
 
+    async def _run_review(self) -> str | None:
+        """The optional review (setting "auto_review"): a read-only subagent with a new context reads the diffs of
+        the turn when they have auto_review_min_lines changed lines or more. One time in a turn. The findings, as
+        a note for the agent, or None."""
+        if (not self.user_facing or self._reviewed or self.settings.get("auto_review") is not True
+                or self._mode() == "plan" or self._stop_continuations >= MAX_STEER_CONTINUATIONS):
+            return None
+        diffs = [m["diff"] for m in self.history[self._turn_start:] if m.get("role") == "tool" and m.get("diff")]
+        try:
+            minimum = max(int(self.settings.get("auto_review_min_lines") or REVIEW_MIN_LINES), 1)
+        except (TypeError, ValueError):
+            minimum = REVIEW_MIN_LINES
+        if changed_lines(diffs) < minimum:
+            return None
+        self._reviewed = True
+        request = next((str(m.get("content") or "") for m in self.history[self._turn_start:]
+                        if m.get("role") == "user"), "")
+        await self.emit({"type": "notice", "level": "info", "text": REVIEW_START_NOTICE})
+        sub = self._subagent(self._forward("review"), [], kind=REVIEW_TYPE, label="review")
+        try:
+            stop = await sub.run_turn(review_request(request, diffs))
+        except ModelError as e:
+            await self.emit({"type": "notice", "level": "warning", "text": REVIEW_FAILED_NOTICE.format(error=e)})
+            return None
+        if stop == "interrupted":
+            raise asyncio.CancelledError()
+        return review_note(self._report(sub))
+
     async def _verify_before_wrap_up(self) -> VerifyResult | None:
         """Hook point B: the verify gate before the recap box, so that the recap is true. The failed result,
         or None: wrap_up runs."""
@@ -2051,7 +2137,8 @@ class Agent:
                 if not allowed:
                     return _DENIED_RESULT
                 if name in FILE_TOOLS:
-                    self._checkpoint(args)
+                    for key in (approval.keys if approval is not None and approval.keys else (None,)):
+                        self._checkpoint(args, key)
                 stage = "run"
                 call.result = await tool.run(args, self.ctx)
                 ran = True

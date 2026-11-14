@@ -47,6 +47,7 @@ const VIEW = new Set([
   "git.diff", // The Changes pane.
   "disk.usage", // The Storage dialog.
   "user_settings.set", // Settings > General.
+  "sandbox.set", // Settings > General > "Local sandbox".
   // Settings > Local models (cookbook/useCookbook.ts).
   "hf.token",
   "hf.search",

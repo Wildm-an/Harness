@@ -34,7 +34,10 @@ from .agent import Agent
 from . import acp_harnesses, acp_install, acp_models
 from . import acp_mcp
 from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client
-from .config import ConfigError, harness_home, load_settings, project_settings_path, read_json, write_json
+from .config import (
+    BYPASS, ConfigError, bypass_allowed, harness_home, load_settings, project_settings_path, read_json, store_mode,
+    write_json,
+)
 from .osname import os_name
 from .files import PathError, file_hash, hash_bytes, is_binary, relpath, resolve_in_cwd
 from .permissions import DECISIONS, MODES, PermissionRules
@@ -103,7 +106,7 @@ TITLE_WAIT = 15
 from .agents import agent_folders, discover_agents
 from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import, project_root
 from .verify import VERIFY_MAX_TIMEOUT
-from .sandbox import sandbox_status
+from .sandbox import sandbox_status, set_enabled as set_sandbox_enabled
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
 from .web import set_key as set_web_key
 
@@ -673,10 +676,8 @@ class LiveSession:
         """The user accepted a plan in this mode: save it as the mode picker does, and tell the client."""
         session = self.session
         assert session is not None
-        path = project_settings_path(session.cwd)
-        data = read_json(path, {})
-        data["permission_mode"] = mode
-        write_json(path, data)
+        _check_bypass(mode)
+        store_mode(session.cwd, mode)
         session.agent.reload_settings(load_settings(session.cwd))
         values = {k: session.agent.settings.get(k) for k in CLIENT_SETTINGS}
         values["permission_mode"] = _permission_mode(session.agent.settings)
@@ -1679,7 +1680,7 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
     session = live.session
     assert session is not None
     # The mode of the routine, in memory only: the project settings file does not change.
-    session.agent.settings["permission_mode"] = routine["permission_mode"]
+    session.agent.settings["permission_mode"] = _allowed_mode(routine["permission_mode"])
     title = routine_files.run_title(routine, dt.datetime.now(), load_settings(None).get("time_format"))
     session.title = title
     headless.storage.update_session(session.id, title=title, routine_id=routine["id"])
@@ -1730,7 +1731,7 @@ async def start_child_session(parent: Session, title: str, prompt: str, worktree
         raise ToolError(str(e)) from None
     session = live.session
     assert session is not None
-    session.agent.settings["permission_mode"] = mode
+    session.agent.settings["permission_mode"] = _allowed_mode(mode)
     session.title = title
     headless.storage.update_session(session.id, title=title)
     headless.live[session.id] = live
@@ -1967,23 +1968,16 @@ async def create_session(conn: Connection, cwd: Path, provider: str | None, mode
         # The mode of the start page. It is a project setting, as with settings.set.
         if mode not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
-        path = project_settings_path(cwd)
-        data = read_json(path, {})
-        if (data.get("permission_mode") or "default") != mode:
-            data["permission_mode"] = mode
-            write_json(path, data)
+        _check_bypass(mode)
+        store_mode(cwd, mode)
     worktree = None
     if wt_arg is not None:
         try:
             worktree = await asyncio.to_thread(worktrees.create, cwd, wt_arg.get("base"))
         except WorktreeError as e:
             raise ProtocolError(str(e)) from None
-        if mode is not None:  # The agent reads the settings of the worktree folder.
-            path = project_settings_path(Path(worktree["path"]))
-            data = read_json(path, {})
-            if (data.get("permission_mode") or "default") != mode:
-                data["permission_mode"] = mode
-                write_json(path, data)
+        if mode is not None:  # The agent reads the mode of the worktree folder.
+            store_mode(Path(worktree["path"]), mode)
     live = LiveSession(conn)
     try:
         agent, warnings = await conn.make_agent(live, Path(worktree["path"]) if worktree else cwd, provider, model)
@@ -3097,6 +3091,7 @@ def _routine_fields(msg: dict[str, Any]) -> dict[str, Any]:
     mode = msg.get("permission_mode") or "default"
     if mode not in MODES:
         raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+    _check_bypass(mode)
     fields = {"name": name[:200], "prompt": prompt, "cwd": str(_project_dir(msg.get("cwd"))),
               "provider": msg.get("provider") or None, "model": msg.get("model") or None,
               "permission_mode": mode, "schedule": schedule, "enabled": bool(msg.get("enabled", True))}
@@ -3754,6 +3749,21 @@ async def on_context_get(conn: Connection, msg: dict[str, Any]) -> None:
     await conn.send({"type": "context.usage", **session.agent.context_breakdown()})
 
 
+BYPASS_OFF = ("Bypass permissions mode is off. Turn on \"Allow bypass permissions mode\" in Settings > General "
+              "first.")
+
+
+def _check_bypass(mode: str) -> None:
+    """Bypass needs the switch "Allow bypass permissions mode" of the user settings file (UI rule C12)."""
+    if mode == BYPASS and not bypass_allowed():
+        raise ProtocolError(BYPASS_OFF)
+
+
+def _allowed_mode(mode: str) -> str:
+    """The mode of a routine or a started session: bypass becomes default while the switch is off."""
+    return "default" if mode == BYPASS and not bypass_allowed() else mode
+
+
 def _permission_mode(settings: dict[str, Any]) -> str:
     """The mode of the settings. An unknown mode, for example "auto" of an older version, is "default"."""
     mode = settings.get("permission_mode")
@@ -3780,10 +3790,16 @@ async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"'{key}' must be a {kind.__name__}.")
         if key == "permission_mode" and value not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
-    path = project_settings_path(session.cwd)
-    data = read_json(path, {})
-    data.update(changes)
-    write_json(path, data)
+        if key == "permission_mode":
+            _check_bypass(value)
+    mode = changes.pop("permission_mode", None)
+    if mode is not None:  # The mode goes to the store of the user, not to the repository (change 4-D).
+        store_mode(session.cwd, mode)
+    if changes:
+        path = project_settings_path(session.cwd)
+        data = read_json(path, {})
+        data.update(changes)
+        write_json(path, data)
     session.agent.reload_settings(load_settings(session.cwd))
     await _send_settings(conn, session)
 
@@ -3792,6 +3808,8 @@ async def on_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
 # of the daemon use them, and a project settings file can change them for one project.
 USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "permission_mode": (str,),
+    "allow_bypass_permissions": (bool,),
+    "auto_review": (bool,),
     "prompt_suggestions": (bool,),
     "auto_verify": (bool,),
     "max_tool_calls": (int,),
@@ -3847,6 +3865,17 @@ async def on_user_settings_get(conn: Connection, msg: dict[str, Any]) -> None:
     await _send_user_settings(conn)
 
 
+@handler("sandbox.set")
+async def on_sandbox_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """Settings > General > "Local sandbox": {"enabled": bool}. It writes sandbox.enabled in the user settings
+    file only (sandbox.py). The answer is user_settings with the new "sandbox" status."""
+    enabled = msg.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ProtocolError("'enabled' must be true or false.")
+    await asyncio.to_thread(set_sandbox_enabled, enabled)
+    await _send_user_settings(conn)
+
+
 @handler("user_settings.set")
 async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
     """Change user settings, for example {"values": {"prompt_suggestions": false}}. Null removes a
@@ -3862,6 +3891,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"The type of '{key}' must be {' or '.join('null' if k is type(None) else k.__name__ for k in kinds)}.")
         if key == "permission_mode" and value not in MODES:
             raise ProtocolError(f"'permission_mode' must be one of: {', '.join(MODES)}.")
+        if key == "permission_mode" and value == BYPASS and changes.get("allow_bypass_permissions") is not True:
+            _check_bypass(value)
         if key == "auto_archive_days" and value not in ARCHIVE_DAYS:
             raise ProtocolError(f"'auto_archive_days' must be one of: {', '.join(map(str, ARCHIVE_DAYS))}.")
         if key == "new_task_prompt" and value not in NEW_TASK_CHOICES:

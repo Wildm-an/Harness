@@ -546,7 +546,7 @@ Rules:
 - The daemon binds to `127.0.0.1` by default.
 - The daemon requires a token on every connection.
 - Do not expose the daemon port to the internet.
-- `bash` runs in the project folder. An optional Docker sandbox mode runs `bash` in a container.
+- `bash` runs in the project folder. An optional sandbox (`sandbox` in `~/.harness/settings.json`, off by default) limits writes to the project and blocks the network except the allowed domains: Seatbelt on macOS, bubblewrap on Linux. Windows has no sandbox yet. See `docs/SANDBOX.md`.
 - Store API keys and the Hugging Face token in the operating system keychain through Tauri. Do not store them in plain text.
 - The Browser pane runs in a separate webview. Pages in it cannot call Tauri commands.
 - The daemon forwards only the server ports from `launch.json`.

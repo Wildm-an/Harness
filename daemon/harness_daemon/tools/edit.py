@@ -9,12 +9,12 @@ from .base import Approval, Tool, ToolContext, ToolError, ToolResult, get_bool
 from .match import apply_match, find_tolerant
 
 
-def unified_diff(before: str, after: str, name: str, new_file: bool = False) -> str:
+def unified_diff(before: str, after: str, name: str, new_file: bool = False, deleted: bool = False) -> str:
     lines = difflib.unified_diff(
         before.splitlines(keepends=True),
         after.splitlines(keepends=True),
         fromfile="/dev/null" if new_file else f"a/{name}",
-        tofile=f"b/{name}",
+        tofile="/dev/null" if deleted else f"b/{name}",
     )
     return "".join(line if line.endswith("\n") else line + "\n" for line in lines)
 

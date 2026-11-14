@@ -112,6 +112,63 @@ async def run_verify(command: str, cwd: Path, shell: ShellInfo, timeout: int, ta
     return VerifyResult(command, "passed", 0, seconds, "")
 
 
+# The optional review of a large change (setting "auto_review", off by default): a read-only subagent with a new
+# context reads the diffs of the turn. A model that reviews its own work in the same context misses its errors.
+REVIEW_MIN_LINES = 200  # The setting "auto_review_min_lines" changes it.
+REVIEW_REQUEST_CHARS = 2_000
+REVIEW_DIFF_CHARS = 30_000
+REVIEW_FINDINGS_CHARS = 4_000
+REVIEW_PROMPT = """\
+You review a code change that another agent made. You did not make it. You can read files, but you cannot \
+change them.
+- Check the change against the request of the user.
+- Look for real defects: wrong logic, a missing case, a broken caller, a test that was weakened or removed, \
+and code that the request did not ask for.
+- Read the changed files and their callers when the diff alone is not clear.
+- Do not report style or taste.
+Reply with exactly NO FINDINGS when you find no real defect. Otherwise reply with a short list. Give each finding \
+the file, the line, the defect, and why it is a defect."""
+REVIEW_REQUEST = """\
+The request of the user:
+{request}
+
+The diffs of the change:
+{diffs}
+
+Review the change now."""
+REVIEW_NOTE = ("[Harness: A reviewer with a new context read your changes and reports these findings. Check each "
+               "finding in the code. Fix the ones that are real. Tell the user about the ones that you do not fix.]")
+REVIEW_START_NOTICE = "A reviewer subagent reads the large change of this turn."
+REVIEW_FAILED_NOTICE = "The review of the change failed: {error}"
+
+
+def changed_lines(diffs: list[str]) -> int:
+    """The added and removed lines of unified diffs."""
+    count = 0
+    for diff in diffs:
+        for line in diff.splitlines():
+            if line.startswith(("+++", "---")):
+                continue
+            if line.startswith(("+", "-")):
+                count += 1
+    return count
+
+
+def review_request(request: str, diffs: list[str]) -> str:
+    text = "\n\n".join(diffs)
+    if len(text) > REVIEW_DIFF_CHARS:
+        text = text[:REVIEW_DIFF_CHARS] + "\n[... The rest of the diffs is not shown. Read the files.]"
+    return REVIEW_REQUEST.format(request=request.strip()[:REVIEW_REQUEST_CHARS] or "(no text)", diffs=text)
+
+
+def review_note(report: str | None) -> str | None:
+    """The note for the agent, or None when the reviewer found nothing."""
+    report = (report or "").strip()
+    if not report or report.upper().startswith("NO FINDINGS"):
+        return None
+    return f"{REVIEW_NOTE}\n\n{report[:REVIEW_FINDINGS_CHARS]}"
+
+
 def wrap_up_output(result: VerifyResult, timeout: int) -> str:
     """The wrap_up result after a verify run in the turn: it names the state, so the final answer is true."""
     state = WRAP_UP_STATES.get(result.status)

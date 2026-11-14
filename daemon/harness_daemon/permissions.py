@@ -17,6 +17,11 @@ Rule forms:
 
 A deny rule has priority over an allow rule.
 
+A call that changes several files (apply_patch) has one key for each path (``Approval.keys``). The gate checks
+each path: a deny rule, a hard rule, or a protected path for one path applies to the call. An allow rule or an
+auto mode fast path must hold for each path. The tool name is ``edit``, so plan mode and acceptEdits treat the
+call as an edit.
+
 Permission modes (the ``permission_mode`` setting, as in Claude Code):
 
 - ``default``: ask the user for each action that no rule allows.
@@ -203,7 +208,8 @@ class PermissionGate:
         if force is not None:
             key = approval.key if approval is not None else json.dumps(args, sort_keys=True, ensure_ascii=False)[:500]
             name = (approval.tool if approval is not None else None) or tool.name
-            if self.rules.denies(name, key):
+            keys = approval.all_keys() if approval is not None else (key,)
+            if any(self.rules.denies(name, k) for k in keys):
                 return self._from("deny_rule", False)
             self._source = "plugin_ask"
             decision = await self.approver({
@@ -218,15 +224,18 @@ class PermissionGate:
         if not tool.needs_approval or approval is None:
             return self._from("no_approval", True)
         name = approval.tool or tool.name
-        if self.rules.denies(name, approval.key):
+        keys = approval.all_keys()  # A call that changes several files (apply_patch) has one key for each path.
+        if any(self.rules.denies(name, key) for key in keys):
             return self._from("deny_rule", False)
         mode = self.mode()  # An unknown mode, for example a mode of an older version, is "default".
         if mode == "plan" and name in EDIT_TOOLS:
             # Before the allow rules: an allow rule or a hook must not change files in plan mode.
             return self._from("mode:plan", PLAN_BLOCK)
-        match = safety_match(name, approval.key)
+        # The first path that a safety rule catches. A hard rule has priority over a protected path.
+        found = [(key, m) for key in keys if (m := safety_match(name, key)) is not None]
+        key, match = next((f for f in found if f[1].kind == "hard"), found[0] if found else (approval.key, None))
         if match is not None:
-            decided = await self._safety(tool, args, approval, mode, match)
+            decided = await self._safety(tool, args, approval, mode, match, key)
             if decided is not None:
                 return decided
         sandbox = sandbox_config() if approval.sandboxed is not None else None
@@ -238,9 +247,9 @@ class PermissionGate:
             return self._from("mode:bypassPermissions", True)
         if mode == "auto" and self.auto is not None:
             return await self._auto_check(tool, name, args, approval)
-        if self.rules.allows(name, approval.key):
+        if all(self.rules.allows(name, key) for key in keys):
             return self._from("allow_rule", True)
-        if any(rule_matches(r, name, approval.key) for r in (*self.session_allow, *self.turn_allow)):
+        if all(any(rule_matches(r, name, key) for r in (*self.session_allow, *self.turn_allow)) for key in keys):
             return self._from("session_rule", True)
         if name in EDIT_TOOLS and mode == "acceptEdits":
             return self._from("mode:acceptEdits", True)
@@ -252,7 +261,7 @@ class PermissionGate:
                                note=OUTSIDE_SANDBOX_ASK if approval.sandboxed is False else None)
 
     async def _safety(self, tool: Tool, args: dict[str, Any], approval: Approval, mode: str,
-                      match: SafetyMatch) -> bool | str | None:
+                      match: SafetyMatch, key: str | None = None) -> bool | str | None:
         """The decision for a call that a safety rule catches. None: the normal checks decide.
 
         Auto mode keeps its own checks: a hard rule blocks, and the model checks a protected path.
@@ -266,7 +275,7 @@ class PermissionGate:
         if match.kind == "protected":
             if mode == "bypassPermissions":
                 return None
-            return await self._ask(tool, args, approval, note=PROTECTED_ASK.format(path=approval.key), always=False,
+            return await self._ask(tool, args, approval, note=PROTECTED_ASK.format(path=key or approval.key), always=False,
                                    source="protected:user")
         if mode == "bypassPermissions":
             setting = bypass_safety_rules()
@@ -288,14 +297,14 @@ class PermissionGate:
             "tool": tool.name,
             "input": approval.input if approval.input is not None else args,
             "diff": approval.diff,
-            "rule": approval.rule if always else None,
+            "rule": approval.rule if always and approval.rule else None,
         }
         if note:
             request["reason"] = note
         decision = await self.approver(request)
         self._source = source
         if decision == "allow_always":
-            if always:
+            if always and approval.rule:
                 self.rules.add_allow(approval.rule)
                 self._source = f"{source}_always"
             return True
@@ -305,15 +314,16 @@ class PermissionGate:
         """Auto mode: the hard rules, the narrow allow rules, the fast paths, then the model."""
         auto = self.auto
         assert auto is not None
-        label = hard_rule(name, approval.key)
+        keys = approval.all_keys()
+        label = next((found for key in keys if (found := hard_rule(name, key))), None)
         if label:
             self._source = "auto:hard_rule"
             return BLOCK_MESSAGE.format(rule=label, reason="A fixed rule of auto mode blocks this action. The user "
                                                              "can run it in another permission mode.")
         allow = [r for r in self.rules.read()["allow"] if not is_broad_rule(r)]
-        if any(rule_matches(r, name, approval.key) for r in (*allow, *self.session_allow, *self.turn_allow)):
+        if all(any(rule_matches(r, name, key) for r in (*allow, *self.session_allow, *self.turn_allow)) for key in keys):
             return self._from("auto:allow_rule", True)
-        if fast_path(name, approval.key) or getattr(tool, "read_only", False):
+        if all(fast_path(name, key) for key in keys) or getattr(tool, "read_only", False):
             return self._from("auto:fast_path", True)
         if approval.sandboxed is True and sandbox_config()["autoAllowBashIfSandboxed"]:
             # The sandbox limits the command, so the model does not check it.

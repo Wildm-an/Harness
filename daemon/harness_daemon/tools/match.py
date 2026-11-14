@@ -75,14 +75,18 @@ def _reindent(old: list[str], found: list[str], new: list[str]) -> list[str] | N
 
 def find_tolerant(text: str, old: str, new: str) -> tuple[str | None, list[Match]]:
     """The matches of the first tolerant level that finds one: (level, matches). (None, []): no match."""
-    file_lines = text.replace("\r\n", "\n").split("\n")
-    old_lines, new_lines = _lines(old), _lines(new)
+    return scan_lines(text.replace("\r\n", "\n").split("\n"), _lines(old), _lines(new))
+
+
+def scan_lines(file_lines: list[str], old_lines: list[str], new_lines: list[str],
+               start: int = 0) -> tuple[str | None, list[Match]]:
+    """find_tolerant for lines, from the 0-based line ``start``. The apply_patch tool uses it for each hunk."""
     size = len(old_lines)
     if not any(line.strip() for line in old_lines):
         return None, []
     for level in (TRAILING, INDENTATION):
         matches = []
-        for i in range(len(file_lines) - size + 1):
+        for i in range(start, len(file_lines) - size + 1):
             found = file_lines[i:i + size]
             if level == TRAILING:
                 if all(f.rstrip() == o.rstrip() for f, o in zip(found, old_lines)):

@@ -151,7 +151,7 @@ import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
@@ -185,6 +185,7 @@ import { isModelUnavailable, networkModel, proposedModel, rememberModel } from "
 import { ModelChoice, isLocalProvider } from "./components/ModelChoice";
 import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
+import { setAllowBypass } from "./lib/bypass";
 import {
   LOCAL,
   closeTunnel,
@@ -569,6 +570,7 @@ export default function App() {
   // The Settings dialog (Ctrl+,): General, Local Models, Providers, and Computers.
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null); // Settings > General > "Local sandbox".
   useTimeFormat(); // A change of "Time format" shows the times again in the new format.
   const [startHarness, setStartHarness] = useState<SessionHarness | null>(null); // The operating harness of new sessions.
   const [storageOpen, setStorageOpen] = useState(false); // Settings > General > Storage > Manage.
@@ -598,15 +600,17 @@ export default function App() {
       conn.onMessage((msg) => {
         if (msg.type === "user_settings") {
           setUserSettings(msg.values);
+          setAllowBypass(msg.values.allow_bypass_permissions === true);
           setTimeFormat(toTimeFormat(msg.values.time_format)); // An older daemon has no value: 12-hour time.
           setStartHarness(msg.harness ?? null);
+          setSandboxStatus(msg.sandbox ?? null);
           setUserSettingsInfo({ path: msg.path, version: msg.version });
           // A change of the preferred models changes the name on the "Default model" chip.
           const { auto_model, online_model, offline_model } = msg.values;
           const key = JSON.stringify([auto_model, online_model, offline_model]);
           if (defaultModelKey.current !== null && defaultModelKey.current !== key) conn.send({ type: "models.list" });
           defaultModelKey.current = key;
-        } else if (msg.type === "error" && msg.ref === "user_settings.set") {
+        } else if (msg.type === "error" && (msg.ref === "user_settings.set" || msg.ref === "sandbox.set")) {
           setSettingsError(msg.message);
           try {
             conn.send({ type: "user_settings.get" }); // Show the saved values again.
@@ -3844,6 +3848,11 @@ export default function App() {
                   sendSafely({ type: "user_settings.set", values });
                 }}
                 onManageStorage={status === "open" ? () => setStorageOpen(true) : undefined}
+                sandbox={status === "open" ? sandboxStatus : null}
+                onSetSandbox={(enabled) => {
+                  setSettingsError(null);
+                  sendSafely({ type: "sandbox.set", enabled });
+                }}
               />
             )}
             {settingsPage === "harness" && (

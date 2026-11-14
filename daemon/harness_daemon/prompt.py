@@ -84,13 +84,22 @@ BASE_PROMPT_TEMPLATE = "\n\n".join((BASE_INTRO, BASE_RULES, BASE_TOOLS, BASE_AUT
 BASE_PROMPT = BASE_PROMPT_TEMPLATE.format(tool_calls=PARALLEL_TOOL_CALLS)
 
 
-def base_prompt(model: str, ablate: Collection[str] = ()) -> str:
+# BASE_TOOLS for an agent that changes files with apply_patch (setting "edit_tool"). It names no edit or write tool.
+BASE_TOOLS_PATCH = BASE_TOOLS.replace(
+    "- Use the edit tool to change part of an existing file. Use the write tool to create a file.",
+    "- Use the apply_patch tool to create, change, or delete a file.").replace(
+    "Use the edit or write tool to make each change.", "Use the apply_patch tool to make each change.")
+
+
+def base_prompt(model: str, ablate: Collection[str] = (), patch: bool = False) -> str:
     """The base prompt. A small model gets one tool call for each reply, in place of parallel calls.
 
     ``ablate``: part ids (BASE_PART_IDS) to leave out, for an evaluation run.
+    ``patch``: the agent changes files with apply_patch, not with edit and write.
     """
     calls = SMALL_MODEL_TOOL_CALLS if is_small_model(model) else PARALLEL_TOOL_CALLS
-    parts = dict(zip(BASE_PART_IDS, (BASE_INTRO, BASE_RULES, BASE_TOOLS, BASE_AUTHORITY, calls, BASE_TASK_LIST,
+    tools = BASE_TOOLS_PATCH if patch else BASE_TOOLS
+    parts = dict(zip(BASE_PART_IDS, (BASE_INTRO, BASE_RULES, tools, BASE_AUTHORITY, calls, BASE_TASK_LIST,
                                      BASE_FINISH)))
     return "\n\n".join(text for part, text in parts.items() if part not in ablate)
 
@@ -339,7 +348,7 @@ def system_prompt_parts(
     ``date``: the date of the prompt. The agent pins it, so a rebuild after midnight keeps the cache prefix.
     """
     ablate = prompt_ablate(ctx.settings)
-    parts: list[tuple[str, str]] = [("system", base_prompt(model, ablate)), ("system", "\n".join([
+    parts: list[tuple[str, str]] = [("system", base_prompt(model, ablate, getattr(ctx, "patch_mode", False))), ("system", "\n".join([
         "Environment:",
         f"- Project folder: {ctx.cwd}",
         f"- Operating system: {os_name()}",
