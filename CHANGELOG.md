@@ -3,6 +3,33 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.84 (2026-11-13)
+
+### Agent browser
+
+- When the headless agent browser needs a Chromium revision that is not installed, the daemon
+  downloads it (about 150 MB). The first browser action waits up to 50 seconds for the download,
+  then opens the page. Before, you had to run `harness-daemon --install-browser` after an update.
+
+### Document preview
+
+- Word files show true pages. A page breaks at the bottom margin, as in Word: a paragraph divides
+  between its lines, a table divides between its rows, and a heading stays with the next block.
+- The pages show on a gray ground with a gap between them, and the header shows the page count of
+  Word files. A narrow pane scales the pages and keeps the line breaks. Tab stops use their true
+  positions.
+
+### Skills
+
+- The docx, pdf, pptx, and xlsx skills are now the Anthropic Office skills (Apache License 2.0),
+  with changes for Harness. On Windows, they find LibreOffice outside the PATH, and they work
+  with no zip program.
+
+### Fixes
+
+- The bash tool, background tasks, and the ACP terminal read program output as UTF-8. Windows
+  Python does not fail on characters outside the code page now.
+
 ## 0.1.83 (2026-11-13)
 
 ### Routines
