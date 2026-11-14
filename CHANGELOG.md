@@ -3,6 +3,64 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.85 (2026-11-14)
+
+### Agent
+
+- The verify command: a project can set `verify_command` (for example `npm test`) in Settings >
+  Your Harness > Project instructions > "Verify command". It runs when a turn that changed files
+  ends, and before the recap box. On a failure the agent gets the end of the output and
+  continues, 5 times at most. The box shows the result.
+- At the tool call limit or the time budget (`max_turn_minutes`), the agent writes a short report
+  of the work that is done and the work that is left.
+- A reply that the output limit of the model cut gets a continuation. A cut tool call does not
+  run, and the model gets a note to send a smaller call.
+- Loop guards: a note after 8 edits of one file in a turn, and after 6 calls that alternate
+  between two calls. After 3 strong reminders, a question asks you to stop or continue.
+- `edit` and `write` change only a file that the agent read in this session. `edit` also finds
+  text with other line ends or indentation.
+- "Review large changes" (Settings > General, off by default): a read-only subagent reviews a
+  turn that changes 200 lines or more, and its findings go to the agent.
+- An instruction file in a subfolder (`HARNESS.md`, `AGENTS.md`, or `CLAUDE.md`) goes to the agent
+  when it first works in that folder. `AGENTS.md` also loads in the project folder.
+- A `PreCompact` hook, and a note to the agent when the date changes during a session.
+- The setting `edit_tool: "apply_patch"` gives the agent an `apply_patch` tool in the Codex format,
+  in place of `edit` and `write`. The default stays `edit`.
+
+### Permissions and safety
+
+- The safety rules apply in all modes: `sudo`, a download that runs, a critical deletion, and a
+  secret that leaves the computer ask for approval, also in bypass mode. An edit of a protected
+  path (`.git`, `.harness`, `.env`, and others) asks in "Accept edits".
+- In plan mode, an allow rule or a hook cannot change files.
+- The mode that you pick is saved outside the project folder. A project file cannot turn on
+  "Bypass permissions". The mode shows only after you turn on "Allow bypass permissions mode" in
+  Settings > General.
+- Commands of the agent do not get the daemon token, the provider keys, or other secret
+  variables.
+- Web pages and MCP results go to the model as data, with a mark that says so.
+- "Local sandbox" (Settings > General, off by default, macOS and Linux): a `bash` command writes
+  only in the project and has no network, except the domains that you allow.
+
+### Prompt box
+
+- Dictation: the microphone button at the right of Send, or Ctrl+Shift+Space. Whisper runs on this
+  computer. Settings > General > Dictation can clean up the text with a model.
+- A skill name in the prompt box shows as a link. Backspace deletes the whole link.
+
+### Window
+
+- When the window is hidden in the tray, a click on the tray icon or the taskbar icon opens the
+  start screen of a new session.
+
+### Records and evals
+
+- Each turn, model request, and tool call gets a row in the local database: tokens, times, and
+  results, with no prompt text. `session.export` gives the full transcript of a session.
+- The full output of a long command goes to a file. The model gets the start and the end, and the
+  path.
+- `python -m evals` runs 28 tasks with a real model and grades the results.
+
 ## 0.1.84 (2026-11-13)
 
 ### Agent browser
