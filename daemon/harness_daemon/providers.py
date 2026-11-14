@@ -649,6 +649,28 @@ class ModelResponse:
     # reasoning). records.py stores them.
     timing: dict[str, int | None] | None = None
 
+    @property
+    def cached_tokens(self) -> int | None:
+        """The prompt tokens that the endpoint read from its cache, or None."""
+        return cached_tokens(self.usage)
+
+
+def cached_tokens(usage: dict[str, Any] | None) -> int | None:
+    """The prompt tokens that the endpoint read from its cache. None: the endpoint does not report it.
+
+    The fields of the providers: OpenAI and most compatible servers (prompt_tokens_details.cached_tokens),
+    DeepSeek (prompt_cache_hit_tokens), and the Anthropic form (cache_read_input_tokens).
+    """
+    if not usage:
+        return None
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
+        return details["cached_tokens"]
+    for key in ("prompt_cache_hit_tokens", "cache_read_input_tokens"):
+        if isinstance(usage.get(key), int):
+            return usage[key]
+    return None
+
 
 OnText = Callable[[str], Awaitable[None]]
 
@@ -670,6 +692,10 @@ log = logging.getLogger(__name__)
 # One INFO line for each model request in the daemon log: the size, and the time to the first byte, the first
 # reasoning, the first answer, and the end. A slow model server then shows in the log.
 timing = logging.getLogger("harness.timing")
+
+
+def _or_dash(value: Any) -> Any:
+    return "-" if value is None else value
 timing.setLevel(logging.INFO)
 
 # The effort levels of the model menu (setting "effort"), and the reasoning_effort value of the API.
@@ -831,10 +857,10 @@ class ModelClient:
             await stream.close()
             since = lambda t: f"{t - started:.2f}s" if t is not None else "-"  # noqa: E731
             timing.info("model %s: %d messages, %d tools | first byte %s, first reasoning %s, first answer %s, end %s | "
-                        "prompt %s, completion %s tokens | finish %s", self.label, len(messages), len(tools), since(opened),
-                        since(first_reasoning), since(first_answer), since(time.monotonic()),
-                        (usage or {}).get("prompt_tokens", "?"), (usage or {}).get("completion_tokens", "?"),
-                        finish or "-")
+                        "prompt %s (cached %s), completion %s tokens | finish %s", self.label, len(messages), len(tools),
+                        since(opened), since(first_reasoning), since(first_answer), since(time.monotonic()),
+                        (usage or {}).get("prompt_tokens", "?"), _or_dash(cached_tokens(usage)),
+                        (usage or {}).get("completion_tokens", "?"), finish or "-")
 
         calls = []
         for key in sorted(slots):

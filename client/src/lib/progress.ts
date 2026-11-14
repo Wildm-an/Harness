@@ -4,6 +4,7 @@
 // last turn with its answer buttons.
 
 import type { ChatItem } from "../chat/state";
+import type { VerifyInfo } from "../daemon/protocol";
 
 export const PROGRESS_TOOLS = new Set(["update_plan", "wrap_up"]);
 
@@ -19,6 +20,7 @@ export interface WrapUp {
   recap: string;
   ask: string | null;
   actions: { label: string; message: string }[];
+  verify?: string | null; // A second line: the result of the verify command of the project.
 }
 
 /** True for the tools that the chat draws as blocks, not as tool rows. */
@@ -166,7 +168,16 @@ export function latestWrapUp(items: ChatItem[]): WrapUp | null {
       })
       .filter((a): a is { label: string; message: string } => a !== null)
       .slice(0, 2);
-    return { id: item.id, recap, ask, actions: ask ? actions : [] };
+    return { id: item.id, recap, ask, actions: ask ? actions : [], verify: verifyLine(item.verify) };
   }
+  return null;
+}
+
+/** The line under the recap for the verify command result, or null. */
+export function verifyLine(verify: VerifyInfo | undefined): string | null {
+  if (!verify?.command) return null;
+  if (verify.status === "passed") return `Verify command passed: ${verify.command}`;
+  if (verify.status === "timeout") return `Verify command did not end in time: ${verify.command}`;
+  if (verify.status === "failed") return `Verify command failed (exit code ${verify.exit_code ?? "?"}): ${verify.command}`;
   return null;
 }

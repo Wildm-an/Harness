@@ -1,0 +1,14 @@
+id: memory-no-save
+behavior: save_memory
+polarity: no_act
+pair: memory-save
+turns:
+  - "Add farewell(name) to hello.py. It returns 'Bye, ' plus the name."
+permission_mode: acceptEdits
+approvals: {allow: ["bash"], default: deny}
+settings: {auto_memory: true}
+timeout_s: 240
+checks:
+  # A small task with no new fact for later sessions. The agent must not save a memory.
+  - {type: memory_files, max: 0}
+  - {type: command, run: "{python} -m unittest -q test_farewell_hidden", copy_hidden: true}

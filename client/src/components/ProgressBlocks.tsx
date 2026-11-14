@@ -84,6 +84,7 @@ export function WrapUpBox({ wrap, disabled, onAction, plan }: { wrap: WrapUp; di
     <section className={`wrapup-box${plan ? " with-plan" : ""}`} aria-label="Next step">
       {plan && <div className="wrapup-plan">{plan}</div>}
       <p className="wrapup-recap">{wrap.recap}</p>
+      {wrap.verify && <p className="wrapup-verify mono">{wrap.verify}</p>}
       {wrap.ask && <p className="wrapup-ask">{wrap.ask}</p>}
       {wrap.actions.length > 0 && (
         <div className="wrapup-actions">

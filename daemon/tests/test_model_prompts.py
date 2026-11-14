@@ -79,3 +79,41 @@ def test_the_prompt_asks_for_links_that_the_user_can_click():
         prompt = base_prompt(model)
         assert "Write each URL as a Markdown link" in prompt
         assert "Do not put a URL in backticks or in a code block" in prompt
+
+
+# -- 10b: the pinned date of the prompt and the date note ----------------------------------------------------
+
+def test_a_date_change_is_a_note_and_the_system_prompt_stays(harness_home, project, fake_model, monkeypatch):
+    import asyncio
+    import datetime
+
+    from test_agent import make_agent
+
+    day = {"value": datetime.date(2026, 3, 1)}
+    monkeypatch.setattr("harness_daemon.prompt.today", lambda: day["value"])
+    fake_model.script({"text": "One."}, {"text": "Two."}, {"text": "Three."})
+    agent, _, _ = make_agent(project)
+    asyncio.run(agent.run_turn("hi"))
+    first = fake_model.requests[0]["messages"]
+    assert "- Date: 2026-03-01" in first[0]["content"]
+    day["value"] = datetime.date(2026, 3, 2)
+    agent.reload_settings(dict(agent.settings))  # A rebuild after midnight keeps the pinned date.
+    asyncio.run(agent.run_turn("again"))
+    second = fake_model.requests[1]["messages"]
+    assert second[0] == first[0]
+    assert "The date changed. Today is 2026-03-02." in str(second[-1]["content"])
+    asyncio.run(agent.run_turn("third"))
+    assert "The date changed" not in str(fake_model.requests[2]["messages"][-1]["content"])  # One time only.
+
+
+def test_a_new_context_takes_the_new_date(harness_home, project, fake_model, monkeypatch):
+    import datetime
+
+    from test_agent import make_agent
+
+    day = {"value": datetime.date(2026, 3, 1)}
+    monkeypatch.setattr("harness_daemon.prompt.today", lambda: day["value"])
+    agent, _, _ = make_agent(project)
+    day["value"] = datetime.date(2026, 3, 2)
+    agent.clear()
+    assert "- Date: 2026-03-02" in agent.system_prompt

@@ -70,6 +70,7 @@ Rules:
 - Do not list every file. The agent can list files. Describe only what is not clear from the names.
 - Do not copy the README. Point to it if it has more detail.
 - Keep the file under about 150 lines.
+- Put rules for one folder in an instruction file in that folder. Harness loads it when the agent works there.
 - Write commands exactly, in code format, so that the agent can copy them.
 - Do not put secrets, tokens, or passwords in the file.
 

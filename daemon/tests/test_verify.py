@@ -143,3 +143,34 @@ def test_a_stop_hook_message_is_a_harness_note(harness_home, project, fake_model
     assert note == "[Harness: A Stop hook asks you to continue: run the tests]"
     assert any(n.startswith("A Stop hook asked the agent to continue") for n in notices(events))
     assert not any("A plugin added a message" in n for n in notices(events))
+
+
+WRAP = {"name": "wrap_up", "arguments": {"recap": "hello.py says hi now."}}
+
+
+def test_wrap_up_with_a_failing_command_shows_no_box(harness_home, project, fake_model):
+    fake_model.script({"tool_calls": [EDIT]}, {"tool_calls": [WRAP]}, {"text": "The test fails."})
+    agent, events = setup(project, failing=True)
+    assert asyncio.run(agent.run_turn("change it")) == "end"
+    result = next(e for e in events if e["type"] == "tool.result" and e["id"] == events_call_id(events, "wrap_up"))
+    assert result["is_error"] and result["output"].startswith("The recap was not shown, because the verify")
+    assert "AssertionError: 2 != 3" in result["output"] and "verify" not in result
+    # The stop after it has no new file change: one run only.
+    assert events[-1]["verify"]["runs"] == 1
+
+
+def test_wrap_up_with_a_passing_command_names_it(harness_home, project, fake_model):
+    fake_model.script({"tool_calls": [EDIT]}, {"tool_calls": [WRAP]}, {"text": "Done."})
+    agent, events = setup(project)
+    assert asyncio.run(agent.run_turn("change it")) == "end"
+    result = next(e for e in events if e["type"] == "tool.result" and e["id"] == events_call_id(events, "wrap_up"))
+    assert not result["is_error"] and "The verify command passed:" in result["output"] and "check.py" in result["output"]
+    assert result["verify"]["status"] == "passed"
+    stored = next(m for m in agent.history if m.get("role") == "tool" and m.get("verify"))
+    assert stored["verify"]["command"].endswith("check.py")
+    assert all("verify" not in m for m in fake_model.requests[-1]["messages"])  # A client field only.
+    assert events[-1]["verify"]["runs"] == 1  # The stop after wrap_up does not run it again.
+
+
+def events_call_id(events, name):
+    return next(e["id"] for e in events if e["type"] == "tool.start" and e["name"] == name)

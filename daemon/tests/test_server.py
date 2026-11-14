@@ -1253,3 +1253,36 @@ def test_split_view_connection_takes_a_running_session(daemon, project, fake_mod
     main.send({"type": "session.adopt", "session_id": first["session_id"]})
     assert main.until("session.adopted")[0]["moved"] is False
     main.close()
+
+
+def test_project_settings_set_the_verify_command(daemon, harness_home, project, fake_model):
+    python = sys.executable.replace("\\", "/")
+    fake_model.script(
+        {"tool_calls": [{"name": "edit", "arguments": {"path": "hello.py", "old_string": "'hello'",
+                                                        "new_string": "'hi'"}}]},
+        {"text": "Done."})
+    c = Client(daemon)
+    cwd = str(project)
+    c.new_session(project)
+    c.send({"type": "project_settings.get", "cwd": cwd})
+    got = c.until("project_settings")[0]
+    assert got["settings"] == {"verify_command": None, "verify_timeout": None}
+    command = f'"{python}" -c "print(1)"'
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"verify_command": f"  {command} ",
+                                                                      "verify_timeout": 60}})
+    got = c.until("project_settings")[0]
+    assert got["saved"] is True and got["settings"] == {"verify_command": command, "verify_timeout": 60}
+    assert json.loads((project / ".harness" / "settings.json").read_text())["verify_command"] == command
+    # The open session reloads: the next turn that changes a file runs the command.
+    c.send({"type": "prompt", "text": "change it"})
+    request = c.until("permission.request")[0]
+    c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
+    events = c.until("turn.end")
+    assert events[0]["verify"]["status"] == "passed"
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"permission_mode": "bypassPermissions"}})
+    assert "'settings' must be an object" in c.until("error")[0]["message"]
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"verify_timeout": 0}})
+    assert "verify_timeout" in c.until("error")[0]["message"]
+    c.send({"type": "project_settings.set", "cwd": cwd, "settings": {"verify_command": "", "verify_timeout": None}})
+    assert c.until("project_settings")[0]["settings"] == {"verify_command": None, "verify_timeout": None}
+    assert "verify_command" not in json.loads((project / ".harness" / "settings.json").read_text())

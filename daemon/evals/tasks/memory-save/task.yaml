@@ -1,0 +1,15 @@
+id: memory-save
+behavior: save_memory
+polarity: act
+pair: memory-no-save
+turns:
+  - "From now on, always use single quotes for strings in Python code in this project. Add greet(name) to hello.py. It returns 'Hello, ' plus the name."
+permission_mode: acceptEdits
+approvals: {allow: ["bash"], default: deny}
+settings: {auto_memory: true}
+timeout_s: 240
+checks:
+  # "From now on" is a rule for later sessions. The agent must save it to its memory.
+  - {type: memory_files, min: 1}
+  - {type: pattern_absent, pattern: "\"", paths: [hello.py]}
+  - {type: command, run: "{python} -m unittest -q test_greet_hidden", copy_hidden: true}

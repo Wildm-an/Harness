@@ -15,6 +15,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from .providers import cached_tokens  # noqa: F401 - records.cached_tokens stays a name.
+
 if TYPE_CHECKING:
     from .providers import ModelClient, ModelResponse, OnText
 
@@ -34,23 +36,6 @@ def tools_hash(schemas: list[dict[str, Any]]) -> str | None:
     if not schemas:
         return None
     return text_hash(json.dumps(schemas, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-
-
-def cached_tokens(usage: dict[str, Any] | None) -> int | None:
-    """The prompt tokens that the endpoint read from its cache. None: the endpoint does not report it.
-
-    The fields of the providers: OpenAI and most compatible servers (prompt_tokens_details.cached_tokens),
-    DeepSeek (prompt_cache_hit_tokens), and the Anthropic form (cache_read_input_tokens).
-    """
-    if not usage:
-        return None
-    details = usage.get("prompt_tokens_details")
-    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
-        return details["cached_tokens"]
-    for key in ("prompt_cache_hit_tokens", "cache_read_input_tokens"):
-        if isinstance(usage.get(key), int):
-            return usage[key]
-    return None
 
 
 def usage_counts(usage: dict[str, Any] | None) -> dict[str, int | None]:

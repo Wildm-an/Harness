@@ -65,6 +65,7 @@ const VIEW_PREFIXES = [
   "harnesses.", // Settings > Operating Harness.
   "memory.", // Settings > Your Harness.
   "project_instructions.", // Settings > Your Harness.
+  "project_settings.", // Settings > Your Harness > Verify command.
   "output_styles.", // Settings > Your Harness.
   "cookbook.",
   "serve.",

@@ -8,11 +8,11 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronRight, Copy, Download, LoaderCircle, NotebookPen, Plus, Trash2, Upload } from "lucide-react";
 import { BackLink } from "./BackLink";
 import type { DaemonConnection } from "../daemon/connection";
-import type { MemoryFact, MemoryItem, MemoryType, ProjectItem, UserSettings } from "../daemon/protocol";
+import type { MemoryFact, MemoryItem, MemoryType, ProjectItem, ProjectSettings, UserSettings } from "../daemon/protocol";
 import { saveBase64File } from "../lib/tauri";
 import { useFormIntoView } from "../lib/formFocus";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { INSTRUCTION_FIELDS, Row, Switch, TextAreaField } from "./SettingsDialog";
+import { INSTRUCTION_FIELDS, Row, Switch, TextAreaField, TextField } from "./SettingsDialog";
 import { NewOutputStyleDialog, OutputStyleSelect, useOutputStyles } from "./OutputStyle";
 import { RowsPending } from "./Skeleton";
 
@@ -190,6 +190,56 @@ function useProjectInstructions(conn: DaemonConnection, cwd: string | null, conn
   };
 }
 
+/** The project settings file of one project: the verify command. Hook trust: the agent does not change it. */
+function useProjectSettings(conn: DaemonConnection, cwd: string | null, connected: boolean) {
+  const [data, setData] = useState<{ cwd: string; path: string; settings: ProjectSettings } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [savedKey, setSavedKey] = useState(0);
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+
+  useEffect(
+    () =>
+      conn.onMessage((msg) => {
+        if (msg.type === "project_settings") {
+          if (msg.cwd !== cwdRef.current) return;
+          setData({ cwd: msg.cwd, path: msg.path, settings: msg.settings });
+          setError(null);
+          if (msg.saved) setSavedKey((k) => k + 1);
+        } else if (msg.type === "error" && msg.ref?.startsWith("project_settings.")) {
+          setError(msg.message);
+        }
+      }),
+    [conn],
+  );
+
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    if (!cwd || !connected) return;
+    try {
+      conn.send({ type: "project_settings.get", cwd });
+    } catch {
+      // Not connected. The page shows the note.
+    }
+  }, [conn, cwd, connected]);
+
+  return {
+    data: data && data.cwd === cwd ? data : null,
+    error,
+    savedKey,
+    save: (settings: Partial<ProjectSettings>) => {
+      if (!cwd) return;
+      setError(null);
+      try {
+        conn.send({ type: "project_settings.set", cwd, settings });
+      } catch (e) {
+        setError(errorText(e));
+      }
+    },
+  };
+}
+
 /** The project of the project rows. The Project instructions and the Memory section show the same choice. */
 function ProjectSelect({ id, cwd, choices, projectName, disabled, onChange }: {
   id: string;
@@ -245,6 +295,7 @@ export function YourHarnessSettings({
   const cwd = project ?? currentProject ?? choices[0]?.path ?? null;
   const memory = useMemory(conn, cwd, connected);
   const notes = useProjectInstructions(conn, cwd, connected);
+  const projectSettings = useProjectSettings(conn, cwd, connected);
   const styles = useOutputStyles(conn, connected);
   const [newStyle, setNewStyle] = useState(false);
   useEffect(() => {
@@ -256,10 +307,10 @@ export function YourHarnessSettings({
     setStatus("saved");
     const timer = window.setTimeout(() => setStatus(""), 1500);
     return () => window.clearTimeout(timer);
-  }, [values, notes.savedKey]);
+  }, [values, notes.savedKey, projectSettings.savedKey]);
   useEffect(() => {
-    if (error || notes.error) setStatus("");
-  }, [error, notes.error]);
+    if (error || notes.error || projectSettings.error) setStatus("");
+  }, [error, notes.error, projectSettings.error]);
   const projectName = choices.find((p) => p.path === cwd)?.name ?? cwd?.split(/[\\/]/).filter(Boolean).pop() ?? "";
 
   useEffect(() => {
@@ -368,6 +419,29 @@ export function YourHarnessSettings({
       {notes.error && (
         <p className="form-error" role="alert">
           {notes.error}
+        </p>
+      )}
+      <Row
+        label="Verify command"
+        help="Harness runs this command when the agent ends a turn that changed files. If it fails, the agent gets the end of the output and continues. Empty: no check. Applies to this project. An ACP harness does not run it."
+        htmlFor="setting-verify-command"
+      >
+        <TextField
+          key={cwd ?? ""}
+          id="setting-verify-command"
+          value={projectSettings.data?.settings.verify_command ?? ""}
+          placeholder="npm test"
+          maxLength={2000}
+          disabled={off || !projectSettings.data}
+          onSave={(v) => {
+            setStatus("saving");
+            projectSettings.save({ verify_command: v || null });
+          }}
+        />
+      </Row>
+      {projectSettings.error && (
+        <p className="form-error" role="alert">
+          {projectSettings.error}
         </p>
       )}
 

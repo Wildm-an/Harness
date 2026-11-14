@@ -89,6 +89,9 @@ def answer(task: Task, request: dict[str, Any]) -> dict[str, Any]:
     if kind == "question":
         answers = task.answers.get("question")
         values = None if answers in (None, "skip") else answers
+        if isinstance(answers, str) and answers != "skip":
+            # One text answers each question of the card: the task cannot know the question texts.
+            values = {str(q.get("question")): answers for q in request.get("questions") or [] if q.get("question")}
         return {"type": "question.reply", "request_id": request["request_id"], "answers": values}
     if kind == "plan":
         reply = {"type": "plan.reply", "request_id": request["request_id"],

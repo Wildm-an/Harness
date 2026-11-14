@@ -10,6 +10,10 @@ import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..sandbox import SandboxPolicy
 
 
 @dataclass(frozen=True)
@@ -71,8 +75,8 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 def shell_argv(shell: ShellInfo, command: str) -> list[str]:
     """The process arguments that run ``command`` in ``shell``.
 
-    All places that start a shell command use it (bash, tasks, servers, hooks, ACP terminals). A sandbox
-    can later wrap the command at this one point.
+    All places that start a shell command use it (bash, tasks, servers, hooks, ACP terminals). run_command
+    puts the sandbox prefix before it (sandbox.wrap).
     """
     return [*shell.argv, command]
 
@@ -158,13 +162,19 @@ class CommandResult:
 
 
 async def run_command(command: str, cwd: Path, shell: ShellInfo, timeout: float,
-                      env: dict[str, str] | None = None) -> CommandResult:
+                      env: dict[str, str] | None = None, sandbox: SandboxPolicy | None = None) -> CommandResult:
     """Run ``command`` in ``shell``. Stdout and stderr go to one stream.
 
     ``env``: the environment of the process. Default: command_env().
+    ``sandbox``: the policy of the sandbox (sandbox.py). The sandbox program of the platform then starts the shell.
     On a timeout or a cancel, the process and all its children stop.
     """
     env = env if env is not None else command_env()
+    argv = shell_argv(shell, command)
+    if sandbox is not None:
+        from ..sandbox import wrap
+
+        argv = wrap(argv, sandbox)
     kwargs: dict = {
         "cwd": str(cwd),
         "stdin": subprocess.DEVNULL,
@@ -177,7 +187,7 @@ async def run_command(command: str, cwd: Path, shell: ShellInfo, timeout: float,
     else:
         kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen(shell_argv(shell, command), **kwargs)
+    proc = subprocess.Popen(argv, **kwargs)
     reader = asyncio.ensure_future(asyncio.to_thread(proc.communicate))
     try:
         out, _ = await asyncio.wait_for(asyncio.shield(reader), timeout)

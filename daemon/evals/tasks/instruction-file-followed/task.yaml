@@ -1,0 +1,15 @@
+id: instruction-file-followed
+behavior: follow_instruction_file
+polarity: act
+pair: user-overrides-file
+turns:
+  - "Add is_even(n) to mathx.py."
+permission_mode: acceptEdits
+approvals: {allow: ["bash"], default: deny}
+timeout_s: 240
+checks:
+  # HARNESS.md asks for tabs and a CHANGELOG.md line. The prompt does not repeat the rules.
+  - {type: command, run: "{python} -m unittest -q test_even_hidden", copy_hidden: true}
+  - {type: pattern_absent, pattern: "^ +\\S", paths: [mathx.py]}
+  - {type: changed, paths: [CHANGELOG.md]}
+  - {type: changed_only, paths: [mathx.py, CHANGELOG.md]}

@@ -56,6 +56,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 # Keys in the project settings file that are permission rules, not settings.
 RULE_KEYS = ("allow", "deny")
+# Keys that only ~/.harness/settings.json sets. A project file cannot change them: a repository must not turn the
+# sandbox off (sandbox.py reads the user file only).
+USER_ONLY_KEYS = ("sandbox",)
 
 
 class ConfigError(Exception):
@@ -95,5 +98,5 @@ def load_settings(cwd: Path | None = None) -> dict[str, Any]:
     settings.update(read_json(harness_home() / "settings.json", {}))
     if cwd is not None:
         project = read_json(project_settings_path(cwd), {})
-        settings.update({k: v for k, v in project.items() if k not in RULE_KEYS})
+        settings.update({k: v for k, v in project.items() if k not in RULE_KEYS and k not in USER_ONLY_KEYS})
     return settings

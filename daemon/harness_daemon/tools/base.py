@@ -102,6 +102,8 @@ class ToolResult:
     # True: the tool applied the output limit itself (head and tail, or pages). The agent must not cut the
     # output again, because a second cut from the end removes the tail, the exit code, and the paging hint.
     limited: bool = False
+    # The verify command result of the turn, on a wrap_up result: the client shows it in the box.
+    verify: dict[str, Any] | None = None
 
 
 @dataclass
@@ -114,6 +116,10 @@ class Approval:
     example, ``preview_start`` uses the ``server(<command>)`` rules of the dev servers.
     ``input`` replaces the tool arguments in the request to the user, if the arguments do
     not show what the tool does. For example, ``preview_start`` shows the server command.
+    ``sandboxed`` is for a bash command while the sandbox is ready (sandbox.py): True if the command runs in
+    the sandbox, False if it runs outside. None: the sandbox is off or not available.
+    ``sandbox_escape`` is True if the model asked to run the command outside the sandbox
+    (``dangerouslyDisableSandbox``).
     """
 
     key: str
@@ -121,6 +127,8 @@ class Approval:
     diff: str | None = None
     tool: str | None = None
     input: dict[str, Any] | None = None
+    sandboxed: bool | None = None
+    sandbox_escape: bool = False
 
 
 class Tool:

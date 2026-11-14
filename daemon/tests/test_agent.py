@@ -111,7 +111,7 @@ def test_long_command_output_keeps_its_tail_and_exit_code(harness_home, project,
 
     lines = "\n".join(f"line {i}" for i in range(5000)) + "\nLAST LINE"
 
-    async def fake_run(command, cwd, shell, timeout):
+    async def fake_run(command, cwd, shell, timeout, **kwargs):  # kwargs: env and sandbox.
         return CommandResult(output=lines, returncode=1, timed_out=False)
 
     monkeypatch.setattr("harness_daemon.tools.bash.run_command", fake_run)

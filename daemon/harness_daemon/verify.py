@@ -44,6 +44,15 @@ TIMEOUT_NOTICE = ("The verify command did not end in {timeout} s and was stopped
 LIMIT_NOTICE = "The verify command still fails after {runs} runs: {command}. The turn ended."
 BLOCKED_NOTICE = "A deny rule or a safety rule blocks the verify command: {command}. The Harness did not run it."
 
+# Hook point B: the gate also runs before the recap box of wrap_up, so that the recap is true.
+WRAP_UP_FAILED = "The recap was not shown, because the verify command failed."
+WRAP_UP_DONE = "Shown to the user. {state} Now write your final answer."
+WRAP_UP_STATES = {
+    "passed": "The verify command passed: {command}.",
+    "failed": "The verify command failed (exit code {exit_code}): {command}. Say that in your final answer.",
+    "timeout": "The verify command did not end in {timeout} s: {command}. Say that in your final answer.",
+}
+
 
 @dataclass
 class VerifyResult:
@@ -101,6 +110,14 @@ async def run_verify(command: str, cwd: Path, shell: ShellInfo, timeout: int, ta
     if result.returncode:
         return VerifyResult(command, "failed", result.returncode, seconds, output_tail(result.output, tail_chars))
     return VerifyResult(command, "passed", 0, seconds, "")
+
+
+def wrap_up_output(result: VerifyResult, timeout: int) -> str:
+    """The wrap_up result after a verify run in the turn: it names the state, so the final answer is true."""
+    state = WRAP_UP_STATES.get(result.status)
+    if state is None:
+        return WRAP_UP_DONE.format(state="").replace("  ", " ")
+    return WRAP_UP_DONE.format(state=state.format(command=result.command, exit_code=result.exit_code, timeout=timeout))
 
 
 def failure_note(result: VerifyResult, passed_before: bool) -> str:

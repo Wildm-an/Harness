@@ -21,9 +21,10 @@ For each tool call that needs approval, the first match decides:
    - a shell command that only reads, with no shell operators: `ls`, `cat`, `rg`, `git status`, `git diff`, `git log`, a version probe, and others. A read of a credential file (`~/.ssh`, `~/.aws`, `.env`, `.npmrc`, and others), `env`, `printenv`, `rg --pre`, and `git diff --output` go to the model.
    - a file change in the project, except in the protected folders and files (`.git`, `.harness`, `.claude`, `.github`, `.vscode`, `.idea`, `.husky`, `.env*`, `.mcp.json`, `.npmrc`, shell profiles)
    - a Browser pane page on this computer (`localhost`, `127.0.0.1`)
+   - a `bash` command in the sandbox, when the sandbox is on and `autoAllowBashIfSandboxed` is true (`docs/SANDBOX.md`)
 5. **The model** checks all other calls: other shell commands, protected files, MCP tools, and other pages. Its answer is `allow`, `block`, or `ask`.
 
-Harness has no sandbox. Thus every shell command that is not clearly read-only goes to the model. The reference plugin (dsh-auto-mode) runs commands in a sandbox, and its model checks fewer calls.
+With the sandbox off (the default), every shell command that is not clearly read-only goes to the model. With the sandbox on (`docs/SANDBOX.md`), a sandboxed command needs no model check: it has no network, and it writes only in the allowed folders. A command outside the sandbox goes to the model. On Windows, Harness has no sandbox yet.
 
 ## What the model sees
 

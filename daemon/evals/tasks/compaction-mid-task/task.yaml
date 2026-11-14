@@ -1,0 +1,22 @@
+id: compaction-mid-task
+behavior: recall_after_compaction
+polarity: act
+pair: null
+turns:
+  - "Read logs/day1.log. What is the last time stamp?"
+  - "Read logs/day2.log. What is the last time stamp?"
+  - "Read logs/day3.log. What is the last time stamp?"
+  - "Read logs/day4.log. What is the last time stamp?"
+  - "Rename the class UserRepo to UserRepository in the whole project. Then run the tests."
+setup:
+  - "{python} make_logs.py"
+permission_mode: acceptEdits
+approvals: {allow: ["bash"], default: deny}
+settings: {context_length: 24000}
+timeout_s: 900
+require:
+  # Compaction keeps the last 4 turns, so a compaction can remove turns only in turn 5: the rename.
+  - {type: event, event: context.compacted, min: {removed_messages: 1}}
+checks:
+  - {type: pattern_absent, pattern: "\\bUserRepo\\b", paths: ["*.py", "*.md"]}
+  - {type: command, run: "{python} -m unittest -q", copy_hidden: true}

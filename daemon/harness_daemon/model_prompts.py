@@ -77,7 +77,7 @@ SMALL_MODEL_TOOL_CALLS = """\
 Tool calls:
 - Make one tool call in each reply. Wait for its result before you make the next call.
 - When a result is useful, use it for the next step. Do not search again in a loop.
-- If the request is not clear, ask the user before you read files or make changes."""
+- If the request can mean two different tasks, ask the user which one before you change files."""
 
 # Hermes Agent TOOL_USE_ENFORCEMENT_GUIDANCE.
 TOOL_USE_ENFORCEMENT = """\
@@ -95,20 +95,20 @@ EXECUTION_DISCIPLINE = """\
 <tool_persistence>
 - Use tools when they make the result more correct, more complete, or better supported.
 - Do not stop early when one more tool call would make the result much better.
-- If a tool gives an empty, partial, or very narrow result, try a broader or different query before you decide.
+- If a tool gives an empty or partial result, try one different query before you decide.
 - Continue to call tools until the task is complete and you checked the result.
 </tool_persistence>
 
-<mandatory_tool_use>
-Do not answer these from memory or from mental calculation. Use a tool:
-- Arithmetic and calculations: use bash.
+<facts_from_tools>
+Get these facts from a tool, because your memory of them can be wrong or old:
+- Calculations with large numbers or many steps: use bash.
 - Hashes, encodings, and checksums: use bash.
-- The current time and date: use bash.
+- The current time: use bash. The Environment section gives the date.
 - System state (operating system, CPU, memory, disk, ports, processes): use bash.
 - File contents, sizes, and line counts: use read or grep.
 - Git history, branches, and diffs: use bash.
 Your memory and the instructions of the user describe the user. They do not describe the computer that you run on.
-</mandatory_tool_use>
+</facts_from_tools>
 
 <act_dont_ask>
 When a question has one clear default meaning, act on it. Do not ask the user first. For example:
@@ -128,7 +128,7 @@ Before your final answer, check these items:
 - Correctness: the result satisfies each requirement.
 - Grounding: tool output or the given context supports each fact.
 - Format: the result has the format that the user asked for.
-- Safety: before a step with side effects (file writes, commands, API calls), confirm its scope.
+- Scope: each file write, command, and API call stays in the scope of the request.
 - Completion: "done" means that you checked each requirement that the user named, not only some of them.
 </verification>
 
@@ -151,9 +151,9 @@ does not match a format.
 </missing_context>"""
 
 TOOL_LINES = {
-    "- Arithmetic and calculations: use bash.\n": ("bash",),
+    "- Calculations with large numbers or many steps: use bash.\n": ("bash",),
     "- Hashes, encodings, and checksums: use bash.\n": ("bash",),
-    "- The current time and date: use bash.\n": ("bash",),
+    "- The current time: use bash. The Environment section gives the date.\n": ("bash",),
     "- System state (operating system, CPU, memory, disk, ports, processes): use bash.\n": ("bash",),
     "- File contents, sizes, and line counts: use read or grep.\n": ("read", "grep"),
     "- Git history, branches, and diffs: use bash.\n": ("bash",),

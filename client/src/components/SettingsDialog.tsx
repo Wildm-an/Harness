@@ -1157,7 +1157,7 @@ export function TextAreaField({ id, value, placeholder, disabled, rows = 3, onSa
   );
 }
 
-function TextField({ id, value, placeholder, disabled, maxLength, onSave }: {
+export function TextField({ id, value, placeholder, disabled, maxLength, onSave }: {
   id: string;
   value: string;
   placeholder?: string;

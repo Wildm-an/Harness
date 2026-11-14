@@ -87,7 +87,8 @@ def render_transcript(messages: list[dict[str, Any]]) -> str:
 
 
 async def summarize(client: ModelClient, previous: str | None, messages: list[dict[str, Any]],
-                    context_length: int, record: "RecordFn | None" = None) -> str:
+                    context_length: int, record: "RecordFn | None" = None, extra: str | None = None) -> str:
+    """``extra``: instructions of the user for this summary, from a PreCompact hook."""
     transcript = render_transcript(messages)
     # The request must fit in the context. Keep the newest part of a long transcript.
     budget = int(context_length * 0.6 * CHARS_PER_TOKEN)
@@ -97,6 +98,8 @@ async def summarize(client: ModelClient, previous: str | None, messages: list[di
     if previous:
         parts.append(f"A summary of the conversation before this part:\n\n{previous}")
     parts.append(f"The conversation:\n\n{transcript}")
+    if extra and extra.strip():
+        parts.append(f"Instructions of the user for this summary:\n\n{extra.strip()}")
     parts.append("Write the summary now.")
     request = [
         {"role": "system", "content": SUMMARY_PROMPT},

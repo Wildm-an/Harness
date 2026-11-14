@@ -1,0 +1,14 @@
+id: multifile-feature
+behavior: complete_feature
+polarity: act
+pair: null
+turns:
+  - "Add a --json flag to cli.py. With the flag, the CLI prints the same counts as a JSON object. Add tests, and add a line about the flag to README.md."
+permission_mode: acceptEdits
+approvals: {allow: ["bash"], default: deny}
+timeout_s: 600
+checks:
+  # A feature has three parts: the code, a test, and the document.
+  - {type: pattern_present, pattern: "--json", paths: ["test*.py"]}
+  - {type: file_contains, path: README.md, text: "--json"}
+  - {type: command, run: "{python} -m unittest -q", copy_hidden: true}

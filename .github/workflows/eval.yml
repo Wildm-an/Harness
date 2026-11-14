@@ -1,0 +1,108 @@
+# The evals of the agent harness with a real model (daemon/evals). Report only: the result does not gate a release.
+#
+# Start it by hand (Actions > eval > Run workflow). It has no schedule and no pull_request trigger, so a pull request
+# from a fork cannot start it or read its secret. Only a person with write access to the repository can start it.
+#
+# Set these in Settings > Secrets and variables > Actions:
+# - variable HARNESS_EVAL_BASE_URL: the OpenAI-compatible endpoint, for example https://openrouter.ai/api/v1
+# - variable HARNESS_EVAL_MODEL: the default model name (the "model" input replaces it)
+# - variable HARNESS_EVAL_KIND: optional, the provider kind (default: from the URL)
+# - secret HARNESS_EVAL_API_KEY: the API key. It goes to the daemons through the environment, never to a file.
+#
+# Cost: each trial sends the full prompt and tool list in each request. Start with the smoke set and 1 trial.
+# The agent runs real shell commands in the workspace of each trial. The GitHub runner is the sandbox.
+
+name: eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "smoke (8 tasks), all (28 tasks), tasks (the ids below), or classifier (the labeled command set)"
+        type: choice
+        options: [smoke, all, tasks, classifier]
+        default: smoke
+      tasks:
+        description: "Task ids or case ids, with commas (for suite tasks or classifier)"
+        type: string
+        default: ""
+      trials:
+        description: "Trials for each task or case"
+        type: string
+        default: "1"
+      model:
+        description: "Model name (empty: the variable HARNESS_EVAL_MODEL)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      HARNESS_EVAL_BASE_URL: ${{ vars.HARNESS_EVAL_BASE_URL }}
+      HARNESS_EVAL_KIND: ${{ vars.HARNESS_EVAL_KIND }}
+      HARNESS_EVAL_API_KEY: ${{ secrets.HARNESS_EVAL_API_KEY }}
+      EVAL_MODEL: ${{ inputs.model || vars.HARNESS_EVAL_MODEL }}
+      EVAL_SUITE: ${{ inputs.suite }}
+      EVAL_SELECT: ${{ inputs.tasks }}
+      EVAL_TRIALS: ${{ inputs.trials }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: daemon/pyproject.toml
+
+      - name: Install the daemon
+        run: python -m pip install -e "./daemon[dev]"
+
+      - name: Check the task files
+        working-directory: daemon
+        run: python -m evals lint
+
+      - name: Run the evals
+        working-directory: daemon
+        shell: bash
+        run: |
+          if [ -z "$HARNESS_EVAL_BASE_URL" ] || [ -z "$EVAL_MODEL" ]; then
+            echo "Set the variables HARNESS_EVAL_BASE_URL and HARNESS_EVAL_MODEL." >&2
+            exit 1
+          fi
+          case "$EVAL_TRIALS" in ''|*[!0-9]*) echo "trials must be a number." >&2; exit 1 ;; esac
+          model=(--base-url "$HARNESS_EVAL_BASE_URL" --model-name "$EVAL_MODEL" --api-key-env HARNESS_EVAL_API_KEY
+                 --trials "$EVAL_TRIALS" --out evals/results/ci)
+          if [ -n "$HARNESS_EVAL_KIND" ]; then model+=(--kind "$HARNESS_EVAL_KIND"); fi
+          case "$EVAL_SUITE" in
+            classifier) python -m evals classifier "${model[@]}" ${EVAL_SELECT:+--cases "$EVAL_SELECT"} ;;
+            smoke) python -m evals run "${model[@]}" --smoke ;;
+            tasks) python -m evals run "${model[@]}" --tasks "$EVAL_SELECT" ;;
+            *) python -m evals run "${model[@]}" ;;
+          esac
+
+      - name: Show the summary
+        if: always()
+        working-directory: daemon
+        shell: bash
+        run: |
+          if [ -f evals/results/ci/summary.md ]; then
+            { echo "## Eval: $EVAL_SUITE, $EVAL_MODEL"; echo; cat evals/results/ci/summary.md; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: daemon/evals/results/ci
+          if-no-files-found: ignore
+          retention-days: 30

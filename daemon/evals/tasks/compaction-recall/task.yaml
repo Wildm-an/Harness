@@ -1,0 +1,24 @@
+id: compaction-recall
+behavior: recall_after_compaction
+polarity: act
+pair: null
+turns:
+  - "Remember two facts for later in this session: the release codename is BLUE HERON, and the release port is 8443. Do not write them to a file yet. Reply with OK."
+  - "Read logs/day1.log. How many lines have ERROR?"
+  - "Read logs/day2.log. How many lines have ERROR?"
+  - "Read logs/day3.log. How many lines have ERROR?"
+  - "Read logs/day4.log. How many lines have ERROR?"
+  - "Write the release codename and the release port to release.txt, one per line."
+setup:
+  - "{python} make_logs.py"
+permission_mode: acceptEdits
+approvals: {allow: ["bash"], default: deny}
+settings: {context_length: 24000}
+timeout_s: 600
+require:
+  # A valid trial has a compaction that removed the first turn from the context.
+  - {type: event, event: context.compacted, min: {removed_messages: 1}}
+checks:
+  - {type: tool_not_called, name: [edit, write, bash], turn: 1}
+  - {type: pattern_present, pattern: "blue heron", paths: [release.txt], ignore_case: true}
+  - {type: pattern_present, pattern: "8443", paths: [release.txt]}

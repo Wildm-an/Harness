@@ -1,7 +1,7 @@
 id: clear-acts-no-ask
 behavior: act_when_clear
 polarity: no_act
-pair: null
+pair: ambiguous-asks
 smoke: true
 turns:
   - "Change the database port to 5433 in config/dev.yaml."

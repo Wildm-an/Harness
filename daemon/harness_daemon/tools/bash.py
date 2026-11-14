@@ -2,8 +2,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import Approval, Tool, ToolContext, ToolError, ToolResult, get_int, truncate
-from .shell import run_command
+from .. import sandbox
+from .base import Approval, Tool, ToolContext, ToolError, ToolResult, get_bool, get_int, truncate
+from .shell import command_env, run_command
+
+ESCAPE = "dangerouslyDisableSandbox"  # The Claude Code name.
+ESCAPE_PARAMETER = {
+    "type": "boolean",
+    "description": "Run the command outside the sandbox. Use it only after the sandbox caused a failure. The user "
+                   "approves each command outside the sandbox. Optional.",
+}
+SANDBOX_HINT = ("[The command ran in the sandbox: no network, and writes only in the project folder and the temp "
+                "folder. If the sandbox caused the failure, run the command again with dangerouslyDisableSandbox: "
+                "true. The user then approves it.]")
+SANDBOX_HINT_LOCKED = ("[The command ran in the sandbox: no network, and writes only in the project folder and the "
+                       "temp folder. If the sandbox caused the failure, tell the user. The settings do not allow "
+                       "commands outside the sandbox.]")
+UNAVAILABLE_ERROR = ("The sandbox is on, but it is not available: {reason} The setting sandbox.failIfUnavailable is "
+                     "true, so the command did not run. Tell the user.")
 
 
 class BashTool(Tool):
@@ -28,6 +44,21 @@ class BashTool(Tool):
         "required": ["command"],
     }
     needs_approval = True
+
+    @staticmethod
+    def _sandbox() -> tuple[dict[str, Any], dict[str, str]]:
+        config = sandbox.sandbox_config()
+        return config, sandbox.sandbox_status(config)
+
+    def schema(self, ctx: ToolContext) -> dict[str, Any]:
+        result = super().schema(ctx)
+        config, status = self._sandbox()
+        if status["state"] == "ready" and config["allowUnsandboxedCommands"]:
+            # The parameter is in the schema only while the sandbox is on, as in Claude Code.
+            parameters = dict(self.parameters)
+            parameters["properties"] = {**self.parameters["properties"], ESCAPE: ESCAPE_PARAMETER}
+            result["function"]["parameters"] = parameters
+        return result
 
     def describe(self, ctx: ToolContext) -> str:
         shell = ctx.shell.name
@@ -59,6 +90,12 @@ class BashTool(Tool):
             "- The command does not get secret environment variables (for example names that end with _TOKEN or "
             "_API_KEY), unless the user keeps them. A login error can have this cause: tell the user.",
         ]
+        config, status = self._sandbox()
+        if status["state"] == "ready":
+            then = ("run the command again with dangerouslyDisableSandbox: true. The user then approves it."
+                    if config["allowUnsandboxedCommands"] else "tell the user.")
+            lines.append("- The command runs in a sandbox: it has no network, and it can write only in the project "
+                         f"folder and the temp folder. If the sandbox blocks a necessary action, {then}")
         if shell == "powershell":
             lines.append("- This is Windows PowerShell 5.1: && and || do not work. Use ; to run commands in sequence.")
         elif shell == "cmd":
@@ -77,7 +114,19 @@ class BashTool(Tool):
             # Models trained on Codex send apply_patch as a shell command. Tell them which tool to use.
             raise ToolError("This shell has no apply_patch command. Use the edit tool to change a file, and the "
                             "write tool to create one.")
-        return Approval(key=command, rule=f"bash({command})")
+        config, status = self._sandbox()
+        if config["enabled"] and status["state"] == "unavailable" and config["failIfUnavailable"]:
+            raise ToolError(UNAVAILABLE_ERROR.format(reason=status["reason"]))
+        if status["state"] != "ready":
+            return Approval(key=command, rule=f"bash({command})")
+        return Approval(key=command, rule=f"bash({command})", sandboxed=self._in_sandbox(command, args, config),
+                        sandbox_escape=get_bool(args, ESCAPE))
+
+    @staticmethod
+    def _in_sandbox(command: str, args: dict[str, Any], config: dict[str, Any]) -> bool:
+        """True if the command runs in the sandbox, while the sandbox is ready. A background task runs outside it."""
+        return not (get_bool(args, ESCAPE) or args.get("run_in_background") is True
+                    or sandbox.is_excluded(command, config))
 
     async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         command = self._command(args)
@@ -86,7 +135,12 @@ class BashTool(Tool):
         limit = ctx.settings["bash_max_timeout"]
         timeout = get_int(args, "timeout", ctx.settings["bash_timeout"])
         timeout = min(max(timeout, 1), limit)
-        result = await run_command(command, ctx.cwd, ctx.shell, timeout)
+        config, status = self._sandbox()
+        policy = None
+        if status["state"] == "ready" and self._in_sandbox(command, args, config):
+            policy = sandbox.prepare_run(ctx.cwd, ctx.output_dir, config)
+        env = command_env(sandbox.sandbox_env(policy)) if policy is not None else None
+        result = await run_command(command, ctx.cwd, ctx.shell, timeout, env=env, sandbox=policy)
         output = result.output.rstrip("\n") or "(no output)"
         # Keep the end of long command output. Errors are usually at the end.
         output = truncate(output, ctx.settings["max_output_chars"], keep_tail=True, spill_dir=ctx.output_dir)
@@ -94,7 +148,10 @@ class BashTool(Tool):
             return ToolResult(f"{output}\n[The command timed out after {timeout} seconds and was stopped.]",
                               is_error=True, limited=True)
         if result.returncode:
-            return ToolResult(f"{output}\n[Exit code: {result.returncode}]", is_error=True, limited=True)
+            hint = ""
+            if policy is not None:
+                hint = "\n" + (SANDBOX_HINT if config["allowUnsandboxedCommands"] else SANDBOX_HINT_LOCKED)
+            return ToolResult(f"{output}\n[Exit code: {result.returncode}]{hint}", is_error=True, limited=True)
         return ToolResult(output, limited=True)
 
     def _start_task(self, command: str, args: dict[str, Any], ctx: ToolContext) -> ToolResult:

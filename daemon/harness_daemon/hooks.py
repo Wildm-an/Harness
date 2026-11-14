@@ -4,7 +4,8 @@ The ``hooks`` key of ``~/.harness/settings.json`` and of ``<project>/.harness/se
 
     { "hooks": {
         "PreToolUse": [ { "matcher": "Bash|Edit", "hooks": [ { "type": "command", "command": "...", "timeout": 60 } ] } ],
-        "PostToolUse": [...], "UserPromptSubmit": [...], "Stop": [...], "SessionStart": [...] } }
+        "PostToolUse": [...], "UserPromptSubmit": [...], "Stop": [...], "SessionStart": [...],
+        "PreCompact": [...] } }
 
 The events:
 
@@ -17,10 +18,13 @@ The events:
 - ``PostToolUse``: after a tool call. Exit code 2 or ``{"decision": "block"}`` gives the reason to the agent.
 - ``Stop``: the agent is about to end its turn. Exit code 2 or ``{"decision": "block"}`` makes it
   continue, with the reason as a message.
+- ``PreCompact``: before a summary of the old messages (``trigger``: ``auto`` or ``manual``). The output
+  goes to the summary request as instructions of the user. A block cannot stop the summary: the client
+  shows the reason as a warning.
 
 A hook gets the event as JSON on stdin: ``hook_event_name``, ``cwd``, ``session_id``,
-``permission_mode``, and for the event ``prompt``, ``tool_name``, ``tool_input``, ``tool_response``, or
-``stop_hook_active``. ``tool_name`` is the Claude Code name (``Bash``, ``Edit``) when the tool has one,
+``permission_mode``, and for the event ``prompt``, ``tool_name``, ``tool_input``, ``tool_response``,
+``stop_hook_active``, or ``trigger``, ``custom_instructions``, ``context_tokens``, and ``context_length``. ``tool_name`` is the Claude Code name (``Bash``, ``Edit``) when the tool has one,
 and ``harness_tool_name`` is the Harness name. A matcher is a regular expression for one of these names.
 The command runs in the shell of the session with the environment variables ``HARNESS_PROJECT_DIR``
 and ``CLAUDE_PROJECT_DIR``. Exit code 0 is a success. Other exit codes are errors that do not block.
@@ -44,7 +48,7 @@ from .tools.shell import ShellInfo, _kill_tree, shell_argv
 
 log = logging.getLogger("harness.hooks")
 
-EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
+EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "PreCompact")
 TOOL_EVENTS = ("PreToolUse", "PostToolUse")
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 600
@@ -195,7 +199,7 @@ class CommandHooks:
             except ValueError:
                 data = None
         if not isinstance(data, dict):
-            if out and event in ("SessionStart", "UserPromptSubmit"):
+            if out and event in ("SessionStart", "UserPromptSubmit", "PreCompact"):
                 outcome.context.append(out)
             return
         specific = data.get("hookSpecificOutput") if isinstance(data.get("hookSpecificOutput"), dict) else {}

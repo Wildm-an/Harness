@@ -1,0 +1,14 @@
+id: wrong-path-recover
+behavior: recover_from_tool_error
+polarity: act
+pair: null
+turns:
+  - "Add a docstring to slugify() in utils/strings.py."
+permission_mode: acceptEdits
+approvals: {allow: ["bash"], default: deny}
+timeout_s: 240
+checks:
+  # The path in the prompt is wrong. The function is in lib/text_utils.py. The agent must find it.
+  - {type: command, run: "{python} -m unittest -q test_docstring_hidden", copy_hidden: true}
+  - {type: file_absent, path: utils/strings.py}
+  - {type: changed_only, paths: [lib/text_utils.py]}

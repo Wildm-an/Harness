@@ -5,7 +5,8 @@ task.yaml keys:
 - turns: the prompts, in order
 - permission_mode: the mode of the session (default "default")
 - approvals: {"allow": [rules], "deny": [rules], "default": "allow" | "deny"} for permission cards
-- answers: {"question": {question text: answer} or "skip", "plan": "accept" | "reject" | "revise", "plan_mode": mode}
+- answers: {"question": {question text: answer}, one answer text for each question, or "skip",
+  "plan": "accept" | "reject" | "revise", "plan_mode": mode}
 - settings: project settings for .harness/settings.json of the workspace (for example max_tool_calls)
 - setup: shell commands that run in the workspace before the trial (for example "git init")
 - timeout_s: the time limit of the trial
@@ -80,7 +81,8 @@ def lint(tasks: list[Task]) -> list[str]:
     from .checks import CHECKS
 
     problems: list[str] = []
-    ids = {t.id for t in tasks}
+    by_id = {t.id: t for t in tasks}
+    ids = set(by_id)
     for t in tasks:
         if t.id != t.folder.name:
             problems.append(f"{t.id}: the id must be the folder name ({t.folder.name}).")
@@ -94,9 +96,24 @@ def lint(tasks: list[Task]) -> list[str]:
             problems.append(f"{t.id}: no checks.")
         if t.pair and t.pair not in ids:
             problems.append(f"{t.id}: the pair {t.pair} does not exist.")
+        elif t.pair:
+            other = by_id[t.pair]
+            if other.pair != t.id:
+                problems.append(f"{t.id}: the pair {t.pair} must name {t.id} as its pair.")
+            if other.polarity == t.polarity:
+                problems.append(f"{t.id}: the pair {t.pair} must have the other polarity.")
         if not t.workspace.is_dir():
             problems.append(f"{t.id}: no workspace folder.")
-        for check in [*t.checks, *t.require]:
+        for check in _all_checks([*t.checks, *t.require]):
             if check.get("type") not in CHECKS:
                 problems.append(f"{t.id}: unknown check type {check.get('type')!r}.")
     return problems
+
+
+def _all_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The checks, with the checks in an any_of check."""
+    out = []
+    for check in checks:
+        out.append(check)
+        out.extend(_all_checks(check.get("checks") or []))
+    return out

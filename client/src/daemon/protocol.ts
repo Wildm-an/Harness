@@ -2,7 +2,7 @@
 
 export type Decision = "allow_once" | "allow_always" | "deny";
 
-export type StopReason = "end" | "max_tool_calls" | "max_time" | "denied" | "interrupted" | "error" | "blocked"; // blocked: a plugin ended the turn. max_time: the time budget (max_turn_minutes).
+export type StopReason = "end" | "max_tool_calls" | "max_time" | "loop" | "denied" | "interrupted" | "error" | "blocked"; // blocked: a plugin ended the turn. max_time: the time budget (max_turn_minutes). loop: the agent repeated the same tool calls.
 
 export interface Usage {
   prompt_tokens: number;
@@ -10,6 +10,21 @@ export interface Usage {
   last_prompt_tokens: number;
   context_tokens: number; // The size of the next request (estimate).
   context_length: number;
+}
+
+// The verify command of the project (daemon verify.py): its last run in the turn.
+export interface VerifyInfo {
+  command: string;
+  status: "passed" | "failed" | "timeout" | "blocked";
+  exit_code: number | null;
+  seconds: number;
+  runs: number;
+}
+
+// Settings > Your Harness > Project instructions: the keys of <project>/.harness/settings.json that the app changes.
+export interface ProjectSettings {
+  verify_command: string | null;
+  verify_timeout: number | null;
 }
 
 // Messages in the OpenAI chat format, as the daemon stores them.
@@ -27,7 +42,7 @@ export type HistoryMessage =
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   // created: the new PDF and Word files of the call. The chat shows a card with "Open" for each one.
-  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string; created?: string[]; ts?: number; card?: ToolCardData };
+  | { role: "tool"; tool_call_id: string; content: string; is_error?: boolean; diff?: string; image?: string; created?: string[]; ts?: number; card?: ToolCardData; verify?: VerifyInfo };
 
 export interface PermissionRequest {
   request_id: string;
@@ -904,6 +919,9 @@ export type ClientMessage =
   // Settings > Your Harness > Project instructions. cwd: the project folder. text null: no instructions.
   | { type: "project_instructions.get"; cwd: string }
   | { type: "project_instructions.set"; cwd: string; text: string | null }
+  // The keys of the project settings file that the app can change. null or "": remove the key.
+  | { type: "project_settings.get"; cwd: string }
+  | { type: "project_settings.set"; cwd: string; settings: Partial<ProjectSettings> }
   | { type: "memory.list"; cwd: string }
   | { type: "memory.save"; cwd: string; name: string; old_name?: string; description: string; memory_type: MemoryType; content: string }
   | { type: "memory.delete"; cwd: string; name: string }
@@ -1163,6 +1181,8 @@ export type DaemonMessage =
   | { type: "output_styles"; items: OutputStyleItem[]; folder: string; created?: string; note?: string | null }
   // The instructions of a project from the settings. path: the file on the daemon computer. saved: after a set.
   | { type: "project_instructions"; cwd: string; path: string; text: string | null; saved?: boolean }
+  // The project settings file (.harness/settings.json) of a project. saved: after a set.
+  | { type: "project_settings"; cwd: string; path: string; settings: ProjectSettings; saved?: boolean }
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
@@ -1195,10 +1215,10 @@ export type DaemonMessage =
   | { type: "thinking" } // The model thinks (its reasoning streams). The working line shows "Thinking…".
   // agent: the skill name when a forked skill runs the tool in a subagent.
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
-  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[]; card?: ToolCardData }
+  | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[]; card?: ToolCardData; verify?: VerifyInfo }
   | ({ type: "permission.request" } & PermissionRequest)
   | { type: "permissions"; path: string; allow: string[]; deny: string[] }
-  | { type: "turn.end"; usage: Usage; stop_reason: StopReason }
+  | { type: "turn.end"; usage: Usage; stop_reason: StopReason; verify?: VerifyInfo }
   // A steer message went into the history. text: the text that the user sees.
   | { type: "steer.taken"; id: string; text: string; origin?: "task" }
   // A turn that the daemon started, with no prompt: the notes of background tasks (origin "task").

@@ -101,7 +101,9 @@ from .titles import MAX_TITLE_TRIES, summarize_title
 # The first turn waits this many seconds for the model title (wait_title). A slow model does not stop the chat.
 TITLE_WAIT = 15
 from .agents import agent_folders, discover_agents
-from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import
+from .memory import IMPORT_PROMPT, MemoryError as MemoryStoreError, MemoryStore, parse_import, project_root
+from .verify import VERIFY_MAX_TIMEOUT
+from .sandbox import sandbox_status
 from .web import KEY_PROVIDERS as WEB_KEY_PROVIDERS, PROVIDERS as WEB_PROVIDERS, WEB_KEYS, WebError, normalize_url
 from .web import set_key as set_web_key
 
@@ -1660,6 +1662,7 @@ def take_session(conn: Connection, session_id: str) -> LiveSession | None:
 # The text of a run that failed, by the stop reason of its turn (agent.py), when no error event came.
 RUN_STOPS = {
     "denied": "A permission request was denied.",
+    "loop": "The agent repeated the same tool calls with no progress.",
     "blocked": "A hook or a plugin stopped the turn.",
     "interrupted": "The turn was stopped.",
     "error": "The model request failed.",
@@ -3833,6 +3836,7 @@ async def _send_user_settings(conn: Connection) -> None:
     spec = acp_harnesses.find(harness_id) if isinstance(harness_id, str) and harness_id         and harness_id != acp_harnesses.BUILTIN_ID else None
     await conn.send({"type": "user_settings", "path": str(_user_settings_path()), "version": __version__,
                      "values": {k: values.get(k) for k in USER_SETTINGS},
+                     "sandbox": await asyncio.to_thread(sandbox_status),
                      "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id)}
                      if spec is not None else None})
 
@@ -4171,6 +4175,70 @@ async def on_project_instructions_set(conn: Connection, msg: dict[str, Any]) -> 
         if reload is not None and project_note_path(live.session.cwd) == path:
             reload()
     await _send_project_note(conn, msg, cwd, saved=True)
+
+
+# Settings > Your Harness > Project instructions > Verify command: the keys of the project settings file
+# (.harness/settings.json) that the app can change. The verify gate (verify.py) reads them.
+PROJECT_SETTING_KEYS = ("verify_command", "verify_timeout")
+
+
+def _project_settings(cwd: Path) -> dict[str, Any]:
+    data = read_json(project_settings_path(cwd), {})
+    data = data if isinstance(data, dict) else {}
+    return {key: data.get(key) for key in PROJECT_SETTING_KEYS}
+
+
+async def _send_project_settings(conn: Connection, msg: dict[str, Any], cwd: Path, **extra: Any) -> None:
+    values = await asyncio.to_thread(_project_settings, cwd)
+    await conn.send({"type": "project_settings", "cwd": msg["cwd"], "path": str(project_settings_path(cwd)),
+                     "settings": values, **extra})
+
+
+@handler("project_settings.get")
+async def on_project_settings_get(conn: Connection, msg: dict[str, Any]) -> None:
+    await _send_project_settings(conn, msg, _project_note_cwd(msg))
+
+
+@handler("project_settings.set")
+async def on_project_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """Change keys of the project settings file: {"cwd", "settings": {key: value or null}}. Only the keys of
+    PROJECT_SETTING_KEYS. Null or an empty text removes a key. The open sessions of the project reload."""
+    cwd = _project_note_cwd(msg)
+    changes = msg.get("settings")
+    if not isinstance(changes, dict) or not changes or set(changes) - set(PROJECT_SETTING_KEYS):
+        raise ProtocolError(f"'settings' must be an object with the keys {', '.join(PROJECT_SETTING_KEYS)}.")
+    command = changes.get("verify_command")
+    if command is not None and (not isinstance(command, str) or len(command) > 2000 or "\n" in command.strip()):
+        raise ProtocolError("'verify_command' must be one line of text, 2000 characters or less.")
+    timeout = changes.get("verify_timeout")
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int)
+                                or not 1 <= timeout <= VERIFY_MAX_TIMEOUT):
+        raise ProtocolError(f"'verify_timeout' must be a number of seconds from 1 "
+                            f"to {VERIFY_MAX_TIMEOUT}.")
+    path = project_settings_path(cwd)
+
+    def save() -> None:
+        data = read_json(path, {})
+        data = data if isinstance(data, dict) else {}
+        for key, value in changes.items():
+            value = value.strip() if isinstance(value, str) else value
+            if value in (None, ""):
+                data.pop(key, None)
+            else:
+                data[key] = value
+        write_json(path, data)
+
+    try:
+        await asyncio.to_thread(save)
+    except OSError as e:
+        raise ProtocolError(f"The project settings were not saved: {e}") from None
+    root = project_root(cwd)
+    for live in conn.live.values():
+        agent = live.session.agent if live.session is not None else None
+        reload = getattr(agent, "reload_settings", None)  # An ACP harness has no verify gate.
+        if reload is not None and project_root(live.session.cwd) == root:
+            reload(load_settings(live.session.cwd))
+    await _send_project_settings(conn, msg, cwd, saved=True)
 
 
 @handler("disk.usage")

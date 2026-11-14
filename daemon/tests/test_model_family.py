@@ -84,7 +84,7 @@ def test_task_reminders_setting(setting, sent, harness_home, project, fake_model
     fake_model.script({"tool_calls": [call, call, call]}, {"text": "Done."})
     agent, _, _ = make_agent(project, task_reminders=setting)
     asyncio.run(agent.run_turn("look around"))
-    notes = [m for m in fake_model.requests[1]["messages"] if m["role"] == "user" and "you showed no task list" in str(m.get("content"))]
+    notes = [m for m in fake_model.requests[1]["messages"] if m["role"] == "user" and "showed no task list" in str(m.get("content"))]
     assert bool(notes) is sent
 
 

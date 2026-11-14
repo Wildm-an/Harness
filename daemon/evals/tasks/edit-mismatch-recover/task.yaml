@@ -1,0 +1,35 @@
+id: edit-mismatch-recover
+behavior: recover_from_tool_error
+polarity: act
+pair: null
+turns:
+  - "In store.py, change the second `return None` in load() to `return {}`."
+permission_mode: acceptEdits
+approvals: {default: deny}
+timeout_s: 240
+checks:
+  # "return None" is in the file three times. An edit with only that text fails. The agent must recover.
+  - type: file_equals
+    path: store.py
+    strip: true
+    text: |
+      import json
+      import os
+
+
+      def load(path):
+          if not os.path.exists(path):
+              return None
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          if not text.strip():
+              return {}
+          return json.loads(text)
+
+
+      def load_backup(path):
+          if not os.path.exists(path + ".bak"):
+              return None
+          return load(path + ".bak")
+  - {type: changed_only, paths: [store.py]}
+  - {type: stop_reason, value: end}

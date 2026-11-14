@@ -43,11 +43,12 @@ def test_the_agent_gets_a_reminder_to_show_and_update_the_plan(daemon, project, 
 
 
 def test_the_agent_gets_a_reminder_when_it_does_not_update_the_plan(daemon, project, fake_model):  # noqa: F811
-    glob = {"name": "glob", "arguments": {"pattern": "*.py"}}
+    # Different patterns: the same call 9 times would get the loop question (loop_guards.py).
+    globs = [{"name": "glob", "arguments": {"pattern": f"*{i}.py"}} for i in range(9)]
     plan = {"name": "update_plan", "arguments": {"items": [
         {"content": "Fix the bug", "status": "in_progress"},
         {"content": "Run the tests", "status": "pending"}]}}
-    fake_model.script({"tool_calls": [plan]}, *[{"tool_calls": [glob]}] * 9, {"text": "Done."}, {"text": ""})
+    fake_model.script({"tool_calls": [plan]}, *[{"tool_calls": [g]} for g in globs], {"text": "Done."}, {"text": ""})
     c = Client(daemon)
     c.new_session(project)
     c.send({"type": "prompt", "text": "Fix the bug"})

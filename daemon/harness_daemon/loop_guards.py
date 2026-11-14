@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import Any
 
 # Names that models trained on other harnesses use, and the Harness tool for each.
@@ -73,10 +73,15 @@ REPEAT_FIRST = 3  # The count of the first, short reminder.
 REPEAT_STRONG = 5  # From this count, each repeat gets the strong reminder.
 
 
-def repeat_key(name: str, args: dict[str, Any] | None, output: str) -> str:
-    """The key of a call and its result. The "description" argument is only for the user."""
+def call_key(name: str, args: dict[str, Any] | None) -> str:
+    """The key of a call with no result. The "description" argument is only for the user."""
     shown = {k: v for k, v in (args or {}).items() if k != "description"}
-    text = json.dumps([name, shown], sort_keys=True, default=str) + "\0" + output
+    return json.dumps([name, shown], sort_keys=True, default=str)
+
+
+def repeat_key(name: str, args: dict[str, Any] | None, output: str) -> str:
+    """The key of a call and its result."""
+    text = call_key(name, args) + "\0" + output
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
@@ -90,6 +95,58 @@ def repeat_note(name: str, count: int) -> str | None:
         return (f"[You called {name} with these exact arguments 3 times in this turn, and the result did not "
                 "change. Look at the result before you call it again. Try a different approach if it does not help.]")
     return None
+
+
+# Many edits of one file in one turn. Failed edits count too: repeated failed edits are a loop sign.
+EDIT_NOTE_EVERY = 8  # A tunable value: no source gives a tested number.
+EDIT_NOTE = ("[You changed {path} {count} times in this turn. Many small changes to one file can show that the "
+             "approach does not work. Read the file again and check the whole change. Then continue, or try a "
+             "different approach.]")
+
+
+def edit_note(path: str, count: int) -> str | None:
+    """The note at each multiple of EDIT_NOTE_EVERY edits of one file, or None."""
+    return EDIT_NOTE.format(path=path, count=count) if count and count % EDIT_NOTE_EVERY == 0 else None
+
+
+# Two calls in turn (A B A B) with the same arguments and changing results.
+ALTERNATE_CYCLES = 3  # The note fires at 3 cycles (6 calls), then at each second call. A tunable value.
+ALTERNATE_NOTE = ("[You alternate between two tool calls, {a} and {b}, with the same arguments. You made {count} "
+                  "such calls in sequence. They do not make progress. Read the latest results. Then choose a "
+                  "different action, or finish the task.]")
+
+
+def alternation(keys: Sequence[str]) -> int:
+    """The length of the newest run of the form A B A B with two different keys, else 0."""
+    if len(keys) < 2 or keys[-1] == keys[-2]:
+        return 0
+    pair = (keys[-1], keys[-2])
+    count = 2
+    for i in range(len(keys) - 3, -1, -1):
+        if keys[i] != pair[(len(keys) - 1 - i) % 2]:
+            break
+        count += 1
+    return count
+
+
+def alternate_due(run: int) -> bool:
+    """True at 3 cycles (6 calls), then at each second call."""
+    return run >= 2 * ALTERNATE_CYCLES and run % 2 == 0
+
+
+# After repeated strong reminders the Harness asks the user, or ends a subagent with a report.
+LOOP_ASK_AFTER = 3  # Strong repeat notes and alternation notes. A tunable value.
+LOOP_QUESTION = "The agent repeats the same tool calls with no progress. What must it do?"
+LOOP_STOP = "Stop the turn"
+LOOP_CONTINUE = "Continue"
+LOOP_CLOSE = "Not run. The turn stopped, because the agent repeated the same tool calls."
+LOOP_CONTINUE_NOTE = ("[Harness: You repeated the same tool calls with no progress. The user lets you continue. "
+                      "Change your approach: the same calls will give the same results.]")
+LOOP_ANSWER_NOTE = ("[Harness: You repeated the same tool calls with no progress. The Harness asked the user. "
+                    "The user answered: {answer}]")
+LOOP_REPORT_NOTE = ("[Harness: This turn repeated the same tool calls with no progress, so it ends now. This is your "
+                    "last reply of the turn, and it cannot run a tool. Write a short report: the work that is done, "
+                    "the problem that stopped you, and the next step.]")
 
 
 # The stall nudge: a short reply that says what the model will do now, with no tool call.

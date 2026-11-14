@@ -31,6 +31,13 @@ The deny rules apply in all modes. The safety rules (auto_mode.safety_match) als
   Auto mode blocks it. ``bypass_safety_rules`` in ~/.harness/settings.json sets the bypass behavior.
 - An edit of a protected path (.git, .github, .harness, .env, and others) asks the user with no "Always
   allow", also in acceptEdits. It runs in bypassPermissions. The model checks it in auto mode.
+
+The sandbox rule (sandbox.py, docs/SANDBOX.md) comes after the deny rules, the plan mode block, and the safety
+rules. While the sandbox is ready and ``autoAllowBashIfSandboxed`` is true, a sandboxed bash command runs with no
+question in default and acceptEdits, and with no model check in auto mode. Plan mode asks as before. A bash command
+outside the sandbox (an excluded command, a background task, or ``dangerouslyDisableSandbox``) follows the allow
+rules, else the user decides: the question says that the command runs outside the sandbox. With
+``allowUnsandboxedCommands`` false, a call with ``dangerouslyDisableSandbox`` gets a text, and the turn continues.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ from .auto_mode import (
     safety_match,
 )
 from .config import project_settings_path, read_json, write_json
+from .sandbox import sandbox_config
 from .tools import Approval, Tool
 
 RULE_RE = re.compile(r"([A-Za-z0-9_\-]+\*?)(?:\((.*)\))?", re.S)
@@ -76,6 +84,10 @@ PROTECTED_ASK = ("{path} is a protected path. It holds settings, hooks, or repos
                  "Accept edits do not skip this question.")
 SAFETY_BLOCK = ("Blocked by a safety rule [{label}]. This call did not run. Do not try to get the same result in "
                 "another way. Tell the user what you need.")
+OUTSIDE_SANDBOX_ASK = "This command runs outside the sandbox."
+SANDBOX_ESCAPE_BLOCK = ("The settings do not allow commands outside the sandbox (sandbox.allowUnsandboxedCommands is "
+                        "false). This call did not run. Run the command without dangerouslyDisableSandbox, or tell "
+                        "the user what you need.")
 
 # The approver gets a request and returns one of DECISIONS.
 Approver = Callable[[dict[str, Any]], Awaitable[str]]
@@ -217,6 +229,9 @@ class PermissionGate:
             decided = await self._safety(tool, args, approval, mode, match)
             if decided is not None:
                 return decided
+        sandbox = sandbox_config() if approval.sandboxed is not None else None
+        if sandbox is not None and approval.sandbox_escape and not sandbox["allowUnsandboxedCommands"]:
+            return self._from("sandbox:locked", SANDBOX_ESCAPE_BLOCK)
         if preapproved:
             return self._from("hook", True)
         if mode == "bypassPermissions":
@@ -229,7 +244,12 @@ class PermissionGate:
             return self._from("session_rule", True)
         if name in EDIT_TOOLS and mode == "acceptEdits":
             return self._from("mode:acceptEdits", True)
-        return await self._ask(tool, args, approval)
+        if (approval.sandboxed is True and sandbox is not None and sandbox["autoAllowBashIfSandboxed"]
+                and mode in ("default", "acceptEdits")):
+            # The sandbox limits the command: no network, and writes only in the allowed folders.
+            return self._from("sandbox", True)
+        return await self._ask(tool, args, approval,
+                               note=OUTSIDE_SANDBOX_ASK if approval.sandboxed is False else None)
 
     async def _safety(self, tool: Tool, args: dict[str, Any], approval: Approval, mode: str,
                       match: SafetyMatch) -> bool | str | None:
@@ -295,6 +315,9 @@ class PermissionGate:
             return self._from("auto:allow_rule", True)
         if fast_path(name, approval.key) or getattr(tool, "read_only", False):
             return self._from("auto:fast_path", True)
+        if approval.sandboxed is True and sandbox_config()["autoAllowBashIfSandboxed"]:
+            # The sandbox limits the command, so the model does not check it.
+            return self._from("auto:sandbox", True)
         shown = approval.input if isinstance(approval.input, dict) else args
         try:
             verdict = await auto.review(name, shown, approval.key)

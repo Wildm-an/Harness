@@ -191,8 +191,11 @@ def test_no_memory_check_when_the_memory_is_off(harness_home, project, fake_mode
 
 def test_a_long_turn_gets_the_memory_check(harness_home, project, fake_model):
     from harness_daemon.agent import MEMORY_CHECK_CALLS
-    (project / "a.txt").write_text("x", encoding="utf-8")
-    fake_model.script(*[{"tool_calls": [{"name": "read", "arguments": {"path": "a.txt"}}]}] * MEMORY_CHECK_CALLS,
+    # Different files: the same call 8 times would get the loop question (loop_guards.py).
+    for i in range(MEMORY_CHECK_CALLS):
+        (project / f"a{i}.txt").write_text("x", encoding="utf-8")
+    fake_model.script(*[{"tool_calls": [{"name": "read", "arguments": {"path": f"a{i}.txt"}}]}
+                        for i in range(MEMORY_CHECK_CALLS)],
                       {"text": "Done."}, {"text": ""})
     agent, _, _ = make_agent(project)
     assert asyncio.run(agent.run_turn("Look at the file.")) == "end"

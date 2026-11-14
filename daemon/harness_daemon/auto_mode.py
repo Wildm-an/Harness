@@ -10,8 +10,9 @@ The order of the checks for one tool call:
    folders, and the Browser pane on this computer. They run with no check.
 5. The model (the classifier) for all other calls: allow, block, or ask the user.
 
-Harness has no sandbox (the reference design, dsh-auto-mode, has one). Thus every shell command
-that is not clearly read-only goes to the model.
+The sandbox (sandbox.py, docs/SANDBOX.md) is off by default. With the sandbox off, every shell
+command that is not clearly read-only goes to the model. With the sandbox on, a sandboxed bash
+command needs no model check (the "auto:sandbox" fast path in permissions.py).
 
 Only the messages of the user and the project instructions give authority. The tool arguments,
 the file text, the tool output, and the text of the agent are data for the model, not orders.

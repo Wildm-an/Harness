@@ -33,7 +33,7 @@ Rules:
 Do not put a URL in backticks or in a code block: the user cannot click it there. \
 A command that the user must copy can stay in a code block.
 - Write an equation in LaTeX: $...$ in a line of text, and $$...$$ on separate lines.
-- If a tool returns an error, read the error. Then try a different approach.
+- If a tool returns an error, read the error. It often states the fix. Do not send the same call again with no change.
 - If the user denies a tool call, stop. Ask the user what to do."""
 
 BASE_TOOLS = """\
@@ -53,6 +53,7 @@ starts with [Harness:."""
 BASE_AUTHORITY = """\
 Instructions and their order:
 - The messages of the user in this conversation come first.
+- Next is the instruction file nearest to the file that you work on. The Harness sends it in a [Harness: ...] note when you first touch its folder.
 - Next are the project instructions that the user wrote in Settings, then the instruction file of the project folder.
 - Last are the instructions for all projects, then your memory.
 - When two instructions disagree, follow the one that is earlier in this list. It is more specific to the work that you do now."""
@@ -182,6 +183,66 @@ def load_project_instructions(cwd: Path) -> ProjectInstructions | None:
     return None
 
 
+# Nested instruction files: an instruction file in a folder below the project folder. The agent gets it in a
+# [Harness: ...] note when a tool first touches that folder, so the system prompt does not change.
+MAX_NESTED_CHARS = 8_000
+MAX_NESTED_FILES = 8
+NESTED_HEAD = "[Harness: The folder {folder}/ has the instruction file {name}."
+NESTED_NOTE = (NESTED_HEAD + " Its rules apply to the files in this folder. When they disagree with the instruction "
+               "file of the project folder, follow these rules.]\n\n{text}")
+NESTED_CUT = "\n\nThe file is long. Only the first part is shown. Read {path} for the rest."
+NESTED_POINTER = (NESTED_HEAD + " The Harness did not load it, because this conversation already has {limit} nested "
+                  "instruction files. Read it before you change files in that folder.]")
+
+
+def nested_instruction_files(cwd: Path, path: Path | str) -> list[Path]:
+    """The instruction files in the folders between cwd (not included) and the folder of path, outer folder
+    first. Only a path in cwd counts. A hidden folder or a folder of SKIP_DIRS (node_modules) loads nothing."""
+    from .created import SKIP_DIRS
+
+    try:
+        root = Path(cwd).resolve()
+        target = (root / path).resolve()
+        folder = target if target.is_dir() else target.parent
+        parts = folder.relative_to(root).parts
+    except (OSError, ValueError):
+        return []
+    if any(p.startswith(".") or p in SKIP_DIRS for p in parts):
+        return []
+    found: list[Path] = []
+    current = root
+    for part in parts:
+        current = current / part
+        for name in INSTRUCTION_FILES:
+            if (current / name).is_file():
+                found.append(current / name)
+                break
+    return found
+
+
+def nested_head(cwd: Path, file: Path) -> str:
+    """The first words of the note of a nested file. A note in the context with this head means: loaded."""
+    folder = file.parent.relative_to(Path(cwd).resolve()).as_posix()
+    return NESTED_HEAD.format(folder=folder, name=file.name)
+
+
+def nested_note(cwd: Path, file: Path, limit: int, pointer_after: int | None = None) -> str | None:
+    """The note of a nested file, or None for an empty file. ``pointer_after``: the note is a pointer only."""
+    folder = file.parent.relative_to(Path(cwd).resolve()).as_posix()
+    if pointer_after is not None:
+        return NESTED_POINTER.format(folder=folder, name=file.name, limit=pointer_after)
+    try:
+        text = file.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    note = NESTED_NOTE.format(folder=folder, name=file.name, text=text[:limit])
+    if len(text) > limit:
+        note += NESTED_CUT.format(path=file.relative_to(Path(cwd).resolve()).as_posix())
+    return note
+
+
 def load_user_instructions() -> ProjectInstructions | None:
     """The instruction file of the user for all projects: ~/.harness/HARNESS.md, ~/.harness/AGENTS.md, or
     ~/.claude/CLAUDE.md (the file of Claude Code). The first file that exists wins."""
@@ -227,6 +288,11 @@ def save_project_note(cwd: Path, text: str) -> str | None:
     return text
 
 
+def today() -> datetime.date:
+    """The local date of the daemon computer. The agent keeps the date of its prompt until a new context starts."""
+    return datetime.date.today()
+
+
 def build_system_prompt(
     ctx: ToolContext,
     model: str,
@@ -239,10 +305,11 @@ def build_system_prompt(
     project_note: str | None = None,
     family: str | None = None,
     user_file: ProjectInstructions | None = None,
+    date: datetime.date | None = None,
 ) -> str:
     return "\n\n".join(text for _kind, text in system_prompt_parts(ctx, model, instructions, summary, skills,
                                                                   plugin_sections, user_facing, tool_names,
-                                                                  project_note, family, user_file))
+                                                                  project_note, family, user_file, date))
 
 
 def system_prompt_parts(
@@ -257,6 +324,7 @@ def system_prompt_parts(
     project_note: str | None = None,
     family: str | None = None,
     user_file: ProjectInstructions | None = None,
+    date: datetime.date | None = None,
 ) -> list[tuple[str, str]]:
     """The parts of the system prompt, with their kind: system, instructions, skills, plugins, or summary.
 
@@ -268,6 +336,7 @@ def system_prompt_parts(
     ``family``: the model family from providers.json, in place of the match of the model name.
     ``user_file``: the instruction file of the user for all projects. All agents get it, also a subagent:
     a rule such as "do not push" must hold for each agent.
+    ``date``: the date of the prompt. The agent pins it, so a rebuild after midnight keeps the cache prefix.
     """
     ablate = prompt_ablate(ctx.settings)
     parts: list[tuple[str, str]] = [("system", base_prompt(model, ablate)), ("system", "\n".join([
@@ -275,7 +344,7 @@ def system_prompt_parts(
         f"- Project folder: {ctx.cwd}",
         f"- Operating system: {os_name()}",
         f"- Shell for the bash tool: {ctx.shell.name}",
-        f"- Date: {datetime.date.today().isoformat()}",
+        f"- Date: {(date or today()).isoformat()}",
         f"- Model: {model}",
     ]))]
     parts += [("system", text) for text in model_guidance(model, tool_names, family, ablate)]

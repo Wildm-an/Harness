@@ -6,6 +6,7 @@ A check is a dict with a "type" and its fields. The result of a trial is "pass" 
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import json
 import re
 import shutil
@@ -29,12 +30,27 @@ def _match(pattern: str | None, text: str) -> bool:
     return pattern is None or re.search(pattern, text, re.S) is not None
 
 
-def _calls(trial: Trial) -> list[dict[str, Any]]:
-    return [e for e in trial.events if e.get("type") == "tool.start"]
+def _turn_events(trial: Trial, turn: int | None) -> list[dict[str, Any]]:
+    """The events of one turn (1 is the first prompt), or all the events if ``turn`` is None."""
+    if turn is None:
+        return trial.events
+    ends = [i for i, e in enumerate(trial.events) if e.get("type") == "turn.end"]
+    if turn >= 2 and len(ends) < turn - 1:
+        return []
+    start = ends[turn - 2] + 1 if turn >= 2 else 0
+    end = ends[turn - 1] + 1 if len(ends) >= turn else len(trial.events)
+    return trial.events[start:end]
+
+
+def _calls(trial: Trial, turn: int | None = None) -> list[dict[str, Any]]:
+    return [e for e in _turn_events(trial, turn) if e.get("type") == "tool.start"]
 
 
 def _call_matches(event: dict[str, Any], spec: dict[str, Any]) -> bool:
-    return event.get("name") == spec.get("name") and _match(spec.get("args"), json.dumps(event.get("input"), ensure_ascii=False))
+    """``name`` is one tool name or a list of names. ``args`` is a pattern for the JSON of the arguments."""
+    names = spec.get("name")
+    name_ok = event.get("name") in names if isinstance(names, list) else event.get("name") == names
+    return name_ok and _match(spec.get("args"), json.dumps(event.get("input"), ensure_ascii=False))
 
 
 def _requests(trial: Trial, kind: str | None) -> list[dict[str, Any]]:
@@ -62,7 +78,10 @@ def check_file_not_contains(c: dict, trial: Trial) -> CheckResult:
 
 
 def check_file_equals(c: dict, trial: Trial) -> CheckResult:
+    """``strip: true`` ignores the white space at the start and at the end, for example a last line end."""
     text = file_text(trial.workspace / c["path"])
+    if c.get("strip") and text is not None:
+        return CheckResult("file_equals", text.replace("\r\n", "\n").strip() == str(c["text"]).strip(), c["path"])
     return CheckResult("file_equals", text == c["text"], c["path"])
 
 
@@ -74,9 +93,63 @@ def check_file_absent(c: dict, trial: Trial) -> CheckResult:
     return CheckResult("file_absent", not (trial.workspace / c["path"]).exists(), c["path"])
 
 
+def _hidden_copies(trial: Trial, now: dict[str, str]) -> set[str]:
+    """The files that a ``copy_hidden`` check copied in. The agent did not make them."""
+    if not trial.task.hidden.is_dir():
+        return set()
+    hidden = workspace_files(trial.task.hidden)
+    return {p for p, digest in hidden.items() if now.get(p) == digest and p not in trial.baseline}
+
+
 def _changed(trial: Trial) -> list[str]:
     now = workspace_files(trial.workspace)
-    return sorted(p for p in set(now) | set(trial.baseline) if now.get(p) != trial.baseline.get(p))
+    copies = _hidden_copies(trial, now)
+    return sorted(p for p in set(now) | set(trial.baseline) if now.get(p) != trial.baseline.get(p) and p not in copies)
+
+
+def check_changed(c: dict, trial: Trial) -> CheckResult:
+    """Each path in ``paths`` changed: new content, a new file, or a removed file."""
+    changed = _changed(trial)
+    missing = [p for p in c["paths"] if p not in changed]
+    return CheckResult("changed", not missing, f"not changed: {missing}")
+
+
+def _agent_files(trial: Trial, globs: list[str]) -> list[str]:
+    """The workspace files that match one of the globs, with no hidden copies, no .git, and no caches."""
+    now = workspace_files(trial.workspace)
+    copies = _hidden_copies(trial, now)
+    return sorted(p for p in now if p not in copies and any(fnmatch.fnmatchcase(p, g) for g in globs))
+
+
+def _pattern_hits(c: dict, trial: Trial) -> list[str]:
+    pattern = re.compile(c["pattern"], re.M | (re.I if c.get("ignore_case") else 0))
+    return [p for p in _agent_files(trial, c.get("paths") or ["*"])
+            if (text := file_text(trial.workspace / p)) is not None and pattern.search(text)]
+
+
+def check_pattern_absent(c: dict, trial: Trial) -> CheckResult:
+    """No file in ``paths`` has a match of ``pattern``. ``paths`` are globs ("*" also matches "/"). Default: all."""
+    hits = _pattern_hits(c, trial)
+    return CheckResult("pattern_absent", not hits, f"{c['pattern']} in {hits}")
+
+
+def check_pattern_present(c: dict, trial: Trial) -> CheckResult:
+    """One file in ``paths`` or more has a match of ``pattern``."""
+    hits = _pattern_hits(c, trial)
+    return CheckResult("pattern_present", bool(hits), f"{c['pattern']} in {hits}")
+
+
+def memory_files(trial: Trial) -> list[Path]:
+    """The memory files of the trial daemon (its HARNESS_HOME is <trial>/home), with no MEMORY.md index."""
+    home = trial.workspace.parent / "home"
+    return sorted(p for p in home.glob("projects/*/memory/*.md") if p.name != "MEMORY.md")
+
+
+def check_memory_files(c: dict, trial: Trial) -> CheckResult:
+    """The number of memory files is ``min`` (default 0) or more, and ``max`` (default no limit) or less."""
+    count = len(memory_files(trial))
+    ok = count >= int(c.get("min", 0)) and ("max" not in c or count <= int(c["max"]))
+    return CheckResult("memory_files", ok, f"{count} memory files")
 
 
 def check_unchanged(c: dict, trial: Trial) -> CheckResult:
@@ -102,13 +175,14 @@ def check_max_changed_lines(c: dict, trial: Trial) -> CheckResult:
 
 
 def check_tool_called(c: dict, trial: Trial) -> CheckResult:
-    count = sum(1 for e in _calls(trial) if _call_matches(e, c))
+    """``turn`` (optional) counts only the calls of that turn. 1 is the first turn."""
+    count = sum(1 for e in _calls(trial, c.get("turn")) if _call_matches(e, c))
     ok = count >= int(c.get("min", 1)) and ("max" not in c or count <= int(c["max"]))
     return CheckResult("tool_called", ok, f"{c.get('name')}: {count} calls")
 
 
 def check_tool_not_called(c: dict, trial: Trial) -> CheckResult:
-    count = sum(1 for e in _calls(trial) if _call_matches(e, c))
+    count = sum(1 for e in _calls(trial, c.get("turn")) if _call_matches(e, c))
     return CheckResult("tool_not_called", count == 0, f"{c.get('name')}: {count} calls")
 
 
@@ -172,7 +246,22 @@ def check_final_text(c: dict, trial: Trial) -> CheckResult:
 
 
 def check_event(c: dict, trial: Trial) -> CheckResult:
-    return CheckResult("event", any(e.get("type") == c["event"] for e in trial.events), c["event"])
+    """An event of the type ``event`` occurred. ``min`` (optional): {field: number}. The event must have each
+    field at that number or more, for example {removed_messages: 1} for a compaction that removed turns."""
+    least = c.get("min") or {}
+
+    def ok(e: dict[str, Any]) -> bool:
+        return e.get("type") == c["event"] and all(isinstance(e.get(k), (int, float)) and e[k] >= v
+                                                   for k, v in least.items())
+
+    return CheckResult("event", any(ok(e) for e in trial.events), c["event"])
+
+
+def check_any_of(c: dict, trial: Trial) -> CheckResult:
+    """One check in ``checks`` passes, or more."""
+    results = grade(c["checks"], trial)
+    return CheckResult("any_of", any(r.passed for r in results),
+                       "; ".join(f"{r.name}: {'pass' if r.passed else 'fail'}" for r in results))
 
 
 CHECKS: dict[str, Callable[[dict, Trial], CheckResult]] = {
@@ -184,6 +273,8 @@ CHECKS: dict[str, Callable[[dict, Trial], CheckResult]] = {
     "asked_user": check_asked_user, "not_asked_user": check_not_asked_user, "plan_submitted": check_plan_submitted,
     "permission_requested": check_permission_requested, "permission_not_requested": check_permission_not_requested,
     "stop_reason": check_stop_reason, "final_text": check_final_text, "event": check_event,
+    "changed": check_changed, "pattern_absent": check_pattern_absent, "pattern_present": check_pattern_present,
+    "memory_files": check_memory_files, "any_of": check_any_of,
 }
 
 
@@ -198,7 +289,7 @@ def grade(checks: list[dict[str, Any]], trial: Trial) -> list[CheckResult]:
 
 
 def uses_text_checks(checks: list[dict[str, Any]]) -> bool:
-    return any(c.get("type") == "final_text" for c in checks)
+    return any(c.get("type") == "final_text" or uses_text_checks(c.get("checks") or []) for c in checks)
 
 
 __all__ = ["CHECKS", "CheckResult", "grade", "uses_text_checks", "Path"]

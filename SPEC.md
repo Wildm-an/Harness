@@ -106,7 +106,9 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Messages are JSON. Each message
 5. Repeat until the model returns no tool calls, or the user sends `interrupt`.
 6. Set a maximum of 250 tool calls for each turn (`max_tool_calls`). Make this value configurable. At the limit, or at the time budget (`max_turn_minutes`), make one more model call with no tools for a report to the user.
 7. When the output limit of the model cuts a reply (`finish_reason` `length`), ask the model to continue, 3 times at most in sequence. A cut tool call does not run. The model gets a note to send a smaller call (`loop_guards.py`).
-8. When the turn changed files and the project sets `verify_command`, run it before the turn ends. On a failure, send the end of the output to the agent and continue (`verify.py`).
+8. When the turn changed files and the project sets `verify_command`, run it before the turn ends. On a failure, send the end of the output to the agent and continue (`verify.py`). Also run it before the recap box of `wrap_up`. On a failure, do not show the box.
+9. Add a note to a tool result after 8 edits of one file in a turn, and after 6 alternating calls with the same arguments. After 3 strong reminders, ask the user to stop or continue. A subagent has no user, so it stops with stop reason `loop` and writes a report (`loop_guards.py`).
+10. When a tool first touches a folder below the project folder that has an instruction file (`HARNESS.md`, `AGENTS.md`, or `CLAUDE.md`), send that file to the agent in a note. Do not change the system prompt.
 
 ### 5.2 Tools
 
