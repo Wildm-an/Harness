@@ -14,6 +14,7 @@
   --surface: #242424;
   --surface-2: #2e2e2e;
   --surface-sunken: #161616;
+  --preview-ground: #161616; /* Behind the pages of the Preview pane. */
   --hover: rgba(255, 255, 255, 0.06);
   --border: #353535;
   --border-strong: #4a4a4a;
@@ -119,6 +120,7 @@
   --surface: #f1f1f1;
   --surface-2: #e9e9e9;
   --surface-sunken: #efefef;
+  --preview-ground: #d4d4d4; /* Darker than the white pages, so each page break shows. */
   --hover: rgba(0, 0, 0, 0.05);
   --border: #dedede;
   --border-strong: #c6c6c6;
@@ -10887,14 +10889,15 @@ body.sorting * {
   background: transparent;
 }
 
-/* The Preview pane (preview/PreviewPane.tsx): a PDF or Word file as white pages on a dark ground. */
+/* The Preview pane (preview/PreviewPane.tsx): a PDF or Word file as white pages on a gray ground,
+   with a gap between the pages, as in Word and in a PDF viewer. */
 .preview-pane {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface-sunken);
+  background: var(--preview-ground);
 }
 
 .preview-name {
@@ -11009,8 +11012,20 @@ body.sorting * {
 }
 
 .preview-docx .docx-wrapper > section.docx {
-  margin-bottom: 16px;
+  flex: none;
+  margin-bottom: 12px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* The second part of a paragraph that a page break divides (preview/paginate.ts): no list number. */
+.preview-docx p.docx-continued::before {
+  content: none !important;
+}
+
+.preview-docx p.docx-continued {
+  counter-increment: none !important;
+  counter-set: none !important;
+  counter-reset: none !important;
 }
 
 /* Narrow panes (for example the chat of the IDE view): each pane is a size container, so its

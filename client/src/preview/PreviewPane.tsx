@@ -10,6 +10,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { PaneActions, PaneHeader } from "../layout/Workspace";
 import { baseName } from "../chat/toolText";
 import { fitWidthZoom, linkAction, previewKind, stepZoom, type PreviewDoc } from "./document";
+import { paginateDocx } from "./paginate";
 
 // pdf.js loads only when the first PDF opens: it is large.
 type PdfJs = typeof import("pdfjs-dist");
@@ -62,9 +63,11 @@ export function PreviewPane({
         </span>
       </PaneHeader>
       <PaneActions>
+        {doc.status === "ready" && pages > 0 && (
+          <span className="preview-pages">{pages === 1 ? "1 page" : `${pages} pages`}</span>
+        )}
         {kind === "pdf" && doc.status === "ready" && (
           <>
-            {pages > 0 && <span className="preview-pages">{pages === 1 ? "1 page" : `${pages} pages`}</span>}
             <button
               type="button"
               className="icon-btn ghost win-btn"
@@ -113,7 +116,9 @@ export function PreviewPane({
       {doc.status === "ready" && kind === "pdf" && (
         <PdfView key={doc.path} data={doc.data} zoom={zoom} onZoom={setZoom} onPages={setPages} />
       )}
-      {doc.status === "ready" && kind === "docx" && <DocxView key={doc.path} data={doc.data} onOpenLink={onOpenLink} />}
+      {doc.status === "ready" && kind === "docx" && (
+        <DocxView key={doc.path} data={doc.data} onOpenLink={onOpenLink} onPages={setPages} />
+      )}
     </div>
   );
 }
@@ -318,22 +323,38 @@ function PdfPage({
 }
 
 /**
- * A Word file, drawn as pages by docx-preview. A page that is wider than the pane gets smaller, so
- * it fits the pane width. Links do not change the app page.
+ * A Word file, drawn as pages by docx-preview. paginateDocx then breaks the pages at the bottom
+ * margin, as Word does. A page that is wider than the pane gets smaller, so it fits the pane width.
+ * Links do not change the app page.
  */
-function DocxView({ data, onOpenLink }: { data: Uint8Array; onOpenLink: (url: string) => void }) {
+function DocxView({
+  data,
+  onOpenLink,
+  onPages,
+}: {
+  data: Uint8Array;
+  onOpenLink: (url: string) => void;
+  onPages: (count: number) => void;
+}) {
   const scroller = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const styles = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"loading" | "ready" | string>("loading");
   const [pageWidth, setPageWidth] = useState(0); // The width of the widest page at zoom 1.
   const [paneWidth, setPaneWidth] = useState(0);
+  const [bodyHeight, setBodyHeight] = useState(0); // The height of the pages at zoom 1.
 
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => setPaneWidth(el.clientWidth));
+    const inner = body.current;
+    if (!el || !inner) return;
+    // A ResizeObserver gives the size before the transform, so the scale does not change it.
+    const observer = new ResizeObserver(() => {
+      setPaneWidth(el.clientWidth);
+      setBodyHeight(inner.offsetHeight);
+    });
     observer.observe(el);
+    observer.observe(inner);
     setPaneWidth(el.clientWidth);
     return () => observer.disconnect();
   }, []);
@@ -358,12 +379,22 @@ function DocxView({ data, onOpenLink }: { data: Uint8Array; onOpenLink: (url: st
           renderComments: false,
           renderAltChunks: false, // An alt chunk is HTML: it does not run in the app.
           useBase64URL: true, // The Content Security Policy allows data: images, not blob: images.
+          experimental: true, // Tab stops at their true positions.
         }),
       )
-      .then(() => {
+      .then(async () => {
+        // The page breaks need the final layout: the fonts, the images, and the tab stops (docx-preview
+        // sets them 500 ms after the render).
+        await Promise.all([
+          document.fonts.ready,
+          ...[...target.querySelectorAll("img")].map((img) => img.decode().catch(() => undefined)),
+          new Promise((resolve) => setTimeout(resolve, 600)),
+        ]);
         if (cancelled) return;
+        paginateDocx(target);
         const pages = [...target.querySelectorAll<HTMLElement>("section.docx")];
         setPageWidth(Math.max(0, ...pages.map((page) => page.offsetWidth)));
+        onPages(pages.length);
         setState("ready");
       })
       .catch((e: unknown) => {
@@ -394,6 +425,11 @@ function DocxView({ data, onOpenLink }: { data: Uint8Array; onOpenLink: (url: st
 
   const failed = state !== "loading" && state !== "ready";
   const zoom = pageWidth ? Math.min(1, fitWidthZoom(paneWidth, pageWidth)) : 1;
+  // A narrow pane shows the pages smaller with a transform, not with CSS zoom: CSS zoom changes the
+  // line breaks of the text, so the pages would not match the page breaks. The outer box gets the
+  // size of the scaled pages, so the scroll bar is correct.
+  const scaled = zoom < 1 && state === "ready";
+  const fullWidth = pageWidth + 32; // The pages and the padding of the docx-preview wrapper.
   return (
     <div ref={scroller} className="preview-scroll preview-docx" tabIndex={0} aria-label="Word document" onClick={onClick}>
       {state === "loading" && (
@@ -403,7 +439,18 @@ function DocxView({ data, onOpenLink }: { data: Uint8Array; onOpenLink: (url: st
       )}
       {failed && <ErrorText text={state} />}
       <div ref={styles} />
-      <div ref={body} hidden={failed} style={zoom < 1 ? { zoom } : undefined} />
+      <div
+        hidden={failed}
+        style={scaled ? { width: fullWidth * zoom, height: bodyHeight * zoom, margin: "0 auto", overflow: "hidden" } : undefined}
+      >
+        <div
+          ref={body}
+          style={{
+            visibility: state === "loading" ? "hidden" : undefined,
+            ...(scaled ? { width: fullWidth, transform: `scale(${zoom})`, transformOrigin: "0 0" } : {}),
+          }}
+        />
+      </div>
     </div>
   );
 }
