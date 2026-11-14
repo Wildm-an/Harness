@@ -16,6 +16,7 @@ from harness_daemon.mcp_client import McpManager, load_mcp_config
 from harness_daemon.outlook_server import DISCONNECTED, Outlook, OutlookError
 
 import fake_outlook_com
+from untag import untag
 from fake_outlook_com import App, ComError
 
 FAKE = str(Path(fake_outlook_com.__file__).resolve())
@@ -251,7 +252,7 @@ def test_the_server_over_mcp(fake_server, project):
             assert "mcp__outlook-classic__send_draft" not in names
             search = next(t for t in box["tools"] if t.name == "mcp__outlook-classic__search_messages")
             result = await search.run({"sender": "bob@shop"}, None)
-            assert [m["subject"] for m in json.loads(result.output)] == ["Invoice 42"]
+            assert [m["subject"] for m in json.loads(untag(result.output))] == ["Invoice 42"]
             read = next(t for t in box["tools"] if t.name == "mcp__outlook-classic__get_message")
             failed = await read.run({"entry_id": "nope"}, None)
             assert failed.is_error and "could not be found" in failed.output

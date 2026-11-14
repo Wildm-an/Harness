@@ -6,6 +6,7 @@ from typing import Any
 
 from ..files import is_binary, relpath
 from .base import Approval, Tool, ToolContext, ToolError, ToolResult, get_bool
+from .match import apply_match, find_tolerant
 
 
 def unified_diff(before: str, after: str, name: str, new_file: bool = False) -> str:
@@ -47,7 +48,8 @@ class EditTool(Tool):
     }
     needs_approval = True
 
-    def _plan(self, args: dict[str, Any], ctx: ToolContext) -> tuple[Path, bytes, bytes]:
+    def _plan(self, args: dict[str, Any], ctx: ToolContext) -> tuple[Path, bytes, bytes, str | None]:
+        """The path, the old bytes, the new bytes, and a note when a tolerant match found the text."""
         path = ctx.resolve(args.get("path"))
         old = args.get("old_string")
         new = args.get("new_string")
@@ -78,28 +80,50 @@ class EditTool(Tool):
             old = old.replace("\r\n", "\n").replace("\n", "\r\n")
             new = new.replace("\r\n", "\n").replace("\n", "\r\n")
             count = text.count(old)
-        if count == 0:
-            raise ToolError("old_string was not found in the file. Read the file and copy the exact text.")
         replace_all = get_bool(args, "replace_all")
+        if count == 0:
+            return self._tolerant(path, data, text, args, replace_all, ctx)
         if count > 1 and not replace_all:
             raise ToolError(
                 f"old_string occurs {count} times in the file. Add more lines around it to make it unique, "
                 "or set replace_all to true."
             )
         updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
-        return path, data, updated.encode("utf-8")
+        return path, data, updated.encode("utf-8"), None
+
+    def _tolerant(self, path: Path, data: bytes, text: str, args: dict[str, Any], replace_all: bool,
+                  ctx: ToolContext) -> tuple[Path, bytes, bytes, str | None]:
+        """No exact match: try whitespace at the line ends, then a constant indentation (match.py)."""
+        level, matches = (None, []) if ctx.settings.get("edit_tolerant_match") is False else find_tolerant(
+            text, args["old_string"], args["new_string"])
+        if not matches:
+            raise ToolError("old_string was not found in the file, also when whitespace at the start and the end of "
+                            "lines is ignored. Read the file and copy the exact text.")
+        if replace_all:
+            raise ToolError(f"replace_all needs an exact match. old_string matches only when {level} is ignored. "
+                            "Read the file and copy the exact text.")
+        if len(matches) > 1:
+            places = ", ".join(f"{m.first_line}-{m.last_line}" for m in matches[:10])
+            raise ToolError(f"old_string does not match the file exactly. With {level} ignored, it matches "
+                            f"{len(matches)} places (lines {places}). Read the file, and copy the exact text with "
+                            "more lines around it.")
+        match = matches[0]
+        note = (f"old_string did not match the file exactly. The harness ignored a difference in {level} and "
+                f"replaced lines {match.first_line}-{match.last_line}. Copy the text from the read result exactly "
+                "next time.")
+        return path, data, apply_match(text, match).encode("utf-8"), note
 
     async def prepare(self, args: dict[str, Any], ctx: ToolContext) -> Approval:
-        path, before, after = self._plan(args, ctx)
+        path, before, after, _ = self._plan(args, ctx)
         rel = relpath(ctx.cwd, path)
         diff = unified_diff(before.decode("utf-8"), after.decode("utf-8"), rel)
         return Approval(key=rel, rule=f"edit({rel})", diff=diff)
 
     async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-        path, before, after = self._plan(args, ctx)
+        path, before, after, note = self._plan(args, ctx)
         path.write_bytes(after)
         if ctx.reads is not None:
             ctx.reads.note(path, after)  # The agent knows the new text: the next edit needs no new read.
         rel = relpath(ctx.cwd, path)
         diff = unified_diff(before.decode("utf-8"), after.decode("utf-8"), rel)
-        return ToolResult(f"Edited {rel}.", changed_paths=[path], diff=diff)
+        return ToolResult(f"Edited {rel}." + (f" {note}" if note else ""), changed_paths=[path], diff=diff)

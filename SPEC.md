@@ -104,8 +104,9 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Messages are JSON. Each message
 3. If the model returns tool calls, run them in order.
 4. Append the tool results to the messages.
 5. Repeat until the model returns no tool calls, or the user sends `interrupt`.
-6. Set a maximum of 250 tool calls for each turn (`max_tool_calls`). Make this value configurable.
+6. Set a maximum of 250 tool calls for each turn (`max_tool_calls`). Make this value configurable. At the limit, or at the time budget (`max_turn_minutes`), make one more model call with no tools for a report to the user.
 7. When the output limit of the model cuts a reply (`finish_reason` `length`), ask the model to continue, 3 times at most in sequence. A cut tool call does not run. The model gets a note to send a smaller call (`loop_guards.py`).
+8. When the turn changed files and the project sets `verify_command`, run it before the turn ends. On a failure, send the end of the output to the agent and continue (`verify.py`).
 
 ### 5.2 Tools
 

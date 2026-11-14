@@ -61,8 +61,10 @@ def test_a_turn_gives_a_turn_record_and_a_request_record_for_each_model_call(har
     agent, rows = recording_agent(project)
     asyncio.run(agent.run_turn("what does hello.py do?"))
     kinds = [k for k, _ in rows]
-    assert kinds == ["turn_start", "request", "request", "turn_end"]
-    start, first, second, end = (r for _, r in rows)
+    assert kinds == ["turn_start", "request", "tool", "request", "turn_end"]
+    start, first, tool, second, end = (r for _, r in rows)
+    assert tool["name"] == "read" and tool["result_class"] == "ok" and tool["step"] == 1
+    assert tool["decision"] == "allow" and tool["decision_source"] == "no_approval" and tool["output_chars"] > 0
     assert start["id"] == end["id"] == first["turn_id"] == second["turn_id"]
     assert end["stop_reason"] == "end" and end["steps"] == 2 and end["tool_calls"] == 1
     assert (first["step"], second["step"]) == (1, 2)
@@ -125,3 +127,74 @@ def test_storage_ends_open_turns_and_deletes_records(tmp_path):
     storage.delete_session(sid)
     assert storage.session_records(sid) == {"turns": [], "model_requests": [], "tool_calls": []}
     storage.close()
+
+
+def tool_rows(rows):
+    return [r for k, r in rows if k == "tool"]
+
+
+def test_the_result_class_of_each_kind_of_call(harness_home, project, fake_model):
+    fake_model.script(
+        {"tool_calls": [{"name": "fly", "arguments": {}},
+                        {"name": "read", "arguments": "{not json"},
+                        {"name": "read", "arguments": {"path": "missing.txt"}},
+                        {"name": "Read", "arguments": {"path": "hello.py"}}]},
+        {"text": "Done."},
+    )
+    agent, rows = recording_agent(project)
+    asyncio.run(agent.run_turn("go"))
+    classes = [(r["name"], r["result_class"], r["called_name"]) for r in tool_rows(rows)]
+    assert classes == [("fly", "unknown_tool", None), ("read", "invalid_arguments", None),
+                       ("read", "tool_error", None), ("read", "ok", "Read")]
+
+
+def test_a_deny_rule_and_a_user_denial_have_different_sources(harness_home, project, fake_model):
+    (project / ".harness").mkdir()
+    (project / ".harness" / "settings.json").write_text('{"deny": ["bash(rm:*)"]}')
+    fake_model.script({"tool_calls": [{"name": "bash", "arguments": {"command": "rm x"}}]})
+    agent, rows = recording_agent(project)
+    asyncio.run(agent.run_turn("go"))
+    fake_model.script({"tool_calls": [{"name": "bash", "arguments": {"command": "ls"}}]})
+    agent.gate.approver = lambda request: _deny()
+    asyncio.run(agent.run_turn("again"))
+    first, second = tool_rows(rows)
+    assert (first["result_class"], first["decision"], first["decision_source"]) == ("denied", "deny", "deny_rule")
+    assert (second["result_class"], second["decision"], second["decision_source"]) == ("denied", "deny", "user")
+
+
+async def _deny():
+    return "deny"
+
+
+def test_plan_mode_blocks_with_a_source(harness_home, project, fake_model):
+    fake_model.script(
+        {"tool_calls": [{"name": "write", "arguments": {"path": "a.txt", "content": "x"}}]},
+        {"text": "Ok."},
+    )
+    agent, rows = recording_agent(project)
+    agent.settings["permission_mode"] = "plan"
+    asyncio.run(agent.run_turn("go"))
+    [row] = tool_rows(rows)
+    assert (row["result_class"], row["decision"], row["decision_source"]) == ("blocked", "block", "mode:plan")
+
+
+def test_calls_after_the_limit_are_skipped_rows(harness_home, project, fake_model):
+    call = {"name": "read", "arguments": {"path": "hello.py"}}
+    fake_model.script({"tool_calls": [call, call, call]})
+    agent, rows = make_agent(project, max_tool_calls=1)[0], []
+    agent.on_record = lambda kind, row: rows.append((kind, row))
+    asyncio.run(agent.run_turn("go"))
+    assert [r["result_class"] for r in tool_rows(rows)] == ["ok", "skipped", "skipped"]
+
+
+def test_the_session_stores_tool_rows(daemon, harness_home, project, fake_model, tmp_path):  # noqa: F811
+    fake_model.script({"tool_calls": [{"name": "read", "arguments": {"path": "hello.py"}}]}, {"text": "Hi."})
+    c = Client(daemon)
+    ready = c.new_session(project)
+    c.send({"type": "prompt", "text": "hi"})
+    c.until("turn.end")
+    db = sqlite3.connect(tmp_path / "daemon.db")
+    rows = db.execute("SELECT name, result_class, decision_source FROM tool_calls WHERE session_id = ?",
+                      (ready["session_id"],)).fetchall()
+    assert rows == [("read", "ok", "no_approval")]
+    db.close()

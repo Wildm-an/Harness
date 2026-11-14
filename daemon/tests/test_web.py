@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from untag import untag
 from harness_daemon import web
 from harness_daemon.agent import Agent
 from harness_daemon.auto_mode import fast_path
@@ -140,7 +141,8 @@ def test_the_fetch_tool_asks_for_each_host_and_reads_in_parts(routes, tmp_path):
     routes["https://e.com/long"] = httpx.Response(200, headers={"content-type": "text/plain"}, text="a" * 300 + "b" * 300)
     small = ctx(tmp_path, max_output_chars=300)
     first = run(tool.run({"url": "https://e.com/long"}, small)).output
-    assert "URL: https://e.com/long" in first and "Use offset=300 to read more." in first and "b" not in first.split("\n\n")[1]
+    assert "URL: https://e.com/long" in first and "Use offset=300 to read more." in first and "b" not in untag(first).split("\n\n")[1]
+    assert first.count("<external-content-") == 1 and "source=\"web_fetch https://e.com/long\"" in first
     second = run(tool.run({"url": "https://e.com/long", "offset": 300}, small)).output
     assert "b" * 300 in second and "Characters 300-600 of 600.]" in second
     routes["https://e.com/away"] = httpx.Response(302, headers={"location": "https://other.org/x"})

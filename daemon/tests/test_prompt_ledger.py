@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from harness_daemon import agent, loop_guards, model_prompts, prompt
+from harness_daemon import agent, loop_guards, model_prompts, prompt, verify
 
 LEDGER = Path(__file__).resolve().parents[2] / "docs" / "PROMPT_LEDGER.md"
-MODULES = (prompt, model_prompts, agent, loop_guards)
+MODULES = (prompt, model_prompts, agent, loop_guards, verify)
 SUFFIXES = ("_NOTE", "_NUDGE", "_PROMPT", "_RULES", "_REQUEST", "_STYLE", "_CALLS", "_ENFORCEMENT", "_DISCIPLINE",
             "_COMMENTS", "_TEMPLATE", "_ERROR", "_MAYBE", "_NOTICE", "_INTRO", "_TOOLS", "_TASK_LIST", "_FINISH")
 

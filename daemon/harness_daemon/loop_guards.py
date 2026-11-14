@@ -118,6 +118,20 @@ CUT_LIMIT_ERROR = ("The model reply stopped at the output limit {count} times in
                    "Raise the output limit of the model server, or ask for smaller steps.")
 
 
+# The limits of a turn: the tool call limit (max_tool_calls) and the time budget (max_turn_minutes).
+# At a limit the agent gets one more model call with no tools, for a report to the user.
+LIMIT_CLOSE = "Not run. This turn reached the limit of {limit} tool calls."
+LIMIT_REPORT_NOTE = ("[Harness: This turn reached the limit of {limit} tool calls, so it ends now. This is your last "
+                     "reply of the turn, and it cannot run a tool. Write a short report for the user: the work that is "
+                     "done, the work that is left, and the next step.]")
+TIME_CLOSE = "Not run. This turn reached its time budget of {minutes} minutes."
+TIME_REPORT_NOTE = ("[Harness: This turn reached its time budget of {minutes} minutes, so it ends now. This is your "
+                    "last reply of the turn, and it cannot run a tool. Write a short report for the user: the work "
+                    "that is done, the work that is left, and the next step.]")
+NO_FINAL_REPORT = "The model gave no final report."
+FINAL_REPORT_FAILED = "The final report failed: {error}"
+
+
 def json_ends_early(raw: str) -> bool:
     """True for JSON that stops before its end, as when the output limit cuts a tool call."""
     try:

@@ -50,11 +50,14 @@ class BashTool(Tool):
             "run_in_background and read the output later with task_output.",
             "- Do not run commands that wait for input. Use flags such as --yes or -y.",
             "- Do not start servers that do not stop, unless you use run_in_background.",
-            "- Long output is cut, and the end is kept. Errors are usually at the end.",
+            "- Long output is cut, and the end is kept. Errors are usually at the end. The note at the cut names a "
+            "file with the full output.",
             "- When commands do not depend on each other, make several bash calls in one reply.",
             "- Put quotes around paths that have spaces.",
             "- Before you delete or move files, check the paths.",
             "- Read the exit code and the output before you say that a command worked.",
+            "- The command does not get secret environment variables (for example names that end with _TOKEN or "
+            "_API_KEY), unless the user keeps them. A login error can have this cause: tell the user.",
         ]
         if shell == "powershell":
             lines.append("- This is Windows PowerShell 5.1: && and || do not work. Use ; to run commands in sequence.")
@@ -70,6 +73,10 @@ class BashTool(Tool):
 
     async def prepare(self, args: dict[str, Any], ctx: ToolContext) -> Approval:
         command = self._command(args)
+        if command.lstrip().startswith("apply_patch"):
+            # Models trained on Codex send apply_patch as a shell command. Tell them which tool to use.
+            raise ToolError("This shell has no apply_patch command. Use the edit tool to change a file, and the "
+                            "write tool to create one.")
         return Approval(key=command, rule=f"bash({command})")
 
     async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
@@ -82,7 +89,7 @@ class BashTool(Tool):
         result = await run_command(command, ctx.cwd, ctx.shell, timeout)
         output = result.output.rstrip("\n") or "(no output)"
         # Keep the end of long command output. Errors are usually at the end.
-        output = truncate(output, ctx.settings["max_output_chars"], keep_tail=True)
+        output = truncate(output, ctx.settings["max_output_chars"], keep_tail=True, spill_dir=ctx.output_dir)
         if result.timed_out:
             return ToolResult(f"{output}\n[The command timed out after {timeout} seconds and was stopped.]",
                               is_error=True, limited=True)

@@ -68,6 +68,16 @@ These texts arrive as `[Harness: ...]` messages or tool results. They do not cha
 | `CUT_NOTICE` | Client text for a continuation. | | 2026-11-14 (change 3) | | keep |
 | `FILTER_NOTICE` | Client text for a filtered reply. | | 2026-11-14 (change 3) | | keep |
 | `CUT_LIMIT_ERROR` | Client text when the cap of continuations stops the turn. | | 2026-11-14 (change 3) | | keep |
+| `LIMIT_REPORT_NOTE` | The tool call limit ended the turn with no text: the user did not learn what was done and what was left. | All | 2026-11-14 (change 11a) | none | keep |
+| `TIME_REPORT_NOTE` | The same for the time budget of a turn (`max_turn_minutes`). | All | 2026-11-14 (change 11a) | none | keep |
+| `FAILURE_NOTE` | The agent changed code and stopped with no check (the most common failure in the LangChain traces). The verify command of the project failed. | All, when the project sets `verify_command` | 2026-11-14 (change 5a) | `verify-fix-act` | keep |
+| `START_NOTICE` | Client text: the verify command runs. | | 2026-11-14 (change 5a) | | keep |
+| `PASS_NOTICE` | Client text: the verify command passed. | | 2026-11-14 (change 5a) | | keep |
+| `FAIL_NOTICE` | Client text: the verify command failed, and the agent continues. | | 2026-11-14 (change 5a) | | keep |
+| `TIMEOUT_NOTICE` | Client text: the verify command did not end in time. | | 2026-11-14 (change 5a) | | keep |
+| `LIMIT_NOTICE` | Client text: the verify command still fails at the limit of continuations. | | 2026-11-14 (change 5a) | | keep |
+| `BLOCKED_NOTICE` | Client text: a deny rule or a safety rule blocks the verify command. | | 2026-11-14 (change 5a) | | keep |
+| `STATE_HEAD` (`context.py`, `state_note`) | A summary lost the open task list, the running background tasks, the changed files, or the request of the running turn. The agent then repeated work or lost the plan. | All | 2026-11-14 (change 10a) | `compaction-recall`, `compaction-mid-task` | keep |
 | `NO_IMAGE_NOTE` | The model has no image input and the user pasted an image. | Models with no image input | 2026-11-03 `13669ef` | none | keep |
 | `NO_IMAGE_NOTICE` | Client text for the same case. | | 2026-11-03 `13669ef` | | keep |
 | `REJECTED_IMAGE_NOTICE` | Client text when the endpoint rejects an image. | | 2026-11-03 `13669ef` | | keep |

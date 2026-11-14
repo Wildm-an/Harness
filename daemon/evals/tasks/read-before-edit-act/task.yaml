@@ -1,0 +1,15 @@
+id: read-before-edit-act
+behavior: read_before_edit
+polarity: act
+pair: null
+smoke: true
+turns:
+  - "In config.py, change DEFAULT_TIMEOUT from 30 to 45."
+permission_mode: acceptEdits
+approvals: {default: deny}
+timeout_s: 240
+checks:
+  - {type: tool_before, first: {name: read, args: "config\\.py"}, then: {name: edit, args: "config\\.py"}}
+  - {type: file_contains, path: config.py, text: "DEFAULT_TIMEOUT = 45"}
+  - {type: changed_only, paths: [config.py]}
+  - {type: max_changed_lines, n: 2}

@@ -8,6 +8,7 @@ at a user message and holds all the messages until the next user message.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from typing import Any
 
 from .providers import ModelClient
@@ -119,3 +120,55 @@ def trim_tool_outputs(history: list[dict[str, Any]], keep_from: int) -> int:
             m.pop("image", None)
             count += 1
     return count
+
+
+STATE_FILES = 5  # The changed files that the state note names after a summary.
+STATE_REQUEST_CHARS = 4000
+
+
+def changed_files(messages: list[dict[str, Any]], tools: Collection[str], limit: int = STATE_FILES) -> list[str]:
+    """The paths of the successful calls of ``tools`` (edit, write), newest first, with no duplicate."""
+    failed = {m.get("tool_call_id") for m in messages if m.get("role") == "tool" and m.get("is_error")}
+    paths: list[str] = []
+    for m in reversed(messages):
+        for call in reversed(m.get("tool_calls") or []) if m.get("role") == "assistant" else []:
+            fn = call.get("function") or {}
+            if fn.get("name") not in tools or call.get("id") in failed:
+                continue
+            try:
+                path = json.loads(fn.get("arguments") or "{}").get("path")
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(path, str) and path and path not in paths:
+                paths.append(path)
+                if len(paths) >= limit:
+                    return paths
+    return paths
+
+
+STATE_HEAD = ("[Harness: A summary replaced the older messages, to save context. The summary is in the system "
+              "prompt. This note gives the state that the summary can miss. Continue the work with your tools.]")
+
+
+def state_note(request: str | None, steps: list[str], tasks: list[str], files: list[str], search: bool) -> str | None:
+    """The note after a summary: the request of the turn, the open steps, the running tasks, the changed files.
+    None when there is no state to give."""
+    parts: list[str] = []
+    if request:
+        parts.append(f"Request of this turn:\n{request}")
+    if steps:
+        parts.append("Open steps of your task list:\n" + "\n".join(f"- {s}" for s in steps)
+                     + "\nCall update_plan with the whole list again before you continue. The user then sees "
+                       "the current list.")
+    if tasks:
+        parts.append("Background tasks that still run:\n" + "\n".join(f"- {t}" for t in tasks)
+                     + "\nRead a task with task_output. Stop a task with task_stop.")
+    if files:
+        parts.append("Files that you changed last:\n" + "\n".join(f"- {f}" for f in files)
+                     + "\nRead a file again before you change it. The summary does not hold file text.")
+    if not parts:
+        return None
+    if search:
+        parts.append("For a detail that the summary does not have, search the older messages of this session "
+                     "with conversation_search.")
+    return "\n".join([STATE_HEAD, *parts])

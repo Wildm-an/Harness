@@ -14,7 +14,13 @@ from typing import Any
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "max_tool_calls": 250,
-    "limit_tool_calls": True,  # False: no tool call limit. A turn ends only when the model stops, or the user stops it.
+    "limit_tool_calls": True,
+    # The verify command of the project (verify.py), for .harness/settings.json: tests, a type check, or a lint.
+    # It runs when the agent ends a turn that changed files. None: no check.
+    "verify_command": None,
+    "verify_timeout": 300,  # Seconds.
+    # The time budget of a turn, in minutes. 0: no budget. The time that waits for the user does not count.
+    "max_turn_minutes": 0,  # False: no tool call limit. A turn ends only when the model stops, or the user stops it.
     "bash_timeout": 120,
     "bash_max_timeout": 600,
     "max_output_chars": 20000,

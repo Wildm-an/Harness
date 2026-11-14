@@ -113,6 +113,7 @@ const STOP_NOTICES: Partial<Record<StopReason, string>> = {
   interrupted: "The turn was interrupted.",
   denied: "The tool call was denied. The agent waits for your instructions.",
   max_tool_calls: "The turn stopped at the tool call limit.",
+  max_time: "The turn stopped at its time budget.",
   blocked: "A plugin or a hook ended the turn.",
 };
 

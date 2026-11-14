@@ -2,7 +2,7 @@
 
 export type Decision = "allow_once" | "allow_always" | "deny";
 
-export type StopReason = "end" | "max_tool_calls" | "denied" | "interrupted" | "error" | "blocked"; // blocked: a plugin ended the turn.
+export type StopReason = "end" | "max_tool_calls" | "max_time" | "denied" | "interrupted" | "error" | "blocked"; // blocked: a plugin ended the turn. max_time: the time budget (max_turn_minutes).
 
 export interface Usage {
   prompt_tokens: number;
@@ -213,6 +213,7 @@ export interface UserSettings {
   auto_verify: boolean;
   max_tool_calls: number;
   limit_tool_calls?: boolean; // false: no tool call limit.
+  max_turn_minutes?: number; // The time budget of a turn. 0: no budget.
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
   subagents?: boolean; // false: the agent cannot start subagents (the agent tool).

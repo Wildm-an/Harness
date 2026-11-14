@@ -28,6 +28,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
+from .tool_output import prune_outputs, remove_session_outputs, session_output_dir
 from . import __version__
 from .agent import Agent
 from . import acp_harnesses, acp_install, acp_models
@@ -770,6 +771,7 @@ class LiveSession:
         session.agent.on_mode = self.set_mode
         if session.agent.command_hooks is not None:
             session.agent.command_hooks.session_id = session.id  # The hooks get it on stdin.
+        session.agent.set_output_dir(session_output_dir(session.project_dir, session.id))
         self.terminal = TerminalHost(session.cwd, self.send,
                                      on_exit=lambda: asyncio.ensure_future(self.conn.close_if_done(self)))
         # The MCP servers connect in the background. The first turn waits for them (MCP_WAIT).
@@ -1695,7 +1697,7 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
         await asyncio.wait({task})  # It does not raise when a window stops the turn.
     live.on_waiting = None
     stop = outcome.get("stop")
-    if stop in ("end", "max_tool_calls"):
+    if stop in ("end", "max_tool_calls", "max_time"):
         report("done")
     else:
         report("failed", error=live.last_error or RUN_STOPS.get(stop or "", "The turn did not end."))
@@ -1798,6 +1800,7 @@ async def archive_inactive(storage: Storage, now: float | None = None) -> list[s
     changes that are not in a commit. The archive of a clean worktree session removes its folder, as
     a manual archive does. The windows get the new session list.
     """
+    await asyncio.to_thread(prune_outputs, now)  # The hourly check also removes old tool output files.
     days = load_settings(None).get("auto_archive_days")
     if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
         return []
@@ -2154,6 +2157,7 @@ async def on_session_delete(conn: Connection, msg: dict[str, Any]) -> None:
     worktree = worktrees.loads(row.get("worktree"))
     if worktree:
         await asyncio.to_thread(worktrees.remove, worktree)
+    await asyncio.to_thread(remove_session_outputs, Path(row["cwd"]), session_id)
     conn.storage.delete_session(session_id)
     await conn.send({"type": "session.deleted", "id": session_id})
     if row.get("routine_id") and ROUTINES.scheduler is not None:
@@ -3789,6 +3793,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "auto_verify": (bool,),
     "max_tool_calls": (int,),
     "limit_tool_calls": (bool,),
+    "max_turn_minutes": (int,),
     "bash_timeout": (int,),
     "terminal_shell": (str, type(None)),
     "subagents": (bool,),
@@ -3812,7 +3817,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "instructions_speaking": (str, type(None)),
     "instructions_other": (str, type(None)),
 }
-USER_INT_LIMITS = {"max_tool_calls": (1, 500), "bash_timeout": (1, 3600)}
+USER_INT_LIMITS = {"max_tool_calls": (1, 500), "bash_timeout": (1, 3600), "max_turn_minutes": (0, 1440)}
 USER_TEXT_LIMIT = 10_000  # The maximum length of an agent instruction setting, in characters.
 
 
@@ -4226,6 +4231,26 @@ async def on_memory_import(conn: Connection, msg: dict[str, Any]) -> None:
     except MemoryStoreError as e:
         raise ProtocolError(str(e)) from None
     await _send_memory(conn, msg, store, changed=True, imported=count)
+
+
+@handler("session.export")
+async def on_session_export(conn: Connection, msg: dict[str, Any]) -> None:
+    """The transcript of a session as JSON (base64): all messages and the run records (transcript.py).
+    ``content`` false removes the text, the arguments, and the output. ``images`` true keeps the image data."""
+    from .transcript import export_transcript
+
+    current = conn.current.session if conn.current is not None else None
+    session_id = msg.get("session_id") or (current.id if current is not None else None)
+    if not isinstance(session_id, str) or conn.storage.get_session(session_id) is None:
+        raise ProtocolError(f"Unknown session: {session_id}")
+    content = msg.get("content") is not False
+    data = await asyncio.to_thread(export_transcript, conn.storage, session_id, content=content,
+                                   images=msg.get("images") is True)
+    text = json.dumps(data, ensure_ascii=False, indent=1)
+    suffix = "" if content else "-metadata"
+    await conn.send({"type": "session.export", "session_id": session_id,
+                     "name": f"harness-transcript-{session_id[:8]}{suffix}.json",
+                     "data": base64.b64encode(text.encode("utf-8")).decode("ascii")})
 
 
 @handler("memory.export")

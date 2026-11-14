@@ -97,6 +97,12 @@ python scripts/ws_client.py --port <port> --token <token> --cwd /path/to/project
 
 The daemon prints `{"event": "ready", "port": ..., "token": ...}` on start. Use these values in the client.
 
+Write the transcript of a session (all messages and the run records) as JSON. The script opens the database read-only. `--no-content` leaves out the text, the arguments, and the output, for a bug report:
+
+```bash
+python scripts/export_transcript.py --session <id> --no-content --out transcript.json
+```
+
 ## Package the sidecar
 
 The installers of the desktop app include the daemon as one executable (PyInstaller). Build it on each operating system:
@@ -232,13 +238,18 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 
 | Key | Default | Function |
 |---|---|---|
-| `max_tool_calls` | `250` | The maximum number of tool calls in one turn. |
+| `max_tool_calls` | `250` | The maximum number of tool calls in one turn. At the limit, the model gets one more call with no tools, for a report of the work that is done and the work that is left. |
+| `verify_command` | none | For the project file `.harness/settings.json`: a command that checks the work, for example `npm test`. It runs when the agent ends a turn that changed files. On a failure the agent gets the end of the output and continues, 5 times at most in a turn (the same limit as the `Stop` hook). On a pass the agent gets nothing. The command gets `HARNESS_CHANGED_FILES` (one relative path on each line). A deny rule of the project stops it, and in auto mode a hard rule. A worktree with no value uses the command of its project. |
+| `verify_timeout` | `300` | Seconds for the verify command. A command that takes longer is stopped, and the turn ends. |
+| `max_turn_minutes` | `0` | The time budget of a turn, in minutes. `0`: no budget. The time that waits for the user does not count. At the budget, the turn ends with a report, as at the tool call limit. |
 | `limit_tool_calls` | `true` | `false` turns off the tool call limit: a turn ends only when the model stops, or the user stops it. |
 | `bash_timeout` | `120` | The default `bash` timeout, in seconds. |
 | `bash_max_timeout` | `600` | The maximum `bash` timeout that the model can request. |
-| `max_output_chars` | `20000` | Tool output above this length is truncated. |
+| `max_output_chars` | `20000` | Tool output above this length is truncated. The full output goes to a file in `~/.harness/projects/<project>/<session>/tool-results/`, and the cut note names it. The agent can read the file. A session delete removes the files, and files older than 30 days go at the hourly check. |
+| `env_scrub` | `{"enabled": true}` | Only in `~/.harness/settings.json`. The commands that the agent runs (bash, background tasks, ACP terminals, the verify command) do not get secret environment variables: names that end with `_API_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD`, and similar, the `api_key_env` names of `providers.json`, and values that look like a key. `"keep": ["GH_TOKEN"]` keeps a name. `"remove": [...]` adds names. `"enabled": false` turns the scrub off. `HARNESS_TOKEN` never reaches a command. |
 | `task_reminders` | `"auto"` | The `[Harness: ...]` reminders to show and update the task list. `"auto"` gives them by the model tier (small, standard, frontier: `scaffold_tier` in `model_prompts.py`). Today each tier gets each reminder, until the evaluation set shows which tier does not need one. `"on"` or `"off"` for all models. |
 | `prompt_ablate` | none | Only for an evaluation run: a list of prompt part and block ids to leave out (the "Id" column of `docs/PROMPT_LEDGER.md`). |
+| `edit_tolerant_match` | `true` | When `old_string` of `edit` is not in the file, the tool tries a match that ignores whitespace at the line ends, then one constant change of indentation (also tabs and spaces). It needs exactly one match and whole lines. The result tells the agent the lines that it replaced. `false` turns it off. |
 | `read_before_edit` | `true` | `edit` and `write` reject a change to a file that the agent did not read in this session, or that changed on disk after the read. The error tells the agent to read the file. A partial read counts. A file that the agent wrote needs no new read. |
 | `shell` | auto | The shell for `bash`. On Windows, the default is Git Bash, then PowerShell. |
 | `default_model` | none | The model for a `session.new` message with no model. |

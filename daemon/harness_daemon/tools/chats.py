@@ -19,7 +19,8 @@ class ConversationSearchTool(Tool):
     description = (
         "Search the past sessions of this project for relevant details: earlier decisions, requests, "
         "and answers. Use it when the user refers to an earlier conversation, or when context from "
-        "an earlier session will help. The query is a few keywords. The result gives the title and "
+        "an earlier session will help. It also finds the older messages of this session that a summary "
+        "replaced. The query is a few keywords. The result gives the title and "
         "the date of each session, with the parts that match."
     )
     parameters = {

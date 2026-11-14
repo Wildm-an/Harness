@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -76,6 +78,8 @@ class ToolContext:
     model: Any = None
     # The files that the agent read (ReadState). None: edit and write do not check reads, for example in a test.
     reads: ReadState | None = None
+    # The folder for the full output of a cut result (tool_output.py). None: the cut text is lost.
+    output_dir: Path | None = None
 
     def resolve(self, path: Any, read_only: bool = False) -> Path:
         try:
@@ -176,7 +180,8 @@ def get_bool(args: dict[str, Any], key: str, default: bool = False) -> bool:
     return bool(value)
 
 
-def truncate(text: str, limit: int, keep_tail: bool = False) -> str:
+def truncate(text: str, limit: int, keep_tail: bool = False, spill_dir: Path | None = None) -> str:
+    """Cut text to ``limit`` characters. With ``spill_dir``, the full text goes to a file that the note names."""
     if len(text) <= limit:
         return text
     removed = len(text) - limit
@@ -187,7 +192,25 @@ def truncate(text: str, limit: int, keep_tail: bool = False) -> str:
     else:
         body = text[:limit]
         where = "from the end"
+    from ..tool_output import spill
+
+    path = spill(spill_dir, text)
+    more = (f" The full output is in the file {path}. Use read with offset and limit, or grep, to see more."
+            if path is not None else "")
     return (
         f"{body}\n\n[Output truncated. The full output has {len(text)} characters. "
-        f"{removed} characters were removed {where}.]"
+        f"{removed} characters were removed {where}.{more}]"
     )
+
+
+def external(text: str, source: str) -> str:
+    """Text from outside the project (a web page, search results, an MCP result) in a tag that names its source.
+
+    The model reads the tag as a boundary: the text in it is data, not instructions (the base prompt says so).
+    The random suffix stops a page that writes its own closing tag. One layer of defense, not a guarantee.
+    """
+    tag = f"external-content-{secrets.token_hex(4)}"
+    clean = re.sub(r"[\"<>\r\n]", " ", source)[:200].strip()
+    body = text.replace("external-content", "external_content")
+    opening = f'<{tag} source="{clean}">'
+    return f"{opening}\n{body}\n</{tag}>"

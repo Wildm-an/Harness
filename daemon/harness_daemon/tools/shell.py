@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -76,13 +77,69 @@ def shell_argv(shell: ShellInfo, command: str) -> list[str]:
     return [*shell.argv, command]
 
 
-def command_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    """The environment of a command that the agent chooses (bash, background tasks, ACP terminals).
+# The secret scrub: names of environment variables that hold secrets. A command that the agent chooses does not
+# get them. The setting "env_scrub" of ~/.harness/settings.json changes it: {"enabled": true, "keep": [...],
+# "remove": [...]}. A project file cannot change it.
+SECRET_SUFFIXES = ("_API_KEY", "_APIKEY", "_TOKEN", "_SECRET", "_SECRET_KEY", "_PASSWORD", "_PASSWD", "_PWD",
+                   "_PRIVATE_KEY", "_CREDENTIALS", "_ACCESS_KEY", "_AUTH")
+SECRET_PREFIXES = ("TF_TOKEN_",)
+SECRET_NAMES = {"DATABASE_URL", "PGPASSWORD", "DOCKER_AUTH_CONFIG", "BASH_ENV", "HARNESS_TOKEN"}
+# Names that stay: paths and agents that a tool needs, not secret values.
+KEEP_NAMES = {"PATH", "HOME", "USERPROFILE", "PWD", "OLDPWD", "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS",
+              "GOOGLE_APPLICATION_CREDENTIALS", "KUBECONFIG"}
+SECRET_VALUE = re.compile(r"(AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_\-]{20,}|"
+                          r"xox[abpr]-[A-Za-z0-9\-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY)")
 
-    A copy of the daemon environment, with no pager: a pager waits for input that never comes. ``extra``
-    comes last. The secret scrub of the plan (change 9) goes here.
+
+def scrub_config() -> dict:
+    from ..config import harness_home, read_json
+
+    settings = read_json(harness_home() / "settings.json", {})
+    value = settings.get("env_scrub") if isinstance(settings, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _provider_key_names() -> set[str]:
+    """The api_key_env names of providers.json: the daemon reads model keys from them."""
+    from ..config import harness_home, read_json
+
+    data = read_json(harness_home() / "providers.json", {})
+    names = set()
+    for entry in data.values() if isinstance(data, dict) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("api_key_env"), str):
+            names.add(entry["api_key_env"].upper())
+    return names
+
+
+def scrub_env(env: dict[str, str], config: dict | None = None) -> dict[str, str]:
+    """Remove the secret variables. Names compare in upper case: Windows names have no case."""
+    config = scrub_config() if config is None else config
+    keep = {str(n).upper() for n in config.get("keep") or [] if isinstance(n, str)}
+    extra = {str(n).upper() for n in config.get("remove") or [] if isinstance(n, str)}
+    if config.get("enabled") is False:
+        return {k: v for k, v in env.items() if k.upper() != "HARNESS_TOKEN"}
+    remove = SECRET_NAMES | extra | _provider_key_names()
+    out = {}
+    for name, value in env.items():
+        upper = name.upper()
+        if upper in keep or (upper in KEEP_NAMES and upper not in extra):
+            out[name] = value
+        elif (upper in remove or upper.endswith(SECRET_SUFFIXES) or upper.startswith(SECRET_PREFIXES)
+              or SECRET_VALUE.search(value or "")):
+            continue
+        else:
+            out[name] = value
+    return out
+
+
+def command_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment of a command that the agent chooses (bash, background tasks, ACP terminals, the verify
+    command).
+
+    A copy of the daemon environment with no secrets (scrub_env), and no pager: a pager waits for input that
+    never comes. ``extra`` comes last.
     """
-    env = dict(os.environ)
+    env = scrub_env(dict(os.environ))
     env.setdefault("PAGER", "cat")
     env.setdefault("GIT_PAGER", "cat")
     # Python writes UTF-8, as the output is read: else Windows Python writes the code page, and

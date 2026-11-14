@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..web import DEFAULT_RESULTS, MAX_RESULTS, WebError, fetch, host_of, normalize_url, search
-from .base import Approval, Tool, ToolContext, ToolError, ToolResult, get_int
+from .base import external, Approval, Tool, ToolContext, ToolError, ToolResult, get_int
 
 
 def _strings(value: Any, key: str) -> list[str]:
@@ -61,23 +61,24 @@ class WebFetchTool(Tool):
             return ToolResult(f"{page.url} redirects (HTTP {page.status}) to another host: {page.redirect}\n"
                               "Call web_fetch with this URL to read it.")
         head = [f"URL: {page.url}"]
-        if page.title:
-            head.append(f"Title: {page.title}")
         if page.status >= 400:
             head.append(f"The server returned HTTP {page.status}.")
+        title = f"Title: {page.title}\n\n" if page.title else ""
+        source = f"web_fetch {page.url}"
         if page.image is not None:
             if ctx.image_input:
-                return ToolResult("\n".join(head + [page.text]), image=page.image)
-            return ToolResult("\n".join(head + [page.text, "The model of this session does not accept images."]))
+                return ToolResult("\n".join(head + [external(title + page.text, source)]), image=page.image)
+            return ToolResult("\n".join(head + [external(title + page.text, source),
+                                                 "The model of this session does not accept images."]))
         text = page.text
         if not text:
-            return ToolResult("\n".join(head + ["(The page has no text.)"]))
+            return ToolResult("\n".join(head + [external(title + "(The page has no text.)", source)]))
         if offset >= len(text):
             raise ToolError(f"The page has {len(text)} characters. Offset {offset} is after the end.")
         limit = int(ctx.settings.get("max_output_chars") or 20_000)
         part = text[offset:offset + limit]
         end = offset + len(part)
-        body = "\n".join(head) + "\n\n" + part
+        body = "\n".join(head) + "\n\n" + external(title + part, source)
         if offset or end < len(text):
             body += f"\n\n[Characters {offset}-{end} of {len(text)}."
             body += f" Use offset={end} to read more.]" if end < len(text) else "]"
@@ -124,10 +125,10 @@ class WebSearchTool(Tool):
             raise ToolError(str(e)) from None
         if not results:
             return ToolResult(f"No results for: {query}")
-        lines = [f"Results for: {query}", ""]
+        lines: list[str] = []
         for n, r in enumerate(results, 1):
             lines.append(f"{n}. {r.title}\n   {r.url}")
             if r.snippet:
                 lines.append(f"   {r.snippet}")
-        lines.append("\nUse web_fetch to read a page. Give the URLs that you used under \"Sources:\" in your answer.")
-        return ToolResult("\n".join(lines))
+        return ToolResult(f"Results for: {query}\n\n" + external("\n".join(lines), "web_search")
+                          + "\n\nUse web_fetch to read a page. Give the URLs that you used under \"Sources:\" in your answer.")

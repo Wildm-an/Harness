@@ -326,3 +326,16 @@ def test_mcp_server_entry_without_http_support():
     assert entry["name"] == "harness" and entry["args"][-2:] == ["--mcp-bridge", "http://127.0.0.1:1/acp-mcp/x"]
     assert server_entry({"mcpCapabilities": {"http": True}}, "u") == {"type": "http", "name": "harness", "url": "u",
                                                                       "headers": []}
+
+
+def test_acp_bypass_mode_asks_for_a_hard_rule_match(daemon, project, fake_acp):
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "settings.set", "permission_mode": "bypassPermissions"})
+    c.send({"type": "prompt", "text": "sudo"})
+    request, _ = c.until("permission.request", timeout=30)
+    assert "[Privilege Escalation]" in request["reason"] and request["rule"] is None
+    c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "deny"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "outcome=no"
+    c.close()

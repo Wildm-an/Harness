@@ -157,9 +157,26 @@ class PermissionGate:
         # Rules for the current turn: the allowed-tools of the skills that run in it.
         self.turn_allow: list[str] = []
         self.auto: AutoReviewer | None = None  # The checks of auto mode. The agent sets it.
+        # The last decision: ("allow" | "deny" | "block", source). The run records store it (records.py).
+        self.last: tuple[str, str] | None = None
+        self._source: str | None = None
 
     async def check(self, tool: Tool, args: dict[str, Any], approval: Approval | None,
                     force: str | None = None, preapproved: bool = False) -> bool | str:
+        """The decision for one call (see _check). ``self.last`` gets the decision and the rule or the
+        person that made it, for example ("deny", "deny_rule") or ("deny", "user")."""
+        self._source = None
+        result = await self._check(tool, args, approval, force, preapproved)
+        decision = "allow" if result is True else "deny" if result is False else "block"
+        self.last = (decision, self._source or "unknown")
+        return result
+
+    def _from(self, source: str, result: Any) -> Any:
+        self._source = source
+        return result
+
+    async def _check(self, tool: Tool, args: dict[str, Any], approval: Approval | None,
+                     force: str | None = None, preapproved: bool = False) -> bool | str:
         """True: run the action. False: the user denied it, and the turn stops.
 
         A text: the mode blocked the action. The text goes to the agent, and the turn continues.
@@ -175,7 +192,8 @@ class PermissionGate:
             key = approval.key if approval is not None else json.dumps(args, sort_keys=True, ensure_ascii=False)[:500]
             name = (approval.tool if approval is not None else None) or tool.name
             if self.rules.denies(name, key):
-                return False
+                return self._from("deny_rule", False)
+            self._source = "plugin_ask"
             decision = await self.approver({
                 "request_id": uuid.uuid4().hex,
                 "tool": tool.name,
@@ -186,30 +204,31 @@ class PermissionGate:
             })
             return decision in ("allow_once", "allow_always")
         if not tool.needs_approval or approval is None:
-            return True
+            return self._from("no_approval", True)
         name = approval.tool or tool.name
         if self.rules.denies(name, approval.key):
-            return False
+            return self._from("deny_rule", False)
         mode = self.mode()  # An unknown mode, for example a mode of an older version, is "default".
         if mode == "plan" and name in EDIT_TOOLS:
-            return PLAN_BLOCK  # Before the allow rules: an allow rule or a hook must not change files in plan mode.
+            # Before the allow rules: an allow rule or a hook must not change files in plan mode.
+            return self._from("mode:plan", PLAN_BLOCK)
         match = safety_match(name, approval.key)
         if match is not None:
             decided = await self._safety(tool, args, approval, mode, match)
             if decided is not None:
                 return decided
         if preapproved:
-            return True
+            return self._from("hook", True)
         if mode == "bypassPermissions":
-            return True
+            return self._from("mode:bypassPermissions", True)
         if mode == "auto" and self.auto is not None:
             return await self._auto_check(tool, name, args, approval)
         if self.rules.allows(name, approval.key):
-            return True
+            return self._from("allow_rule", True)
         if any(rule_matches(r, name, approval.key) for r in (*self.session_allow, *self.turn_allow)):
-            return True
+            return self._from("session_rule", True)
         if name in EDIT_TOOLS and mode == "acceptEdits":
-            return True
+            return self._from("mode:acceptEdits", True)
         return await self._ask(tool, args, approval)
 
     async def _safety(self, tool: Tool, args: dict[str, Any], approval: Approval, mode: str,
@@ -227,17 +246,19 @@ class PermissionGate:
         if match.kind == "protected":
             if mode == "bypassPermissions":
                 return None
-            return await self._ask(tool, args, approval, note=PROTECTED_ASK.format(path=approval.key), always=False)
+            return await self._ask(tool, args, approval, note=PROTECTED_ASK.format(path=approval.key), always=False,
+                                   source="protected:user")
         if mode == "bypassPermissions":
             setting = bypass_safety_rules()
             if setting == "off":
                 return None
             if setting == "block":
-                return SAFETY_BLOCK.format(label=match.label)
-        return await self._ask(tool, args, approval, note=SAFETY_ASK.format(label=match.label), always=False)
+                return self._from("safety:block", SAFETY_BLOCK.format(label=match.label))
+        return await self._ask(tool, args, approval, note=SAFETY_ASK.format(label=match.label), always=False,
+                               source="safety:user")
 
     async def _ask(self, tool: Tool, args: dict[str, Any], approval: Approval, note: str | None = None,
-                   always: bool = True) -> bool:
+                   always: bool = True, source: str = "user") -> bool:
         """Ask the user. ``note`` tells why the gate asks: the client shows it as the reason.
 
         ``always`` False sends no rule, so the card has no "Always allow": a safety question asks each time.
@@ -252,9 +273,11 @@ class PermissionGate:
         if note:
             request["reason"] = note
         decision = await self.approver(request)
+        self._source = source
         if decision == "allow_always":
             if always:
                 self.rules.add_allow(approval.rule)
+                self._source = f"{source}_always"
             return True
         return decision == "allow_once"
 
@@ -264,13 +287,14 @@ class PermissionGate:
         assert auto is not None
         label = hard_rule(name, approval.key)
         if label:
+            self._source = "auto:hard_rule"
             return BLOCK_MESSAGE.format(rule=label, reason="A fixed rule of auto mode blocks this action. The user "
                                                              "can run it in another permission mode.")
         allow = [r for r in self.rules.read()["allow"] if not is_broad_rule(r)]
         if any(rule_matches(r, name, approval.key) for r in (*allow, *self.session_allow, *self.turn_allow)):
-            return True
+            return self._from("auto:allow_rule", True)
         if fast_path(name, approval.key) or getattr(tool, "read_only", False):
-            return True
+            return self._from("auto:fast_path", True)
         shown = approval.input if isinstance(approval.input, dict) else args
         try:
             verdict = await auto.review(name, shown, approval.key)
@@ -278,14 +302,15 @@ class PermissionGate:
             auto.failures += 1
             if auto.failures >= MAX_FAILURES:
                 auto.failures = 0
-                return await self._ask(tool, args, approval, note=f"Auto mode could not check this action ({e}).")
-            return FAILURE_MESSAGE.format(error=e)
+                return await self._ask(tool, args, approval, note=f"Auto mode could not check this action ({e}).",
+                                       source="auto:user")
+            return self._from("auto:failure", FAILURE_MESSAGE.format(error=e))
         auto.failures = 0
         if verdict.decision == "allow":
             auto.consecutive_blocks = 0
-            return True
+            return self._from("auto:classifier", True)
         if verdict.decision == "ask":
-            return await self._ask(tool, args, approval, note=f"Auto mode asks you: {verdict.reason}")
+            return await self._ask(tool, args, approval, note=f"Auto mode asks you: {verdict.reason}", source="auto:user")
         auto.consecutive_blocks += 1
         auto.total_blocks += 1
         if auto.consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS or auto.total_blocks >= MAX_TOTAL_BLOCKS:
@@ -295,5 +320,5 @@ class PermissionGate:
                 auto.total_blocks = 0
             return await self._ask(tool, args, approval, note=(
                 f"Auto mode blocked this action [{verdict.rule}]: {verdict.reason} It blocked several actions, "
-                "so it asks you."))
-        return BLOCK_MESSAGE.format(rule=verdict.rule, reason=verdict.reason)
+                "so it asks you."), source="auto:user")
+        return self._from("auto:classifier", BLOCK_MESSAGE.format(rule=verdict.rule, reason=verdict.reason))

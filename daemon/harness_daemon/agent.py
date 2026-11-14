@@ -25,7 +25,10 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .config import ConfigError, load_settings
-from .context import CHARS_PER_TOKEN, COMPACT_AT, KEEP_TURNS, estimate_tokens, split_turns, summarize, trim_tool_outputs
+from .context import (
+    CHARS_PER_TOKEN, COMPACT_AT, KEEP_TURNS, STATE_REQUEST_CHARS, changed_files, estimate_tokens, split_turns,
+    state_note, summarize, trim_tool_outputs,
+)
 from .created import before_call, created_files
 from .files import file_hash, relpath
 from .auto_mode import AutoReviewer
@@ -37,6 +40,7 @@ from . import model_contexts
 from .model_prompts import model_family, reminder_on, scaffold_tier
 from .loop_guards import (
     CUT_CALL_ERROR, CUT_CALL_MAYBE, CUT_EMPTY_NOTE, CUT_LIMIT_ERROR, CUT_NOTICE, CUT_REPLY_NOTE, FILTER_NOTICE,
+    FINAL_REPORT_FAILED, LIMIT_CLOSE, LIMIT_REPORT_NOTE, NO_FINAL_REPORT, TIME_CLOSE, TIME_REPORT_NOTE,
     MAX_CUT_REPLIES, MAX_STALL_NUDGES, STALL_NOTICE, STALL_NUDGE, is_stall, json_ends_early, repair_tool_name,
     repaired_note, repeat_key, repeat_note,
 )
@@ -44,6 +48,11 @@ from .prompt import (
     build_system_prompt, load_project_instructions, load_project_note, load_user_instructions, system_prompt_parts,
 )
 from . import __version__
+from .auto_mode import hard_rule
+from .verify import (
+    BLOCKED_NOTICE, FAIL_NOTICE, LIMIT_NOTICE, PASS_NOTICE, START_NOTICE, TIMEOUT_NOTICE, VERIFY_TAIL_CHARS,
+    VerifyResult, failure_note, run_verify, verify_command, verify_timeout,
+)
 from .records import recorded_stream
 from .providers import (
     DEFAULT_CONTEXT_LENGTH,
@@ -217,7 +226,16 @@ class Agent:
         self.hooks = Hooks()
         self._plugin_tools: list[str] = []  # The names of the plugin tools in self.tools.
         self._set_plugin_tools(plugins)
-        self.gate = PermissionGate(self.cwd, approver, session_allow,
+        self._waited = 0.0  # Seconds of this turn that waited for the user. The time budget does not count them.
+
+        async def timed_approver(request: dict[str, Any]) -> Any:
+            start = time.monotonic()
+            try:
+                return await approver(request)
+            finally:
+                self._waited += time.monotonic() - start
+
+        self.gate = PermissionGate(self.cwd, timed_approver, session_allow,
                                    mode=lambda: self.settings.get("permission_mode") or "default")
         self.gate.auto = AutoReviewer(self)
         self.history: list[dict[str, Any]] = list(history or [])
@@ -257,6 +275,18 @@ class Agent:
         self.record_label: str | None = None
         self._turn_id: str | None = None
         self._step = 0
+        # The result class and the permission decision of the running tool call (_execute). The tool row uses them.
+        self._call_info: dict[str, Any] = {}
+        self._turn_clock = 0.0  # time.monotonic() at the start of the turn (the time budget).
+        # The verification gate (verify.py): the relative paths that tools changed since the last verify run,
+        # the continuations of the gate and the Stop hook in this turn (one limit), and the last result.
+        self._turn_changed: set[str] = set()
+        self._stop_continuations = 0
+        self._verify_result: Any = None
+        self._verify_runs = 0
+        self._verify_passed = False  # A run passed earlier in this session.
+        self._verify_blocked_told = False
+        self.on_changed: Callable[[list[str]], None] | None = None  # A subagent tells its parent.
         self._turn_start = 0  # The history index of the user message of the turn.
         self._plan_nudged = False  # The turn got the reminder to show a task list.
         self._plan_close_nudged = False  # The turn got the reminder to close its task list (PLAN_CLOSE_NOTE).
@@ -544,10 +574,20 @@ class Agent:
         self._set_plugin_tools(host)
         self._rebuild_prompt()
 
+    def _read_roots(self) -> tuple[Path, ...]:
+        """The folders outside the project that read, grep, and glob can read: the skills and the output files."""
+        roots = tuple(s.dir for s in self.skills.values())
+        return roots + ((self.ctx.output_dir,) if self.ctx.output_dir is not None else ())
+
+    def set_output_dir(self, folder: Path) -> None:
+        """The session folder for the full output of a cut tool result (tool_output.py)."""
+        self.ctx.output_dir = folder
+        self.ctx.read_roots = self._read_roots()
+
     def set_skills(self, skills: dict[str, Skill]) -> None:
         """Replace the skills, for example after a change of the plugins."""
         self.skills = dict(skills)
-        self.ctx.read_roots = tuple(s.dir for s in self.skills.values())
+        self.ctx.read_roots = self._read_roots()
         self.tools.pop(SkillTool.name, None)
         if any(s.model_invocable for s in self.skills.values()):
             tool = SkillTool(self.skills, self._activate_skill, self.run_fork)
@@ -753,7 +793,7 @@ class Agent:
         ``origin`` "task": the message is a note of a background task, not a message of the user.
         ``images``: data URLs that the user pasted. A model with image input gets them.
 
-        Stop reasons: ``end``, ``max_tool_calls``, ``denied``, ``interrupted``, ``error``.
+        Stop reasons: ``end``, ``max_tool_calls``, ``max_time``, ``denied``, ``interrupted``, ``error``, ``blocked``.
         """
         text = (await self.hooks.emit("turn.start", TurnEvent(text, self.cwd))).text
         if self.user_facing and origin != "task" and self.command_hooks is not None:
@@ -786,7 +826,6 @@ class Agent:
         turn = self.turn_number
         step = 0
         continuations = 0
-        stop_hooks = 0  # The times that a Stop hook made the turn continue.
         new_messages = [message]  # The new user messages of the next step, for step.before.
         self.in_turn = True
         self._cancel_turn = False
@@ -796,6 +835,10 @@ class Agent:
         kind = "other"  # The finish kind of the last reply.
         usage ={"prompt_tokens": 0, "completion_tokens": 0, "last_prompt_tokens": 0}
         max_calls = int(self.settings["max_tool_calls"])
+        self._turn_clock, self._waited = time.monotonic(), 0.0
+        self._turn_changed, self._stop_continuations = set(), 0
+        self._verify_result, self._verify_runs = None, 0
+        report_note: str | None = None  # At a limit: the note of the final model call with no tools.
         calls_used = 0
         streamed: list[str] = []
         self.streamed = streamed  # A client that returns to the session reads it.
@@ -820,6 +863,9 @@ class Agent:
 
         try:
             while True:
+                if self._over_time():
+                    stop, report_note = "max_time", TIME_REPORT_NOTE.format(minutes=self._turn_minutes())
+                    break
                 streamed.clear()
                 step += 1
                 self._step = step
@@ -886,6 +932,12 @@ class Agent:
                         new_messages = [self._add_harness_note(STALL_NUDGE)]
                         await self.emit({"type": "notice", "level": "info", "text": STALL_NOTICE})
                         continue
+                    # The verify command of the project, when the turn changed files. A failure: the agent continues.
+                    verify = await self._run_verify_gate()
+                    if verify is not None and verify.status == "failed":
+                        self._stop_continuations += 1
+                        new_messages = [self._add_harness_note(failure_note(verify, self._verify_passed))]
+                        continue
                     # The task list of the turn has open steps: one more step for the closing update_plan.
                     close_note = self._plan_close_note(origin, ended=True)
                     if close_note:
@@ -904,14 +956,18 @@ class Agent:
                             new_messages = [self._add_steered(t) for t in stopping.steered]
                             continue
                     # A Stop hook of the settings can make the agent continue.
-                    if (self.user_facing and self.command_hooks is not None and stop_hooks < MAX_STEER_CONTINUATIONS
-                            and self.command_hooks.has("Stop")):
-                        outcome = await self.command_hooks.run("Stop", {"stop_hook_active": stop_hooks > 0,
+                    if (self.user_facing and self.command_hooks is not None
+                            and self._stop_continuations < MAX_STEER_CONTINUATIONS and self.command_hooks.has("Stop")):
+                        outcome = await self.command_hooks.run("Stop", {"stop_hook_active": self._stop_continuations > 0,
                                                                         "permission_mode": self._mode()})
                         await self._hook_errors(outcome)
                         if outcome.blocked:
-                            stop_hooks += 1
-                            new_messages = [self._add_steered(f"A Stop hook asks you to continue: {outcome.blocked}")]
+                            # The verify gate and the Stop hook share one limit of continuations.
+                            self._stop_continuations += 1
+                            new_messages = [self._add_harness_note(f"[Harness: A Stop hook asks you to continue: "
+                                                                   f"{outcome.blocked}]")]
+                            await self.emit({"type": "notice", "level": "info",
+                                             "text": f"A Stop hook asked the agent to continue: {outcome.blocked}"})
                             continue
                     break
 
@@ -919,12 +975,12 @@ class Agent:
                 while open_calls:
                     call = open_calls[0]
                     if calls_used >= max_calls and self.settings.get("limit_tool_calls", True) is not False:
-                        stop = "max_tool_calls"
-                        self._close_open_calls(
-                            open_calls,
-                            f"Not run. The limit of {max_calls} tool calls for each turn is reached. "
-                            "Stop and tell the user what is left to do.",
-                        )
+                        stop, report_note = "max_tool_calls", LIMIT_REPORT_NOTE.format(limit=max_calls)
+                        self._close_open_calls(open_calls, LIMIT_CLOSE.format(limit=max_calls))
+                        break
+                    if self._over_time():
+                        stop, report_note = "max_time", TIME_REPORT_NOTE.format(minutes=self._turn_minutes())
+                        self._close_open_calls(open_calls, TIME_CLOSE.format(minutes=self._turn_minutes()))
                         break
                     calls_used += 1
                     in_flight = call["id"]
@@ -949,13 +1005,20 @@ class Agent:
                     raise ModelError(CUT_LIMIT_ERROR.format(count=cut_replies))  # Each call has a result now.
                 if stop != "end":
                     break
+            if report_note is not None:
+                # A limit ended the turn. One more model call, with no tools, gives the user a report.
+                step += 1
+                self._step = step
+                response = await self._final_report(report_note, on_text, streamed, turn, step)
+                if response is not None:
+                    await add_usage(response)
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and hasattr(task, "uncancel"):
                 task.uncancel()
             if streamed:
                 self.history.append({"role": "assistant", "content": "".join(streamed)})
-            self._close_open_calls(open_calls, INTERRUPTED)
+            self._close_open_calls(open_calls, INTERRUPTED, "interrupted")
             if in_flight is not None:
                 await self.emit({"type": "tool.result", "id": in_flight, "output": INTERRUPTED, "is_error": True})
             stop = "interrupted"
@@ -968,8 +1031,11 @@ class Agent:
         await self._return_user_steer()
         await self.hooks.emit("turn.end", TurnEvent(text, self.cwd, stop))
         self._record("turn_end", {"id": self._turn_id, "stop_reason": stop, "steps": step, "tool_calls": calls_used})
+        end: dict[str, Any] = {"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop}
+        if self._verify_result is not None:
+            end["verify"] = self._verify_result.event(self._verify_runs)
         self._turn_id = None
-        await self.emit({"type": "turn.end", "usage": self._usage(usage), "stop_reason": stop})
+        await self.emit(end)
         return stop
 
     # -- the hooks of the settings files (hooks.py) ----------------------------------------------------
@@ -1416,6 +1482,10 @@ class Agent:
         sub.set_mcp_tools(self.mcp_tools())
         # Auto mode checks the calls of the subagent with the messages of the user in this session.
         sub.gate.auto = self.gate.auto
+        if self.ctx.output_dir is not None:
+            sub.set_output_dir(self.ctx.output_dir)
+        # A file change of the subagent counts for the verify gate of this agent.
+        sub.on_changed = self._mark_changed
         # The run records of the subagent go to the session of this agent, with the label of the subagent.
         sub.on_record = self.on_record
         sub.record_label = label or (kind.name if kind is not None else "subagent")
@@ -1526,6 +1596,103 @@ class Agent:
 
     # -- context ---------------------------------------------------------------------
 
+    def _mark_changed(self, paths: list[str]) -> None:
+        """Files that a tool changed in this turn: the verify gate runs at the end of the turn."""
+        self._turn_changed.update(paths)
+        if self.on_changed is not None:
+            self.on_changed(paths)
+
+    async def _run_verify_gate(self) -> VerifyResult | None:
+        """Run the verify command of the project when the turn changed files. None: no run was necessary."""
+        command = verify_command(self.settings, self.cwd)
+        if (not self.user_facing or command is None or not self._turn_changed
+                or self._stop_continuations >= MAX_STEER_CONTINUATIONS or self._mode() == "plan"):
+            if command and self._turn_changed and self._stop_continuations >= MAX_STEER_CONTINUATIONS \
+                    and self._verify_result is not None and self._verify_result.status == "failed":
+                await self.emit({"type": "notice", "level": "warning", "text": LIMIT_NOTICE.format(
+                    runs=self._verify_runs, command=command)})
+                self._turn_changed.clear()
+            return None
+        changed = sorted(self._turn_changed)
+        self._turn_changed.clear()  # A later stop with no new change does not run the command again.
+        if self.gate.rules.denies("bash", command) or (self._mode() == "auto" and hard_rule("bash", command)):
+            if not self._verify_blocked_told:
+                self._verify_blocked_told = True
+                await self.emit({"type": "notice", "level": "warning", "text": BLOCKED_NOTICE.format(command=command)})
+            return None
+        await self.emit({"type": "notice", "level": "info", "text": START_NOTICE.format(command=command)})
+        limit = min(VERIFY_TAIL_CHARS, max(int(self.context_length * CHARS_PER_TOKEN * 0.1), 1000))
+        timeout = verify_timeout(self.settings)
+        result = await run_verify(command, self.cwd, self.ctx.shell, timeout, limit, changed)
+        self._verify_result, self._verify_runs = result, self._verify_runs + 1
+        if result.status == "passed":
+            self._verify_passed = True
+            await self.emit({"type": "notice", "level": "info",
+                             "text": PASS_NOTICE.format(seconds=result.seconds, command=command)})
+        elif result.status == "timeout":
+            await self.emit({"type": "notice", "level": "warning",
+                             "text": TIMEOUT_NOTICE.format(timeout=timeout, command=command)})
+        else:
+            await self.emit({"type": "notice", "level": "info", "text": FAIL_NOTICE.format(exit_code=result.exit_code)})
+        return result
+
+    def _turn_minutes(self) -> int:
+        """The setting "max_turn_minutes": the time budget of a turn. 0: no budget."""
+        try:
+            return max(int(self.settings.get("max_turn_minutes") or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _over_time(self) -> bool:
+        """True when the turn used its time budget. The time that waited for the user does not count.
+        The budget is soft: a running model call or tool call ends first."""
+        minutes = self._turn_minutes()
+        return bool(minutes) and time.monotonic() - self._turn_clock - self._waited >= minutes * 60
+
+    async def _final_report(self, note: str, on_text: Any, streamed: list[str], turn: int,
+                            step: int) -> ModelResponse | None:
+        """The last model call of a turn that a limit ended: tool_choice "none", with the same tool list, so the
+        prompt cache stays. The reply goes in the history. A tool call in it does not run."""
+        self._add_harness_note(note)
+        try:
+            await self._compact_if_needed()
+            client, options = await self._request_config(turn, step)
+            response = await self._stream_with_retries(client, {**(options or {}), "tool_choice": "none"}, on_text,
+                                                       streamed, turn, step)
+        except ModelError as e:
+            await self.emit({"type": "notice", "level": "warning", "text": FINAL_REPORT_FAILED.format(error=e)})
+            return None
+        finally:
+            streamed.clear()
+        if (response.text or "").strip():
+            self.history.append({"role": "assistant", "content": response.text})
+        else:
+            await self.emit({"type": "notice", "level": "info", "text": NO_FINAL_REPORT})
+        return response
+
+    def _compaction_state(self, removed: int) -> dict[str, Any]:
+        """The state that a summary can lose, read before the old messages go (context.state_note)."""
+        kept = self.history[removed:]
+        plans = self._plan_calls()
+        kept_plan = any((c.get("function") or {}).get("name") == "update_plan"
+                        for m in kept if m.get("role") == "assistant" for c in m.get("tool_calls") or [])
+        steps = []
+        if plans and not kept_plan:
+            steps = [f"{i.get('content') or ''}" + (" (in progress)" if i.get("status") == "in_progress" else "")
+                     for i in plans[-1] if i.get("status") != "completed"]
+        request = None
+        if self.in_turn and self._turn_start < removed:
+            content = self.history[self._turn_start].get("content")
+            if isinstance(content, str) and not content.startswith("[Harness:"):
+                request = truncate(content, STATE_REQUEST_CHARS, keep_tail=True)
+        tasks = []
+        host = self.ctx.tasks
+        for task in (getattr(host, "running", None) or []) if host is not None else []:
+            tasks.append(f"{task.id} ({task.kind}): {task.description or task.command[:80]}")
+        return {"request": request, "steps": steps, "tasks": tasks,
+                "files": changed_files(self.history, FILE_TOOLS),
+                "search": ConversationSearchTool.name in self.tools}
+
     async def _compact_if_needed(self) -> bool:
         """Compact when the next request is near the context limit. Return True if the context changed."""
         if self.context_tokens() >= COMPACT_AT * self.context_length:
@@ -1543,6 +1710,7 @@ class Agent:
         summary: str | None = None
         if keep >= 1 and len(turns) > keep:
             old = [m for turn in turns[:-keep] for m in turn]
+            state = self._compaction_state(len(old))
             try:
                 summary = await summarize(self.client, self.summary, old, self.context_length,
                                           record=self.record_request)
@@ -1562,6 +1730,12 @@ class Agent:
                 self._rebuild_prompt()
                 if self.on_compact:
                     self.on_compact(removed, summary)
+                note = state_note(**state)
+                if note:
+                    if self.in_turn:
+                        self._add_harness_note(note)  # The next request of the turn carries it.
+                    else:
+                        self._harness_notes.append(note)  # /compact: the note goes with the next prompt.
 
         # If the kept turns are still too large, remove old tool outputs. Keep the current turn.
         trimmed = 0
@@ -1613,9 +1787,12 @@ class Agent:
             message["card"] = card
         self.history.append(message)
 
-    def _close_open_calls(self, open_calls: list[dict[str, str]], output: str) -> None:
+    def _close_open_calls(self, open_calls: list[dict[str, str]], output: str, result_class: str = "skipped") -> None:
         for call in open_calls:
             self._add_tool_result(call["id"], output, True)
+            self._record("tool", {"turn_id": self._turn_id, "step": self._step, "call_id": call["id"],
+                                  "name": call["name"], "started_at": time.time(), "duration_ms": 0,
+                                  "result_class": result_class})
         open_calls.clear()
 
     async def _run_tool_call(self, call: dict[str, str]) -> ToolResult:
@@ -1628,10 +1805,18 @@ class Agent:
 
         # The new PDF and Word files of the call get a card in the chat (created.py).
         snapshot = await asyncio.to_thread(before_call, self.cwd, name, args) if args is not None else None
-        result = await self._execute(name, args, parse_error, call_id)
+        started, clock = time.time(), time.monotonic()
+        self._call_info = {}
+        try:
+            result = await self._execute(name, args, parse_error, call_id)
+        except asyncio.CancelledError:
+            self._record_tool(call_id, name, called, started, clock, "interrupted")
+            raise
+        full_chars = len(result.output)
         if result is not _DENIED_RESULT:
             if not result.limited:
-                result.output = truncate(result.output, int(self.settings["max_output_chars"]))
+                result.output = truncate(result.output, int(self.settings["max_output_chars"]),
+                                         spill_dir=self.ctx.output_dir)
             if snapshot is not None:
                 result.created = await asyncio.to_thread(created_files, self.cwd, snapshot, result.changed_paths)
             key = repeat_key(name, args, result.output)
@@ -1654,33 +1839,59 @@ class Agent:
         await self.emit(event)
         for path in result.changed_paths:
             await self.emit({"type": "fs.changed", "path": relpath(self.cwd, path), "hash": file_hash(path), "by": "agent"})
+        if result.changed_paths:
+            self._mark_changed([relpath(self.cwd, p) for p in result.changed_paths])
+        result_class = "denied" if result is _DENIED_RESULT else self._call_info.get("class") or (
+            "error_result" if result.is_error else "ok")
+        self._record_tool(call_id, name, called, started, clock, result_class, full_chars,
+                          result.limited or len(result.output) < full_chars)
         return result
+
+    def _record_tool(self, call_id: str, name: str, called: str, started: float, clock: float, result_class: str,
+                     output_chars: int | None = None, truncated: bool = False) -> None:
+        """One tool_calls row: no arguments and no output, only the class, the decision, and the size."""
+        decision = self._call_info.get("decision")
+        self._record("tool", {
+            "turn_id": self._turn_id, "step": self._step, "call_id": call_id, "name": name,
+            "called_name": called if called != name else None, "started_at": started,
+            "duration_ms": round((time.monotonic() - clock) * 1000), "result_class": result_class,
+            "decision": decision[0] if decision else None, "decision_source": decision[1] if decision else None,
+            "output_chars": output_chars, "truncated": int(truncated) if output_chars is not None else None,
+        })
 
     async def _execute(self, name: str, args: dict[str, Any] | None, parse_error: str | None,
                        call_id: str = "") -> ToolResult:
         tool = self.tools.get(name)
+        info = self._call_info
         if tool is None:
+            info["class"] = "unknown_tool"
             return ToolResult(f"Unknown tool: {name}. The tools are: {', '.join(self.tools)}.", is_error=True)
         if args is None:
+            info["class"] = "invalid_arguments"
             return self._bad_arguments(name, call_id, parse_error or "")
         if args == {} and call_id and call_id == self._cut_call and tool.parameters.get("required"):
             # The output limit cut the call before its first argument.
+            info["class"] = "invalid_arguments"
             return ToolResult(CUT_CALL_ERROR.format(name=name), is_error=True)
         call = await self.hooks.emit("tool.before", ToolCall(name, args, self.cwd, call_id=call_id))
         if call.blocked:
             if call.cancelled:
                 self._cancel_turn = True
             # tool.after still runs, so that result observers see the blocked call (``call.blocked`` is set).
+            info.update({"class": "blocked", "decision": ("block", "plugin")})
             call.result = ToolResult(f"A plugin blocked this tool call: {call.blocked}", is_error=True)
             call = await self.hooks.emit("tool.after", call)
             return call.result if isinstance(call.result, ToolResult) else ToolResult(str(call.result))
         args = call.args
         ran = False
+        stage = "prepare"  # A ToolError in validate or prepare is a bad argument. In run, it is a tool error.
         try:
             tool.validate(args)
             approval = await tool.prepare(args, self.ctx)
+            stage = "gate"
             pre = await self._tool_hooks("PreToolUse", name, args)
             if pre is not None and pre.blocked:
+                info.update({"class": "blocked", "decision": ("block", "hook")})
                 call.result = ToolResult(f"A PreToolUse hook blocked this tool call: {pre.blocked}", is_error=True)
             else:
                 if pre is not None and pre.decision == "allow" and call.asked is None:
@@ -1690,20 +1901,26 @@ class Agent:
                 else:
                     asked = call.asked or ("A PreToolUse hook asks for approval." if pre is not None and pre.decision == "ask" else None)
                     allowed = await self.gate.check(tool, args, approval, force=asked)
+                info["decision"] = self.gate.last
                 if isinstance(allowed, str):  # The permission mode blocked the action. The turn continues.
+                    info["class"] = "blocked"
                     return ToolResult(allowed, is_error=True)
                 if not allowed:
                     return _DENIED_RESULT
                 if name in FILE_TOOLS:
                     self._checkpoint(args)
+                stage = "run"
                 call.result = await tool.run(args, self.ctx)
                 ran = True
         except ToolError as e:
+            info["class"] = "tool_error" if stage == "run" else "invalid_arguments"
             call.result = ToolResult(str(e), is_error=True)
         except OSError as e:
+            info["class"] = "os_error"
             call.result = ToolResult(f"{type(e).__name__}: {e}", is_error=True)
         except Exception as e:  # noqa: BLE001 - a tool bug gives an error result. The turn continues.
             log.exception("The tool %s failed", name)
+            info["class"] = "internal_error"  # Each row of this class is a harness bug.
             call.result = ToolResult(f"The tool failed: {type(e).__name__}: {e}", is_error=True)
         if ran and isinstance(call.result, ToolResult):
             post = await self._tool_hooks("PostToolUse", name, args, call.result)

@@ -690,6 +690,7 @@ class ModelClient:
         self._send_stream_options = True
         # False after the endpoint rejected a request with reasoning_effort: the model has no effort levels.
         self._send_effort = True
+        self._send_tool_choice = True  # False after a server rejected tool_choice.
 
     async def _openai(self) -> AsyncOpenAI:
         """The API client for the current address and event loop.
@@ -753,6 +754,9 @@ class ModelClient:
             kwargs["reasoning_effort"] = effort
         if tools:
             kwargs["tools"] = tools
+            # tool_choice "none": a reply with no tool call, with the same tool list (the prompt cache stays).
+            if options and options.get("tool_choice") and self._send_tool_choice:
+                kwargs["tool_choice"] = options["tool_choice"]
         if self._send_stream_options:
             kwargs["stream_options"] = {"include_usage": True}
         try:
@@ -761,6 +765,9 @@ class ModelClient:
             # Some servers reject stream_options. Try once more without it.
             if self._send_stream_options and "stream_options" in str(e):
                 self._send_stream_options = False
+                return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
+            if "tool_choice" in kwargs and "tool_choice" in str(e):
+                self._send_tool_choice = False
                 return await self.stream(messages, tools, on_text, options=options, on_reasoning=on_reasoning)
             # A model with no effort levels can reject reasoning_effort. Try once more without it.
             # Not for a request that is too long: the agent uses the limit in the error (agent.py).
