@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 from .config import harness_home, read_json
 from .providers import ModelClient, resolve_model
+from .records import recorded_stream
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -106,6 +107,7 @@ for a risky action, block it. Prefer allow for ordinary project work."""
 _CMD = r"(?:^|[;&|(`{]|\bthen|\bdo)\s*"  # A command position: the start, or after an operator.
 HARD_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("Privilege Escalation", re.compile(_CMD + r"(sudo|doas|su|runas)\s", re.I)),
+    ("Privilege Escalation", re.compile(r"(start-process|saps)\b[^\n]*-verb\s+['\"]?runas", re.I)),
     ("System Change", re.compile(_CMD + r"(format(\.com)?\s+[a-z]:|diskpart|bcdedit|mkfs(\.\w+)?\s|"
                                          r"set-executionpolicy|reg\s+(add|delete)\s+hklm|shutdown\s|"
                                          r"dd\s+[^\n]*of=/dev/)", re.I)),
@@ -114,7 +116,7 @@ HARD_RULES: list[tuple[str, re.Pattern[str]]] = [
                                     r"(python3?|node)\s*($|[;&|]|-\s))", re.I)),
     ("Download and Run", re.compile(r"(iex|invoke-expression)\s*\(?\s*(\(|\$)?[^\n]*(downloadstring|iwr|"
                                     r"invoke-webrequest|irm|invoke-restmethod)", re.I)),
-    ("Critical Deletion", re.compile(r"(rm|rmdir|remove-item|del|rd|erase)\b[^\n;&|]*\s(-[a-z]*\s+)*"
+    ("Critical Deletion", re.compile(r"(rm|rmdir|remove-item|ri|del|rd|erase)\b[^\n;&|]*\s(-[a-z]*\s+)*"
                                      r"(/|~|~/|\$home|\$env:userprofile|%userprofile%|[a-z]:\\?|/\*|~/\*|"
                                      r"[a-z]:\\\*)(\s|$|\"|')", re.I)),
     ("Secret Exfiltration", re.compile(r"(curl|wget|iwr|invoke-webrequest|irm|invoke-restmethod|nc|scp)\b[^\n]*"
@@ -129,12 +131,21 @@ HARD_RULES: list[tuple[str, re.Pattern[str]]] = [
 SHELL_OPERATORS = re.compile(r"[;&|`\n<>]|\$\(")
 READ_ONLY_COMMANDS = {
     "ls", "dir", "pwd", "cat", "type", "head", "tail", "wc", "echo", "rg", "grep", "findstr", "tree", "stat",
-    "file", "which", "where", "whoami", "date", "du", "df", "env", "printenv", "get-childitem", "gci",
+    "file", "which", "where", "whoami", "date", "du", "df", "get-childitem", "gci",
     "get-content", "gc", "get-location", "gl", "get-item", "gi", "test-path", "resolve-path", "select-string",
     "sls", "get-command", "gcm", "measure-object",
 }
 GIT_READ = {"status", "diff", "log", "show", "rev-parse", "ls-files", "blame", "describe", "shortlog", "grep",
             "reflog", "cat-file", "ls-tree"}
+# A read of these files shows credentials. It is not a routine read: the model checks it.
+# env and printenv are not on the fast path for the same reason: they print the secrets of the environment.
+CREDENTIAL_PATH = re.compile(
+    r"(^|[\\/~])(\.ssh|\.aws|\.gnupg|\.docker|\.kube|\.azure|\.config[\\/]gh)([\\/]|$)|"
+    r"(^|[\\/])(\.env(\.[^\\/]*)?|\.netrc|_netrc|\.npmrc|\.pypirc|\.git-credentials|credentials(\.json)?|"
+    r"id_(rsa|ed25519|ecdsa|dsa)|daemon-token|providers\.json|mcp-auth\.json)$",
+    re.I,
+)
+GIT_RUNS_OR_WRITES = {"--output", "--open-files-in-pager", "--ext-diff", "--textconv"}
 FIND_WRITES = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls", "-fprintf"}
 VERSION_FLAGS = {"--version", "-v", "-V", "version", "--help", "-h"}
 # Changes here need a check: they change the tools, the settings, or the history of the project.
@@ -161,15 +172,41 @@ class Verdict:
     reason: str
 
 
+@dataclass(frozen=True)
+class SafetyMatch:
+    """A call that a safety rule catches. ``kind`` is "hard" (a hard rule) or "protected" (a protected path)."""
+
+    kind: str
+    label: str
+
+
+# An SSH identity file after -i is ordinary use of the key (scp -i ~/.ssh/id_ed25519 a host:), not a copy of it.
+_IDENTITY_ARG = re.compile(r"(?<!\S)-i\s+(\"[^\"]*\"|'[^']*'|\S+)")
+
+
 def hard_rule(tool: str, key: str) -> str | None:
     """The label of a hard rule that blocks the call, or None."""
     if tool == "bash":
         for label, pattern in HARD_RULES:
-            if pattern.search(key):
-                return label
+            text = _IDENTITY_ARG.sub(" ", key) if label == "Secret Exfiltration" else key
+            if not pattern.search(text):
+                continue
+            if label == "Permission Settings" and is_read_only_command(key):
+                continue  # cat .harness/settings.json only reads the file.
+            return label
         return None
     if tool in ("edit", "write") and _parts(key)[:2] == [".harness", "settings.json"]:
         return "Permission Settings"
+    return None
+
+
+def safety_match(tool: str, key: str) -> SafetyMatch | None:
+    """A hard rule match, or an edit of a protected path. The permission gate uses it in each mode."""
+    label = hard_rule(tool, key)
+    if label:
+        return SafetyMatch("hard", label)
+    if tool in ("edit", "write") and is_protected_path(key):
+        return SafetyMatch("protected", "Protected Path")
     return None
 
 
@@ -199,6 +236,10 @@ def is_read_only_command(command: str) -> bool:
     name = Path(tokens[0]).name.lower()
     name = name[:-4] if name.endswith(".exe") else name
     args = tokens[1:]
+    # The raw words too: posix shlex removes the backslashes of a Windows path.
+    words = args + [w.strip("'\"") for w in command.split()[1:]]
+    if any(CREDENTIAL_PATH.search(w.split("=", 1)[-1]) for w in words):
+        return False
     if len(args) == 1 and args[0] in VERSION_FLAGS:
         return True
     if name == "git":
@@ -206,7 +247,8 @@ def is_read_only_command(command: str) -> bool:
             return False
         sub, rest = args[0], args[1:]
         if sub in GIT_READ:
-            return True
+            # --output writes a file. -O and --open-files-in-pager (git grep) and --ext-diff run a program.
+            return not any(a.split("=", 1)[0] in GIT_RUNS_OR_WRITES or a.startswith("-O") for a in rest)
         if sub == "branch":
             return not any(a.startswith("-") and a not in ("-a", "-r", "-v", "-vv", "--list", "--show-current")
                            for a in rest)
@@ -215,6 +257,8 @@ def is_read_only_command(command: str) -> bool:
         return False
     if name == "find":
         return not any(a in FIND_WRITES for a in args)
+    if name == "rg" and any(a == "--pre" or a.startswith("--pre=") for a in args):
+        return False  # rg --pre runs a command for each file.
     return name in READ_ONLY_COMMANDS
 
 
@@ -280,6 +324,18 @@ def global_auto_config() -> dict[str, Any]:
     a repository must not add its own allow rules."""
     config = read_json(harness_home() / "settings.json", {}).get("auto_mode")
     return config if isinstance(config, dict) else {}
+
+
+BYPASS_SAFETY_VALUES = ("ask", "block", "off")
+
+
+def bypass_safety_rules() -> str:
+    """What a hard rule match does in bypassPermissions mode: "ask" (the default), "block", or "off".
+
+    Only ~/.harness/settings.json can set it. A repository must not turn the safety rules off.
+    """
+    value = read_json(harness_home() / "settings.json", {}).get("bypass_safety_rules")
+    return value if value in BYPASS_SAFETY_VALUES else "ask"
 
 
 def _texts(value: Any) -> list[str]:
@@ -400,7 +456,9 @@ class AutoReviewer:
             return None
 
         try:
-            response = await asyncio.wait_for(self.client().stream(request, [], ignore), REVIEW_TIMEOUT)
+            response = await asyncio.wait_for(
+                recorded_stream(self.client(), request, [], ignore, record=getattr(self.agent, "record_request", None),
+                                purpose="classifier"), REVIEW_TIMEOUT)
         except asyncio.TimeoutError:
             raise AutoModeError(f"the model did not answer in {REVIEW_TIMEOUT} seconds") from None
         except Exception as e:  # noqa: BLE001 - any model error means: no verdict.

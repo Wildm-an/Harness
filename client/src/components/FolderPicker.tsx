@@ -135,7 +135,7 @@ export function FolderPicker({
           </label>
           <span className="spacer" />
           {listing?.is_project && (
-            <span className="badge ok" title="The folder has .git, a HARNESS.md, or a project file">
+            <span className="badge ok" title="The folder has .git, a HARNESS.md or AGENTS.md, or a project file">
               <FolderGit2 size={12} aria-hidden /> Project
             </span>
           )}

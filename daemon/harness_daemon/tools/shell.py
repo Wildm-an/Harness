@@ -67,17 +67,20 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         pass
 
 
-@dataclass
-class CommandResult:
-    output: str
-    returncode: int | None
-    timed_out: bool
+def shell_argv(shell: ShellInfo, command: str) -> list[str]:
+    """The process arguments that run ``command`` in ``shell``.
+
+    All places that start a shell command use it (bash, tasks, servers, hooks, ACP terminals). A sandbox
+    can later wrap the command at this one point.
+    """
+    return [*shell.argv, command]
 
 
-async def run_command(command: str, cwd: Path, shell: ShellInfo, timeout: float) -> CommandResult:
-    """Run ``command`` in ``shell``. Stdout and stderr go to one stream.
+def command_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment of a command that the agent chooses (bash, background tasks, ACP terminals).
 
-    On a timeout or a cancel, the process and all its children stop.
+    A copy of the daemon environment, with no pager: a pager waits for input that never comes. ``extra``
+    comes last. The secret scrub of the plan (change 9) goes here.
     """
     env = dict(os.environ)
     env.setdefault("PAGER", "cat")
@@ -85,6 +88,26 @@ async def run_command(command: str, cwd: Path, shell: ShellInfo, timeout: float)
     # Python writes UTF-8, as the output is read: else Windows Python writes the code page, and
     # a script that prints a character outside it (for example "→") fails.
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    if extra:
+        env.update(extra)
+    return env
+
+
+@dataclass
+class CommandResult:
+    output: str
+    returncode: int | None
+    timed_out: bool
+
+
+async def run_command(command: str, cwd: Path, shell: ShellInfo, timeout: float,
+                      env: dict[str, str] | None = None) -> CommandResult:
+    """Run ``command`` in ``shell``. Stdout and stderr go to one stream.
+
+    ``env``: the environment of the process. Default: command_env().
+    On a timeout or a cancel, the process and all its children stop.
+    """
+    env = env if env is not None else command_env()
     kwargs: dict = {
         "cwd": str(cwd),
         "stdin": subprocess.DEVNULL,
@@ -97,7 +120,7 @@ async def run_command(command: str, cwd: Path, shell: ShellInfo, timeout: float)
     else:
         kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen([*shell.argv, command], **kwargs)
+    proc = subprocess.Popen(shell_argv(shell, command), **kwargs)
     reader = asyncio.ensure_future(asyncio.to_thread(proc.communicate))
     try:
         out, _ = await asyncio.wait_for(asyncio.shield(reader), timeout)

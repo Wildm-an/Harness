@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from .providers import ModelClient
+from .records import RecordFn, recorded_stream
 
 COMPACT_AT = 0.8
 KEEP_TURNS = 4
@@ -85,7 +86,7 @@ def render_transcript(messages: list[dict[str, Any]]) -> str:
 
 
 async def summarize(client: ModelClient, previous: str | None, messages: list[dict[str, Any]],
-                    context_length: int) -> str:
+                    context_length: int, record: "RecordFn | None" = None) -> str:
     transcript = render_transcript(messages)
     # The request must fit in the context. Keep the newest part of a long transcript.
     budget = int(context_length * 0.6 * CHARS_PER_TOKEN)
@@ -104,7 +105,7 @@ async def summarize(client: ModelClient, previous: str | None, messages: list[di
     async def ignore(_: str) -> None:
         return None
 
-    response = await client.stream(request, [], ignore)
+    response = await recorded_stream(client, request, [], ignore, record=record, purpose="compact")
     return response.text.strip()
 
 

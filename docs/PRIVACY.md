@@ -59,6 +59,18 @@ Harness connects to these services only after you add them or turn them on:
 The daemon listens only on `127.0.0.1` (your own computer). A daemon that you start by hand with
 `--host` can listen on other addresses. It then shows a warning.
 
+## Run records on your computer
+
+The daemon keeps run records in its local database (`~/.harness/harness.db`, `daemon/harness_daemon/records.py`). They help to find the cause of a change in agent behavior or token use. Harness does not send them anywhere.
+
+| Table | One row for each | Data |
+|---|---|---|
+| `turns` | Turn of a session | The start and end time, the stop reason, the permission mode, the number of steps and tool calls, the Harness version. |
+| `model_requests` | Request to a model | The purpose (turn, summary, auto mode check), the provider and the model, the times, the token counts that the endpoint reported, the finish reason, an error text, and a hash of the system prompt and of the tool list. |
+| `tool_calls` | Tool call (a later version fills it) | The tool name, the time, the result class, and the permission decision. |
+
+The rows hold no prompt text, no tool arguments, and no tool output. The same database already holds the messages of each session. A session delete also deletes its run records.
+
 ## Privacy policies of third-party services
 
 - GitHub (the update check, the downloads, and `gh`):

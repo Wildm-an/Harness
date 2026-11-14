@@ -27,12 +27,15 @@ WAIT_PID_ENV = "HARNESS_WAIT_PID"  # The new process waits for the port of this 
 
 # The arguments of the daemon. None: this daemon cannot update itself.
 _argv: list[str] | None = None
+# The HARNESS_TOKEN value that main removed from os.environ. A restart gives it to the new daemon.
+_env_token: str | None = None
 
 
-def enable(argv: list[str], sidecar: bool) -> None:
+def enable(argv: list[str], sidecar: bool, env_token: str | None = None) -> None:
     """Called by main. The sidecar of the desktop app and a frozen daemon cannot update."""
-    global _argv
+    global _argv, _env_token
     _argv = None if sidecar or frozen.is_frozen() else [a for a in argv if a != "--new-token"]
+    _env_token = env_token
 
 
 def refusal() -> str | None:
@@ -74,6 +77,8 @@ def restart() -> None:
     """Start a new daemon with the same arguments, then stop this process."""
     assert _argv is not None
     env = {**os.environ, WAIT_PID_ENV: str(os.getpid())}
+    if _env_token:
+        env["HARNESS_TOKEN"] = _env_token
     kwargs: dict = {"env": env, "stdin": subprocess.DEVNULL}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP

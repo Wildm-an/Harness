@@ -28,7 +28,7 @@ import httpx
 from .nethttp import async_client
 
 from .launch import ServerConfig, load_launch, server_dir
-from .tools.shell import ShellInfo, _kill_tree
+from .tools.shell import ShellInfo, _kill_tree, shell_argv
 
 log = logging.getLogger("harness.servers")
 
@@ -181,7 +181,7 @@ class ServerManager:
         server.url = f"http://localhost:{config.port}/" if config.port else None
         server.port = config.port
         try:
-            server.proc = subprocess.Popen([*self.shell.argv, config.command], **kwargs)
+            server.proc = subprocess.Popen(shell_argv(self.shell, config.command), **kwargs)
         except OSError as e:
             await self._set(server, "crashed", f"The command did not start: {e}")
             return server

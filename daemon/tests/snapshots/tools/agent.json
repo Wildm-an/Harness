@@ -1,0 +1,632 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "read",
+      "description": "Read a text file. The result shows each line as the line number, a tab, and the text. The line number and the tab are not part of the file. For a large file, use offset and limit to read one part. Use it in place of cat, head, tail, or Get-Content in bash. When you need several files, read them all in one reply with several read calls. It also reads PDF, Word (.docx), PowerPoint (.pptx), and Excel (.xlsx) files as text with numbered parts: paragraphs [P1], table cells, slides and shapes [2.1], and cells such as B4. Use office_edit to change a Word, PowerPoint, or Excel file. It shows a PNG, JPEG, GIF, or WebP image to a model that accepts images.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path, relative to the project folder."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "The first line to read. Line 1 is the first line."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "The maximum number of lines to read. Default 2000."
+          },
+          "pages": {
+            "type": "string",
+            "description": "For a PDF: the pages to read, for example 1-5 or 2,7. Default: all."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "glob",
+      "description": "Find files by a name pattern, for example **/*.py or src/**/*.ts. A pattern with no / matches the file name in each folder. The newest files come first.\n\nUsage notes:\n- It shows at most 200 files. If there are more, use a narrower pattern.\n- To find text in files, use grep.\n- Use it in place of find, ls, or dir in bash.\n- When you need several patterns, make several glob calls in one reply.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "The glob pattern."
+          },
+          "path": {
+            "type": "string",
+            "description": "The folder to search. Default: the project folder."
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "grep",
+      "description": "Search the content of files with a regular expression.\n\nOutput modes:\n- output=files (default) lists the files that match.\n- output=content shows the matching lines as path:line:text. Add context to see lines around each match.\n- output=count shows the number of matching lines in each file.\n\nUsage notes:\n- Use it in place of grep, rg, findstr, or Select-String in bash.\n- The pattern is a regular expression. Escape special characters, for example interface\\{\\} or foo\\(.\n- Use glob to limit the search, for example *.py. To find files by name, use the glob tool.\n- It shows at most 200 files or 300 lines. If there are more, use a narrower pattern, path, or glob.\n- After you find a match, use read to see the code around it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "The regular expression."
+          },
+          "path": {
+            "type": "string",
+            "description": "A file or folder to search. Default: the project folder."
+          },
+          "glob": {
+            "type": "string",
+            "description": "Search only files that match this glob, for example *.py."
+          },
+          "output": {
+            "type": "string",
+            "enum": [
+              "files",
+              "content",
+              "count"
+            ],
+            "description": "files, content, or count."
+          },
+          "ignore_case": {
+            "type": "boolean",
+            "description": "Ignore upper and lower case. Default false."
+          },
+          "context": {
+            "type": "integer",
+            "description": "Lines to show before and after each match (content only)."
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "edit",
+      "description": "Replace an exact string in an existing file.\n\nUse it to change part of a file. To create a file or to replace all its content, use write. For Word, PowerPoint, or Excel files, use office_edit.\n\nUsage notes:\n- Read the file with the read tool before you edit it. The tool rejects an edit of a file that you did not read in this session, or that changed after the read.\n- old_string must match the file exactly, with the same spaces and indentation. Do not copy the line numbers and the tab that the read tool puts before each line.\n- old_string must occur one time in the file. If it occurs more times, add lines around it, or set replace_all to true to change each occurrence.\n- If the edit fails with \"old_string was not found\", read the file again and copy the exact text.\n- Make small, targeted edits. Do not replace a full file with edit.\n- To make several changes to one file, make several edit calls.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path, relative to the project folder."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "The exact text to replace."
+          },
+          "new_string": {
+            "type": "string",
+            "description": "The new text."
+          },
+          "replace_all": {
+            "type": "boolean",
+            "description": "Replace each occurrence. Default false."
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "write",
+      "description": "Create a file, or replace all the content of a file. The folders are created if necessary.\n\nUsage notes:\n- To change part of an existing file, use edit. Edit is safer, and the diff is smaller.\n- Before you replace an existing file, read it. The tool rejects a replace of a file that you did not read in this session.\n- Do not create documentation or README files unless the user asks for them.\n- Do not use bash with echo or a redirect (>) to create a file. Use this tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path, relative to the project folder."
+          },
+          "content": {
+            "type": "string",
+            "description": "The full content of the file."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "bash",
+      "description": "Run a command with bash in the project folder. Each call starts a new shell in the project folder, so a cd does not stay for the next call.\n\nUse it for commands that have no tool: git, package managers, tests, builds, and scripts.\n\nDo not use it for these jobs. Use the tool instead:\n- Read a file: use read, not cat, head, tail, or Get-Content.\n- Find files by name: use glob, not find, ls, or dir.\n- Find text in files: use grep, not grep, rg, findstr, or Select-String.\n- Change a file: use edit or write, not sed, awk, echo, or a redirect (>).\n- Talk to the user: write text in your reply, not echo.\n\nUsage notes:\n- The default timeout is 120 seconds, and the maximum is 600 seconds. For a long build, test run, or watcher, set run_in_background and read the output later with task_output.\n- Do not run commands that wait for input. Use flags such as --yes or -y.\n- Do not start servers that do not stop, unless you use run_in_background.\n- Long output is cut, and the end is kept. Errors are usually at the end.\n- When commands do not depend on each other, make several bash calls in one reply.\n- Put quotes around paths that have spaces.\n- Before you delete or move files, check the paths.\n- Read the exit code and the output before you say that a command worked.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The command to run."
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Timeout in seconds. Optional."
+          },
+          "run_in_background": {
+            "type": "boolean",
+            "description": "Run the command as a background task and return at once, for a long build, test run, or watcher. Read its output later with task_output. Optional."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the command does, in 3 to 8 words, in the past tense, for the user. For example: Listed the skill files. Optional."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "office_edit",
+      "description": "Change a Word (.docx), PowerPoint (.pptx), or Excel (.xlsx) file, or make a new one with create: true. Read the file first: the read tool numbers its parts. Give a list of edits; they apply in order, then the file is saved once. Each edit has an 'op':\nWord: replace {find, replace}; insert_paragraph {after (paragraph number, 0 for the start), text, style?}; set_paragraph {index, text, style?}; delete_paragraph {index}; set_cell {table, row, col, text}; add_table {rows: [[text, ...], ...]}.\nPowerPoint: replace {find, replace, slide?}; add_slide {title?, body? (lines), layout? (name or number), position?}; delete_slide {slide}; set_text {slide, shape, text}; set_notes {slide, text}.\nExcel: set {cell, value, sheet?} (a value that starts with = is a formula); set_rows {start, rows: [[value, ...], ...], sheet?}; add_sheet {name}; rename_sheet {sheet, name}; delete_sheet {sheet}.\nNumbers start at 1. A replace keeps the formatting when the text is in one run.\nThis tool is for small changes. To make a formatted document, a deck, or a workbook with formulas, or for tracked changes, comments, charts, or a template, load the docx, pptx, or xlsx skill first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The .docx, .pptx, or .xlsx file, relative to the project folder."
+          },
+          "create": {
+            "type": "boolean",
+            "description": "True to make a new, empty document first."
+          },
+          "edits": {
+            "type": "array",
+            "description": "The edits, in order. Each is an object with 'op' and its fields.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op"
+              ]
+            }
+          }
+        },
+        "required": [
+          "path",
+          "edits"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "show_document",
+      "description": "Open a PDF (.pdf) or Word (.docx) file of the project in the Preview pane of the app, so that the user can look at it. Use it when the user asks to see a document, or after you make or change a document that the user must check. This tool does not give you the text: use read for that.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The path of the .pdf or .docx file, relative to the project."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "show_visual",
+      "description": "Show an interactive visual in the chat: an HTML fragment, or one raw <svg> element. Use it for a diagram, a chart, a small demo, or a set of choices with buttons. The user sees it below your message. Follow these rules:\n- Give a fragment only. Do not write <!DOCTYPE>, <html>, <head>, or <body>.\n- Use these CSS variables for all colors and fonts. They change with the light and the dark theme: --color-text, --color-text-muted, --color-surface, --color-surface-2, --color-border, --color-accent, --color-accent-text, --color-success, --color-danger, --color-warning, --font-sans, --font-mono, --radius. Example: color: var(--color-text). Do not use fixed colors for text, lines, or backgrounds.\n- Use a flat style: no gradients, no large shadows. The page background is transparent.\n- Do not use vh units. The frame gets the height of its content.\n- Scripts and styles can load only from cdnjs.cloudflare.com, cdn.jsdelivr.net, and unpkg.com. fetch and other network calls do not work.\n- Call sendPrompt(text) in a button click to send text as the next prompt of the user.\n- Keep the code short. Do not repeat the visual in your text reply.\n- Optional: 'loading_messages', 1 to 4 short lines (about 5 words) that show while the visual loads. For a serious topic, keep them plain. The title is also the file name when the user downloads the visual.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "A short snake_case name for the visual, for example loader_options."
+          },
+          "code": {
+            "type": "string",
+            "description": "The HTML fragment or the <svg> element."
+          },
+          "loading_messages": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional. 1 to 4 short lines that show while the visual loads."
+          }
+        },
+        "required": [
+          "title",
+          "code"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_file",
+      "description": "Send files to the user: each file shows as a card in the chat. Use it for a deliverable that the user must see, for example a report, a chart image, an HTML page, or a built file. Do not send scratch files or each small change of a file. The files must exist in the project. 'display': \"render\" opens the first file in a pane of the app now (a PDF, a Word file, an image, an HTML page, or a text file); \"attach\" shows a card that the user opens in another app (for example a spreadsheet). Leave it out to let the app decide by the file type. 'status': \"proactive\" when you send the file on your own initiative and the user must see it now (the app shows a notification); else \"normal\". Add a 'caption' of one line when it helps.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "string"
+            },
+            "description": "The paths of the files, relative to the project or absolute."
+          },
+          "caption": {
+            "type": "string",
+            "description": "Optional. One short line about the files."
+          },
+          "display": {
+            "type": "string",
+            "enum": [
+              "render",
+              "attach"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "proactive"
+            ]
+          }
+        },
+        "required": [
+          "files"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "artifact",
+      "description": "Publish an HTML page as an artifact: a page that the user opens from a card in the chat, in the Browser pane of the app. Use it for a report, a dashboard, an explainer, or a small app that the user keeps or shares, not for a quick look (use show_visual for that). Write the page to a .html file first, then publish it. The page must be complete: inline CSS and scripts, or scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net, or unpkg.com with an exact version. It must work at phone width and in light and dark mode. To update an artifact, publish the same file again, or give its 'id'. Actions: publish (default), list, read, delete.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "publish",
+              "list",
+              "read",
+              "delete"
+            ]
+          },
+          "file_path": {
+            "type": "string",
+            "description": "publish: the .html file of the page."
+          },
+          "title": {
+            "type": "string",
+            "description": "publish: a name of 2 to 4 words. Default: the <title> of the page."
+          },
+          "description": {
+            "type": "string",
+            "description": "publish: one sentence for the card."
+          },
+          "id": {
+            "type": "string",
+            "description": "publish: the artifact to update. read, delete: the artifact."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_plan",
+      "description": "Show the user your plan for a task of more than one step, as a list under your message. Send the whole list each time: short steps (at most 7 words) in order, each with a status: pending, in_progress, or completed. Keep exactly one step in_progress while you work. Call it at the start of the task, again as soon as each step finishes (before you start the next step), and when the plan changes. Do not mark many steps completed at the end. After the user interrupts you or gives a new instruction, send the new whole list. Do not use it for a one-step answer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "The whole plan, in order (1 to 12 steps).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string",
+                  "description": "The step, in a few words."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "completed"
+                  ]
+                }
+              },
+              "required": [
+                "content",
+                "status"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wrap_up",
+      "description": "At the end of a turn in which you changed files, ran commands, or did work of more than one step, show the user a short recap in a box: what is now true and what is not done or not checked. 2 or 3 short sentences, about 40 words, 300 characters or less. Do not list each check or step that you did: the details go in your final answer. When the next move is the user's decision, add one short question in 'ask' (100 characters or less), and one or two answer buttons in 'actions': the first is your recommendation. A button has a label of 1 to 3 words, and a message that it sends as the user's next prompt. Call it once, as the last tool call of the turn, then write your final answer. Before wrap_up, call update_plan with each finished step completed. Do not use it for a short answer to a question.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "recap": {
+            "type": "string",
+            "description": "2 or 3 short sentences, 300 characters or less: what changed, and what is not done."
+          },
+          "ask": {
+            "type": "string",
+            "description": "Optional: one short question for a decision of the user, 100 characters or less."
+          },
+          "actions": {
+            "type": "array",
+            "description": "Optional: 1 or 2 answer buttons. The first is your recommendation.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "The button text, 1 to 3 words."
+                },
+                "message": {
+                  "type": "string",
+                  "description": "The prompt that the click sends. Default: the label."
+                }
+              },
+              "required": [
+                "label"
+              ]
+            }
+          }
+        },
+        "required": [
+          "recap"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_fetch",
+      "description": "Fetch a web page and read it as text. HTML becomes text in the Markdown form, with the links. It also reads JSON, plain text, and PDF files, and shows an image to a model that accepts images. A long page comes in parts: use offset to read the next part. A page that you fetched in the last 15 minutes comes from a cache. A redirect to another host does not continue: call web_fetch again with the new URL. Do not use it for pages of the dev servers: use the preview tools.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "A full http or https URL."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "The first character to read. Default 0."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Search the web. The result lists the title, the URL, and a short text of each page. Use web_fetch to read a page. Use it for information after your training data, for example new versions and docs. In your answer, give the URLs of the pages that you used, in a list with the title \"Sources:\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query."
+          },
+          "allowed_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Show only results from these domains. Optional."
+          },
+          "blocked_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Do not show results from these domains. Optional."
+          },
+          "count": {
+            "type": "integer",
+            "description": "The number of results, 1 to 20. Default 8."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ask_user_question",
+      "description": "Ask the user 1 to 4 questions while you work, each with 2 to 4 options. Use it when you must know a choice of the user to continue, for example between two designs, or to make a vague request clear. Do not use it for a question that the code or the docs can answer. The user can also type another answer. Put your recommended option first, and add \" (Recommended)\" to its label. To compare concrete things (a layout mockup, a code snippet, a diagram), give an option a 'preview': the card shows it next to the options in a monospace box. The user can add notes to the answer. The result gives the answers and the notes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "questions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "description": "The full question. End it with a question mark."
+                },
+                "header": {
+                  "type": "string",
+                  "description": "A short label, 12 characters or less."
+                },
+                "options": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 4,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "description": "1 to 5 words."
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "What the option means."
+                      },
+                      "preview": {
+                        "type": "string",
+                        "description": "Optional. Text that the card shows when the user looks at this option: an ASCII mockup, a code snippet, or a short comparison. Monospace, Markdown code fences allowed."
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ]
+                  }
+                },
+                "multiSelect": {
+                  "type": "boolean",
+                  "description": "True: the user can pick more than one option."
+                }
+              },
+              "required": [
+                "question",
+                "header",
+                "options"
+              ]
+            }
+          }
+        },
+        "required": [
+          "questions"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "exit_plan_mode",
+      "description": "In plan mode, give the user your plan for approval when it is complete. The plan is Markdown: the steps, and the files that each step changes. The user accepts it (the mode changes and you start the work), asks for changes (you get the feedback and stay in plan mode), or rejects it. Use it only to plan a task that changes files, not after research only. When plan mode is off, do not call it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "string",
+            "description": "The plan, in Markdown."
+          }
+        },
+        "required": [
+          "plan"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "memory",
+      "description": "Save, read, or delete a memory that stays between sessions. action 'save' writes one fact (name, description, type, content) and updates the index MEMORY.md. A save with an existing name replaces that memory. action 'read' gives a memory, 'delete' removes it, and 'list' gives the index. For a feedback or project memory, end the content with a 'Why:' line and a 'How to apply:' line.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "save",
+              "read",
+              "delete",
+              "list"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "A short kebab-case slug, for example user-role."
+          },
+          "description": {
+            "type": "string",
+            "description": "For save: one line that tells when the memory is useful."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "feedback",
+              "project",
+              "reference"
+            ],
+            "description": "For save."
+          },
+          "content": {
+            "type": "string",
+            "description": "For save: the fact."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  }
+]

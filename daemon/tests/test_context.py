@@ -94,6 +94,38 @@ def test_auto_compaction_keeps_the_last_four_turns(harness_home, project, fake_m
     assert end["type"] == "turn.end" and end["usage"]["context_length"] == agent.context_length
 
 
+def test_a_compaction_in_a_turn_moves_the_turn_start(harness_home, project, fake_model):
+    agent, _, _ = make_agent(project, old_turns(6))
+    agent.context_length = int(agent.context_tokens() / 0.8)
+    fake_model.script({"text": "The user asked six questions."}, {"text": "Done."})
+    asyncio.run(agent.run_turn("Question 6"))
+    # The plan reminders read the calls of the turn from _turn_start. It must be the user message of this turn.
+    assert agent.history[agent._turn_start]["content"] == "Question 6"
+
+
+def test_clear_drops_the_queued_harness_notes(harness_home, project, fake_model):
+    agent, _, _ = make_agent(project, old_turns(1))
+    agent._harness_notes.append("[Harness: an old note]")
+    agent.clear()
+    assert agent._harness_notes == [] and agent.history == []
+
+
+def test_the_fake_model_scripts_the_finish_reason_and_the_usage(harness_home, fake_model):
+    provider, model = resolve_model("fake/m")
+    client = ModelClient(provider, model)
+
+    async def ignore(_text):
+        return None
+
+    fake_model.script({"text": "cut", "finish": "length", "cached_tokens": 64, "completion_tokens": 7},
+                      {"text": "no usage", "finish": None, "no_usage": True})
+    first = asyncio.run(client.stream([{"role": "user", "content": "a"}], [], ignore))
+    second = asyncio.run(client.stream([{"role": "user", "content": "b"}], [], ignore))
+    assert first.finish_reason == "length" and first.usage["completion_tokens"] == 7
+    assert first.usage["prompt_tokens_details"]["cached_tokens"] == 64
+    assert second.finish_reason is None and second.usage is None
+
+
 def test_large_tool_outputs_are_trimmed_when_a_summary_cannot_help(harness_home, project, fake_model):
     history = [
         {"role": "user", "content": "read it"},

@@ -120,7 +120,8 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(frozen.install_browser())
 
     logging.basicConfig(level=args.log_level.upper(), stream=sys.stderr)
-    token = args.token or os.environ.get("HARNESS_TOKEN")
+    env_token = take_env_token()
+    token = args.token or env_token
     token_file: Path | None = None
     if not token:
         token_file = Path(args.token_file).expanduser() if args.token_file else harness_home() / "daemon-token"
@@ -132,7 +133,7 @@ def main(argv: list[str] | None = None) -> None:
         if not _is_loopback(host):
             print(f"Warning: the daemon listens on {host}. Do not expose this port to the internet.", file=sys.stderr)
 
-    update.enable(argv, sidecar=args.exit_on_stdin_eof)
+    update.enable(argv, sidecar=args.exit_on_stdin_eof, env_token=env_token)
     if args.report_connections:
         clients.enable()
     wait = bool(os.environ.pop(update.WAIT_PID_ENV, None))
@@ -167,6 +168,15 @@ def main(argv: list[str] | None = None) -> None:
     if args.exit_on_stdin_eof:
         threading.Thread(target=_exit_on_stdin_eof, args=(server,), daemon=True).start()
     asyncio.run(server.serve(sockets=sockets))
+
+
+def take_env_token() -> str | None:
+    """Remove HARNESS_TOKEN from the environment of this process and return it.
+
+    Each child process (bash, tasks, servers, hooks, MCP servers) copies os.environ. With the token,
+    a command could connect to the daemon and approve its own permission requests.
+    """
+    return os.environ.pop("HARNESS_TOKEN", None) or None
 
 
 def _bind(host: str, port: int, wait: bool) -> socket.socket:

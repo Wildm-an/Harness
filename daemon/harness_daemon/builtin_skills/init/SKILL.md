@@ -5,14 +5,14 @@ description: "Make or improve the HARNESS.md file of a project: the instructions
 
 # Make the project instruction file
 
-Harness reads `HARNESS.md` in the project folder at the start of each session. If there is no `HARNESS.md`, it reads `CLAUDE.md`. The agent of each future session reads this file before it does any work. A good file saves each session from the same exploration.
+Harness reads `HARNESS.md` in the project folder at the start of each session. If there is no `HARNESS.md`, it reads `AGENTS.md`, then `CLAUDE.md`. Only the first file that exists counts. The agent of each future session reads this file before it does any work. A good file saves each session from the same exploration.
 
 ## 1. Find what exists
 
-1. Look for `HARNESS.md` and `CLAUDE.md` in the project folder.
-   - If one of them exists, read it. Improve that file. Do not make a second file.
+1. Look for `HARNESS.md`, `AGENTS.md`, and `CLAUDE.md` in the project folder.
+   - If one of them exists, read it. Improve the first one in that order. Do not make a second file: Harness reads only one.
    - If none exists, you will make `HARNESS.md`.
-2. Look for other instruction files and use their rules: `AGENTS.md`, `.cursorrules`, `.cursor/rules/`, `.github/copilot-instructions.md`, `.windsurfrules`, `CONTRIBUTING.md`.
+2. Look for other instruction files and use their rules: `.cursorrules`, `.cursor/rules/`, `.github/copilot-instructions.md`, `.windsurfrules`, `CONTRIBUTING.md`.
 3. Read `README.md`.
 
 ## 2. Explore the project

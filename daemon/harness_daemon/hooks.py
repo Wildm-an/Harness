@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import harness_home, project_settings_path, read_json
-from .tools.shell import ShellInfo, _kill_tree
+from .tools.shell import ShellInfo, _kill_tree, shell_argv
 
 log = logging.getLogger("harness.hooks")
 
@@ -171,7 +171,7 @@ class CommandHooks:
         stdin = json.dumps(body, ensure_ascii=False, default=str)
         env = {**os.environ, "HARNESS_PROJECT_DIR": str(self.cwd), "CLAUDE_PROJECT_DIR": str(self.cwd)}
         results = await asyncio.gather(*(asyncio.to_thread(
-            _run, [*self.shell.argv, h.command], stdin, self.cwd, env, h.timeout) for h in hooks))
+            _run, shell_argv(self.shell, h.command), stdin, self.cwd, env, h.timeout) for h in hooks))
         for hook, (code, out, err, timed_out) in zip(hooks, results):
             if timed_out:
                 outcome.errors.append(f"The {event} hook timed out after {hook.timeout} s: {hook.command}")

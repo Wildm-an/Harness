@@ -39,6 +39,8 @@ You can also edit the file by hand. If the file does not exist, the daemon uses 
 
 For OpenRouter (`"kind": "openrouter"`, or any `openrouter.ai` URL), give the model as `openrouter/<author>/<model>`, for example `openrouter/anthropic/claude-sonnet-4.5`. The daemon reads the context length, the tool support, and the image input of each model from the OpenRouter model list. It keeps the list for 10 minutes. The connection test also checks the API key with `/key`, because OpenRouter sends the model list with no key.
 
+The model name selects the prompt blocks of a model family (`model_prompts.py`, `docs/PROMPT_LEDGER.md`): for example `gpt-5.5` gets the GPT blocks, and `qwen2.5-coder:7b` gets the Qwen blocks. A model with a name that does not show its family can get one with `"family"`: `"models": { "my-finetune": { "family": "qwen" } }`. The value is a family id (`claude`, `gpt`, `gemini`, `gemma`, `grok`, `glm`, `qwen`, `deepseek`, `kimi`, `minimax`, `mimo`, `mistral`) or `"none"`.
+
 The daemon finds the context length of a model in this order:
 
 1. `context_length` in the settings.
@@ -151,6 +153,14 @@ python -m pytest
 
 The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do not need a real model. The agent browser tests need Chromium for Playwright. Without it, pytest skips them.
 
+`tests/snapshots/` holds the system prompt of each model family and the tool list (`tests/test_prompt_snapshots.py`). A change of a prompt text or a tool description fails this test and shows a diff. After an intended change, write the new snapshots and add them to the same commit:
+
+```bash
+HARNESS_UPDATE_SNAPSHOTS=1 python -m pytest tests/test_prompt_snapshots.py
+```
+
+`tests/test_prefix_stability.py` checks that the system message and the tool list stay the same in a session. The prompt cache of the endpoint needs the same request start.
+
 ## Files
 
 | File | Function |
@@ -170,7 +180,7 @@ The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do 
 | `harness_daemon/tunnels.py` | SSH tunnels to model endpoints. |
 | `harness_daemon/skills.py` | The skill loader, the frontmatter parser, and the argument substitution. |
 | `harness_daemon/context.py` | Context control: the token estimate, the summary, and the trim of old tool outputs. |
-| `harness_daemon/prompt.py` | The system prompt and the project instruction file (`HARNESS.md`, then `CLAUDE.md`). |
+| `harness_daemon/prompt.py` | The system prompt, the project instruction file (`HARNESS.md`, then `AGENTS.md`, then `CLAUDE.md`), and the user instruction file (`~/.harness/HARNESS.md`, `~/.harness/AGENTS.md`, or `~/.claude/CLAUDE.md`). |
 | `harness_daemon/permissions.py` | Permission rules and the permission gate. |
 | `harness_daemon/server.py` | The WebSocket server and the message handlers. |
 | `harness_daemon/storage.py` | SQLite storage for sessions and messages. |
@@ -227,12 +237,15 @@ Global settings are in `~/.harness/settings.json`. Project settings are in `<pro
 | `bash_timeout` | `120` | The default `bash` timeout, in seconds. |
 | `bash_max_timeout` | `600` | The maximum `bash` timeout that the model can request. |
 | `max_output_chars` | `20000` | Tool output above this length is truncated. |
+| `task_reminders` | `"auto"` | The `[Harness: ...]` reminders to show and update the task list. `"auto"` gives them by the model tier (small, standard, frontier: `scaffold_tier` in `model_prompts.py`). Today each tier gets each reminder, until the evaluation set shows which tier does not need one. `"on"` or `"off"` for all models. |
+| `prompt_ablate` | none | Only for an evaluation run: a list of prompt part and block ids to leave out (the "Id" column of `docs/PROMPT_LEDGER.md`). |
+| `read_before_edit` | `true` | `edit` and `write` reject a change to a file that the agent did not read in this session, or that changed on disk after the read. The error tells the agent to read the file. A partial read counts. A file that the agent wrote needs no new read. |
 | `shell` | auto | The shell for `bash`. On Windows, the default is Git Bash, then PowerShell. |
 | `default_model` | none | The model for a `session.new` message with no model. |
 | `context_length` | none | The context length for all models. See the order above. |
 | `ripgrep` | `rg` on the PATH | The ripgrep binary for `glob` and `grep`. Without ripgrep, the tools use a Python search that does not apply `.gitignore`. |
 | `auto_verify` | `false` | The agent checks the app with the preview tools after each change to the user interface. The Servers pane of the client changes this value in the project settings. |
-| `permission_mode` | `default` | `default` (ask), `acceptEdits` (file changes in the project run), `plan` (no file changes: the agent makes a plan), or `bypassPermissions` (every action runs). The deny rules apply in all modes. The client changes this value with the mode menu or Shift+Tab. |
+| `permission_mode` | `default` | `default` (ask), `acceptEdits` (file changes in the project run), `plan` (no file changes: the agent makes a plan), `auto` (a model checks each action, `docs/AUTO_MODE.md`), or `bypassPermissions` (every action runs, except a match of a safety rule). The deny rules and the safety rules apply in all modes. The client changes this value with the mode menu or Shift+Tab. |
 
 
 ## MCP servers
