@@ -415,8 +415,9 @@ def test_a_real_sandbox_reaches_only_the_allowed_hosts(project):
         ok = asyncio.run(BashTool().run({"command": f"curl -sS --noproxy '' --max-time 10 http://127.0.0.1:{port}/"},
                                         ctx))
         assert not ok.is_error and "hello-from-host" in ok.output
-        blocked = asyncio.run(BashTool().run({"command": "curl -sS --max-time 10 http://blocked.invalid/"}, ctx))
-        assert blocked.is_error and "blocked.invalid:80" in blocked.output
+        # The proxy answers a blocked host with HTTP 403. -f: curl exits with an error code on an HTTP error.
+        blocked = asyncio.run(BashTool().run({"command": "curl -sSf --max-time 10 http://blocked.invalid/"}, ctx))
+        assert blocked.is_error and "The sandbox blocked the network connection to blocked.invalid" in blocked.output
         direct = asyncio.run(BashTool().run({"command": f"curl -sS --noproxy '*' --max-time 5 "
                                                         f"http://127.0.0.1:{port}/"}, ctx))
         assert direct.is_error  # With no proxy, the sandbox has no network.
