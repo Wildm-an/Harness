@@ -316,9 +316,15 @@ def test_terminal_running_names_the_programs_of_a_shell(daemon, project, fake_mo
     assert (idle["id"], idle["names"]) == (shell, [])
     sleep = f'"{sys.executable}" -c "import time; time.sleep(8)"'
     c.send({"type": "term.input", "id": shell, "data": (f"& {sleep}" if os.name == "nt" else sleep) + "\r"})
-    time.sleep(2)
-    c.send({"type": "term.running", "id": shell})
-    assert [n.lower().removesuffix(".exe") for n in c.until("term.running")[0]["names"]] == [Path(sys.executable).stem.lower()]
+    # The shell can need some seconds to start the program. Ask again until it runs (it sleeps 8 s).
+    deadline = time.time() + 6
+    while True:
+        c.send({"type": "term.running", "id": shell})
+        names = [n.lower().removesuffix(".exe") for n in c.until("term.running")[0]["names"]]
+        if names or time.time() > deadline:
+            break
+        time.sleep(0.2)
+    assert names == [Path(sys.executable).stem.lower()]
     # An unknown shell runs nothing.
     c.send({"type": "term.running", "id": "gone"})
     assert c.until("term.running")[0]["names"] == []
