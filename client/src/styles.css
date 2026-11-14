@@ -7514,12 +7514,16 @@ input.tree-rename-input[aria-invalid="true"] {
   color: transparent;
 }
 
-/* The box shadow makes the tint wider than the text, so the text does not move. */
+/* A link is blue text. The link under the pointer also gets a tint. The box shadow makes the tint
+   wider than the text, so the text does not move. */
 .prompt-link {
   border-radius: 3px;
+  color: var(--info);
+}
+
+.prompt-link.hover {
   background: color-mix(in srgb, var(--info-mark) 16%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--info-mark) 16%, transparent);
-  color: var(--info);
 }
 
 /* The hover card of a link: the name and the description of the command or skill. */

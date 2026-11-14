@@ -455,7 +455,8 @@ export function PromptBox({
     askedCommands.current = true;
     onRequestCommands();
   }, [text, commands]);
-  const [linkCard, setLinkCard] = useState<{ item: CommandItem; rect: DOMRect } | null>(null);
+  // The link under the pointer: its part index, its item, and its place. Only this link has the tint.
+  const [linkCard, setLinkCard] = useState<{ item: CommandItem; part: number; rect: DOMRect } | null>(null);
   const hideCard = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const keepCard = () => clearTimeout(hideCard.current);
   const dropCard = () => {
@@ -470,10 +471,11 @@ export function PromptBox({
     for (const el of links) {
       for (const r of el.getClientRects()) {
         if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
-        const item = parts[Number(el.dataset.part)]?.command;
+        const part = Number(el.dataset.part);
+        const item = parts[part]?.command;
         if (!item) continue;
         keepCard();
-        if (linkCard?.item !== item) setLinkCard({ item, rect: r });
+        if (linkCard?.part !== part) setLinkCard({ item, part, rect: r });
         return;
       }
     }
@@ -832,7 +834,7 @@ export function PromptBox({
             <div className="prompt-mirror" ref={mirror} aria-hidden>
               {parts.map((p, i) =>
                 p.command ? (
-                  <span key={i} className="prompt-link" data-part={i}>
+                  <span key={i} className={`prompt-link${linkCard?.part === i ? " hover" : ""}`} data-part={i}>
                     {p.text}
                   </span>
                 ) : (
