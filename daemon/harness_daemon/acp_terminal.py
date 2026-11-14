@@ -108,6 +108,9 @@ class TerminalHost:
         env = dict(os.environ)
         env.setdefault("PAGER", "cat")
         env.setdefault("GIT_PAGER", "cat")
+        # Python writes UTF-8, as the output is read: else Windows Python writes the code page, and
+        # a script that prints a character outside it (for example "→") fails.
+        env.setdefault("PYTHONIOENCODING", "utf-8")
         for item in params.get("env") or []:
             if isinstance(item, dict) and isinstance(item.get("name"), str):
                 env[item["name"]] = str(item.get("value") or "")

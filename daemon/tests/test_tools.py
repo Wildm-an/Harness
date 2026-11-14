@@ -84,6 +84,16 @@ def test_bash_output_and_exit_code(ctx):
     assert bad.is_error and "[Exit code: 3]" in bad.output
 
 
+def test_bash_python_prints_utf8(ctx, project):
+    # A Python script prints characters outside the Windows code page with no error, and the
+    # output reads back the same (the skill scripts print an arrow, U+2192).
+    (project / "arrow.py").write_text('print("1 \\u2192 2")\n', encoding="utf-8")
+    exe = sys.executable.replace("\\", "/")
+    result = run(BashTool().run({"command": f'"{exe}" arrow.py'}, ctx))
+    assert not result.is_error, result.output
+    assert result.output.strip() == "1 \u2192 2"
+
+
 def test_bash_runs_in_project_folder(ctx, project):
     out = run(BashTool().run({"command": "ls"}, ctx)).output
     assert "hello.py" in out
