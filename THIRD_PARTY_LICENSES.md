@@ -96,6 +96,22 @@ Notes:
 - The icons come from `lucide-react` (ISC).
 - The bundle contains the KaTeX math fonts (`KaTeX_*.woff2`, `.woff`, `.ttf`) from `katex 0.16.47`. See "Licenses to review".
 
+### Dictation (speech engine)
+
+Dictation (`client/src/lib/dictation.worker.ts`) added `@huggingface/transformers 4.3.2` after version 0.1.84. Vite puts this code into the worker file `dictation.worker-*.js` and the ONNX Runtime WebAssembly files (`ort-wasm-simd-threaded.asyncify.*`). The table above does not count these packages yet.
+
+| License | Package | In the bundle |
+|---|---|---|
+| Apache-2.0 | @huggingface/transformers 4.3.2 | yes (the web build, `transformers.web.js`) |
+| Apache-2.0 | @huggingface/tokenizers 0.2.0 | yes |
+| MIT | @huggingface/jinja 0.5.13 | yes |
+| MIT | onnxruntime-web 1.31.0-dev.20260914-8d85527a0, onnxruntime-common | yes (JavaScript, `.mjs`, and `.wasm`) |
+
+Notes:
+
+- The lock file also has `onnxruntime-node`, `sharp`, the `@img/sharp-*` packages (Apache-2.0, and LGPL-3.0-or-later for libvips), and their small dependencies. They are dependencies of the Node.js build of transformers.js. The web build does not import them, so they are not in `client/dist` or the installer. The audit checked `client/dist` for them.
+- The app does not contain the Whisper model. The first dictation downloads `onnx-community/whisper-base` (ONNX files of OpenAI Whisper base, MIT license) from Hugging Face into the cache of the web view.
+
 ## 3. Python packages in the sidecar (`daemon`)
 
 The closure of the runtime `dependencies` in `daemon/pyproject.toml` has 50 distributions on Windows. The `dev` and `package` extras are not in the closure.

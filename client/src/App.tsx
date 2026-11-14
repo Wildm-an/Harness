@@ -122,6 +122,8 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { overlayOpen } from "./lib/overlay";
+import { cleanDictation, setDictationHost } from "./lib/dictationEngine";
+import { DictationSettings } from "./components/DictationSettings";
 import { addErrorToast, addOpenToast, addUndoToast, errorRoute, mcpFailureText, newlyFailedMcp, type ErrorToastItem } from "./lib/errorRoute";
 import { waitingCardHint } from "./lib/cardKeys";
 import { ErrorToasts } from "./components/ErrorToasts";
@@ -578,6 +580,17 @@ export default function App() {
   const defaultModelKey = useRef<string | null>(null); // The preferred model settings of the last user_settings message.
   const [userSettingsInfo, setUserSettingsInfo] = useState<{ path: string; version: string } | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  // Dictation (DictationButton.tsx): the prompt boxes ask the daemon for the cleanup, and show their errors as popups.
+  const userSettingsRef = useRef<UserSettings | null>(null);
+  userSettingsRef.current = userSettings;
+  useEffect(() => {
+    setDictationHost({
+      cleanupOn: () => !!userSettingsRef.current?.dictation_cleanup,
+      showError,
+      clean: (text) => cleanDictation(conn, text),
+    });
+    return () => setDictationHost(null);
+  }, [conn, showError]);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [daemonVersion, setDaemonVersion] = useState<string | null>(null); // From auth.ok of the connection.
   const [daemonUpdatable, setDaemonUpdatable] = useState(false); // The daemon can install an update from the app.
@@ -3862,6 +3875,19 @@ export default function App() {
                   sendSafely({ type: "user_settings.set", values });
                 }}
                 onManageStorage={status === "open" ? () => setStorageOpen(true) : undefined}
+                dictation={
+                  <DictationSettings
+                    values={status === "open" ? userSettings : null}
+                    connected={status === "open"}
+                    models={models}
+                    providers={providers?.items ?? null}
+                    onRequestModels={requestModels}
+                    onSet={(values) => {
+                      setSettingsError(null);
+                      sendSafely({ type: "user_settings.set", values });
+                    }}
+                  />
+                }
               />
             )}
             {settingsPage === "harness" && (
