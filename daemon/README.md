@@ -203,14 +203,16 @@ Harness comes with these skills, in `harness_daemon/builtin_skills/`:
 
 | Skills | Purpose |
 |---|---|
-| `docx`, `xlsx`, `pptx`, `pdf` | Word, Excel, PowerPoint, and PDF files. Each has a `SKILL.md`, a `scripts/` folder, and a `reference/` folder. |
+| `docx`, `xlsx`, `pptx`, `pdf` | Word, Excel, PowerPoint, and PDF files. Anthropic skills under the Apache License 2.0, changed for Harness. `docx`, `pptx`, and `xlsx` each have the same `scripts/office/` folder (LibreOffice, schema checks, and `pack.py`). |
 | `init`, `run`, `debug`, `code-review`, `security-review`, `simplify` | Work on code. Each is a `SKILL.md` only. |
-| `skill-creator`, `mcp-builder` | Make skills and MCP servers. Anthropic skills under the Apache License 2.0, changed for Harness. Each keeps `LICENSE.txt` and lists the changes in `MODIFICATIONS.md`. |
- The shared folder `_office/` has `ooxml.py` (unpack, pack, and check an Office file) and `render.py` (an Office file or a PDF to PNG pages, with LibreOffice and pypdfium2). `_office/` has no `SKILL.md`, so it is not a skill.
+| `skill-creator`, `mcp-builder` | Make skills and MCP servers. Anthropic skills under the Apache License 2.0, changed for Harness. |
 
-- The agent runs the scripts with the Python of the user, not with the Python of the daemon. The skills tell the agent to check and install the libraries (python-docx, openpyxl, python-pptx, pypdf, pdfplumber, reportlab, pypdfium2).
+Each Anthropic skill keeps its `LICENSE.txt` and lists the Harness changes in `MODIFICATIONS.md`. The other files are the same as in the original skill. The source is https://github.com/anthropics/skills (the version of 2026-11-12).
+
+- The agent runs the scripts with the Python of the user, not with the Python of the daemon. The skills tell the agent to check and install the libraries and programs (for example defusedxml, lxml, openpyxl, python-pptx, pypdf, LibreOffice, pandoc, and Poppler).
+- The `bash` tool sets `PYTHONIOENCODING=utf-8`, so a script that prints a character outside the Windows code page does not fail.
 - A skill body must not contain `$` followed by a digit: the daemon replaces `$1` with an argument. Put text such as `$B$2` in a reference file. `tests/test_bundled_skills.py` checks this, the length of each description, and the script paths.
-- The document skills and the code skills are new work for Harness. They do not copy the proprietary Anthropic skills, whose license does not permit copies. Only `skill-creator` and `mcp-builder` come from Anthropic, under the Apache License 2.0.
+- The code skills are new work for Harness. The document skills, `skill-creator`, and `mcp-builder` come from Anthropic, under the Apache License 2.0. (Before 2026-11, the Anthropic document skills had a license that did not permit copies, so Harness had its own.)
 - The system prompt lists the description of each built-in skill. Each description is at most 300 characters, so the 12 skills add about 800 tokens to the system prompt.
 - The Capabilities page shows them under "Built-in skills" (`"bundled": true` in the skill summary).
 

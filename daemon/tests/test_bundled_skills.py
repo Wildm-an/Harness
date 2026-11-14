@@ -15,9 +15,11 @@ REAL_DIR = Path(skills_module.__file__).parent / "builtin_skills"
 NAMES = {
     "docx", "xlsx", "pptx", "pdf",  # Documents
     "init", "run", "debug", "code-review", "security-review", "simplify",  # Work on code
-    "skill-creator", "mcp-builder",  # Anthropic skills under the Apache License 2.0, changed for Harness
+    "skill-creator", "mcp-builder",  # Make skills and MCP servers
 }
-APACHE = {"skill-creator", "mcp-builder"}
+# Anthropic skills under the Apache License 2.0, changed for Harness. The others are new work.
+APACHE = {"docx", "xlsx", "pptx", "pdf", "skill-creator", "mcp-builder"}
+OFFICE = ("docx", "pptx", "xlsx")  # Each has the same scripts/office folder.
 
 
 @pytest.fixture
@@ -33,7 +35,6 @@ def bundled(monkeypatch, tmp_path):
 def test_the_bundled_skills_load(bundled):
     found = discover_skills(bundled)
     assert NAMES <= set(found)
-    assert "_office" not in found  # The shared scripts folder has no SKILL.md.
     for name in NAMES:
         skill = found[name]
         assert skill.bundled
@@ -99,54 +100,94 @@ def test_the_scripts_compile():
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
 
 
-def test_the_docx_scripts_make_tracked_changes_and_comments(tmp_path):
-    docx = pytest.importorskip("docx")
-    import json
+def run_script(*args):
+    # As the bash tool runs them: Python writes UTF-8 (tools/shell.py).
+    import os
     import subprocess
     import sys
 
-    path = tmp_path / "a.docx"
-    doc = docx.Document()
-    doc.add_paragraph("The Seller delivers the goods in 30 days.")
-    doc.add_paragraph("This clause is void.")
-    doc.save(path)
-    changes = tmp_path / "c.json"
-    changes.write_text(json.dumps([
-        {"find": "30", "replace": "45"},
-        {"op": "delete_paragraph", "find": "This clause is void."},
-    ]), encoding="utf-8")
-    scripts = REAL_DIR / "docx" / "scripts"
-    run = lambda *args: subprocess.run([sys.executable, *map(str, args)], capture_output=True, text=True)  # noqa: E731
-    result = run(scripts / "redline.py", path, changes, "-o", tmp_path / "b.docx")
-    assert result.returncode == 0, result.stderr
-    comments = tmp_path / "m.json"
-    comments.write_text(json.dumps([{"find": "Seller", "text": "Which seller?"}]), encoding="utf-8")
-    result = run(scripts / "comment.py", tmp_path / "b.docx", comments, "-o", tmp_path / "c.docx")
-    assert result.returncode == 0, result.stderr
-    result = run(REAL_DIR / "_office" / "ooxml.py", "check", tmp_path / "c.docx")
-    assert result.returncode == 0, result.stdout
-    result = run(scripts / "accept_changes.py", tmp_path / "c.docx", "-o", tmp_path / "d.docx")
-    assert result.returncode == 0, result.stderr
-    texts = [p.text for p in docx.Document(str(tmp_path / "d.docx")).paragraphs]
-    assert texts == ["The Seller delivers the goods in 45 days."]
-    # A change that does not match saves nothing.
-    changes.write_text(json.dumps([{"find": "not there", "replace": "x"}]), encoding="utf-8")
-    result = run(scripts / "redline.py", path, changes, "-o", tmp_path / "e.docx")
-    assert result.returncode == 1 and not (tmp_path / "e.docx").exists()
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run([sys.executable, *map(str, args)], capture_output=True, text=True,
+                          encoding="utf-8", env=env)
 
 
-def test_unpack_and_pack_keep_the_text(tmp_path):
+def test_the_office_folders_are_the_same():
+    # The original skills have three copies of scripts/office. The Harness changes go in all three.
+    first = REAL_DIR / OFFICE[0] / "scripts" / "office"
+    files = sorted(p.relative_to(first) for p in first.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+    assert (first / "pack.py").is_file()
+    for name in OFFICE[1:]:
+        other = REAL_DIR / name / "scripts" / "office"
+        assert sorted(p.relative_to(other) for p in other.rglob("*")
+                      if p.is_file() and "__pycache__" not in p.parts) == files, name
+        for rel in files:
+            assert (other / rel).read_bytes() == (first / rel).read_bytes(), f"{name}: {rel}"
+
+
+def test_soffice_needs_no_af_unix(monkeypatch):
+    # Windows Python has no socket.AF_UNIX. The helper must not fail there.
+    import importlib.util
+    import os
+    import socket
+
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))  # The import can add the LibreOffice folder.
+    path = REAL_DIR / "docx" / "scripts" / "office" / "soffice.py"
+    spec = importlib.util.spec_from_file_location("harness_test_soffice", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.delattr(socket, "AF_UNIX", raising=False)
+    assert module._needs_shim() is False
+
+
+def test_pack_makes_a_file_without_folder_entries(tmp_path):
     docx = pytest.importorskip("docx")
-    import subprocess
-    import sys
+    import zipfile
 
     path = tmp_path / "a.docx"
     doc = docx.Document()
     doc.add_paragraph("Two  spaces and a trailing space ")
     doc.save(path)
-    ooxml = REAL_DIR / "_office" / "ooxml.py"
-    for args in (("unpack", path, tmp_path / "x"), ("pack", tmp_path / "x", tmp_path / "b.docx")):
-        result = subprocess.run([sys.executable, str(ooxml), *map(str, args)], capture_output=True, text=True)
-        assert result.returncode == 0, result.stdout + result.stderr
-    assert "\n  " in (tmp_path / "x" / "word" / "document.xml").read_text(encoding="utf-8")
+    zipfile.ZipFile(path).extractall(tmp_path / "x")
+    (tmp_path / "b.docx").write_bytes(b"old file")  # pack.py replaces an old output.
+    result = run_script(REAL_DIR / "docx" / "scripts" / "office" / "pack.py", tmp_path / "x", tmp_path / "b.docx")
+    assert result.returncode == 0, result.stderr
+    names = zipfile.ZipFile(tmp_path / "b.docx").namelist()
+    assert names[0] == "[Content_Types].xml"
+    assert not any(n.endswith("/") for n in names)
     assert docx.Document(str(tmp_path / "b.docx")).paragraphs[0].text == "Two  spaces and a trailing space "
+
+
+def test_the_docx_scripts_merge_runs_add_a_comment_and_validate(tmp_path):
+    docx = pytest.importorskip("docx")
+    pytest.importorskip("defusedxml")
+    pytest.importorskip("lxml")
+
+    path = tmp_path / "a.docx"
+    doc = docx.Document()
+    p = doc.add_paragraph()
+    p.add_run("The Seller ")
+    p.add_run("delivers the goods.")
+    doc.save(path)
+    scripts = REAL_DIR / "docx" / "scripts"
+    result = run_script(scripts / "merge_runs.py", path, "-o", tmp_path / "m.docx")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(docx.Document(str(tmp_path / "m.docx")).paragraphs[0].runs) == 1
+    result = run_script(scripts / "comment.py", tmp_path / "m.docx", "Which seller?", "-o", tmp_path / "c.docx")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "commentReference" in result.stdout  # It prints the markers for document.xml.
+    result = run_script(scripts / "office" / "validate.py", tmp_path / "c.docx", "--original", path)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_pptx_slide_text_reads_a_deck(tmp_path):
+    pptx = pytest.importorskip("pptx")
+
+    deck = pptx.Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[1])
+    slide.shapes.title.text = "Quarterly results"
+    slide.placeholders[1].text = "Revenue grew"
+    deck.save(tmp_path / "d.pptx")
+    result = run_script(REAL_DIR / "pptx" / "scripts" / "slide_text.py", tmp_path / "d.pptx")
+    assert result.returncode == 0, result.stderr
+    assert "<!-- Slide number: 1 -->" in result.stdout
+    assert "Quarterly results" in result.stdout and "Revenue grew" in result.stdout
