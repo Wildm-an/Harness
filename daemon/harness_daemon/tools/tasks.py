@@ -84,7 +84,7 @@ class TaskOutputTool(Tool):
         if task.ended_at is not None:
             task.noted = True  # The agent knows now: the next prompt does not tell it again.
         output = truncate(task.new_output().rstrip("\n"), ctx.settings["max_output_chars"], keep_tail=True)
-        return ToolResult(f"{output or '(no new output)'}\n[{_status(task)}]")
+        return ToolResult(f"{output or '(no new output)'}\n[{_status(task)}]", limited=True)
 
 
 class TaskStopTool(Tool):

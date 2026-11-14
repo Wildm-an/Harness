@@ -641,7 +641,8 @@ async def model_contexts(provider: Provider, models: list[str],
 class ModelResponse:
     text: str
     tool_calls: list[dict[str, str]] = field(default_factory=list)
-    usage: dict[str, int] | None = None
+    # The usage of the endpoint. Counts are int. Some fields are objects, for example prompt_tokens_details.
+    usage: dict[str, Any] | None = None
     finish_reason: str | None = None
     reasoning: str | None = None  # The reasoning_content of the reply (DeepSeek thinking mode).
 
@@ -773,7 +774,7 @@ class ModelClient:
         reasoning_parts: list[str] = []
         slots: dict[int, dict[str, str]] = {}
         index_map: dict[int, int] = {}
-        usage: dict[str, int] | None = None
+        usage: dict[str, Any] | None = None
         finish: str | None = None
         try:
             async for chunk in stream:

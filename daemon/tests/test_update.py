@@ -17,6 +17,20 @@ def test_only_a_python_daemon_can_update(monkeypatch):
     assert "desktop app" in update.refusal()
 
 
+def test_a_restart_gives_the_env_token_to_the_new_daemon(monkeypatch):
+    started: list[dict] = []
+    monkeypatch.setattr(update.subprocess, "Popen", lambda argv, **kw: started.append(kw["env"]))
+    monkeypatch.setattr("harness_daemon.__main__._hard_exit", lambda: None)
+    monkeypatch.delenv("HARNESS_TOKEN", raising=False)
+    update.enable(["--port", "8765"], sidecar=False, env_token="secret")
+    try:
+        update.restart()
+    finally:
+        update.enable([], sidecar=True)
+    assert started[0]["HARNESS_TOKEN"] == "secret"
+    assert started[0][update.WAIT_PID_ENV]
+
+
 @pytest.mark.parametrize("name, ok", [
     ("harness_daemon-0.1.30-py3-none-any.whl", True),
     ("harness_daemon-1.2.3+local-py3-none-any.whl", True),

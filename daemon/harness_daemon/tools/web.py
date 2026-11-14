@@ -81,7 +81,7 @@ class WebFetchTool(Tool):
         if offset or end < len(text):
             body += f"\n\n[Characters {offset}-{end} of {len(text)}."
             body += f" Use offset={end} to read more.]" if end < len(text) else "]"
-        return ToolResult(body)
+        return ToolResult(body, limited=True)
 
 
 class WebSearchTool(Tool):

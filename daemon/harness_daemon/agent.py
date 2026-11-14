@@ -38,7 +38,15 @@ from .loop_guards import (
     MAX_STALL_NUDGES, STALL_NOTICE, STALL_NUDGE, is_stall, repair_tool_name, repaired_note, repeat_key, repeat_note,
 )
 from .prompt import build_system_prompt, load_project_instructions, load_project_note, system_prompt_parts
-from .providers import DEFAULT_CONTEXT_LENGTH, DEFAULT_EFFORT, EFFORT_API, ModelClient, ModelError, resolve_model
+from .providers import (
+    DEFAULT_CONTEXT_LENGTH,
+    DEFAULT_EFFORT,
+    EFFORT_API,
+    ModelClient,
+    ModelError,
+    ModelResponse,
+    resolve_model,
+)
 from .skills import Skill, render_skill
 from .tools import (
     SkillTool,
@@ -178,6 +186,7 @@ class Agent:
         if any(s.model_invocable for s in self.skills.values()):
             tool_list.append(SkillTool(self.skills, self._activate_skill, self.run_fork))
         self.tools = {t.name: t for t in tool_list}
+        self._tool_rank: dict[str, int] = {}  # The fixed place of each tool in the request (_tool_order).
         # Tool search: MCP tools that the request sends by name only, until the model loads them.
         self._loaded_tools: list[str] = []  # In the order of the loads.
         self._tool_search = ToolSearchTool(lambda: {n: self.tools[n] for n in self._deferrable()}, self._load_tools)
@@ -454,13 +463,24 @@ class Agent:
         self._loaded_tools.extend(n for n in names if n not in self._loaded_tools)
         self._known_tokens = None  # The loaded tools make the next request larger.
 
+    def _tool_order(self) -> list[str]:
+        """The tools in a fixed order. A tool keeps the place of its first request.
+
+        The _sync_* methods remove a tool and add it again at the end of self.tools. Without a fixed order,
+        each setting change would move tools in the request and the prompt cache would start again.
+        """
+        for name in self.tools:
+            self._tool_rank.setdefault(name, len(self._tool_rank))
+        return sorted(self.tools, key=self._tool_rank.__getitem__)
+
     def _sent_tool_names(self) -> list[str]:
         """The tools of the request. With tool search, the MCP tools that the model loaded come at the end,
         in the order of the loads: the start of the request stays the same."""
+        names = self._tool_order()
         deferrable = set(self._deferrable())
         if not deferrable:
-            return list(self.tools)
-        return [n for n in self.tools if n not in deferrable] + [n for n in self._loaded_tools if n in deferrable]
+            return names
+        return [n for n in names if n not in deferrable] + [n for n in self._loaded_tools if n in deferrable]
 
     def mcp_tools(self) -> list[Tool]:
         return [t for n, t in self.tools.items() if n.startswith("mcp__")]
@@ -516,6 +536,7 @@ class Agent:
         """Start a new context: no history and no summary."""
         self.history.clear()
         self.summary = None
+        self._harness_notes.clear()  # A queued note belongs to the old context. The new prompt has the new state.
         self._memory_loaded = False
         self._told_plan = False
         self._told_sessions = None
@@ -729,6 +750,15 @@ class Agent:
             if self.hooks.has("stream.text"):
                 await self.hooks.emit("stream.text", StreamEvent(turn, step, chunk, self.cwd))
 
+        async def add_usage(response: ModelResponse) -> None:
+            """Add the usage of one model reply to the turn. The working line shows the tokens."""
+            if not response.usage:
+                return
+            usage["prompt_tokens"] += response.usage.get("prompt_tokens", 0)
+            usage["completion_tokens"] += response.usage.get("completion_tokens", 0)
+            usage["last_prompt_tokens"] = response.usage.get("prompt_tokens", 0)
+            await self.emit({"type": "turn.usage", **usage})
+
         try:
             while True:
                 streamed.clear()
@@ -749,17 +779,12 @@ class Agent:
                         break
                     self._replace_new_messages(new_messages, event.messages)
                 new_messages = []
-                if self.context_tokens() >= COMPACT_AT * self.context_length:
-                    await self.compact("auto")
+                await self._compact_if_needed()
                 client, options = await self._request_config(turn, step)
                 response = await self._stream_with_retries(client, options, on_text, streamed, turn, step)
                 if self.hooks.has("stream.end"):
                     await self.hooks.emit("stream.end", StreamEvent(turn, step, response.text or "", self.cwd))
-                if response.usage:
-                    usage["prompt_tokens"] += response.usage.get("prompt_tokens", 0)
-                    usage["completion_tokens"] += response.usage.get("completion_tokens", 0)
-                    usage["last_prompt_tokens"] = response.usage.get("prompt_tokens", 0)
-                    await self.emit({"type": "turn.usage", **usage})  # The working line shows the tokens.
+                await add_usage(response)
 
                 response.tool_calls = self._unique_ids(response.tool_calls)
                 message: dict[str, Any] = {"role": "assistant", "content": response.text or None}
@@ -1169,7 +1194,7 @@ class Agent:
                     return await self._stream_without_images(client, options, on_text, e)
                 if not learned and await self._learn_context_limit(client, e):
                     learned = True
-                    if self.context_tokens() >= COMPACT_AT * self.context_length and await self.compact("auto"):
+                    if await self._compact_if_needed():
                         streamed.clear()
                         continue  # The request is smaller now: send it again.
                 if e.reconnect and not streamed:  # Not after text: the user saw part of a reply.
@@ -1382,6 +1407,12 @@ class Agent:
 
     # -- context ---------------------------------------------------------------------
 
+    async def _compact_if_needed(self) -> bool:
+        """Compact when the next request is near the context limit. Return True if the context changed."""
+        if self.context_tokens() >= COMPACT_AT * self.context_length:
+            return await self.compact("auto")
+        return False
+
     async def compact(self, reason: str) -> bool:
         """Summarize the old turns. Keep the last turns. Return True if the context changed.
 
@@ -1400,6 +1431,11 @@ class Agent:
             if summary:
                 removed = len(old)
                 self.history = [m for turn in turns[-keep:] for m in turn]
+                # History indexes move by the number of removed messages. The plan reminders of a running
+                # turn read the history from _turn_start.
+                self._turn_start = max(0, self._turn_start - removed)
+                index, sent = self._stale_nudges
+                self._stale_nudges = (index - removed, sent) if index >= removed else (-1, 0)
                 self.summary = summary
                 self._memory_loaded = False  # A new prompt cache starts here: the memory can be new.
                 self._told_sessions = None  # The summary replaced the session list note.
@@ -1474,7 +1510,8 @@ class Agent:
         snapshot = await asyncio.to_thread(before_call, self.cwd, name, args) if args is not None else None
         result = await self._execute(name, args, parse_error, call_id)
         if result is not _DENIED_RESULT:
-            result.output = truncate(result.output, int(self.settings["max_output_chars"]))
+            if not result.limited:
+                result.output = truncate(result.output, int(self.settings["max_output_chars"]))
             if snapshot is not None:
                 result.created = await asyncio.to_thread(created_files, self.cwd, snapshot, result.changed_paths)
             key = repeat_key(name, args, result.output)

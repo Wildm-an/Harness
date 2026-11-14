@@ -84,10 +84,11 @@ class BashTool(Tool):
         # Keep the end of long command output. Errors are usually at the end.
         output = truncate(output, ctx.settings["max_output_chars"], keep_tail=True)
         if result.timed_out:
-            return ToolResult(f"{output}\n[The command timed out after {timeout} seconds and was stopped.]", is_error=True)
+            return ToolResult(f"{output}\n[The command timed out after {timeout} seconds and was stopped.]",
+                              is_error=True, limited=True)
         if result.returncode:
-            return ToolResult(f"{output}\n[Exit code: {result.returncode}]", is_error=True)
-        return ToolResult(output)
+            return ToolResult(f"{output}\n[Exit code: {result.returncode}]", is_error=True, limited=True)
+        return ToolResult(output, limited=True)
 
     def _start_task(self, command: str, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         from ..tasks import TaskError

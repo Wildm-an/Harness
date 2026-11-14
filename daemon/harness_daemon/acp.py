@@ -900,7 +900,8 @@ class AcpAgent(Agent):
         call_id = f"harness_{uuid.uuid4().hex[:12]}"
         snapshot = await asyncio.to_thread(before_call, self.cwd, name, args)
         result = await self._execute(name, args, None, call_id)
-        result.output = truncate(result.output, int(self.settings["max_output_chars"]))
+        if not result.limited:
+            result.output = truncate(result.output, int(self.settings["max_output_chars"]))
         created = await asyncio.to_thread(created_files, self.cwd, snapshot, result.changed_paths)
         # The harness reports the call itself, after this reply. Its tool row gets the cards (_end_call).
         if result.card or created:

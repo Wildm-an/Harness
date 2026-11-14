@@ -1,0 +1,70 @@
+# The daemon and client tests for each pull request and each push to master.
+#
+# release.yml runs the same tests, but only for a tag. This workflow finds a failure before the release.
+# The tests use a fake model server (daemon/tests/fake_openai.py). They need no API key and no secret.
+# The agent browser tests need Chromium for Playwright. This workflow does not install it, so pytest skips them.
+
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  daemon:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: daemon/pyproject.toml
+
+      - name: Install the daemon
+        run: python -m pip install -e "./daemon[dev]"
+
+      - name: Test the daemon
+        working-directory: daemon
+        run: python -m pytest -q
+
+  client:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install the client packages
+        working-directory: client
+        run: npm ci
+
+      - name: Test the client
+        working-directory: client
+        run: |
+          npm test
+          npm run typecheck

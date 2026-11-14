@@ -106,6 +106,25 @@ def test_no_tool_call_limit(harness_home, project, fake_model):
     assert types(events).count("tool.start") == 3
 
 
+def test_long_command_output_keeps_its_tail_and_exit_code(harness_home, project, fake_model, monkeypatch):
+    from harness_daemon.tools.shell import CommandResult
+
+    lines = "\n".join(f"line {i}" for i in range(5000)) + "\nLAST LINE"
+
+    async def fake_run(command, cwd, shell, timeout):
+        return CommandResult(output=lines, returncode=1, timed_out=False)
+
+    monkeypatch.setattr("harness_daemon.tools.bash.run_command", fake_run)
+    fake_model.script({"tool_calls": [{"name": "bash", "arguments": {"command": "make test"}}]}, {"text": "Failed."})
+    agent, events, _ = make_agent(project, max_output_chars=2000)
+    asyncio.run(agent.run_turn("run the tests"))
+    output = next(e for e in events if e["type"] == "tool.result")["output"]
+    # The tool keeps the head and the tail. The agent must not cut the result a second time from the end.
+    assert "line 0" in output and "LAST LINE" in output
+    assert output.rstrip().endswith("[Exit code: 1]")
+    assert "characters were removed from the middle" in output
+
+
 def test_bad_arguments_and_unknown_tool_go_back_to_the_model(harness_home, project, fake_model):
     fake_model.script(
         {"tool_calls": [{"name": "read", "arguments": "{not json"}, {"name": "fly_to_the_moon", "arguments": {}}]},

@@ -53,6 +53,9 @@ class ToolResult:
     created: list[str] = field(default_factory=list)  # New PDF and Word files, for the chat cards (created.py).
     card: dict[str, Any] | None = None  # A card for the chat: files that the agent sent, or an artifact (share.py).
     stop_turn: bool = False  # The turn stops after this result, for example when the user rejects a plan.
+    # True: the tool applied the output limit itself (head and tail, or pages). The agent must not cut the
+    # output again, because a second cut from the end removes the tail, the exit code, and the paging hint.
+    limited: bool = False
 
 
 @dataclass

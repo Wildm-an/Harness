@@ -3,6 +3,15 @@
 Each request takes the next scripted reply. A reply is a dict:
 ``{"text": "...", "tool_calls": [{"name": "read", "arguments": {...}}]}``, or
 ``{"error": "...", "status": 400}`` for an HTTP error.
+
+More keys of a reply:
+- ``"reasoning"``: reasoning_content chunks before the text.
+- ``"finish"``: the finish_reason of the last chunk, for example ``"length"``. ``None`` sends no finish reason.
+  Default: ``"tool_calls"`` with tool calls, else ``"stop"``.
+- ``"prompt_tokens"`` and ``"completion_tokens"``: the usage counts. Default 100 and 10.
+- ``"cached_tokens"``: adds ``usage.prompt_tokens_details.cached_tokens``.
+- ``"no_usage"``: true sends no usage chunk, as a server that ignores ``stream_options``.
+- A tool call ``"arguments"`` can be a raw string, for example JSON that the output limit cut.
 """
 
 from __future__ import annotations
@@ -159,9 +168,17 @@ async def _sse(reply: dict[str, Any]):
         }]})
         for i in range(0, len(raw), 7):
             yield _chunk({"tool_calls": [{"index": index, "function": {"arguments": raw[i:i + 7]}}]})
-    yield _chunk({}, "tool_calls" if calls else "stop")
+    finish = reply["finish"] if "finish" in reply else ("tool_calls" if calls else "stop")
+    yield _chunk({}, finish)
+    if reply.get("no_usage"):
+        yield "data: [DONE]\n\n"
+        return
     prompt_tokens = reply.get("prompt_tokens", 100)
-    usage = {"prompt_tokens": prompt_tokens, "completion_tokens": 10, "total_tokens": prompt_tokens + 10}
+    completion_tokens = reply.get("completion_tokens", 10)
+    usage: dict[str, Any] = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                             "total_tokens": prompt_tokens + completion_tokens}
+    if "cached_tokens" in reply:
+        usage["prompt_tokens_details"] = {"cached_tokens": reply["cached_tokens"]}
     yield "data: " + json.dumps({"id": "chatcmpl-fake", "object": "chat.completion.chunk", "created": 0,
                                  "model": "fake", "choices": [], "usage": usage}) + "\n\n"
     yield "data: [DONE]\n\n"

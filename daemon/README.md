@@ -151,6 +151,14 @@ python -m pytest
 
 The tests use a fake OpenAI-compatible server (`tests/fake_openai.py`). They do not need a real model. The agent browser tests need Chromium for Playwright. Without it, pytest skips them.
 
+`tests/snapshots/` holds the system prompt of each model family and the tool list (`tests/test_prompt_snapshots.py`). A change of a prompt text or a tool description fails this test and shows a diff. After an intended change, write the new snapshots and add them to the same commit:
+
+```bash
+HARNESS_UPDATE_SNAPSHOTS=1 python -m pytest tests/test_prompt_snapshots.py
+```
+
+`tests/test_prefix_stability.py` checks that the system message and the tool list stay the same in a session. The prompt cache of the endpoint needs the same request start.
+
 ## Files
 
 | File | Function |
