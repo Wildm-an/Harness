@@ -252,6 +252,8 @@ export interface UserSettings {
   instructions_research?: string | null;
   instructions_speaking?: string | null;
   instructions_other?: string | null;
+  dictation_cleanup?: boolean; // Settings > General > Dictation: a model cleans the dictated text.
+  dictation_model?: string | null; // The cleanup model, "provider/model": a provider model or a local model.
   // The search provider of the web_search tool (daemon web.py). "off": the agent has no web_search tool.
   web_search?: WebSearchProvider;
   web_search_url?: string | null; // The SearXNG server.
@@ -927,6 +929,7 @@ export type ClientMessage =
   // Settings > Your Harness > Output style. create: a model drafts a style from the description.
   | { type: "output_styles.list" }
   | { type: "output_styles.create"; description: string; name?: string; model?: string }
+  | { type: "dictation.cleanup"; id: string; text: string }
   // Settings > Your Harness > Project instructions. cwd: the project folder. text null: no instructions.
   | { type: "project_instructions.get"; cwd: string }
   | { type: "project_instructions.set"; cwd: string; text: string | null }
@@ -1191,6 +1194,8 @@ export type DaemonMessage =
   | { type: "projects"; items: ProjectItem[]; saved?: string } // saved: the id after projects.save.
   // The output styles. created: the id of a new style (it is also the output style now). note: a problem of the draft.
   | { type: "output_styles"; items: OutputStyleItem[]; folder: string; created?: string; note?: string | null }
+  // The reply to "dictation.cleanup": the clean text, or the raw text (cleaned false) with an error when the cleanup failed.
+  | { type: "dictation.cleaned"; id: string; text: string; cleaned: boolean; model?: string; error?: string }
   // The instructions of a project from the settings. path: the file on the daemon computer. saved: after a set.
   | { type: "project_instructions"; cwd: string; path: string; text: string | null; saved?: boolean }
   // The project settings file (.harness/settings.json) of a project. saved: after a set.

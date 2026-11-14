@@ -372,6 +372,7 @@ const SHORTCUTS: [string, string][] = [
   ["Files", "Ctrl+Shift+F"],
   ["Next permission mode", "Shift+Tab"],
   ["Add files to the prompt", "Ctrl+U"],
+  ["Dictate in the prompt box", "Ctrl+Shift+Space"],
   ["Back and forward", "Alt+Left, Alt+Right"],
   ["New browser tab", "Ctrl+T"],
   ["New terminal tab", "Ctrl+Shift+T"],
@@ -717,7 +718,9 @@ export function GeneralSettings({
   onManageStorage,
   sandbox,
   onSetSandbox,
+  dictation,
 }: {
+  dictation?: ReactNode; // The Dictation section (DictationSettings.tsx). The app gives it: it needs the model list.
   onManageStorage?: () => void; // Opens the Storage dialog. Absent: not connected.
   sandbox?: SandboxStatus | null; // The "sandbox" of the user_settings message. null: loading or an older daemon.
   onSetSandbox?: (enabled: boolean) => void; // Sends sandbox.set. Absent: no "Local sandbox" row.
@@ -956,6 +959,8 @@ export function GeneralSettings({
       )}
 
       </RowsPending.Provider>
+
+      {dictation}
 
       <h3 className="settings-section">Browser</h3>
       <Row label="Open links in" help="Where a link in the chat opens, for example a link that the agent lists. Applies to this computer." htmlFor="setting-open-links">

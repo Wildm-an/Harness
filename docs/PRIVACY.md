@@ -40,6 +40,11 @@ Harness connects to these services only after you add them or turn them on:
   name of the repository and the branch to GitHub. This setting is off by default.
 - **The Cookbook.** The Local Models screen searches huggingface.co when you open it. Model details
   and downloads use huggingface.co. Harness sends your Hugging Face token only if you save one.
+- **Dictation.** The microphone button records your voice only while you dictate. Whisper changes the
+  speech to text on your computer, in the app: the audio does not leave the computer. The first
+  dictation downloads the Whisper model (about 100 MB) from huggingface.co, with no token. If you turn
+  on Settings > General > "Clean up dictation", the app sends the text (not the audio) to the daemon,
+  and the daemon sends it to the cleanup model that you choose: a provider, or a local model.
 - **Plugins.** A plugin install from a git address clones the repository.
 - **Operating harness.** When you choose another harness in Settings > Operating Harness, a new session
   starts that program. A harness that runs with npx or uvx downloads its package from npm or PyPI at the

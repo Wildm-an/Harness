@@ -48,7 +48,7 @@ from .plugins.install import (InstallError, install as install_plugin, remove as
 from .plugins.patch import set_row_disabled
 from .preview import PreviewHost
 from .prompt import load_project_note, project_note_path, save_project_note
-from . import output_styles
+from . import dictation, output_styles
 from . import clients, disk_usage, provider_config
 from . import connectors, mcp_auth
 from .mcp_client import TEMPLATE as MCP_TEMPLATE, McpManager, load_mcp_config, project_config_path, user_config_path
@@ -3837,6 +3837,8 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "instructions_research": (str, type(None)),
     "instructions_speaking": (str, type(None)),
     "instructions_other": (str, type(None)),
+    "dictation_cleanup": (bool,),  # Settings > General > Dictation: a model cleans the dictated text (dictation.py).
+    "dictation_model": (str, type(None)),  # The cleanup model: "provider/model", of a provider or a local model.
 }
 USER_INT_LIMITS = {"max_tool_calls": (1, 500), "bash_timeout": (1, 3600), "max_turn_minutes": (0, 1440)}
 USER_TEXT_LIMIT = 10_000  # The maximum length of an agent instruction setting, in characters.
@@ -4096,6 +4098,43 @@ async def _send_memory(conn: Connection, msg: dict[str, Any], store: MemoryStore
 def _memory_text(msg: dict[str, Any], key: str) -> str:
     value = msg.get(key)
     return value if isinstance(value, str) else ""
+
+
+# Dictation (dictation.py). The app changes speech to text. The daemon only cleans the text. It needs no session.
+
+@handler("dictation.cleanup")
+async def on_dictation_cleanup(conn: Connection, msg: dict[str, Any]) -> None:
+    """{"id", "text"}: the cleanup model of the settings cleans the dictated text. The reply "dictation.cleaned"
+    always has a text: the clean text, or the raw text with "error" when the cleanup is off or failed."""
+    request_id = msg.get("id")
+    text = msg.get("text")
+    if not isinstance(text, str):
+        raise ProtocolError("'text' must be a string.")
+    if len(text) > dictation.MAX_TEXT:
+        raise ProtocolError(f"Make the dictated text {dictation.MAX_TEXT} characters or less.")
+    reply: dict[str, Any] = {"type": "dictation.cleaned", "id": request_id, "text": text, "cleaned": False}
+    settings = load_settings(None)
+    spec = settings.get("dictation_model")
+    if not text.strip() or not settings.get("dictation_cleanup"):
+        await conn.send(reply)
+        return
+    if not isinstance(spec, str) or not spec.strip():
+        reply["error"] = "No cleanup model is set. Choose one in Settings > General > Dictation."
+        await conn.send(reply)
+        return
+    try:
+        provider, model = resolve_model(spec.strip())
+        cleaned = await dictation.clean(ModelClient(provider, model), text)
+    except ConfigError as e:
+        reply["error"] = f"The cleanup model {spec} is not available: {e}"
+    except asyncio.TimeoutError:
+        reply["error"] = f"The cleanup model {spec} did not answer in {dictation.CLEANUP_TIMEOUT} seconds."
+    except Exception as e:  # noqa: BLE001 - the raw text stays in the prompt box.
+        log.info("The dictation was not cleaned with %s: %s", spec, e)
+        reply["error"] = f"The cleanup model {spec} failed: {e}"
+    else:
+        reply.update(text=cleaned, cleaned=True, model=spec.strip())
+    await conn.send(reply)
 
 
 # Settings > Your Harness > Output style (output_styles.py). The requests need no session.

@@ -122,6 +122,8 @@ import { saveLastMode } from "./components/ModeMenu";
 import { EditorPane } from "./editor/EditorPane";
 import { useEditor } from "./editor/useEditor";
 import { overlayOpen } from "./lib/overlay";
+import { cleanDictation, setDictationHost } from "./lib/dictationEngine";
+import { DictationSettings } from "./components/DictationSettings";
 import { addErrorToast, addOpenToast, addUndoToast, errorRoute, mcpFailureText, newlyFailedMcp, type ErrorToastItem } from "./lib/errorRoute";
 import { waitingCardHint } from "./lib/cardKeys";
 import { ErrorToasts } from "./components/ErrorToasts";
@@ -153,7 +155,7 @@ import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
-import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen } from "./lib/notify";
+import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen, onOpenNewSession } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
@@ -580,6 +582,17 @@ export default function App() {
   const defaultModelKey = useRef<string | null>(null); // The preferred model settings of the last user_settings message.
   const [userSettingsInfo, setUserSettingsInfo] = useState<{ path: string; version: string } | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  // Dictation (DictationButton.tsx): the prompt boxes ask the daemon for the cleanup, and show their errors as popups.
+  const userSettingsRef = useRef<UserSettings | null>(null);
+  userSettingsRef.current = userSettings;
+  useEffect(() => {
+    setDictationHost({
+      cleanupOn: () => !!userSettingsRef.current?.dictation_cleanup,
+      showError,
+      clean: (text) => cleanDictation(conn, text),
+    });
+    return () => setDictationHost(null);
+  }, [conn, showError]);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [daemonVersion, setDaemonVersion] = useState<string | null>(null); // From auth.ok of the connection.
   const [daemonUpdatable, setDaemonUpdatable] = useState(false); // The daemon can install an update from the app.
@@ -1700,6 +1713,24 @@ export default function App() {
     let stop: (() => void) | null = null;
     let live = true;
     void onNotificationOpen((id) => openFromNotice.current(id)).then((s) => (live ? (stop = s) : s()));
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
+
+  // The window was hidden in the tray, and the user opened it (the tray icon, the tray menu, the taskbar
+  // icon): the app shows a new session, as Ctrl+N does. A running turn continues in the background.
+  const openNewFromTray = useRef<() => void>(() => undefined);
+  openNewFromTray.current = () => {
+    if (status !== "open") return;
+    setSettingsPage(null);
+    showStartRef.current();
+  };
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let live = true;
+    void onOpenNewSession(() => openNewFromTray.current()).then((s) => (live ? (stop = s) : s()));
     return () => {
       live = false;
       stop?.();
@@ -3853,6 +3884,19 @@ export default function App() {
                   setSettingsError(null);
                   sendSafely({ type: "sandbox.set", enabled });
                 }}
+                dictation={
+                  <DictationSettings
+                    values={status === "open" ? userSettings : null}
+                    connected={status === "open"}
+                    models={models}
+                    providers={providers?.items ?? null}
+                    onRequestModels={requestModels}
+                    onSet={(values) => {
+                      setSettingsError(null);
+                      sendSafely({ type: "user_settings.set", values });
+                    }}
+                  />
+                }
               />
             )}
             {settingsPage === "harness" && (

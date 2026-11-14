@@ -5,6 +5,8 @@ import { isAddFilesShortcut } from "../lib/fileRefs";
 import { busySend, type BusySend } from "./SettingsDialog";
 import { imageFiles, imageToDataUrl, MAX_IMAGES } from "../lib/images";
 import { shortTip } from "./Tooltips";
+import { DictationButton, isDictationKey, type DictationControls, type DictationStatus } from "./DictationButton";
+import { DictationMeter } from "./DictationWave";
 import {
   filterSessions,
   insertMention,
@@ -106,6 +108,53 @@ export function slashAt(text: string, caret: number): { start: number; query: st
 /** A skill, not a built-in command or a plugin command. Only a skill can go in the middle of a prompt. */
 export function isSkill(item: CommandItem): boolean {
   return !item.builtin && item.path !== undefined;
+}
+
+/** A part of the prompt text. ``command`` is set when the part is a known "/name": the box shows it as a link. */
+export type PromptPart = { text: string; command?: CommandItem };
+
+/** Split the prompt text into plain parts and "/name" links. A "/name" is a link when it is a full token (a space or
+ * the text edge on each side) and names a known item: at the start of the prompt, a command or a skill; after
+ * other text, a skill only (as the "/" menu). */
+export function commandLinks(text: string, commands: readonly CommandItem[] | null): PromptPart[] {
+  if (!commands?.length || !text.includes("/")) return [{ text }];
+  const byName = new Map(commands.map((c) => [c.name, c]));
+  const parts: PromptPart[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/(?<=^|\s)\/([A-Za-z0-9_:.-]+)(?=\s|$)/g)) {
+    const at = m.index ?? 0;
+    const item = byName.get(m[1]);
+    if (!item) continue;
+    if (text.slice(0, at).trim() && !isSkill(item)) continue;
+    if (at > last) parts.push({ text: text.slice(last, at) });
+    parts.push({ text: m[0], command: item });
+    last = at + m[0].length;
+  }
+  if (last < text.length || parts.length === 0) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
+/** A link is one block, as in Claude Code: Backspace at its end or in it, or Delete at its start or in it, removes
+ * the full link. Return the new text and caret, or null when the key does not touch a link (or text is selected). */
+export function deleteLink(
+  parts: readonly PromptPart[],
+  start: number,
+  end: number,
+  key: "Backspace" | "Delete",
+): { text: string; caret: number } | null {
+  if (start !== end) return null;
+  let at = 0;
+  for (const p of parts) {
+    const from = at;
+    const to = at + p.text.length;
+    at = to;
+    if (!p.command) continue;
+    if (key === "Backspace" ? start > from && start <= to : start >= from && start < to) {
+      const text = parts.map((q) => q.text).join("");
+      return { text: text.slice(0, from) + text.slice(to), caret: from };
+    }
+  }
+  return null;
 }
 
 /** Replace the "/query" at ``start`` with "/name ". Return the new text and the new caret. */
@@ -349,11 +398,20 @@ export function PromptBox({
   const [mentionActive, setMentionActive] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState<number | null>(null); // The start of a closed "@" token.
   const pendingCaret = useRef<number | null>(null);
+  // Dictation: the microphone button at the right of Send. Its status ("Listening 0:05") shows under the box, at the
+  // left of the sound wave. A box with no row under it shows the status in the box.
+  const dictation = useRef<DictationControls>(null);
+  const [dictation_, setDictationStatus] = useState<DictationStatus | null>(null);
+  const dictationStatus = dictation_?.text ?? null;
+  const statusInBox = below ? null : dictationStatus;
 
   // The row under the box (the mode and the model): when their names do not fit side by side, the
   // row shows only their icons. It shows the names again when the width that they need is free.
   const belowRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
+  // The meter changes the room in the row under the box: measure the row again when it comes and goes.
+  const metering = dictation_ !== null;
+  useLayoutEffect(() => setCompact(false), [metering]);
   const neededWidth = useRef(0);
   const checkBelow = useRef(() => {});
   checkBelow.current = () => {
@@ -411,6 +469,53 @@ export function PromptBox({
     if (menuOpen) onRequestCommands();
   }, [menuOpen]);
 
+  // A known "/name" in the text shows as a link: a layer under the text box draws the text, and the
+  // text box draws only the caret and the selection. A hover on a link shows the description.
+  const parts = useMemo(() => commandLinks(text, commands), [text, commands]);
+  const hasLinks = parts.some((p) => p.command);
+  const mirror = useRef<HTMLDivElement>(null);
+  const syncMirror = () => {
+    const el = area.current;
+    const m = mirror.current;
+    if (!el || !m) return;
+    m.style.right = `${el.offsetWidth - el.clientWidth}px`; // The scroll bar of the text box.
+    m.scrollTop = el.scrollTop;
+  };
+  useLayoutEffect(syncMirror);
+  // A draft with a "/name" (for example after a restart) needs the list before the menu opens.
+  const askedCommands = useRef(false);
+  useEffect(() => {
+    if (commands !== null || askedCommands.current || !/(^|\s)\/[A-Za-z0-9]/.test(text)) return;
+    askedCommands.current = true;
+    onRequestCommands();
+  }, [text, commands]);
+  // The link under the pointer: its part index, its item, and its place. Only this link has the tint.
+  const [linkCard, setLinkCard] = useState<{ item: CommandItem; part: number; rect: DOMRect } | null>(null);
+  const hideCard = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const keepCard = () => clearTimeout(hideCard.current);
+  const dropCard = () => {
+    clearTimeout(hideCard.current);
+    hideCard.current = setTimeout(() => setLinkCard(null), 150);
+  };
+  useEffect(() => () => clearTimeout(hideCard.current), []);
+  useEffect(() => setLinkCard(null), [text]);
+  /** Show the card of the link under the pointer. The text box is on top of the links, so find the link by its place. */
+  const hoverLink = (x: number, y: number) => {
+    const links = mirror.current?.querySelectorAll<HTMLElement>(".prompt-link") ?? [];
+    for (const el of links) {
+      for (const r of el.getClientRects()) {
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+        const part = Number(el.dataset.part);
+        const item = parts[part]?.command;
+        if (!item) continue;
+        keepCard();
+        if (linkCard?.part !== part) setLinkCard({ item, part, rect: r });
+        return;
+      }
+    }
+    if (linkCard) dropCard();
+  };
+
   useEffect(() => setActive(0), [token?.query, token?.start]);
 
   // The "@" menu: the files of the project and the other sessions. The "/" menu has priority.
@@ -452,6 +557,7 @@ export function PromptBox({
     if (!el) return;
     el.style.height = "";
     if (el.value) el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
+    syncMirror();
   };
   useEffect(fitArea, [text]);
   useEffect(() => {
@@ -484,6 +590,18 @@ export function PromptBox({
     setCaret(at ?? value.length);
     if (dismissed !== null && value[dismissed] !== "/") setDismissed(null);
     if (mentionDismissed !== null && value[mentionDismissed] !== "@") setMentionDismissed(null);
+  };
+
+  /** Put dictated text at the caret, with a space before and after it when the box text needs one. */
+  const insertDictation = (spoken: string) => {
+    const el = area.current;
+    const current = el?.value ?? text;
+    const before = current.slice(0, el ? el.selectionStart : current.length);
+    const after = current.slice(el ? el.selectionEnd : current.length);
+    const added = `${before && !/\s$/.test(before) ? " " : ""}${spoken}${after && !/^\s/.test(after) ? " " : ""}`;
+    pendingCaret.current = before.length + added.length;
+    change(before + added + after);
+    el?.focus();
   };
 
   /** Replace the "@query" with the reference of the item. */
@@ -528,11 +646,30 @@ export function PromptBox({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Ctrl+Shift+Space dictates. Esc drops a recording.
+    if (isDictationKey(e.nativeEvent)) {
+      e.preventDefault();
+      if (!e.repeat) dictation.current?.press();
+      return;
+    }
+    if (e.key === "Escape" && dictation.current?.cancel()) {
+      e.preventDefault();
+      return;
+    }
     // Backspace at the start of the box removes the last chip, as in the Claude app.
     if (e.key === "Backspace" && attachments.length && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
       e.preventDefault();
       setAttachments((list) => list.slice(0, -1));
       return;
+    }
+    if ((e.key === "Backspace" || e.key === "Delete") && hasLinks && !e.altKey && !e.metaKey) {
+      const next = deleteLink(parts, e.currentTarget.selectionStart, e.currentTarget.selectionEnd, e.key);
+      if (next) {
+        e.preventDefault();
+        pendingCaret.current = next.caret;
+        change(next.text, next.caret);
+        return;
+      }
     }
     if (onAddFiles && isAddFilesShortcut(e.nativeEvent)) {
       e.preventDefault();
@@ -757,14 +894,36 @@ export function PromptBox({
               <TriangleAlert size={12} aria-hidden /> {imageNote}
             </p>
           )}
+          <div className="prompt-input">
+          {hasLinks && (
+            <div className="prompt-mirror" ref={mirror} aria-hidden>
+              {parts.map((p, i) =>
+                p.command ? (
+                  <span key={i} className={`prompt-link${linkCard?.part === i ? " hover" : ""}`} data-part={i}>
+                    {p.text}
+                  </span>
+                ) : (
+                  p.text
+                ),
+              )}
+              {/* A last new line has no height in a div. In the text box it has: add a space. */}
+              {text.endsWith("\n") ? " " : null}
+            </div>
+          )}
           <textarea
             id={inputId}
             ref={area}
             rows={1}
             value={text}
             disabled={disabled}
+            className={hasLinks ? "has-links" : undefined}
+            onScroll={syncMirror}
+            onMouseMove={hasLinks ? (e) => hoverLink(e.clientX, e.clientY) : undefined}
+            onMouseLeave={hasLinks ? dropCard : undefined}
             placeholder={
-              answerHint
+              statusInBox
+                ? statusInBox
+                : answerHint
                 ? answerHint
                 : running
                 ? `${BUSY_HINTS[busySend()]} Esc stops the agent.`
@@ -786,6 +945,11 @@ export function PromptBox({
             }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onKeyDown={onKeyDown}
+            onFocus={() => dictation.current?.focused()}
+            onKeyUp={(e) => {
+              // "Hold to record": the release of the key stops a long press. The release of Shift or Ctrl stops it too.
+              if (e.code === "Space" || e.key === "Shift" || e.key === "Control" || e.key === "Meta") dictation.current?.release();
+            }}
             spellCheck={false}
             role="combobox"
             aria-autocomplete="list"
@@ -793,11 +957,40 @@ export function PromptBox({
             aria-controls={menuOpen && matches.length > 0 ? "slash-menu" : mentionOpen ? "mention-menu" : undefined}
             aria-activedescendant={activeId}
           />
+          </div>
+          {linkCard && hasLinks && (
+            <div
+              className="prompt-link-card"
+              role="tooltip"
+              style={
+                linkCard.rect.top > 240
+                  ? { bottom: window.innerHeight - linkCard.rect.top + 6, left: Math.max(8, Math.min(linkCard.rect.left, window.innerWidth - 348)) }
+                  : { top: linkCard.rect.bottom + 6, left: Math.max(8, Math.min(linkCard.rect.left, window.innerWidth - 348)) }
+              }
+              onMouseEnter={keepCard}
+              onMouseLeave={dropCard}
+            >
+              <div className="prompt-link-card-name mono">
+                /{linkCard.item.name}
+                {linkCard.item["argument-hint"] && <span className="prompt-link-card-hint"> {linkCard.item["argument-hint"]}</span>}
+              </div>
+              {linkCard.item.description && <div className="prompt-link-card-desc">{linkCard.item.description}</div>}
+            </div>
+          )}
           {!text && suggestion && !running && (
             <span className="suggestion-hint" aria-hidden>
               <kbd>Tab</kbd>
             </span>
           )}
+          {statusInBox && text && (
+            <span className="dictation-status" aria-hidden>
+              {statusInBox}
+            </span>
+          )}
+          {/* A screen reader hears each state one time: not each second of the timer or each percent of the download. */}
+          <span className="sr-only" aria-live="polite">
+            {dictationStatus?.replace(/ (\d+:\d\d|\d+%)$/, "") ?? ""}
+          </span>
           {/* In line with the text. When the text grows, the buttons stay at the bottom right. During a turn
               Stop always shows (rule C7). With text, Send shows next to it: Enter queues the message. While a card
               waits, Esc answers the card, so the tip of Stop has no key. */}
@@ -824,11 +1017,15 @@ export function PromptBox({
               {busy ? <LoaderCircle size={16} className="spin" aria-hidden /> : <CornerDownLeft size={16} aria-hidden />}
             </button>
           )}
+          {/* The microphone, at the right of Send (rule C2a). A right-click opens its menu. */}
+          <DictationButton ref={dictation} disabled={disabled} onText={insertDictation} onStatus={setDictationStatus} />
       </div>
       </div>
       {below && (
         <div className={`prompt-below${compact ? " compact" : ""}`} ref={belowRef}>
           {below}
+          {/* The status and the sound wave, at the left of the model (rule C2a). */}
+          {dictation_ && <DictationMeter status={dictation_.text} listening={dictation_.listening} />}
         </div>
       )}
     </div>
