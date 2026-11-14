@@ -15,6 +15,7 @@ import datetime
 import difflib
 import json
 import os
+import re
 import types
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from harness_daemon.providers import ModelClient, resolve_model
 from test_server import Client, daemon  # noqa: F401 - the daemon fixture
 
 SNAPSHOTS = Path(__file__).resolve().parent / "snapshots"
+PLACEHOLDER_PATH = re.compile(r"(<PROJECT>|<MEMORY>|<HARNESS_HOME>)((?:(?:\\\\|\\|/)[\w.\-]+)*)")
 UPDATE = os.environ.get("HARNESS_UPDATE_SNAPSHOTS") == "1"
 
 # One model name for each prompt family of model_prompts.py. The provider name ("fake") does not count.
@@ -62,7 +64,9 @@ def normalize(text: str, project: Path, harness_home: Path) -> str:
     ]
     for path, name in pairs:
         text = text.replace(json.dumps(path)[1:-1], name).replace(path, name)
-    return text.replace("\\", "/") if os.name == "nt" else text
+    # A Windows path after a placeholder has backslashes (two in JSON text). Only these become "/": a global
+    # replace would also change JSON escapes such as \n.
+    return PLACEHOLDER_PATH.sub(lambda m: m.group(1) + re.sub(r"\\\\|\\", "/", m.group(2)), text)
 
 
 def assert_snapshot(name: str, text: str) -> None:

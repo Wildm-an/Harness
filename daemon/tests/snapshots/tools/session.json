@@ -34,7 +34,7 @@
     "type": "function",
     "function": {
       "name": "glob",
-      "description": "Find files by a name pattern, for example **/*.py or src/**/*.ts. A pattern with no / matches the file name in each folder. The newest files come first./n/nUsage notes:/n- It shows at most 200 files. If there are more, use a narrower pattern./n- To find text in files, use grep./n- Use it in place of find, ls, or dir in bash./n- When you need several patterns, make several glob calls in one reply.",
+      "description": "Find files by a name pattern, for example **/*.py or src/**/*.ts. A pattern with no / matches the file name in each folder. The newest files come first.\n\nUsage notes:\n- It shows at most 200 files. If there are more, use a narrower pattern.\n- To find text in files, use grep.\n- Use it in place of find, ls, or dir in bash.\n- When you need several patterns, make several glob calls in one reply.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -57,7 +57,7 @@
     "type": "function",
     "function": {
       "name": "grep",
-      "description": "Search the content of files with a regular expression./n/nOutput modes:/n- output=files (default) lists the files that match./n- output=content shows the matching lines as path:line:text. Add context to see lines around each match./n- output=count shows the number of matching lines in each file./n/nUsage notes:/n- Use it in place of grep, rg, findstr, or Select-String in bash./n- The pattern is a regular expression. Escape special characters, for example interface//{//} or foo//(./n- Use glob to limit the search, for example *.py. To find files by name, use the glob tool./n- It shows at most 200 files or 300 lines. If there are more, use a narrower pattern, path, or glob./n- After you find a match, use read to see the code around it.",
+      "description": "Search the content of files with a regular expression.\n\nOutput modes:\n- output=files (default) lists the files that match.\n- output=content shows the matching lines as path:line:text. Add context to see lines around each match.\n- output=count shows the number of matching lines in each file.\n\nUsage notes:\n- Use it in place of grep, rg, findstr, or Select-String in bash.\n- The pattern is a regular expression. Escape special characters, for example interface\\{\\} or foo\\(.\n- Use glob to limit the search, for example *.py. To find files by name, use the glob tool.\n- It shows at most 200 files or 300 lines. If there are more, use a narrower pattern, path, or glob.\n- After you find a match, use read to see the code around it.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -101,7 +101,7 @@
     "type": "function",
     "function": {
       "name": "edit",
-      "description": "Replace an exact string in an existing file./n/nUse it to change part of a file. To create a file or to replace all its content, use write. For Word, PowerPoint, or Excel files, use office_edit./n/nUsage notes:/n- Read the file with the read tool before you edit it. The tool rejects an edit of a file that you did not read in this session, or that changed after the read./n- old_string must match the file exactly, with the same spaces and indentation. Do not copy the line numbers and the tab that the read tool puts before each line./n- old_string must occur one time in the file. If it occurs more times, add lines around it, or set replace_all to true to change each occurrence./n- If the edit fails with /"old_string was not found/", read the file again and copy the exact text./n- Make small, targeted edits. Do not replace a full file with edit./n- To make several changes to one file, make several edit calls.",
+      "description": "Replace an exact string in an existing file.\n\nUse it to change part of a file. To create a file or to replace all its content, use write. For Word, PowerPoint, or Excel files, use office_edit.\n\nUsage notes:\n- Read the file with the read tool before you edit it. The tool rejects an edit of a file that you did not read in this session, or that changed after the read.\n- old_string must match the file exactly, with the same spaces and indentation. Do not copy the line numbers and the tab that the read tool puts before each line.\n- old_string must occur one time in the file. If it occurs more times, add lines around it, or set replace_all to true to change each occurrence.\n- If the edit fails with \"old_string was not found\", read the file again and copy the exact text.\n- Make small, targeted edits. Do not replace a full file with edit.\n- To make several changes to one file, make several edit calls.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -134,7 +134,7 @@
     "type": "function",
     "function": {
       "name": "write",
-      "description": "Create a file, or replace all the content of a file. The folders are created if necessary./n/nUsage notes:/n- To change part of an existing file, use edit. Edit is safer, and the diff is smaller./n- Before you replace an existing file, read it. The tool rejects a replace of a file that you did not read in this session./n- Do not create documentation or README files unless the user asks for them./n- Do not use bash with echo or a redirect (>) to create a file. Use this tool.",
+      "description": "Create a file, or replace all the content of a file. The folders are created if necessary.\n\nUsage notes:\n- To change part of an existing file, use edit. Edit is safer, and the diff is smaller.\n- Before you replace an existing file, read it. The tool rejects a replace of a file that you did not read in this session.\n- Do not create documentation or README files unless the user asks for them.\n- Do not use bash with echo or a redirect (>) to create a file. Use this tool.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -158,7 +158,7 @@
     "type": "function",
     "function": {
       "name": "bash",
-      "description": "Run a command with bash in the project folder. Each call starts a new shell in the project folder, so a cd does not stay for the next call./n/nUse it for commands that have no tool: git, package managers, tests, builds, and scripts./n/nDo not use it for these jobs. Use the tool instead:/n- Read a file: use read, not cat, head, tail, or Get-Content./n- Find files by name: use glob, not find, ls, or dir./n- Find text in files: use grep, not grep, rg, findstr, or Select-String./n- Change a file: use edit or write, not sed, awk, echo, or a redirect (>)./n- Talk to the user: write text in your reply, not echo./n/nUsage notes:/n- The default timeout is 120 seconds, and the maximum is 600 seconds. For a long build, test run, or watcher, set run_in_background and read the output later with task_output./n- Do not run commands that wait for input. Use flags such as --yes or -y./n- Do not start servers that do not stop, unless you use run_in_background./n- Long output is cut, and the end is kept. Errors are usually at the end./n- When commands do not depend on each other, make several bash calls in one reply./n- Put quotes around paths that have spaces./n- Before you delete or move files, check the paths./n- Read the exit code and the output before you say that a command worked.",
+      "description": "Run a command with bash in the project folder. Each call starts a new shell in the project folder, so a cd does not stay for the next call.\n\nUse it for commands that have no tool: git, package managers, tests, builds, and scripts.\n\nDo not use it for these jobs. Use the tool instead:\n- Read a file: use read, not cat, head, tail, or Get-Content.\n- Find files by name: use glob, not find, ls, or dir.\n- Find text in files: use grep, not grep, rg, findstr, or Select-String.\n- Change a file: use edit or write, not sed, awk, echo, or a redirect (>).\n- Talk to the user: write text in your reply, not echo.\n\nUsage notes:\n- The default timeout is 120 seconds, and the maximum is 600 seconds. For a long build, test run, or watcher, set run_in_background and read the output later with task_output.\n- Do not run commands that wait for input. Use flags such as --yes or -y.\n- Do not start servers that do not stop, unless you use run_in_background.\n- Long output is cut, and the end is kept. Errors are usually at the end.\n- When commands do not depend on each other, make several bash calls in one reply.\n- Put quotes around paths that have spaces.\n- Before you delete or move files, check the paths.\n- Read the exit code and the output before you say that a command worked.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -189,7 +189,7 @@
     "type": "function",
     "function": {
       "name": "office_edit",
-      "description": "Change a Word (.docx), PowerPoint (.pptx), or Excel (.xlsx) file, or make a new one with create: true. Read the file first: the read tool numbers its parts. Give a list of edits; they apply in order, then the file is saved once. Each edit has an 'op':/nWord: replace {find, replace}; insert_paragraph {after (paragraph number, 0 for the start), text, style?}; set_paragraph {index, text, style?}; delete_paragraph {index}; set_cell {table, row, col, text}; add_table {rows: [[text, ...], ...]}./nPowerPoint: replace {find, replace, slide?}; add_slide {title?, body? (lines), layout? (name or number), position?}; delete_slide {slide}; set_text {slide, shape, text}; set_notes {slide, text}./nExcel: set {cell, value, sheet?} (a value that starts with = is a formula); set_rows {start, rows: [[value, ...], ...], sheet?}; add_sheet {name}; rename_sheet {sheet, name}; delete_sheet {sheet}./nNumbers start at 1. A replace keeps the formatting when the text is in one run./nThis tool is for small changes. To make a formatted document, a deck, or a workbook with formulas, or for tracked changes, comments, charts, or a template, load the docx, pptx, or xlsx skill first.",
+      "description": "Change a Word (.docx), PowerPoint (.pptx), or Excel (.xlsx) file, or make a new one with create: true. Read the file first: the read tool numbers its parts. Give a list of edits; they apply in order, then the file is saved once. Each edit has an 'op':\nWord: replace {find, replace}; insert_paragraph {after (paragraph number, 0 for the start), text, style?}; set_paragraph {index, text, style?}; delete_paragraph {index}; set_cell {table, row, col, text}; add_table {rows: [[text, ...], ...]}.\nPowerPoint: replace {find, replace, slide?}; add_slide {title?, body? (lines), layout? (name or number), position?}; delete_slide {slide}; set_text {slide, shape, text}; set_notes {slide, text}.\nExcel: set {cell, value, sheet?} (a value that starts with = is a formula); set_rows {start, rows: [[value, ...], ...], sheet?}; add_sheet {name}; rename_sheet {sheet, name}; delete_sheet {sheet}.\nNumbers start at 1. A replace keeps the formatting when the text is in one run.\nThis tool is for small changes. To make a formatted document, a deck, or a workbook with formulas, or for tracked changes, comments, charts, or a template, load the docx, pptx, or xlsx skill first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -247,7 +247,7 @@
     "type": "function",
     "function": {
       "name": "show_visual",
-      "description": "Show an interactive visual in the chat: an HTML fragment, or one raw <svg> element. Use it for a diagram, a chart, a small demo, or a set of choices with buttons. The user sees it below your message. Follow these rules:/n- Give a fragment only. Do not write <!DOCTYPE>, <html>, <head>, or <body>./n- Use these CSS variables for all colors and fonts. They change with the light and the dark theme: --color-text, --color-text-muted, --color-surface, --color-surface-2, --color-border, --color-accent, --color-accent-text, --color-success, --color-danger, --color-warning, --font-sans, --font-mono, --radius. Example: color: var(--color-text). Do not use fixed colors for text, lines, or backgrounds./n- Use a flat style: no gradients, no large shadows. The page background is transparent./n- Do not use vh units. The frame gets the height of its content./n- Scripts and styles can load only from cdnjs.cloudflare.com, cdn.jsdelivr.net, and unpkg.com. fetch and other network calls do not work./n- Call sendPrompt(text) in a button click to send text as the next prompt of the user./n- Keep the code short. Do not repeat the visual in your text reply./n- Optional: 'loading_messages', 1 to 4 short lines (about 5 words) that show while the visual loads. For a serious topic, keep them plain. The title is also the file name when the user downloads the visual.",
+      "description": "Show an interactive visual in the chat: an HTML fragment, or one raw <svg> element. Use it for a diagram, a chart, a small demo, or a set of choices with buttons. The user sees it below your message. Follow these rules:\n- Give a fragment only. Do not write <!DOCTYPE>, <html>, <head>, or <body>.\n- Use these CSS variables for all colors and fonts. They change with the light and the dark theme: --color-text, --color-text-muted, --color-surface, --color-surface-2, --color-border, --color-accent, --color-accent-text, --color-success, --color-danger, --color-warning, --font-sans, --font-mono, --radius. Example: color: var(--color-text). Do not use fixed colors for text, lines, or backgrounds.\n- Use a flat style: no gradients, no large shadows. The page background is transparent.\n- Do not use vh units. The frame gets the height of its content.\n- Scripts and styles can load only from cdnjs.cloudflare.com, cdn.jsdelivr.net, and unpkg.com. fetch and other network calls do not work.\n- Call sendPrompt(text) in a button click to send text as the next prompt of the user.\n- Keep the code short. Do not repeat the visual in your text reply.\n- Optional: 'loading_messages', 1 to 4 short lines (about 5 words) that show while the visual loads. For a serious topic, keep them plain. The title is also the file name when the user downloads the visual.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -279,7 +279,7 @@
     "type": "function",
     "function": {
       "name": "send_file",
-      "description": "Send files to the user: each file shows as a card in the chat. Use it for a deliverable that the user must see, for example a report, a chart image, an HTML page, or a built file. Do not send scratch files or each small change of a file. The files must exist in the project. 'display': /"render/" opens the first file in a pane of the app now (a PDF, a Word file, an image, an HTML page, or a text file); /"attach/" shows a card that the user opens in another app (for example a spreadsheet). Leave it out to let the app decide by the file type. 'status': /"proactive/" when you send the file on your own initiative and the user must see it now (the app shows a notification); else /"normal/". Add a 'caption' of one line when it helps.",
+      "description": "Send files to the user: each file shows as a card in the chat. Use it for a deliverable that the user must see, for example a report, a chart image, an HTML page, or a built file. Do not send scratch files or each small change of a file. The files must exist in the project. 'display': \"render\" opens the first file in a pane of the app now (a PDF, a Word file, an image, an HTML page, or a text file); \"attach\" shows a card that the user opens in another app (for example a spreadsheet). Leave it out to let the app decide by the file type. 'status': \"proactive\" when you send the file on your own initiative and the user must see it now (the app shows a notification); else \"normal\". Add a 'caption' of one line when it helps.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -464,7 +464,7 @@
     "type": "function",
     "function": {
       "name": "web_search",
-      "description": "Search the web. The result lists the title, the URL, and a short text of each page. Use web_fetch to read a page. Use it for information after your training data, for example new versions and docs. In your answer, give the URLs of the pages that you used, in a list with the title /"Sources:/".",
+      "description": "Search the web. The result lists the title, the URL, and a short text of each page. Use web_fetch to read a page. Use it for information after your training data, for example new versions and docs. In your answer, give the URLs of the pages that you used, in a list with the title \"Sources:\".",
       "parameters": {
         "type": "object",
         "properties": {
@@ -501,7 +501,7 @@
     "type": "function",
     "function": {
       "name": "ask_user_question",
-      "description": "Ask the user 1 to 4 questions while you work, each with 2 to 4 options. Use it when you must know a choice of the user to continue, for example between two designs, or to make a vague request clear. Do not use it for a question that the code or the docs can answer. The user can also type another answer. Put your recommended option first, and add /" (Recommended)/" to its label. To compare concrete things (a layout mockup, a code snippet, a diagram), give an option a 'preview': the card shows it next to the options in a monospace box. The user can add notes to the answer. The result gives the answers and the notes.",
+      "description": "Ask the user 1 to 4 questions while you work, each with 2 to 4 options. Use it when you must know a choice of the user to continue, for example between two designs, or to make a vague request clear. Do not use it for a question that the code or the docs can answer. The user can also type another answer. Put your recommended option first, and add \" (Recommended)\" to its label. To compare concrete things (a layout mockup, a code snippet, a diagram), give an option a 'preview': the card shows it next to the options in a monospace box. The user can add notes to the answer. The result gives the answers and the notes.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -703,7 +703,7 @@
     "type": "function",
     "function": {
       "name": "offer_session",
-      "description": "Use this tool first, before other tools, when the latest message of the user asks for a task that is not part of the work of this session, or that fits another session of the session list better. Do not use it for a follow-up, a correction, a question about this work, or the next step of this work: do that here. With session_id, the task goes to that existing session. Without session_id, a new session starts, nested under this session. The setting /"When you ask for an unrelated task/" decides: the user gets a card to choose, or the task goes there at once, or it stays here. The result tells you what to do next.",
+      "description": "Use this tool first, before other tools, when the latest message of the user asks for a task that is not part of the work of this session, or that fits another session of the session list better. Do not use it for a follow-up, a correction, a question about this work, or the next step of this work: do that here. With session_id, the task goes to that existing session. Without session_id, a new session starts, nested under this session. The setting \"When you ask for an unrelated task\" decides: the user gets a card to choose, or the task goes there at once, or it stays here. The result tells you what to do next.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -794,13 +794,13 @@
     "type": "function",
     "function": {
       "name": "preview_tabs",
-      "description": "List the tabs of the Browser pane of this session, or switch to one. You and the user use the same tabs. Before you open a page for a task, list the tabs: if the user opened a tab for this task, continue in it (give its id in 'use'), and read it with preview_snapshot. If no tab is about the task, open the page with preview_navigate and tab /"new/". Each tab has its id, URL, title, /"shown/" (the user sees it now), and /"used/" (you work in it).",
+      "description": "List the tabs of the Browser pane of this session, or switch to one. You and the user use the same tabs. Before you open a page for a task, list the tabs: if the user opened a tab for this task, continue in it (give its id in 'use'), and read it with preview_snapshot. If no tab is about the task, open the page with preview_navigate and tab \"new\". Each tab has its id, URL, title, \"shown\" (the user sees it now), and \"used\" (you work in it).",
       "parameters": {
         "type": "object",
         "properties": {
           "use": {
             "type": "string",
-            "description": "Optional: the id of a tab to work in, or /"new/"."
+            "description": "Optional: the id of a tab to work in, or \"new\"."
           }
         }
       }
@@ -810,7 +810,7 @@
     "type": "function",
     "function": {
       "name": "preview_navigate",
-      "description": "Open a page in the browser. In the desktop app, this is the Browser pane of the session: you and the user use the same tabs, see the same pages, and share the cookies. With 'tab', choose the tab first: an id from preview_tabs (to continue in a tab that the user opened for this task), or /"new/" for a new tab (when no open tab is about this task). Without 'tab', the page opens in the tab that you used last. Give a full URL, or a path such as /about. A path opens on the current page, or on the running server. The URLs of the servers in launch.json need no approval. Other URLs need approval.",
+      "description": "Open a page in the browser. In the desktop app, this is the Browser pane of the session: you and the user use the same tabs, see the same pages, and share the cookies. With 'tab', choose the tab first: an id from preview_tabs (to continue in a tab that the user opened for this task), or \"new\" for a new tab (when no open tab is about this task). Without 'tab', the page opens in the tab that you used last. Give a full URL, or a path such as /about. A path opens on the current page, or on the running server. The URLs of the servers in launch.json need no approval. Other URLs need approval.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -824,7 +824,7 @@
           },
           "tab": {
             "type": "string",
-            "description": "Optional: a tab id from preview_tabs, or /"new/"."
+            "description": "Optional: a tab id from preview_tabs, or \"new\"."
           }
         },
         "required": [
@@ -1014,7 +1014,7 @@
     "type": "function",
     "function": {
       "name": "cron_create",
-      "description": "Schedule a prompt with a cron expression: at each time, you get the prompt as a notification, in the running turn or in a new turn. Use it when the user asks for work at set times, for example /"check the deploy every 10 minutes/" or /"run the report at 9:00 on weekdays/". A recurring task ends after 7 days. Use schedule_wakeup for one check after a delay. The tasks stay only while the session is open. List them with cron_list and stop one with cron_delete. For work that must continue after this session, use routine_create.",
+      "description": "Schedule a prompt with a cron expression: at each time, you get the prompt as a notification, in the running turn or in a new turn. Use it when the user asks for work at set times, for example \"check the deploy every 10 minutes\" or \"run the report at 9:00 on weekdays\". A recurring task ends after 7 days. Use schedule_wakeup for one check after a delay. The tasks stay only while the session is open. List them with cron_list and stop one with cron_delete. For work that must continue after this session, use routine_create.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1076,7 +1076,7 @@
     "type": "function",
     "function": {
       "name": "routine_create",
-      "description": "Save a routine: a prompt that Harness runs on a cron schedule, each time in a new session. Routines continue after this session ends, also when no Harness window is open. The routine shows on the Routines page, where the user can edit it, turn it off, or delete it. Use this tool when the user asks for recurring or later work that must continue after this session, for example /"every morning, summarize the new commits/" or /"each Friday at 17:00, check the dependencies/". Use cron_create only for reminders while this session is open. The runs work in the project folder of this session, with the model of this session. Use routine_list first to find a routine that does the same work. After the save, tell the user the name, the schedule, and the next run.",
+      "description": "Save a routine: a prompt that Harness runs on a cron schedule, each time in a new session. Routines continue after this session ends, also when no Harness window is open. The routine shows on the Routines page, where the user can edit it, turn it off, or delete it. Use this tool when the user asks for recurring or later work that must continue after this session, for example \"every morning, summarize the new commits\" or \"each Friday at 17:00, check the dependencies\". Use cron_create only for reminders while this session is open. The runs work in the project folder of this session, with the model of this session. Use routine_list first to find a routine that does the same work. After the save, tell the user the name, the schedule, and the next run.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1131,7 +1131,7 @@
     "type": "function",
     "function": {
       "name": "agent",
-      "description": "Give a task to a subagent with a new context. It returns a report. Use it for a search or a review of many files, or for independent work. With run_in_background, you can continue your work while the subagent runs. Do not do the same work at the same time. Several agents in one step run at the same time. Select the agent type with subagent_type:/n- general-purpose: For research, code search, and tasks with many steps. It has all the tools./n- Explore: A fast, read-only agent to find files and code, and to answer questions about the code. Give the search breadth in the prompt: quick, medium, or very thorough./n- Plan: A read-only software architect. It returns a plan in steps with the files to change, the risks, and the tests.",
+      "description": "Give a task to a subagent with a new context. It returns a report. Use it for a search or a review of many files, or for independent work. With run_in_background, you can continue your work while the subagent runs. Do not do the same work at the same time. Several agents in one step run at the same time. Select the agent type with subagent_type:\n- general-purpose: For research, code search, and tasks with many steps. It has all the tools.\n- Explore: A fast, read-only agent to find files and code, and to answer questions about the code. Give the search breadth in the prompt: quick, medium, or very thorough.\n- Plan: A read-only software architect. It returns a plan in steps with the files to change, the risks, and the tests.",
       "parameters": {
         "type": "object",
         "properties": {
