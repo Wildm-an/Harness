@@ -194,6 +194,17 @@ KIMI_RULES = """\
 - Reply in the language of the user.
 - Do not run git commit, git push, git reset, git rebase, or other git changes unless the user asks for them."""
 
+KIMI_WRITE_PHRASE = "use the write and edit tools"
+
+
+def kimi_rules(tool_names: Collection[str] | None = None) -> str:
+    """KIMI_RULES. With edit_tool "apply_patch" the agent has apply_patch in place of write and edit."""
+    names = set(tool_names or ())
+    if "apply_patch" in names and "edit" not in names:
+        return KIMI_RULES.replace(KIMI_WRITE_PHRASE, "use the apply_patch tool")
+    return KIMI_RULES
+
+
 # opencode anthropic.txt (v2). Claude gets no enforcement block.
 CLAUDE_COMMENTS = """\
 # Code comments
@@ -284,6 +295,6 @@ def model_guidance(model: str, tool_names: Collection[str] | None = None, family
         "tool_use": lambda: TOOL_USE_ENFORCEMENT,
         "execution": lambda: execution_discipline(tool_names),
         "google": lambda: GOOGLE_RULES,
-        "kimi": lambda: KIMI_RULES,
+        "kimi": lambda: kimi_rules(tool_names),
     }
     return [texts[block]() for block in FAMILY_BLOCKS.get(family or "", ()) if block not in ablate]

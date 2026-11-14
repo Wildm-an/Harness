@@ -25,21 +25,28 @@ function Segments({ segments, kind }: { segments: Segment[]; kind: "add" | "del"
   );
 }
 
-function HunkHeader({ hunk, colSpan }: { hunk: Hunk; colSpan: number }) {
+function HunkHeader({ hunk, colSpan, showFile }: { hunk: Hunk; colSpan: number; showFile?: boolean }) {
   return (
-    <tr className="dr-hunk">
-      <td colSpan={colSpan}>
-        @@ -{hunk.oldStart} +{hunk.newStart} @@ {hunk.header}
-      </td>
-    </tr>
+    <>
+      {showFile && (
+        <tr className="dr-hunk dr-file">
+          <td colSpan={colSpan} className="mono">{hunk.file}</td>
+        </tr>
+      )}
+      <tr className="dr-hunk">
+        <td colSpan={colSpan}>
+          @@ -{hunk.oldStart} +{hunk.newStart} @@ {hunk.header}
+        </td>
+      </tr>
+    </>
   );
 }
 
-function SplitHunk({ hunk }: { hunk: Hunk }) {
+function SplitHunk({ hunk, showFile }: { hunk: Hunk; showFile?: boolean }) {
   const rows = useMemo(() => toSplitRows(hunk), [hunk]);
   return (
     <>
-      <HunkHeader hunk={hunk} colSpan={4} />
+      <HunkHeader hunk={hunk} colSpan={4} showFile={showFile} />
       {rows.map((row, i) => {
         const { left, right } = row;
         const words = left?.kind === "del" && right?.kind === "add" ? wordSegments(left.text, right.text) : null;
@@ -62,10 +69,10 @@ function SplitHunk({ hunk }: { hunk: Hunk }) {
 
 const SIGN: Record<DiffLine["kind"], string> = { add: "+", del: "-", context: " " };
 
-function UnifiedHunk({ hunk }: { hunk: Hunk }) {
+function UnifiedHunk({ hunk, showFile }: { hunk: Hunk; showFile?: boolean }) {
   return (
     <>
-      <HunkHeader hunk={hunk} colSpan={3} />
+      <HunkHeader hunk={hunk} colSpan={3} showFile={showFile} />
       {hunk.lines.map((line, i) => (
         <tr key={i}>
           <td className={`dr-num dr-${line.kind}`}>{line.oldNo}</td>
@@ -121,8 +128,8 @@ export const DiffReview = memo(function DiffReview({
     <section className="side-pane diff-review" aria-label="Diff review" tabIndex={-1}>
       <header className="pane-head">
         <FileDiff size={16} aria-hidden className="pane-icon" />
-        <span className="pane-title mono" title={parsed.path}>
-          {parsed.path || "Change"}
+        <span className="pane-title mono" title={parsed.files.length > 1 ? parsed.files.join(", ") : parsed.path}>
+          {parsed.files.length > 1 ? `${parsed.files.length} files` : parsed.path || "Change"}
         </span>
         <span className="diff-stats" aria-label={`${parsed.added} lines added, ${parsed.removed} lines removed`}>
           <span className="stat-add">+{parsed.added}</span>
@@ -175,9 +182,14 @@ export const DiffReview = memo(function DiffReview({
               )}
             </colgroup>
             <tbody>
-              {parsed.hunks.map((hunk, i) =>
-                mode === "split" ? <SplitHunk key={i} hunk={hunk} /> : <UnifiedHunk key={i} hunk={hunk} />,
-              )}
+              {parsed.hunks.map((hunk, i) => {
+                const showFile = parsed.files.length > 1 && hunk.file !== parsed.hunks[i - 1]?.file;
+                return mode === "split" ? (
+                  <SplitHunk key={i} hunk={hunk} showFile={showFile} />
+                ) : (
+                  <UnifiedHunk key={i} hunk={hunk} showFile={showFile} />
+                );
+              })}
             </tbody>
           </table>
         )}

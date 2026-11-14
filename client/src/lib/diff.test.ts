@@ -73,3 +73,34 @@ describe("wordSegments", () => {
     expect(wordSegments("alpha beta gamma", "completely other text here")).toBeNull();
   });
 });
+
+describe("a diff of several files (apply_patch)", () => {
+  it("gives each hunk its file and lists the files in order", () => {
+    const text = [
+      "--- a/src/a.py",
+      "+++ b/src/a.py",
+      "@@ -1 +1 @@",
+      "-x = 1",
+      "+x = 2",
+      "--- /dev/null",
+      "+++ b/src/new.py",
+      "@@ -0,0 +1 @@",
+      "+y = 3",
+      "--- a/old.py",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-z = 4",
+      "",
+    ].join("\n");
+    const parsed = parseUnifiedDiff(text);
+    expect(parsed.files).toEqual(["src/a.py", "src/new.py", "old.py"]);
+    expect(parsed.hunks.map((h) => h.file)).toEqual(["src/a.py", "src/new.py", "old.py"]);
+    expect([parsed.added, parsed.removed]).toEqual([2, 2]);
+  });
+
+  it("keeps one file for a normal diff", () => {
+    const parsed = parseUnifiedDiff("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n");
+    expect(parsed.files).toEqual(["x"]);
+    expect(parsed.path).toBe("x");
+  });
+});

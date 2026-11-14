@@ -243,7 +243,7 @@ The Harness prompt is in `daemon/harness_daemon/prompt.py`. The loop is in `daem
 | 8 | **No repeated-call detection.** | `agent.py` | 3 identical calls give a reminder or a question to the user. |
 | 9 | **No stall nudge.** A reply that says "I will now edit the file" with no tool call ends the turn. | `agent.py` turn loop | Hermes Agent sends "Continue now. Execute the required tool calls". |
 | 10 | **Tool-name repair is not present.** An unknown name returns the list of tools (good), but `Bash` or `read_file` is not mapped to `bash` or `read`. | `agent.py:1034` | Hermes Agent and opencode repair case and common forms. |
-| 11 | **No lazy subfolder instructions.** Only `HARNESS.md` or `CLAUDE.md` in the project folder loads. `AGENTS.md` does not load. | `prompt.py:69` | opencode and Hermes Agent load `AGENTS.md`, and subfolder files when the agent reads there. |
+| 11 | **Closed.** `AGENTS.md` loads after `HARNESS.md` (change 6a). An instruction file in a subfolder goes to the agent in a note when a tool first touches that folder (change 6b, `prompt.py` `nested_instruction_files`). | `prompt.py` | opencode and Hermes Agent load `AGENTS.md`, and subfolder files when the agent reads there. |
 
 The Harness already does some things well:
 
@@ -270,7 +270,7 @@ The Harness already does some things well:
    - Small local models: one tool for each message, and fewer tools.
    - Claude: no overlay.
 6. **Make the tool descriptions longer** (gap 6). For bash, edit, read, grep, and glob, add "when to use", "when not to use", and the exact error text. Put the bash mapping list ("File search: use glob, not find") in the bash description.
-7. **Load `AGENTS.md`** (gap 11). Add it to `INSTRUCTION_FILES`, and append a subfolder file to the read result the first time the agent reads in that folder.
+7. **Done: load `AGENTS.md`** (gap 11). Add it to `INSTRUCTION_FILES`, and append a subfolder file to the read result the first time the agent reads in that folder.
 8. **Test each change.** Hermes Agent saves the rendered prompt as a test fixture, so each prompt change shows as a diff. Run a small task set on two or three models before and after each change. Vendors and studies agree that tricks do not always add up.
 
 ## 7. Caveats

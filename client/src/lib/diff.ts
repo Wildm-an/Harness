@@ -16,6 +16,7 @@ export interface Hunk {
   oldStart: number;
   newStart: number;
   lines: DiffLine[];
+  file: string; // The file of the hunk. A patch of apply_patch can change several files.
 }
 
 export interface ParsedDiff {
@@ -24,6 +25,7 @@ export interface ParsedDiff {
   added: number;
   removed: number;
   isNewFile: boolean;
+  files: string[]; // The files of the diff, in order. More than one for a patch of several files.
 }
 
 const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
@@ -33,8 +35,10 @@ function stripPrefix(path: string): string {
 }
 
 export function parseUnifiedDiff(text: string): ParsedDiff {
-  const result: ParsedDiff = { path: "", hunks: [], added: 0, removed: 0, isNewFile: false };
+  const result: ParsedDiff = { path: "", hunks: [], added: 0, removed: 0, isNewFile: false, files: [] };
   let hunk: Hunk | null = null;
+  let oldPath = "";
+  let file = "";
   let oldNo = 0;
   let newNo = 0;
 
@@ -44,19 +48,22 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
   for (const raw of rawLines) {
     const line = raw.replace(/\r$/, "");
     if (line.startsWith("--- ")) {
+      oldPath = line.slice(4) === "/dev/null" ? "" : stripPrefix(line.slice(4));
       if (line.slice(4) === "/dev/null") result.isNewFile = true;
-      else result.path ||= stripPrefix(line.slice(4));
+      else result.path ||= oldPath;
       continue;
     }
     if (line.startsWith("+++ ")) {
       if (line.slice(4) !== "/dev/null") result.path = stripPrefix(line.slice(4));
+      file = line.slice(4) === "/dev/null" ? oldPath : stripPrefix(line.slice(4)); // A deleted file: its old path.
+      if (file && !result.files.includes(file)) result.files.push(file);
       continue;
     }
     const m = HUNK_RE.exec(line);
     if (m) {
       oldNo = Number(m[1]);
       newNo = Number(m[2]);
-      hunk = { header: m[3].trim(), oldStart: oldNo, newStart: newNo, lines: [] };
+      hunk = { header: m[3].trim(), oldStart: oldNo, newStart: newNo, lines: [], file };
       result.hunks.push(hunk);
       continue;
     }

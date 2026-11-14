@@ -121,6 +121,7 @@ Keep the tool set small. Small local models make more errors with many tools.
 | `grep` | Searches file contents. Uses `ripgrep` if it is available. | No |
 | `edit` | Replaces an exact string in a file. | Yes |
 | `write` | Creates or overwrites a file. | Yes |
+| `apply_patch` | Adds, deletes, updates, or moves files with one patch in the Codex format. Only with the setting `edit_tool: "apply_patch"`, in place of `edit` and `write`. The default is `edit`. | Yes, for each file of the patch |
 | `bash` | Runs a shell command in the project folder. | Yes |
 | `skill` | Loads the body of a skill. | No |
 | `preview_*` | Controls servers and the agent browser. See section 8.7. | Some |

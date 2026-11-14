@@ -19,7 +19,7 @@ For each tool call that needs approval, the first match decides:
 3. **The narrow allow rules** of the project and the allowed tools of a skill. Broad rules do not apply in auto mode: `bash`, `bash(*)`, `edit`, `write`, `mcp__server__*`, and a prefix rule for an interpreter or a package manager, for example `bash(python:*)` or `bash(npm:*)`. A narrow rule such as `bash(npm run test:*)` applies.
 4. **The fast paths** run with no check:
    - a shell command that only reads, with no shell operators: `ls`, `cat`, `rg`, `git status`, `git diff`, `git log`, a version probe, and others. A read of a credential file (`~/.ssh`, `~/.aws`, `.env`, `.npmrc`, and others), `env`, `printenv`, `rg --pre`, and `git diff --output` go to the model.
-   - a file change in the project, except in the protected folders and files (`.git`, `.harness`, `.claude`, `.github`, `.vscode`, `.idea`, `.husky`, `.env*`, `.mcp.json`, `.npmrc`, shell profiles)
+   - a file change in the project, except in the protected folders and files (`.git`, `.harness`, `.claude`, `.github`, `.vscode`, `.idea`, `.husky`, `.env*`, `.mcp.json`, `.npmrc`, shell profiles). An `apply_patch` call can change several files: the fast path applies only when each file passes, and a hard rule or a protected path on one file applies to the whole call.
    - a Browser pane page on this computer (`localhost`, `127.0.0.1`)
    - a `bash` command in the sandbox, when the sandbox is on and `autoAllowBashIfSandboxed` is true (`docs/SANDBOX.md`)
 5. **The model** checks all other calls: other shell commands, protected files, MCP tools, and other pages. Its answer is `allow`, `block`, or `ask`.

@@ -51,6 +51,10 @@ Harness connects to these services only after you add them or turn them on:
   from the Playwright download servers. You can also start the download with `harness-daemon --install-browser`.
 - **The Browser pane, the terminal, and the agent tools.** These open the addresses and run the
   commands that you or the agent ask for, after the approvals of your permission settings.
+- **The sandbox.** With the sandbox on (`docs/SANDBOX.md`, off by default), a `bash` command has no
+  network. If you add domains to `sandbox.network.allowedDomains`, the command connects to those domains
+  only, through a local proxy of the daemon. The proxy keeps no log. It keeps only the names of the
+  blocked hosts, for the note to the agent.
 - **The Windows installer.** If WebView2 is not installed, the installer downloads it from Microsoft.
   Windows 11 has WebView2.
 

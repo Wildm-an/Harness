@@ -117,3 +117,12 @@ def test_a_new_context_takes_the_new_date(harness_home, project, fake_model, mon
     day["value"] = datetime.date(2026, 3, 2)
     agent.clear()
     assert "- Date: 2026-03-02" in agent.system_prompt
+
+
+def test_the_kimi_rules_name_apply_patch_in_patch_mode():
+    from harness_daemon.model_prompts import KIMI_RULES, model_guidance
+
+    normal = model_guidance("moonshot/kimi-k2", ["read", "edit", "write", "bash"])
+    assert KIMI_RULES in normal
+    patch = "\n".join(model_guidance("moonshot/kimi-k2", ["read", "apply_patch", "bash"]))
+    assert "use the apply_patch tool" in patch and "write and edit" not in patch
