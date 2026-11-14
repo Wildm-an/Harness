@@ -402,10 +402,16 @@ fn show_main(app: &AppHandle) {
 }
 
 /// The user opens the app: a click on the tray icon, "Open Harness" in the tray menu, or a second
-/// start. The window shows, and the UI checks for an update ("app-opened", lib/updater.ts).
+/// start (for example the taskbar icon). The window shows, and the UI checks for an update
+/// ("app-opened", lib/updater.ts). When the window was hidden in the tray, the UI also shows a new
+/// session ("open-new-session", App.tsx). A minimized window keeps its screen.
 fn open_main(app: &AppHandle) {
     use tauri::Emitter;
+    let hidden = app.get_window("main").is_some_and(|w| !w.is_visible().unwrap_or(true));
     show_main(app);
+    if hidden {
+        let _ = app.emit_to("main", "open-new-session", ());
+    }
     let _ = app.emit_to("main", "app-opened", ());
 }
 
