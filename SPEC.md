@@ -104,7 +104,8 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Messages are JSON. Each message
 3. If the model returns tool calls, run them in order.
 4. Append the tool results to the messages.
 5. Repeat until the model returns no tool calls, or the user sends `interrupt`.
-6. Set a maximum of 50 tool calls for each turn. Make this value configurable.
+6. Set a maximum of 250 tool calls for each turn (`max_tool_calls`). Make this value configurable.
+7. When the output limit of the model cuts a reply (`finish_reason` `length`), ask the model to continue, 3 times at most in sequence. A cut tool call does not run. The model gets a note to send a smaller call (`loop_guards.py`).
 
 ### 5.2 Tools
 
@@ -139,7 +140,10 @@ Rules:
 ### 5.4 Project instruction file
 
 - At session start, read `HARNESS.md` in the project root.
-- If `HARNESS.md` does not exist, read `CLAUDE.md`.
+- If `HARNESS.md` does not exist, read `AGENTS.md`, then `CLAUDE.md`. Only the first file that exists counts.
+- A worktree with no instruction file uses the file of its project.
+- Also read the instruction file of the user for all projects: `~/.harness/HARNESS.md`, `~/.harness/AGENTS.md`, or `~/.claude/CLAUDE.md`. All agents get it, also a subagent.
+- The base prompt states the order of authority: the user message, the project instructions of the settings, the project file, the instructions for all projects, the memory.
 - Put the file contents in the system prompt.
 
 ### 5.5 Context control

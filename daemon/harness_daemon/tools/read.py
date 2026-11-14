@@ -97,6 +97,8 @@ class ReadTool(Tool):
         if is_binary(data):
             note = old_format_note(path)
             raise ToolError(note or f"{args['path']} is a binary file.")
+        if ctx.reads is not None:
+            ctx.reads.note(path, data)
         lines = data.decode("utf-8", errors="replace").splitlines()
         if not lines:
             return ToolResult("(The file is empty.)")

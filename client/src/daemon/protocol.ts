@@ -1058,7 +1058,7 @@ export type DaemonMessage =
       context_length: number;
       context_source?: string; // Where the context length came from, for example "Ollama num_ctx".
       context_tokens: number;
-      instructions: string | null; // HARNESS.md or CLAUDE.md, if the project has one.
+      instructions: string | null; // HARNESS.md, AGENTS.md, or CLAUDE.md, if the project has one.
       files_token: string | null; // Project files for the Browser pane: /files/<token>/<path>.
       project: { id: string; name: string } | null; // The saved project of the session folder.
       worktree?: SessionWorktree | null; // The session works in this git worktree. cwd is in it.

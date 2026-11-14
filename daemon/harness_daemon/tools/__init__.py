@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import Approval, Tool, ToolContext, ToolError, ToolResult, truncate
+from .base import Approval, ReadState, Tool, ToolContext, ToolError, ToolResult, truncate
 from .bash import BashTool
 from .document import ShowDocumentTool
 from .edit import EditTool
@@ -40,6 +40,7 @@ __all__ = [
     "ShellInfo",
     "SkillTool",
     "Tool",
+    "ReadState",
     "ToolContext",
     "ToolError",
     "ToolResult",

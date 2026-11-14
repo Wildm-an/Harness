@@ -18,7 +18,7 @@ For each tool call that needs approval, the first match decides:
    - a change to the permission settings of Harness (`.harness/settings.json`, `harness.db`)
 3. **The narrow allow rules** of the project and the allowed tools of a skill. Broad rules do not apply in auto mode: `bash`, `bash(*)`, `edit`, `write`, `mcp__server__*`, and a prefix rule for an interpreter or a package manager, for example `bash(python:*)` or `bash(npm:*)`. A narrow rule such as `bash(npm run test:*)` applies.
 4. **The fast paths** run with no check:
-   - a shell command that only reads, with no shell operators: `ls`, `cat`, `rg`, `git status`, `git diff`, `git log`, a version probe, and others
+   - a shell command that only reads, with no shell operators: `ls`, `cat`, `rg`, `git status`, `git diff`, `git log`, a version probe, and others. A read of a credential file (`~/.ssh`, `~/.aws`, `.env`, `.npmrc`, and others), `env`, `printenv`, `rg --pre`, and `git diff --output` go to the model.
    - a file change in the project, except in the protected folders and files (`.git`, `.harness`, `.claude`, `.github`, `.vscode`, `.idea`, `.husky`, `.env*`, `.mcp.json`, `.npmrc`, shell profiles)
    - a Browser pane page on this computer (`localhost`, `127.0.0.1`)
 5. **The model** checks all other calls: other shell commands, protected files, MCP tools, and other pages. Its answer is `allow`, `block`, or `ask`.
@@ -31,7 +31,7 @@ One JSON message:
 
 - `workspace_root`: the project folder.
 - `user_messages`: the 6 newest messages of the user (up to 1500 characters each). For a skill, the text that the user typed.
-- `project_instructions`: `HARNESS.md` or `CLAUDE.md` (up to 4000 characters).
+- `project_instructions`: `HARNESS.md`, `AGENTS.md`, or `CLAUDE.md` (up to 4000 characters).
 - `recent_actions`: the 12 newest tool calls, with their arguments and no output.
 - `pending_action`: the tool, its arguments, and facts (for a file: the path, if it exists, if it is protected).
 - `environment`, `user_allow_rules`, `user_block_rules`: from the global settings (see below).
@@ -66,6 +66,20 @@ Auto mode reads only `~/.harness/settings.json`. A project cannot change it, bec
 
 - `model`: the model for the checks. The default is the model of the session. A small, fast model makes each check faster.
 - `environment`, `allow`, `soft_deny`: rules in plain language for the model.
+
+## The safety rules in the other modes
+
+The hard rules of step 2 and the protected paths of step 4 also apply outside auto mode (`safety_match` in `auto_mode.py`, `PermissionGate._safety` in `permissions.py`). The checks run after the deny rules and before the allow rules and the mode.
+
+| Mode | Hard rule match | Edit of a protected path |
+|---|---|---|
+| `default` | Ask. The card has no "Always allow". An allow rule does not skip the question. | Ask, with no "Always allow". |
+| `acceptEdits` | Ask, as in `default`. | Ask. Accept edits does not skip the question. |
+| `plan` | Ask for a shell command. An edit of `.harness/settings.json` is blocked as each edit in plan mode. | Blocked, as each edit in plan mode. |
+| `auto` | Blocked (step 2). | The model checks it (step 5). |
+| `bypassPermissions` | Ask. `"bypass_safety_rules"` in `~/.harness/settings.json` changes it: `"block"` or `"off"`. A project file cannot set it. | Runs, as in Claude Code. |
+
+A `PreToolUse` hook that allows a call does not skip the deny rules, the plan mode block, or the safety rules. In plan mode, an allow rule or a hook does not let the agent change files.
 
 ## Limits
 

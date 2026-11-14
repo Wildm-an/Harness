@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .tools.shell import ShellInfo, _kill_tree
+from .tools.shell import ShellInfo, _kill_tree, command_env, shell_argv
 
 DEFAULT_LIMIT = 1_000_000  # Bytes of output to keep, when the harness gives no limit.
 MAX_TERMINALS = 32
@@ -105,16 +105,12 @@ class TerminalHost:
         if len(self.terminals) >= MAX_TERMINALS:
             raise TerminalError(f"At most {MAX_TERMINALS} terminals can be open. Release a terminal first.")
         args = [str(a) for a in params.get("args") or [] if isinstance(a, (str, int, float))]
-        env = dict(os.environ)
-        env.setdefault("PAGER", "cat")
-        env.setdefault("GIT_PAGER", "cat")
-        for item in params.get("env") or []:
-            if isinstance(item, dict) and isinstance(item.get("name"), str):
-                env[item["name"]] = str(item.get("value") or "")
+        env = command_env({item["name"]: str(item.get("value") or "") for item in params.get("env") or []
+                           if isinstance(item, dict) and isinstance(item.get("name"), str)})
         cwd = Path(params["cwd"]) if isinstance(params.get("cwd"), str) and params["cwd"] else self.cwd
         if not cwd.is_dir():
             raise TerminalError(f"The folder does not exist: {cwd}")
-        argv = [command, *args] if args else [*self.shell.argv, command]
+        argv = [command, *args] if args else shell_argv(self.shell, command)
         limit = params.get("outputByteLimit")
         limit = int(limit) if isinstance(limit, int) and limit > 0 else DEFAULT_LIMIT
         terminal = Terminal(f"term_{uuid.uuid4().hex[:12]}", argv, cwd, env, limit, " ".join([command, *args]))

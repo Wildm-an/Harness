@@ -645,9 +645,25 @@ class ModelResponse:
     usage: dict[str, Any] | None = None
     finish_reason: str | None = None
     reasoning: str | None = None  # The reasoning_content of the reply (DeepSeek thinking mode).
+    # Milliseconds from the request start: first_byte_ms (the stream opened), first_token_ms (the first text or
+    # reasoning). records.py stores them.
+    timing: dict[str, int | None] | None = None
 
 
 OnText = Callable[[str], Awaitable[None]]
+
+# finish_reason values of OpenAI-compatible servers that mean "the output limit cut the reply".
+FINISH_LENGTH = ("length", "max_tokens", "model_length")
+
+
+def finish_kind(reason: str | None) -> str:
+    """The kind of a finish_reason: "length" (the output limit cut the reply), "filter", or "other"."""
+    value = (reason or "").lower()
+    if value in FINISH_LENGTH:
+        return "length"
+    if value == "content_filter":
+        return "filter"
+    return "other"
 
 
 log = logging.getLogger(__name__)
@@ -808,9 +824,10 @@ class ModelClient:
             await stream.close()
             since = lambda t: f"{t - started:.2f}s" if t is not None else "-"  # noqa: E731
             timing.info("model %s: %d messages, %d tools | first byte %s, first reasoning %s, first answer %s, end %s | "
-                        "prompt %s, completion %s tokens", self.label, len(messages), len(tools), since(opened),
+                        "prompt %s, completion %s tokens | finish %s", self.label, len(messages), len(tools), since(opened),
                         since(first_reasoning), since(first_answer), since(time.monotonic()),
-                        (usage or {}).get("prompt_tokens", "?"), (usage or {}).get("completion_tokens", "?"))
+                        (usage or {}).get("prompt_tokens", "?"), (usage or {}).get("completion_tokens", "?"),
+                        finish or "-")
 
         calls = []
         for key in sorted(slots):
@@ -822,7 +839,12 @@ class ModelClient:
                 "name": slot["name"],
                 "arguments": slot["arguments"],
             })
-        return ModelResponse("".join(text_parts), calls, usage, finish, "".join(reasoning_parts) or None)
+        firsts = [t for t in (first_reasoning, first_answer) if t is not None]
+        times = {  # Not "timing": that is the logger of this module.
+            "first_byte_ms": round((opened - started) * 1000),
+            "first_token_ms": round((min(firsts) - started) * 1000) if firsts else None,
+        }
+        return ModelResponse("".join(text_parts), calls, usage, finish, "".join(reasoning_parts) or None, times)
 
 
 def _merge_tool_call_delta(slots: dict[int, dict[str, str]], index_map: dict[int, int], tc: Any) -> None:

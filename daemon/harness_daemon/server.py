@@ -4493,7 +4493,7 @@ async def on_fs_dirs(conn: Connection, msg: dict[str, Any]) -> None:
         "parent": str(parent) if parent else None,
         "items": items,
         "roots": _roots(),
-        "is_project": any((folder / marker).exists() for marker in (".git", "HARNESS.md", "CLAUDE.md", "package.json", "pyproject.toml")),
+        "is_project": any((folder / marker).exists() for marker in (".git", "HARNESS.md", "AGENTS.md", "CLAUDE.md", "package.json", "pyproject.toml")),
     })
 
 

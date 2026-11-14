@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,44 @@ from .shell import ShellInfo
 
 class ToolError(Exception):
     """A tool failure. The message goes to the model as an error result."""
+
+
+NOT_READ = ("You did not read {path} in this session. Read it with the read tool, then send this edit again. "
+            "The harness needs the read, so that your edit uses the current text of the file.")
+NOT_READ_WRITE = ("{path} exists, and you did not read it in this session. Read it with the read tool before you "
+                  "replace it, so that you do not remove content that you did not see. To change part of the file, "
+                  "use edit.")
+CHANGED_SINCE_READ = ("{path} changed after you read it. Read it again, then send this edit again. Your copy of the "
+                      "text is old.")
+
+
+@dataclass
+class ReadState:
+    """The files that the agent read or wrote in this session, with a hash of the bytes that it saw.
+
+    edit and write check it: a change to a file that the agent did not read, or that changed on disk after the
+    read, is rejected with an error that states the fix. A partial read (offset and limit) counts: the exact
+    match of edit proves that the agent saw the text that it replaces.
+    """
+
+    files: dict[str, str] = field(default_factory=dict)
+
+    @staticmethod
+    def _key(path: Path) -> str:
+        return os.path.normcase(str(path.resolve()))
+
+    def note(self, path: Path, data: bytes) -> None:
+        self.files[self._key(path)] = hashlib.sha256(data).hexdigest()
+
+    def check(self, path: Path, data: bytes, shown: str, replace: bool = False) -> None:
+        seen = self.files.get(self._key(path))
+        if seen is None:
+            raise ToolError((NOT_READ_WRITE if replace else NOT_READ).format(path=shown))
+        if seen != hashlib.sha256(data).hexdigest():
+            raise ToolError(CHANGED_SINCE_READ.format(path=shown))
+
+    def forget(self) -> None:
+        self.files.clear()
 
 
 @dataclass
@@ -34,6 +74,8 @@ class ToolContext:
     set_mode: Any = None
     # A function that returns the model of the session ("provider/model"), for example for routine_create.
     model: Any = None
+    # The files that the agent read (ReadState). None: edit and write do not check reads, for example in a test.
+    reads: ReadState | None = None
 
     def resolve(self, path: Any, read_only: bool = False) -> Path:
         try:

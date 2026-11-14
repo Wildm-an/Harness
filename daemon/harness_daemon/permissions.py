@@ -21,11 +21,16 @@ Permission modes (the ``permission_mode`` setting, as in Claude Code):
 
 - ``default``: ask the user for each action that no rule allows.
 - ``acceptEdits``: file changes in the project (edit, write) run with no question.
-- ``plan``: file changes are blocked. The agent reads and makes a plan.
+- ``plan``: file changes are blocked, also when a rule or a hook allows them. The agent reads and makes a plan.
 - ``auto``: a model checks each action that no rule decides (auto_mode.py, docs/AUTO_MODE.md).
-- ``bypassPermissions``: every action runs with no question.
+- ``bypassPermissions``: every action runs with no question, except a match of a safety rule.
 
-The deny rules apply in all modes.
+The deny rules apply in all modes. The safety rules (auto_mode.safety_match) also apply in all modes:
+- A hard rule match (sudo, download and run, critical deletion, secret exfiltration, a change of the
+  permission settings) asks the user with no "Always allow". Allow rules do not skip the question.
+  Auto mode blocks it. ``bypass_safety_rules`` in ~/.harness/settings.json sets the bypass behavior.
+- An edit of a protected path (.git, .github, .harness, .env, and others) asks the user with no "Always
+  allow", also in acceptEdits. It runs in bypassPermissions. The model checks it in auto mode.
 """
 
 from __future__ import annotations
@@ -45,9 +50,12 @@ from .auto_mode import (
     MAX_TOTAL_BLOCKS,
     AutoModeError,
     AutoReviewer,
+    SafetyMatch,
+    bypass_safety_rules,
     fast_path,
     hard_rule,
     is_broad_rule,
+    safety_match,
 )
 from .config import project_settings_path, read_json, write_json
 from .tools import Approval, Tool
@@ -57,10 +65,17 @@ SHELL_OPERATORS = re.compile(r"[;&|`\n<>]|\$\(")
 
 DECISIONS = ("allow_once", "allow_always", "deny")
 MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
-EDIT_TOOLS = ("edit", "write")
+# office_edit approves as "edit" (Approval.tool). Its name is here as a second guard.
+EDIT_TOOLS = ("edit", "write", "office_edit")
 
 PLAN_BLOCK = ("Plan mode is on, so you cannot change files. Read and search the project, then call "
               "exit_plan_mode with your plan. The user approves the plan to start the work.")
+SAFETY_ASK = ("A safety rule needs your approval [{label}]. Allow rules and the permission mode do not skip "
+              "this question.")
+PROTECTED_ASK = ("{path} is a protected path. It holds settings, hooks, or repository state. Allow rules and "
+                 "Accept edits do not skip this question.")
+SAFETY_BLOCK = ("Blocked by a safety rule [{label}]. This call did not run. Do not try to get the same result in "
+                "another way. Tell the user what you need.")
 
 # The approver gets a request and returns one of DECISIONS.
 Approver = Callable[[dict[str, Any]], Awaitable[str]]
@@ -144,12 +159,17 @@ class PermissionGate:
         self.auto: AutoReviewer | None = None  # The checks of auto mode. The agent sets it.
 
     async def check(self, tool: Tool, args: dict[str, Any], approval: Approval | None,
-                    force: str | None = None) -> bool | str:
+                    force: str | None = None, preapproved: bool = False) -> bool | str:
         """True: run the action. False: the user denied it, and the turn stops.
 
         A text: the mode blocked the action. The text goes to the agent, and the turn continues.
         ``force``: a plugin asked for approval of this call, with this reason. The user decides,
         also when a rule or the mode allows the call. A deny rule still denies it.
+        ``preapproved``: a PreToolUse hook allowed the call. The deny rules, the plan mode block, and the
+        safety rules still apply. The allow rules, the mode, and the question do not.
+
+        The order: deny rules, the plan mode block of file changes, the safety rules (hard rules and
+        protected paths), then the mode and the allow rules. A rule with no exception comes first.
         """
         if force is not None:
             key = approval.key if approval is not None else json.dumps(args, sort_keys=True, ensure_ascii=False)[:500]
@@ -171,6 +191,15 @@ class PermissionGate:
         if self.rules.denies(name, approval.key):
             return False
         mode = self.mode()  # An unknown mode, for example a mode of an older version, is "default".
+        if mode == "plan" and name in EDIT_TOOLS:
+            return PLAN_BLOCK  # Before the allow rules: an allow rule or a hook must not change files in plan mode.
+        match = safety_match(name, approval.key)
+        if match is not None:
+            decided = await self._safety(tool, args, approval, mode, match)
+            if decided is not None:
+                return decided
+        if preapproved:
+            return True
         if mode == "bypassPermissions":
             return True
         if mode == "auto" and self.auto is not None:
@@ -179,27 +208,53 @@ class PermissionGate:
             return True
         if any(rule_matches(r, name, approval.key) for r in (*self.session_allow, *self.turn_allow)):
             return True
-        if name in EDIT_TOOLS:
-            if mode == "plan":
-                return PLAN_BLOCK
-            if mode == "acceptEdits":
-                return True
+        if name in EDIT_TOOLS and mode == "acceptEdits":
+            return True
         return await self._ask(tool, args, approval)
 
-    async def _ask(self, tool: Tool, args: dict[str, Any], approval: Approval, note: str | None = None) -> bool:
-        """Ask the user. ``note`` tells why auto mode asks: the client shows it as the reason."""
+    async def _safety(self, tool: Tool, args: dict[str, Any], approval: Approval, mode: str,
+                      match: SafetyMatch) -> bool | str | None:
+        """The decision for a call that a safety rule catches. None: the normal checks decide.
+
+        Auto mode keeps its own checks: a hard rule blocks, and the model checks a protected path.
+        bypassPermissions changes protected paths with no question, as in Claude Code. A hard rule match
+        asks there too, unless ~/.harness/settings.json sets "bypass_safety_rules" to "block" or "off".
+        """
+        if mode == "auto" and self.auto is not None:
+            # The checks of auto mode, also for a call that a hook allowed: a hard rule blocks, and the
+            # model checks a protected path (fast_path is False for it).
+            return await self._auto_check(tool, approval.tool or tool.name, args, approval)
+        if match.kind == "protected":
+            if mode == "bypassPermissions":
+                return None
+            return await self._ask(tool, args, approval, note=PROTECTED_ASK.format(path=approval.key), always=False)
+        if mode == "bypassPermissions":
+            setting = bypass_safety_rules()
+            if setting == "off":
+                return None
+            if setting == "block":
+                return SAFETY_BLOCK.format(label=match.label)
+        return await self._ask(tool, args, approval, note=SAFETY_ASK.format(label=match.label), always=False)
+
+    async def _ask(self, tool: Tool, args: dict[str, Any], approval: Approval, note: str | None = None,
+                   always: bool = True) -> bool:
+        """Ask the user. ``note`` tells why the gate asks: the client shows it as the reason.
+
+        ``always`` False sends no rule, so the card has no "Always allow": a safety question asks each time.
+        """
         request: dict[str, Any] = {
             "request_id": uuid.uuid4().hex,
             "tool": tool.name,
             "input": approval.input if approval.input is not None else args,
             "diff": approval.diff,
-            "rule": approval.rule,
+            "rule": approval.rule if always else None,
         }
         if note:
             request["reason"] = note
         decision = await self.approver(request)
         if decision == "allow_always":
-            self.rules.add_allow(approval.rule)
+            if always:
+                self.rules.add_allow(approval.rule)
             return True
         return decision == "allow_once"
 

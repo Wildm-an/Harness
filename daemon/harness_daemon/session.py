@@ -45,6 +45,7 @@ class Session:
         # The state before the last rewind, for "Undo rewind". A new turn, /clear, or a summary removes it.
         self.rewind_undo: dict[str, Any] | None = None
         agent.on_compact = self.on_compact
+        agent.on_record = self.record
         agent.on_checkpoint = lambda message_id, path, content: storage.add_checkpoint(self.id, message_id, path, content)
         # "Search and reference chats": the agent can search the other sessions of the project.
         agent.enable_chat_search(lambda query, limit: storage.search_chats(
@@ -58,6 +59,15 @@ class Session:
         agent.enable_session_context(
             self.session_list_note, self.read_session, self.find_other,
             (lambda target, prompt: sender(self, target, prompt)) if sender is not None else None)
+
+    def record(self, kind: str, row: dict[str, Any]) -> None:
+        """Store a run record of the agent (records.py)."""
+        if kind == "turn_start":
+            self.storage.start_turn(self.id, row)
+        elif kind == "turn_end" and row.get("id"):
+            self.storage.end_turn(row["id"], row["stop_reason"], row["steps"], row["tool_calls"])
+        elif kind == "request":
+            self.storage.add_model_request(self.id, row)
 
     # -- the other sessions of the project ------------------------------------------------
 

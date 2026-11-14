@@ -101,3 +101,13 @@ def test_truncate_tells_the_model():
     assert truncate(text, 100) == text
     out = truncate(text, 20)
     assert out.startswith("x" * 20) and "Output truncated" in out and "50 characters" in out
+
+
+def test_one_helper_builds_the_command_and_its_environment(monkeypatch):
+    from harness_daemon.tools.shell import ShellInfo, command_env, shell_argv
+
+    assert shell_argv(ShellInfo("bash", ("/bin/bash", "-c")), "ls") == ["/bin/bash", "-c", "ls"]
+    monkeypatch.delenv("PAGER", raising=False)
+    env = command_env({"FOO": "1"})
+    assert env["PAGER"] == "cat" and env["GIT_PAGER"] == "cat" and env["FOO"] == "1"
+    assert command_env({"PAGER": "less"})["PAGER"] == "less"  # The extra values come last.

@@ -25,7 +25,8 @@ class EditTool(Tool):
         "Use it to change part of a file. To create a file or to replace all its content, use write. "
         "For Word, PowerPoint, or Excel files, use office_edit.\n\n"
         "Usage notes:\n"
-        "- Read the file with the read tool before you edit it.\n"
+        "- Read the file with the read tool before you edit it. The tool rejects an edit of a file that you "
+        "did not read in this session, or that changed after the read.\n"
         "- old_string must match the file exactly, with the same spaces and indentation. "
         "Do not copy the line numbers and the tab that the read tool puts before each line.\n"
         "- old_string must occur one time in the file. If it occurs more times, add lines around it, "
@@ -64,6 +65,8 @@ class EditTool(Tool):
             raise ToolError(f"File not found: {args['path']}") from None
         if is_binary(data):
             raise ToolError(f"{args['path']} is a binary file.")
+        if ctx.reads is not None:
+            ctx.reads.check(path, data, str(args["path"]))
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -95,6 +98,8 @@ class EditTool(Tool):
     async def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path, before, after = self._plan(args, ctx)
         path.write_bytes(after)
+        if ctx.reads is not None:
+            ctx.reads.note(path, after)  # The agent knows the new text: the next edit needs no new read.
         rel = relpath(ctx.cwd, path)
         diff = unified_diff(before.decode("utf-8"), after.decode("utf-8"), rel)
         return ToolResult(f"Edited {rel}.", changed_paths=[path], diff=diff)

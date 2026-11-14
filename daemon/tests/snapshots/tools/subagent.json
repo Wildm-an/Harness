@@ -101,7 +101,7 @@
     "type": "function",
     "function": {
       "name": "edit",
-      "description": "Replace an exact string in an existing file./n/nUse it to change part of a file. To create a file or to replace all its content, use write. For Word, PowerPoint, or Excel files, use office_edit./n/nUsage notes:/n- Read the file with the read tool before you edit it./n- old_string must match the file exactly, with the same spaces and indentation. Do not copy the line numbers and the tab that the read tool puts before each line./n- old_string must occur one time in the file. If it occurs more times, add lines around it, or set replace_all to true to change each occurrence./n- If the edit fails with /"old_string was not found/", read the file again and copy the exact text./n- Make small, targeted edits. Do not replace a full file with edit./n- To make several changes to one file, make several edit calls.",
+      "description": "Replace an exact string in an existing file./n/nUse it to change part of a file. To create a file or to replace all its content, use write. For Word, PowerPoint, or Excel files, use office_edit./n/nUsage notes:/n- Read the file with the read tool before you edit it. The tool rejects an edit of a file that you did not read in this session, or that changed after the read./n- old_string must match the file exactly, with the same spaces and indentation. Do not copy the line numbers and the tab that the read tool puts before each line./n- old_string must occur one time in the file. If it occurs more times, add lines around it, or set replace_all to true to change each occurrence./n- If the edit fails with /"old_string was not found/", read the file again and copy the exact text./n- Make small, targeted edits. Do not replace a full file with edit./n- To make several changes to one file, make several edit calls.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -134,7 +134,7 @@
     "type": "function",
     "function": {
       "name": "write",
-      "description": "Create a file, or replace all the content of a file. The folders are created if necessary./n/nUsage notes:/n- To change part of an existing file, use edit. Edit is safer, and the diff is smaller./n- Before you replace an existing file, read it./n- Do not create documentation or README files unless the user asks for them./n- Do not use bash with echo or a redirect (>) to create a file. Use this tool.",
+      "description": "Create a file, or replace all the content of a file. The folders are created if necessary./n/nUsage notes:/n- To change part of an existing file, use edit. Edit is safer, and the diff is smaller./n- Before you replace an existing file, read it. The tool rejects a replace of a file that you did not read in this session./n- Do not create documentation or README files unless the user asks for them./n- Do not use bash with echo or a redirect (>) to create a file. Use this tool.",
       "parameters": {
         "type": "object",
         "properties": {

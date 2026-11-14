@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 from .config import harness_home, read_json
 from .providers import ModelClient, resolve_model
+from .records import recorded_stream
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -325,6 +326,18 @@ def global_auto_config() -> dict[str, Any]:
     return config if isinstance(config, dict) else {}
 
 
+BYPASS_SAFETY_VALUES = ("ask", "block", "off")
+
+
+def bypass_safety_rules() -> str:
+    """What a hard rule match does in bypassPermissions mode: "ask" (the default), "block", or "off".
+
+    Only ~/.harness/settings.json can set it. A repository must not turn the safety rules off.
+    """
+    value = read_json(harness_home() / "settings.json", {}).get("bypass_safety_rules")
+    return value if value in BYPASS_SAFETY_VALUES else "ask"
+
+
 def _texts(value: Any) -> list[str]:
     return [str(v) for v in value if isinstance(v, str) and v.strip()] if isinstance(value, list) else []
 
@@ -443,7 +456,9 @@ class AutoReviewer:
             return None
 
         try:
-            response = await asyncio.wait_for(self.client().stream(request, [], ignore), REVIEW_TIMEOUT)
+            response = await asyncio.wait_for(
+                recorded_stream(self.client(), request, [], ignore, record=getattr(self.agent, "record_request", None),
+                                purpose="classifier"), REVIEW_TIMEOUT)
         except asyncio.TimeoutError:
             raise AutoModeError(f"the model did not answer in {REVIEW_TIMEOUT} seconds") from None
         except Exception as e:  # noqa: BLE001 - any model error means: no verdict.

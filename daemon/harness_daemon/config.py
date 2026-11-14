@@ -18,6 +18,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "bash_timeout": 120,
     "bash_max_timeout": 600,
     "max_output_chars": 20000,
+    # edit and write reject a change to a file that the agent did not read, or that changed after the read.
+    "read_before_edit": True,
+    # The task list reminders (update_plan): "auto" (by the scaffold tier of the model), "on", or "off".
+    "task_reminders": "auto",
     "shell": None,
     "default_model": None,
     # The model by network (Settings > Providers). On: a new session with no model uses online_model when
@@ -27,7 +31,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "offline_model": None,
     "auto_verify": False,  # The agent checks the app with the preview tools after each UI change.
     "image_input": None,  # True or False overrides the image input check of the model.
-    "permission_mode": "default",  # default, acceptEdits, plan, or bypassPermissions (permissions.py).
+    "permission_mode": "default",  # default, acceptEdits, plan, auto, or bypassPermissions (permissions.py).
     "prompt_suggestions": True,  # After a turn, the model suggests the next prompt (suggestions.py).
     "subagents": True,  # The agent tool: the agent can start subagents, also several at once in the background.
     # The global instructions of the user (Settings > Your Harness). The system prompt includes them (prompt.py).

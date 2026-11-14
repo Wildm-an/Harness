@@ -337,7 +337,7 @@ export function YourHarnessSettings({
 
       <h3 className="settings-section">Project instructions</h3>
       <p className="help settings-note">
-        The agents of one project follow these instructions, with the global instructions. Each project has its own text. Harness keeps the text out of the project folder. A HARNESS.md or CLAUDE.md file in the project folder also applies. A change applies at the next turn.
+        The agents of one project follow these instructions, with the global instructions. Each project has its own text. Harness keeps the text out of the project folder. A HARNESS.md, AGENTS.md, or CLAUDE.md file in the project folder also applies. A change applies at the next turn.
       </p>
       <Row label="Project" help="The instructions below apply to this project only. The Memory rows use the same project." htmlFor="setting-instructions-project">
         <ProjectSelect id="setting-instructions-project" cwd={cwd} choices={choices} projectName={projectName} disabled={off} onChange={setProject} />
