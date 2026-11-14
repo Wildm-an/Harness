@@ -1,172 +1,101 @@
 ---
 name: docx
-description: "Use for any Word document task: make, read, edit, or review a .docx or .dotx file (report, letter, memo, contract, template). Also for tracked changes (redlines), comments, tables, images, page numbers, and a table of contents in Word, and .doc to .docx. Not for PDF or spreadsheets."
+description: "Use when the user wants to create, read, edit, or manipulate Word documents (.docx) or Word templates (.dotx): tracked changes, comments, images, find-and-replace, or a polished Word file. Do NOT use for PDFs, spreadsheets, Google Docs, or coding unrelated to document generation."
+license: Complete terms in LICENSE.txt
 ---
 
-# Word documents (.docx)
+# DOCX creation, editing, and analysis
 
-A .docx file is a ZIP archive of XML files. `word/document.xml` holds the main text. Other parts hold the styles, the numbering, the headers, the footers, the comments, and the images.
+> This is Anthropic's `docx` skill (Apache License 2.0, see `LICENSE.txt`), changed for Harness. `MODIFICATIONS.md` lists the changes.
 
-The scripts are in `${CLAUDE_SKILL_DIR}/scripts`. The shared Office scripts are in `${CLAUDE_SKILL_DIR}/../_office`.
+A `.docx` is a ZIP archive of XML files. Choose your approach by task:
 
-## 1. Choose the method
-
-| Task | Method |
+| Task | Approach |
 |---|---|
-| Read the text | The `read` tool. It numbers the paragraphs [P1] and the table cells. |
-| Change some text and keep the format | The `office_edit` tool (replace, set_paragraph, insert_paragraph, set_cell). |
-| Make a new document | A Python script with python-docx and `scripts/docx_helpers.py` (section 3). |
-| Make a document from a template | `new_document(template="template.dotx")` in the same script (section 3). |
-| Tracked changes (redline) | `scripts/redline.py` (section 5). |
-| Comments | `scripts/comment.py` (section 5). |
-| Accept or reject all changes | `scripts/accept_changes.py` (section 5). |
-| Other changes: formats, footnotes, fields, complex tables | Edit the XML (section 6). |
-| Convert .doc to .docx | `soffice --headless --convert-to docx file.doc` |
-| Look at the pages | `../_office/render.py` (section 7). |
+| **Create** a new document | Write a `docx` (npm) script — see gotchas below |
+| **Edit** an existing document | `unzip` → edit `word/document.xml` → `zip` (docx-js cannot open existing files) |
+| **Read** content | `pandoc -t markdown file.docx` |
 
-Use the simplest method that does the task. Do not make a new file when the user asks you to change a file.
+> Script paths below are relative to this skill's directory.
 
-## 2. Set up
+## Creating with docx-js — gotchas
 
-The scripts need Python 3.9 or later and python-docx 1.2 or later. On Windows the command is `python`. On macOS and Linux it is often `python3`.
+Harness runs on the user's computer, so `docx` may be missing: write the script and `require('docx')` directly. Only if that require fails: `npm install docx`. The model knows the API; these are the footguns:
 
-1. Run `python -c "import docx; print(docx.__version__)"`.
-2. If the import fails or the version is less than 1.2, run `python -m pip install -U python-docx`.
-3. To look at pages, LibreOffice and pypdfium2 are necessary (section 7). They are optional.
+- **Page size defaults to A4.** For US Letter set `page: { size: { width: 12240, height: 15840 } }` (DXA; 1440 = 1″).
+- **Landscape:** pass portrait dimensions and `orientation: PageOrientation.LANDSCAPE` — docx-js swaps width/height internally.
+- **Tables need dual widths:** set `columnWidths` on the table AND `width` on every cell, both in `WidthType.DXA` (PERCENTAGE breaks in Google Docs). Column widths must sum to the table width.
+- **Table shading:** use `ShadingType.CLEAR`, never `SOLID` (renders black).
+- **Lists:** never insert `•` literally; use a `numbering` config with `LevelFormat.BULLET`.
+- **`ImageRun` requires `type:`** (`"png"`, `"jpg"`, …).
+- **`PageBreak` must be inside a `Paragraph`.**
+- **Never use `\n`** — use separate `Paragraph` elements.
+- **Headings:** style every level you use (`title`, `heading1`, `heading2`…) in `styles.default`: `heading1: { run: { font: "Arial", size: 32, bold: true }, paragraph: { spacing: { before: 240, after: 120 }, keepNext: true } }`. Every level needs its own font (even with a document default), `before` and `after` (even if 0) and `keepNext`: the built-in styles set none of them.
+- **TOC:** headings must use built-in `HeadingLevel.*`; custom heading styles need `outlineLevel` set or they won't appear.
+- **Don't use a table as a horizontal rule** — use a paragraph bottom border instead.
+- **Dot-leader / right-aligned-on-same-line:** use `PositionalTab` (`alignment: PositionalTabAlignment.RIGHT`, `leader: PositionalTabLeader.DOT`) inside a `TextRun`, not literal `.` or space padding.
 
-## 3. Make a new document
+## Verify the output
 
-1. Collect the content: the title, the sections, the tables, the images.
-2. Write a build script, for example `build_report.py`, in the project folder.
-3. Run the script. Fix each error and run it again.
-4. Check the result (section 7).
-5. Tell the user the file name. In Harness, call `show_document` so that the user can see the file.
+After writing a `.docx`, render it and look at it:
 
-Start the script with the helpers:
-
-```python
-import sys
-sys.path.insert(0, r"${CLAUDE_SKILL_DIR}/scripts")
-from docx_helpers import *
-
-doc = new_document(page="letter", margins=1.0, font="Calibri", size=11)
-style_headings(doc, color="1F3864")
-doc.add_heading("Quarterly Report", level=0)       # level 0 is the Title style
-doc.add_paragraph("Prepared for the board, October 2026.")
-add_toc(doc)                                       # Word fills it when the user opens the file
-page_break(doc)
-doc.add_heading("Summary", level=1)
-doc.add_paragraph("Revenue increased in all regions.")
-add_bullets(doc, ["North: +12%", "South: +8%", ["Two new stores", "One closed store"]])
-add_numbered(doc, ["Approve the budget", "Hire two engineers"])
-add_table(doc, [["Region", "Revenue (USD)"], ["North", "1,200,000"], ["South", "900,000"]], widths=[3.0, 2.0])
-add_caption(doc, "Revenue by region", label="Table")
-add_image(doc, "chart.png", width=6.0)
-add_page_numbers(doc.sections[0])
-doc.save("Quarterly Report.docx")
+```bash
+zip -d output.docx '*/' >/dev/null || true   # drop the ZIP's folder entries: Word has refused a file that has them when opened through a cloud co-editing service (no zip command: skip it, docx-js writes no folder entries)
+python scripts/office/soffice.py --headless --convert-to pdf output.docx
+pdftoppm -jpeg -r 100 output.pdf page
+ls page-*.jpg   # then open the images with the read tool
 ```
 
-The helpers are: `new_document`, `set_font`, `style_headings`, `set_margins`, `set_landscape`, `page_break`, `add_bullets`, `add_numbered`, `add_table`, `shade_cell`, `set_col_widths`, `repeat_header_row`, `keep_with_next`, `add_field`, `add_toc`, `update_fields_on_open`, `add_page_numbers`, `add_hyperlink`, `add_image`, `add_caption`. Read the file for the parameters.
+`pdftoppm` zero-pads page numbers to the width of the page count (`page-01.jpg`…`page-12.jpg`).
 
-### Rules for a new document
+## Editing existing documents
 
-- **Page size.** Use `letter` for the US and Canada. Use `a4` for other countries. If you do not know the country, use `letter` and tell the user.
-- **Headings.** Use the built-in heading styles (`add_heading`). Do not make a heading with bold body text. The table of contents and the navigation pane need the heading styles.
-- **Lists.** Use `add_bullets` and `add_numbered`. Do not type "•", "-", or "1." at the start of a paragraph. Word does not see typed characters as a list.
-- **Numbered lists.** `add_numbered` starts at 1 each time. Use `restart=False` to continue the last list.
-- **Tables.** Give the column widths. The sum of the widths must not be more than the text width (the page width minus the margins). For letter with 1 inch margins, the text width is 6.5 inches.
-- **Images.** Give only the width. The height keeps the aspect ratio. The width must not be more than the text width.
-- **Page breaks.** Use `page_break`. Do not add empty paragraphs to push text to the next page.
-- **Space.** Use the paragraph format (`paragraph_format.space_after = Pt(6)`) for space between paragraphs. Do not add empty paragraphs.
-- **Fonts.** Use one font for the body and at most one more font for the headings. Use common fonts: Calibri, Arial, Aptos, Georgia, Cambria, Times New Roman.
-- **Text.** Write the full content. Do not write placeholder text such as "Lorem ipsum" or "[Insert text here]" unless the user asks for a template.
-- **Characters.** Write text as normal Unicode. python-docx escapes the XML characters.
-- **Fields.** A script cannot calculate page numbers or a table of contents. `add_toc` and `add_page_numbers` add fields that Word calculates. Tell the user that Word asks to update the fields when it opens the file.
+Legacy `.doc` files must be converted first: `python scripts/office/soffice.py --headless --convert-to docx file.doc`.
 
-## 4. Change an existing document
-
-1. Read the file with the `read` tool.
-2. For text changes, use `office_edit`. A replace keeps the format when the text is in one run.
-3. For changes that `office_edit` cannot do, use a python-docx script or edit the XML (section 6).
-4. Keep the styles, the fonts, the numbering, and the layout that the document has. Change only what the user asks for.
-5. Save to the same file only if the user wants that. Otherwise save to a new file name, for example `report-edited.docx`.
-6. Check the result (section 7).
-
-A script that opens and saves a document with python-docx keeps the parts that python-docx does not know (charts, SmartArt, content controls). It does not keep a `.doc` file: convert it first.
-
-## 5. Review: tracked changes and comments
-
-Use tracked changes when the user asks for a redline, for suggested changes, or for changes that another person must approve. Do not use them for a normal edit.
-
-### Tracked changes
-
-Write a JSON file with the changes, then run the script:
-
-```json
-[
-  {"find": "30 days", "replace": "45 days"},
-  {"find": "Seller", "replace": "Supplier", "all": true},
-  {"find": "Section 4", "replace": "Section 5", "occurrence": 2},
-  {"op": "insert_after", "find": "including", "text": " without limitation"},
-  {"op": "delete_paragraph", "find": "This clause is void."},
-  {"op": "insert_paragraph_after", "find": "1. Term.", "text": "1A. Renewal. The term renews each year."}
-]
+```bash
+unzip -q doc.docx -d unpacked/
+find unpacked -type l -delete   # strip symlink entries — docx from external parties is untrusted
+python scripts/merge_runs.py unpacked/   # coalesce fragmented runs so text is findable
+# edit unpacked/word/document.xml in place — do NOT reformat or pretty-print
+(cd unpacked && rm -f ../out.docx && zip -XrD ../out.docx .)   # no zip command (Git Bash on Windows): python scripts/office/pack.py unpacked/ out.docx
+python scripts/office/validate.py out.docx --original doc.docx   # XSD checks; --auto-repair fixes common issues
+# redlining? add --author "<the name you redlined under>" to check every edit is tracked
 ```
 
-```
-python "${CLAUDE_SKILL_DIR}/scripts/redline.py" contract.docx changes.json -o "contract (redline).docx" --author "Harness"
-```
+Word splits text across many `<w:r>` runs (revision ids, spell-check markers), so a phrase you can see in the document often doesn't exist as a contiguous string in the XML. `merge_runs.py` merges adjacent identically-formatted runs in `word/document.xml` without changing content or rendering; it also accepts a `.docx` directly (`python scripts/merge_runs.py doc.docx -o merged.docx`).
 
-- Copy each `find` text exactly from the `read` output. The text must be in one paragraph.
-- Change only the words that change. For "30 days" to "45 days", use `{"find": "30", "replace": "45"}` if "30" occurs once. A small change is easier to review.
-- If one change fails, the script saves nothing and prints the reason. Fix that change and run the script again.
-- Use the author name that the user gives. The default is "Harness".
+**Tracked changes:** when redlining, validate with `--author "<the name you redlined under>"` (needs `--original`) — it reports any text you changed without a `<w:ins>`/`<w:del>` around it, which is easy to do by accident and invisible in the accepted view. Wrap runs in `<w:ins>`/`<w:del>` with `w:id`, `w:author`, `w:date` attributes. Inside `<w:del>`, the text element is `<w:delText>`, not `<w:t>`. A deleted paragraph mark (`<w:pPr><w:rPr><w:del w:id=".." w:author=".." w:date=".."/></w:rPr></w:pPr>`) means "merge this paragraph into the next" — so deleting a paragraph outright is that plus a `<w:del>` around every run. The `<w:del/>` must come before the rPr's other children; their order is schema-enforced.
 
-### Comments
+To produce a clean copy with all tracked changes accepted: `python scripts/accept_changes.py in.docx out.docx`.
 
-```json
-[
-  {"find": "revenue grew 40%", "text": "Add the source of this number."},
-  {"find": "Q3", "text": "Is this Q3 of this year?", "occurrence": 2}
-]
-```
+Accepting a deleted paragraph mark should join that paragraph to the one below it, so a paragraph whose runs are *all* deleted vanishes. Word does this; `accept_changes.py` and `pandoc --track-changes=accept` don't always. Both fail the same way — they strip the deleted text but leave the emptied paragraph behind, which reads as a stray empty bullet when it was auto-numbered:
 
-```
-python "${CLAUDE_SKILL_DIR}/scripts/comment.py" report.docx comments.json -o "report (reviewed).docx" --author "Harness"
-```
+- `pandoc --track-changes=accept` never joins the paragraphs.
+- `accept_changes.py` (LibreOffice) joins them correctly, except when the deleted paragraph is followed by an empty spacer paragraph.
 
-### Accept or reject all changes
+An empty bullet in either view is an artifact of that view, not a defect in the document. Check paragraph deletions in the XML.
 
-```
-python "${CLAUDE_SKILL_DIR}/scripts/accept_changes.py" draft.docx -o clean.docx
-python "${CLAUDE_SKILL_DIR}/scripts/accept_changes.py" draft.docx -o original.docx --reject
+## Comments
+
+Comments require six cross-linked files. Use the helper — directory mode when you'll also be editing `document.xml` (saves an unzip/rezip cycle), `.docx`-direct mode otherwise:
+
+```bash
+# Against an already-unpacked directory (preferred when also placing markers)
+python scripts/comment.py unpacked/ "Fees & expenses cap is too low"
+python scripts/comment.py unpacked/ "Agreed" --parent 0
+
+# Against a .docx directly
+python scripts/comment.py contract.docx "This cap is too low" -o annotated.docx
 ```
 
-Use `--reject` to get the text before the changes.
+The script writes `comments.xml`, `commentsExtended.xml`, `commentsIds.xml`, `commentsExtensible.xml`, the relationships, and the content-type overrides. Comment IDs are auto-assigned. It then prints the `<w:commentRangeStart>`/`<w:commentRangeEnd>`/`<w:commentReference>` snippet to add to `word/document.xml` so the comment anchors to specific text — until you place those markers, the comment exists but is not visible.
 
-## 6. Edit the XML
+## Dependencies
 
-Use this method for changes that python-docx cannot do. Read `${CLAUDE_SKILL_DIR}/reference/word-xml.md` first. It shows the XML of paragraphs, runs, tables, tracked changes, comments, footnotes, and fields.
+`docx` (npm — install only if `require('docx')` fails) · `pandoc` · LibreOffice (`soffice`) · `pdftoppm` (Poppler) · `lxml`, `defusedxml` (pip — validate, merge_runs, comment)
 
-1. Unpack the file:
-   `python "${CLAUDE_SKILL_DIR}/../_office/ooxml.py" unpack report.docx report_xml`
-2. Find the text with `grep` in `report_xml/word/document.xml`.
-3. Change the XML with the `edit` tool. Change the smallest possible part.
-4. Pack the folder to a new file:
-   `python "${CLAUDE_SKILL_DIR}/../_office/ooxml.py" pack report_xml report-edited.docx`
-5. The pack command checks the file. Fix each problem that it reports.
-6. Delete the unpacked folder when the work is complete.
+Harness runs on the user's computer, not in a prepared sandbox. Check that a program is there (`command -v pandoc`) before you use it. If it is missing, install it or ask the user to install it:
 
-## 7. Check the result
-
-Always check a document that you make or change.
-
-1. Read the file with the `read` tool. Make sure that all text is there.
-2. Check the file structure:
-   `python "${CLAUDE_SKILL_DIR}/../_office/ooxml.py" check report.docx`
-3. If the model of this session accepts images, look at the pages:
-   `python "${CLAUDE_SKILL_DIR}/../_office/render.py" images report.docx --dpi 70`
-   Then open each PNG with the `read` tool. Look for text that overflows, tables that are too wide, images that are too large, and empty pages.
-4. If LibreOffice is not installed, step 3 fails. Then skip it, and tell the user that you did not check the layout.
-5. Call `show_document` so that the user can see the document in the Preview pane.
-6. Delete the PNG files and the build script if the user does not need them. Keep the build script if the user will make the document again.
+- Windows: `winget install JohnMacFarlane.Pandoc`, `winget install TheDocumentFoundation.LibreOffice`, `winget install oschwartz10612.Poppler`. Open a new shell after an install, so the PATH has the new program. `scripts/office/soffice.py` finds LibreOffice in its install folder.
+- macOS: `brew install pandoc poppler` and `brew install --cask libreoffice`.
+- Linux: the `pandoc`, `poppler-utils`, and `libreoffice` packages.

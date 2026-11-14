@@ -54,7 +54,7 @@ The GitHub Actions workflow `.github/workflows/release.yml` builds all the insta
 
 The installers are not signed. Windows SmartScreen shows a warning. On macOS, a downloaded app that is not signed does not open: remove the quarantine attribute with `xattr -dr com.apple.quarantine /Applications/Harness.app`, or add signing (the Tauri `APPLE_*` environment variables).
 
-After an install, the agent browser needs Chromium. Run the installed sidecar with `--install-browser`, for example `"%LOCALAPPDATA%\Harness\harness-daemon.exe" --install-browser` on Windows. The agent gets the same command in the error message when Chromium is not installed.
+The headless agent browser needs the Chromium revision of the bundled Playwright. When that revision is not installed, the daemon downloads it (about 150 MB) on the first use, and the agent gets a status message. To install it before the first use, run the installed sidecar with `--install-browser`, for example `"%LOCALAPPDATA%\Harness\harness-daemon\harness-daemon.exe" --install-browser` on Windows.
 
 ## Connections
 

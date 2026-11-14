@@ -154,7 +154,7 @@ The PyInstaller spec calls `collect_data_files("playwright")`. This copies the P
 
 Chromium is not in the installer.
 The spec does not collect a browser, and `harness_daemon/frozen.py` sets `PLAYWRIGHT_BROWSERS_PATH` to the cache folder of the user.
-The user starts the download with `harness-daemon --install-browser` (`frozen.install_browser()`).
+The daemon downloads Chromium when the headless agent browser needs it (`browser.ChromiumInstall`), or when the user runs `harness-daemon --install-browser` (`frozen.install_browser()`).
 
 The Python package `playwright 1.63.0` is Apache-2.0 (see section 3).
 
