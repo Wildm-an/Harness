@@ -64,7 +64,8 @@ const VIEW = new Set([
 /** The same, by the start of the type. */
 const VIEW_PREFIXES = [
   "fs.", // The editor, the file tree, the folder picker, and the Preview pane.
-  "harnesses.", // Settings > Operating Harness.
+  "harnesses.", // Settings > Agents.
+  "agents.", // Settings > Agents: the switches, the sign-in, and "Check again".
   "memory.", // Settings > Your Harness.
   "project_instructions.", // Settings > Your Harness.
   "project_settings.", // Settings > Your Harness > Verify command.

@@ -48,7 +48,7 @@ from typing import Any, Awaitable, Callable
 
 from .auto_mode import SafetyMatch, bypass_safety_rules, hard_rule, safety_match
 from .permissions import PROTECTED_ASK, SAFETY_ASK, SAFETY_BLOCK
-from . import __version__, acp_mcp, acp_models
+from . import __version__, acp_harnesses, acp_mcp, acp_models, agent_auth
 from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
 from .acp_terminal import TerminalError, TerminalHost
 from .agent import INTERRUPTED, Agent, user_message
@@ -540,15 +540,18 @@ class AcpAgent(Agent):
 
     async def _provider_model_options(self, argv: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
         """The command and the environment with the model of a Harness provider, when the user chose one in
-        Settings > Operating Harness (only the user settings: a project cannot change it)."""
+        Settings > Agents (only the user settings: a project cannot change it)."""
         self._provider_model = None
-        spec = None if self.harness.custom else acp_models.choice(load_settings(None), self.harness.id)
+        settings = load_settings(None)
+        spec = None if self.harness.custom else acp_models.choice(settings, self.harness.id)
         if spec is None:
+            # A model of the harness itself, chosen in the picker of the start screen (Settings > Agents).
+            self._provider_model = acp_harnesses.native_choice(settings, self.harness.id)
             return argv, env
         try:
             target = await acp_models.resolve(spec)
         except acp_models.ModelChoiceError as e:
-            raise AcpError(f"{e} Change the model of {self.harness.name} in Settings > Operating Harness.") from None
+            raise AcpError(f"{e} Change the model of {self.harness.name} in Settings > Agents.") from None
         extra_args, extra_env = acp_models.launch_options(self.harness.id, target)
         self._provider_model = acp_models.session_model_id(self.harness.id, target)
         return [*argv, *extra_args], {**env, **extra_env}
@@ -567,6 +570,9 @@ class AcpAgent(Agent):
     def _auth_text(self, error: str) -> str:
         names = [str(m.get("name") or m.get("id")) for m in self._auth_methods]
         how = f" Sign-in methods: {', '.join(names)}." if names else ""
+        if agent_auth.supports(self.harness.id):
+            return (f"{self.harness.name} needs a sign-in ({error}). Open Settings > Agents > {self.harness.name}, "
+                    "select \"Sign in\", then send the prompt again.")
         return (f"{self.harness.name} needs a sign-in ({error}). Sign in to {self.harness.name} in a terminal on the "
                 f"daemon computer, then send the prompt again.{how}")
 
@@ -623,6 +629,9 @@ class AcpAgent(Agent):
             return
 
     async def _send_state(self) -> None:
+        if self.acp_models and not self.harness.custom:
+            # The picker of the start screen shows these models before the next session starts.
+            await asyncio.to_thread(acp_harnesses.save_models, self.harness.id, self.acp_models)
         await self.emit({"type": "acp.state", "harness": self.public_harness()})
 
     async def set_model(self, model_id: str) -> None:
@@ -1308,3 +1317,69 @@ class AcpAgent(Agent):
         """The harness of the session for the client: its models and its / commands, when it has them."""
         return {"id": self.harness.id, "name": self.harness.name, "models": self.acp_models,
                 "model": self.acp_model, "commands": self.acp_commands}
+
+
+# -- the models of a harness before its first session (Settings > Agents, the picker of the start screen) --
+
+PROBE_TIMEOUT = 90.0  # Seconds: an npx harness can download its package at the first start.
+
+
+def parse_models(result: Any) -> list[dict[str, str]]:
+    """The models of session/new: a configOptions entry of the category "model", else "models"."""
+    if not isinstance(result, dict):
+        return []
+    for option in result.get("configOptions") or []:
+        if not isinstance(option, dict) or option.get("category") != "model" or option.get("type") != "select":
+            continue
+        values: list[dict[str, str]] = []
+        for item in option.get("options") or []:
+            group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
+            for value in group:
+                if isinstance(value, dict) and value.get("value") is not None:
+                    values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
+                                   "description": str(value.get("description") or "")})
+        if values:
+            return values
+    models = result.get("models")
+    if isinstance(models, dict) and isinstance(models.get("availableModels"), list):
+        return [{"id": str(m.get("modelId")), "name": str(m.get("name") or m.get("modelId")),
+                 "description": str(m.get("description") or "")}
+                for m in models["availableModels"] if isinstance(m, dict) and m.get("modelId")]
+    return []
+
+
+async def probe_models(spec: HarnessSpec, cwd: Path) -> list[dict[str, str]]:
+    """Start the harness, open an ACP session with no prompt, and read its models. The harness stops after it.
+    The session uses no tokens. The models go to the cache of the picker (acp_harnesses.save_models)."""
+    try:
+        argv, env = launch_argv(spec)
+    except HarnessError as e:
+        raise AcpError(str(e)) from None
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    async def no_notification(method: str, params: dict[str, Any]) -> None:
+        return None
+
+    async def no_request(method: str, params: dict[str, Any]) -> Any:
+        raise AcpError(f"Harness does not answer {method} during a model check.")
+
+    conn = AcpConnection(argv, env, cwd, spec.name, no_notification, no_request)
+    await conn.start()
+    try:
+        await conn.request("initialize", {
+            "protocolVersion": PROTOCOL_VERSION,
+            "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False},
+            "clientInfo": {"name": "harness", "title": "Harness", "version": __version__},
+        }, timeout=PROBE_TIMEOUT)
+        try:
+            result = await conn.request("session/new", {"cwd": str(cwd), "mcpServers": []}, timeout=PROBE_TIMEOUT)
+        except AcpError as e:
+            if getattr(e, "code", None) == AUTH_REQUIRED or "auth" in str(e).lower():
+                raise AcpError(f"{spec.name} needs a sign-in before it can list its models.") from None
+            raise
+    finally:
+        await conn.close()
+    models = parse_models(result)
+    if models and not spec.custom:
+        await asyncio.to_thread(acp_harnesses.save_models, spec.id, models)
+    return models

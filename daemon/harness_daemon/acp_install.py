@@ -1,4 +1,4 @@
-"""The downloads of the ACP harnesses: Settings > Operating Harness > "Download" and "Update".
+"""The downloads of the ACP harnesses: Settings > Agents > "Download" and "Update".
 
 The source is the ACP registry (the list of acp_harnesses.py). For each harness, the registry gives one or
 more distributions:

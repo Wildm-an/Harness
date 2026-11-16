@@ -12799,7 +12799,7 @@ body.sorting * {
   color: var(--info-mark);
 }
 
-/* Settings > Operating Harness (OperatingHarnessSettings.tsx). */
+/* Settings > Agents: the older parts that AgentsSettings.tsx still uses. */
 
 .harness-intro {
   display: block;
@@ -12982,11 +12982,6 @@ body.sorting * {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-
-/* The harness of an ACP session, in place of the model menu under the prompt box. */
-.harness-label {
-  cursor: default;
 }
 
 .harness-group-title {
@@ -13345,4 +13340,452 @@ body.sorting * {
 input::-ms-reveal,
 input::-ms-clear {
   display: none;
+}
+
+/* -- Agents: shared parts (AgentBits.tsx) ------------------------------------------------------------- */
+.agent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.agent-icon.builtin {
+  background: none;
+  border: none;
+}
+.agent-usage {
+  display: grid;
+  grid-template-columns: max-content minmax(60px, 1fr) max-content max-content;
+  gap: 6px 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.agent-usage.compact {
+  grid-template-columns: max-content minmax(40px, 1fr) max-content;
+  gap: 4px 8px;
+  font-size: 11px;
+}
+.agent-usage-row {
+  display: contents;
+}
+.agent-usage-label {
+  color: var(--text);
+}
+.agent-usage-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.agent-usage-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.agent-usage-fill.warn {
+  background: var(--warning-mark);
+}
+.agent-usage-fill.danger {
+  background: var(--danger-mark);
+}
+.agent-usage-pct {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.agent-usage-reset {
+  color: var(--text-muted);
+}
+
+/* -- Agent picker (AgentPicker.tsx) -- */
+/* As the ProviderModelPicker of T3 Code (the user asked for this): a 44px rail with one tab for each agent,
+   then a column with a search field and the models of the selected tab. */
+.menu.agent-picker-dropdown {
+  flex-direction: row;
+  width: min(400px, calc(100vw - 32px));
+  padding: 0;
+}
+.pane-content .menu.agent-picker-dropdown {
+  width: min(400px, calc(100cqw - 56px));
+}
+.agent-picker-rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 44px;
+  padding: 6px 0;
+  border-right: 1px solid var(--border);
+}
+.agent-picker-tabs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.menu.agent-picker-dropdown .agent-picker-tab {
+  position: relative;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  color: var(--text-muted);
+}
+.menu.agent-picker-dropdown .agent-picker-tab.selected {
+  background: var(--surface-2);
+  color: var(--text);
+}
+/* A 3px accent bar at the left edge of the rail marks the selected tab. */
+.agent-picker-tab.selected::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: -6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+.agent-picker-tab.not-ready > .agent-icon {
+  opacity: 0.5;
+}
+.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.menu.agent-picker-dropdown .agent-picker-manage {
+  margin-top: auto;
+}
+.agent-picker-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px;
+}
+.agent-picker-search {
+  position: relative;
+  margin: 0 2px 4px;
+  color: var(--text-muted);
+}
+.agent-picker-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.agent-picker-search input {
+  min-height: 30px;
+  padding-left: 29px;
+}
+.agent-picker-usage {
+  padding: 6px 10px 8px;
+}
+.agent-picker-notice {
+  margin: 4px 10px 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.agent-picker-notice > svg {
+  color: var(--warning);
+  vertical-align: -2px;
+}
+.menu.model-dropdown button.agent-picker-link {
+  display: inline;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font-size: inherit;
+}
+.menu.model-dropdown button.agent-picker-link:hover {
+  background: none;
+  text-decoration: underline;
+}
+.model-button > .agent-icon {
+  flex: none;
+}
+
+/* -- Settings > Agents (AgentsSettings.tsx) -- */
+/* The page has two panes, as the Providers settings of T3 Code: the agents at the left, the detail at the right. */
+.settings-page.agents-page {
+  max-width: 960px;
+}
+.agents-panes {
+  display: grid;
+  grid-template-columns: 17rem minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 12px;
+}
+.agents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.agents-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 6px;
+  border-radius: var(--radius-sm);
+}
+.agents-row:hover {
+  background: var(--hover);
+}
+.agents-row.selected {
+  background: var(--surface-2);
+}
+.agents-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agents-row-main:focus-visible,
+.agents-add-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+.agents-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agents-row-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.agents-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agents-row-version {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.agents-default {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+.agents-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+.agents-status.small {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agents-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.agents-dot.ok {
+  background: var(--success-mark);
+}
+.agents-dot.warn {
+  background: var(--warning-mark);
+}
+.agents-dot.error {
+  background: var(--danger-mark);
+}
+.agents-row-skeleton {
+  height: 44px;
+  margin: 2px 0;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  animation: skeleton-pulse 1.6s ease-in-out infinite; /* The shared pulse of the skeletons (M16). */
+}
+.agents-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.agents-add-row:hover:not(:disabled),
+.agents-add-row.selected {
+  background: var(--hover);
+  color: var(--text);
+}
+.agents-add-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.agents-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agents-detail > .cap-back {
+  align-self: flex-start;
+}
+.agents-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agents-detail-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+.agents-meta {
+  margin-bottom: 4px;
+}
+.agents-section-title {
+  margin: 14px 0 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.agents-section-title label {
+  cursor: default;
+}
+.agents-status-detail {
+  margin: 0;
+}
+.agents-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.agents-signed-in {
+  color: var(--text);
+  font-size: 13px;
+}
+.agents-auth-skeleton {
+  width: 60%;
+  height: 28px;
+}
+.agents-checking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.agents-checked {
+  margin: 2px 0 0;
+}
+.agents-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-signin-screen {
+  box-sizing: border-box;
+  height: 240px;
+  padding: 6px 4px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+.agent-signin-screen .xterm {
+  height: 100%;
+}
+.agents-model {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.agents-model select {
+  min-width: 220px;
+  max-width: 100%;
+  cursor: pointer;
+}
+.agents-use {
+  margin-top: 16px;
+}
+.agents-add-item {
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 8px;
+}
+.agents-add-item > .agent-icon,
+.agents-add-item > .agent-icon.builtin {
+  margin-top: 2px;
+}
+.agents-add-item .harness-actions {
+  padding-top: 0;
+}
+@media (max-width: 760px) {
+  .agents-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* An agent icon of the ACP registry: the SVG is a mask, so it shows in the text color (AgentBits.tsx). */
+.agent-icon.logo {
+  background: currentColor;
+  border: none;
+  border-radius: 0;
 }

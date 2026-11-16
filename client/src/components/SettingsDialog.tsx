@@ -67,7 +67,7 @@ export type SettingsPage = "general" | "harness" | "operating" | "appearance" | 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
   { id: "harness", label: "Your Harness", icon: UserRound },
-  { id: "operating", label: "Operating Harness", icon: Workflow },
+  { id: "operating", label: "Agents", icon: Workflow }, // Settings > Agents (AgentsSettings.tsx). The id stays for the links to the page.
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "models", label: "Local models", icon: Boxes },
   { id: "connections", label: "Providers", icon: Cable },

@@ -31,9 +31,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from .tool_output import prune_outputs, remove_session_outputs, session_output_dir
 from . import __version__
 from .agent import Agent
-from . import acp_harnesses, acp_install, acp_models
+from . import acp_harnesses, acp_icons, acp_install, acp_models, agent_auth
 from . import acp_mcp
-from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client
+from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client, probe_models as acp_probe_models
 from .config import (
     BYPASS, ConfigError, bypass_allowed, harness_home, load_settings, project_settings_path, read_json, store_mode,
     write_json,
@@ -1200,7 +1200,7 @@ class Connection:
         if spec is None:
             spec = acp_harnesses.HarnessSpec(id=harness_id, name=harness_id, description="", website="", license="",
                                              bin=(harness_id, ()))
-            warnings.append(f"The harness {harness_id} is not in Settings > Operating Harness. Add it again, or "
+            warnings.append(f"The harness {harness_id} is not in Settings > Agents. Add it again, or "
                             "start a new session.")
         agent = AcpAgent(harness=spec, aux_client=_aux_client(settings), cwd=cwd,
                          client=placeholder_client(spec.id), emit=live.send, approver=live.approve,
@@ -1949,7 +1949,7 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
     provider, model = msg.get("provider"), msg.get("model")
     harness = load_settings(None).get("operating_harness")
     if isinstance(harness, str) and harness and harness != acp_harnesses.BUILTIN_ID:
-        provider, model = ACP_PROVIDER, harness  # Settings > Operating Harness: another harness runs the loop.
+        provider, model = ACP_PROVIDER, harness  # Settings > Agents: another harness runs the loop.
     live, warnings = await create_session(conn, _project_dir(msg.get("cwd")), provider, model,
                                           msg.get("permission_mode"), _worktree_arg(msg))
     await conn.open_session(live)
@@ -3823,7 +3823,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "offline_model": (str, type(None)),
     "effort": (str, type(None)),  # The effort level of the model menu. None: the default level, High.
     "new_task_prompt": (str,),
-    "operating_harness": (str, type(None)),  # Settings > Operating Harness: an ACP harness id (acp_harnesses.py).
+    "operating_harness": (str, type(None)),  # Settings > Agents: an ACP harness id (acp_harnesses.py).
     "tool_search": (str,),  # MCP tools by name only until the model loads them: auto, on, or off (agent.py).
     "auto_archive_days": (int,),  # "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
@@ -3857,7 +3857,9 @@ async def _send_user_settings(conn: Connection) -> None:
     await conn.send({"type": "user_settings", "path": str(_user_settings_path()), "version": __version__,
                      "values": {k: values.get(k) for k in USER_SETTINGS},
                      "sandbox": await asyncio.to_thread(sandbox_status),
-                     "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id)}
+                     "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id),
+                                 "native_model": acp_harnesses.native_choice(values, spec.id),
+                                 "models": [] if spec.custom else acp_harnesses.cached_models(spec.id)}
                      if spec is not None else None})
 
 
@@ -3903,7 +3905,7 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"'effort' must be null or one of: {', '.join(EFFORT_API)}.")
         if (key == "operating_harness" and isinstance(value, str) and value.strip()
                 and value.strip() != acp_harnesses.BUILTIN_ID and acp_harnesses.find(value.strip()) is None):
-            raise ProtocolError(f"Unknown harness: {value}. See Settings > Operating Harness.")
+            raise ProtocolError(f"Unknown harness: {value}. See Settings > Agents.")
         if key == "output_style" and output_styles.find(value) is None:
             raise ProtocolError(f"Unknown output style: {value}. The styles are: "
                                 f"{', '.join(s.id for s in output_styles.all_styles())}.")
@@ -3940,19 +3942,62 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
         await archive_inactive(conn.storage)
 
 
-# Settings > Operating Harness: the harnesses that can run the agent loop through ACP (acp_harnesses.py).
+# Settings > Agents: the harnesses that can run the agent loop through ACP (acp_harnesses.py).
 # They need no session.
 
 async def _send_harnesses(conn: Connection) -> None:
     items = await asyncio.to_thread(acp_harnesses.listing)  # shutil.which reads the PATH folders.
     settings = load_settings(None)
     current = settings.get("operating_harness") or acp_harnesses.BUILTIN_ID
+    enabled = acp_harnesses.enabled_ids(settings)
+    stale: list[str] = []
     for item in items:  # The model of a Harness provider (acp_models.py).
         item["provider_models"] = not item["custom"] and acp_models.supports(item["id"])
         item["provider_model"] = acp_models.choice(settings, item["id"])
         item["provider_note"] = acp_models.NOTES.get(item["id"], "")
+        # Settings > Agents: the picker rail, the models of the last session, and the sign-in state.
+        item["enabled"] = item["id"] in enabled
+        item["models"] = [] if item["custom"] else acp_harnesses.cached_models(item["id"])
+        item["native_model"] = acp_harnesses.native_choice(settings, item["id"])
+        item["can_sign_in"] = agent_auth.supports(item["id"])
+        item["auth"] = agent_auth.STATES.cached(item["id"])
+        item["icon"] = None if item["custom"] else acp_icons.icon(item["id"])  # A data URL from the ACP registry.
+        item["probing"] = item["id"] in _PROBES
+        if item["can_sign_in"] and item["enabled"] and not agent_auth.STATES.fresh(item["id"]):
+            stale.append(item["id"])
     await conn.send({"type": "harnesses", "items": items, "current": current,
                      "path": str(harness_home() / "harnesses.json")})
+    if stale:
+        asyncio.create_task(_check_agents(conn, stale))
+    icons = acp_icons.missing([i["id"] for i in items if not i["custom"]])
+    if icons and not _ICON_DOWNLOADS:
+        asyncio.create_task(_download_icons(conn, icons))
+
+
+_ICON_DOWNLOADS: set[str] = set()  # A download of icons runs (one at a time).
+_PROBES: set[str] = set()  # The agents whose models the daemon reads now (agents.models).
+
+
+async def _download_icons(conn: Connection, ids: list[str]) -> None:
+    """Download the icons of the agents from the ACP registry, then send the list again."""
+    _ICON_DOWNLOADS.add("run")
+    try:
+        if await acp_icons.download(ids):
+            await _send_harnesses(conn)
+    except Exception:  # noqa: BLE001 - the connection closed.
+        log.debug("The agent icons did not go to the client", exc_info=True)
+    finally:
+        _ICON_DOWNLOADS.discard("run")
+
+
+async def _check_agents(conn: Connection, ids: list[str], force: bool = False) -> None:
+    """Read the sign-in state and the usage of the agents, then send the list again."""
+    try:
+        for harness_id in ids:
+            await agent_auth.STATES.check(harness_id, force=force)
+        await _send_harnesses(conn)
+    except Exception:  # noqa: BLE001 - the connection closed.
+        log.debug("The agent states did not go to the client", exc_info=True)
 
 
 async def _refresh_harness_registry(conn: Connection) -> None:
@@ -4025,6 +4070,11 @@ async def on_harnesses_model(conn: Connection, msg: dict[str, Any]) -> None:
         models.pop(harness_id, None)
     else:
         models[harness_id] = value
+        native = data.get(acp_harnesses.NATIVE_SETTING)
+        if isinstance(native, dict):  # One model for the harness: the model of the harness itself goes.
+            native.pop(harness_id, None)
+            if not native:
+                data.pop(acp_harnesses.NATIVE_SETTING, None)
     if models:
         data[acp_models.SETTING] = models
     else:
@@ -4032,6 +4082,161 @@ async def on_harnesses_model(conn: Connection, msg: dict[str, Any]) -> None:
     write_json(path, data)
     await _send_harnesses(conn)
     await _send_user_settings(conn)  # The chip of the start screen shows the model.
+
+
+@handler("harnesses.native_model")
+async def on_harnesses_native_model(conn: Connection, msg: dict[str, Any]) -> None:
+    """A model of the harness itself for new sessions: {"id", "model": <model id> or null}. It replaces a model
+    of a Harness provider for that harness. null: the default of the harness. The reply is the list."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None or spec.custom:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    model = msg.get("model")
+    if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 200):
+        raise ProtocolError("'model' must be a model id or null.")
+    path = _user_settings_path()
+    data = read_json(path, {})
+    native = data.get(acp_harnesses.NATIVE_SETTING) if isinstance(data.get(acp_harnesses.NATIVE_SETTING), dict) else {}
+    if model is None:
+        native.pop(harness_id, None)
+    else:
+        native[harness_id] = model.strip()
+        provider = data.get(acp_models.SETTING)
+        if isinstance(provider, dict):  # One model for the harness: the provider model goes.
+            provider.pop(harness_id, None)
+            if not provider:
+                data.pop(acp_models.SETTING, None)
+    if native:
+        data[acp_harnesses.NATIVE_SETTING] = native
+    else:
+        data.pop(acp_harnesses.NATIVE_SETTING, None)
+    write_json(path, data)
+    await _send_harnesses(conn)
+    await _send_user_settings(conn)
+
+
+@handler("agents.enable")
+async def on_agents_enable(conn: Connection, msg: dict[str, Any]) -> None:
+    """Show an agent in the picker rail and on the Agents page, or hide it: {"id", "enabled": bool}. A hidden
+    operating harness gives its place to the built-in loop."""
+    harness_id = _text_arg(msg, "id")
+    enabled = msg.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ProtocolError("'enabled' must be true or false.")
+    if acp_harnesses.find(harness_id) is None:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    path = _user_settings_path()
+    data = read_json(path, {})
+    ids = acp_harnesses.enabled_ids(data)
+    if enabled and harness_id not in ids:
+        ids.append(harness_id)
+    elif not enabled:
+        ids = [i for i in ids if i != harness_id]
+        if data.get("operating_harness") == harness_id:
+            data.pop("operating_harness", None)
+    data[acp_harnesses.ENABLED_SETTING] = ids
+    write_json(path, data)
+    await _send_harnesses(conn)
+    await _send_user_settings(conn)
+
+
+@handler("agents.models")
+async def on_agents_models(conn: Connection, msg: dict[str, Any]) -> None:
+    """Read the models of an agent before its first session: {"id"}. The daemon starts the agent, opens an
+    ACP session with no prompt, keeps the models (``models`` of the list), and stops the agent. The client
+    gets the list with ``probing`` true at once, then the list with the models (or an error with the ref
+    agents.models)."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    if harness_id in _PROBES:
+        return
+    _PROBES.add(harness_id)
+    await _send_harnesses(conn)
+
+    async def run() -> None:
+        try:
+            await acp_probe_models(spec, harness_home() / "harnesses" / "probe")
+        except AcpError as e:
+            await conn.error(f"Could not read the models of {spec.name}: {e}", ref="agents.models")
+        except Exception as e:  # noqa: BLE001
+            log.exception("The model check of %s failed", harness_id)
+            await conn.error(f"Could not read the models of {spec.name}: {type(e).__name__}: {e}", ref="agents.models")
+        finally:
+            _PROBES.discard(harness_id)
+        await _send_harnesses(conn)
+
+    asyncio.create_task(run())
+
+
+@handler("agents.check")
+async def on_agents_check(conn: Connection, msg: dict[str, Any]) -> None:
+    """Read the sign-in state and the usage of an agent again now: {"id"}. The reply is the list."""
+    harness_id = _text_arg(msg, "id")
+    if not agent_auth.supports(harness_id):
+        raise ProtocolError(f"Harness cannot check the sign-in of {harness_id}.")
+    await _check_agents(conn, [harness_id], force=True)
+
+
+_SIGNIN: agent_auth.SignIn | None = None  # The sign-in that runs now (one for the daemon).
+
+
+@handler("agents.signin")
+async def on_agents_signin(conn: Connection, msg: dict[str, Any]) -> None:
+    """Start the sign-in of an agent in a pseudo terminal: {"id", "cols", "rows"}. The client gets
+    agents.signin.started, agents.signin.output, then agents.signin.exit, then the list with the new state."""
+    global _SIGNIN
+    harness_id = _text_arg(msg, "id")
+    if not agent_auth.supports(harness_id):
+        raise ProtocolError(f"Harness cannot sign in to {harness_id}.")
+    if _SIGNIN is not None and _SIGNIN.alive:
+        _SIGNIN.cancel()
+    cols, rows = _term_size(msg)
+
+    def finished(signin: agent_auth.SignIn, code: int | None) -> None:
+        agent_auth.STATES.invalidate(signin.harness_id)
+        asyncio.ensure_future(_check_agents(conn, [signin.harness_id], force=True))
+
+    signin = agent_auth.SignIn(harness_id, conn.send, finished)
+    try:
+        signin.start(cols, rows)
+    except Exception as e:  # noqa: BLE001 - report any start error to the client.
+        raise ProtocolError(f"The sign-in did not start: {e}") from None
+    _SIGNIN = signin
+    await conn.send({"type": "agents.signin.started", "id": harness_id})
+
+
+def _signin(msg: dict[str, Any]) -> agent_auth.SignIn:
+    if _SIGNIN is None or _SIGNIN.harness_id != msg.get("id"):
+        raise ProtocolError("No sign-in runs for this agent.")
+    return _SIGNIN
+
+
+@handler("agents.signin.input")
+async def on_agents_signin_input(conn: Connection, msg: dict[str, Any]) -> None:
+    data = msg.get("data")
+    if not isinstance(data, str):
+        raise ProtocolError("'data' must be text.")
+    _signin(msg).write(data)
+
+
+@handler("agents.signin.resize")
+async def on_agents_signin_resize(conn: Connection, msg: dict[str, Any]) -> None:
+    cols, rows = _term_size(msg)
+    _signin(msg).resize(cols, rows)
+
+
+@handler("agents.signin.cancel")
+async def on_agents_signin_cancel(conn: Connection, msg: dict[str, Any]) -> None:
+    """Stop the sign-in. The client gets agents.signin.exit, then the list."""
+    signin = _signin(msg)
+    was_alive = signin.alive
+    signin.cancel()
+    if was_alive:
+        await conn.send({"type": "agents.signin.exit", "id": signin.harness_id, "code": None})
+        await _check_agents(conn, [signin.harness_id], force=True)
 
 
 @handler("harnesses.uninstall")

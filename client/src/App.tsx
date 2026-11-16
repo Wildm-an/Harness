@@ -110,8 +110,8 @@ import { ToastStack } from "./components/ToastStack";
 import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
-import { OperatingHarnessSettings } from "./components/OperatingHarnessSettings";
-import { HarnessMenu } from "./components/HarnessMenu";
+import { AgentsSettings } from "./components/AgentsSettings";
+import { AgentPicker } from "./components/AgentPicker";
 import { StorageDialog } from "./components/StorageDialog";
 import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
@@ -153,7 +153,7 @@ import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, HarnessItem, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen, onOpenNewSession } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
@@ -181,7 +181,7 @@ import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { DeleteSessionConfirm } from "./components/DeleteSessionConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
-import { ModelMenu, type ModelList } from "./components/ModelMenu";
+import type { ModelList } from "./components/ModelMenu";
 import { ModelUnavailable } from "./components/ModelUnavailable";
 import { isModelUnavailable, networkModel, proposedModel, rememberModel } from "./lib/modelAvailability";
 import { ModelChoice, isLocalProvider } from "./components/ModelChoice";
@@ -575,6 +575,8 @@ export default function App() {
   const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null); // Settings > General > "Local sandbox".
   useTimeFormat(); // A change of "Time format" shows the times again in the new format.
   const [startHarness, setStartHarness] = useState<SessionHarness | null>(null); // The operating harness of new sessions.
+  // The agents of the daemon (harnesses.list), for the rail of the agent picker under both prompt boxes.
+  const [agents, setAgents] = useState<HarnessItem[] | null>(null);
   const [storageOpen, setStorageOpen] = useState(false); // Settings > General > Storage > Manage.
   useEffect(() => {
     if (!settingsPage) setStorageOpen(false); // The Storage dialog closes with Settings.
@@ -623,6 +625,8 @@ export default function App() {
           const key = JSON.stringify([auto_model, online_model, offline_model]);
           if (defaultModelKey.current !== null && defaultModelKey.current !== key) conn.send({ type: "models.list" });
           defaultModelKey.current = key;
+        } else if (msg.type === "harnesses") {
+          setAgents(msg.items);
         } else if (msg.type === "error" && (msg.ref === "user_settings.set" || msg.ref === "sandbox.set")) {
           setSettingsError(msg.message);
           try {
@@ -1319,6 +1323,8 @@ export default function App() {
     setRoutines(null);
     conn.send({ type: "routines.list" }); // The red dot of the Routines nav item.
     conn.send({ type: "user_settings.get" }); // The effort level of the model menu on the start screen.
+    setAgents(null); // Another computer can have other agents.
+    conn.send({ type: "harnesses.list" }); // The rail of the agent picker.
     // A reconnect to the same computer keeps the list until the new list arrives (audit M16). Another computer
     // starts empty: the sidebar shows skeleton rows.
     if (recentOfRef.current !== currentRef.current?.id) {
@@ -1790,6 +1796,16 @@ export default function App() {
   /** Asks the daemon for the models of the connections that are on. The last list stays until the reply. */
   function requestModels() {
     sendSafely({ type: "models.list" });
+  }
+
+  /** The agent picker asks for the agents when it opens: the sign-in state and the usage can change. */
+  function requestAgents() {
+    sendSafely({ type: "harnesses.list" });
+  }
+
+  /** The agent picker on the start screen: an agent and its model for new sessions. */
+  function sendAgentMessages(messages: ClientMessage[]) {
+    for (const m of messages) if (!sendSafely(m)) return;
   }
 
   /** Switch the model of the session. The model label under the prompt box shows it: the chat shows nothing. */
@@ -2887,27 +2903,24 @@ export default function App() {
                 <>
                 <ModeMenu mode={permissionMode} onChange={changeMode} />
                 <div className="prompt-below-right">
-                {session.harness ? (
-                  <HarnessMenu
-                    harness={session.harness}
-                    disabled={chat.running}
-                    onSelect={(model) => sendSafely({ type: "acp.model", model })}
-                  />
-                ) : (
-                <ModelMenu
-                  value={session.model}
+                {/* The agent and model picker (rule C14). The agent of a session is fixed. */}
+                <AgentPicker
+                  value={session.harness ? "" : session.model}
                   models={models}
                   allowDefault={false}
-                  up
-                  alignRight
-                  heading="Model · this session"
                   localProviders={localProviders}
                   effort={effortControl}
-                  onOpen={requestModels}
+                  agents={agents}
+                  current={session.harness ?? null}
+                  session={{ running: chat.running }}
+                  shortcut
+                  onRequestModels={requestModels}
+                  onRequestAgents={requestAgents}
                   onSelect={chooseModel}
-                  onManage={showProviders}
+                  onSessionModel={(model) => sendSafely({ type: "acp.model", model })}
+                  onManageProviders={showProviders}
+                  onManageAgents={() => openSettings("operating")}
                 />
-                )}
                 {/* An ACP session shows the ring only when its harness reports the usage (usage_update).
                     The open session rail has the Context section, so the ring shows only while the rail is hidden. */}
                 {!railVisible && chat.context && (!session.harness || chat.context.tokens > 0) && (
@@ -3753,6 +3766,9 @@ export default function App() {
             onManageProviders={showProviders}
             harness={status === "open" ? startHarness : null}
             onManageHarness={() => openSettings("operating")}
+            agents={status === "open" ? agents : null}
+            onRequestAgents={requestAgents}
+            onAgentMessages={sendAgentMessages}
             onSaveProject={saveProject}
             onDeleteProject={deleteProject}
             selectProject={startProject}
@@ -3854,8 +3870,9 @@ export default function App() {
             {settingsPage === "updates" && <UpdatesPage appVersion={appVersion} />}
             {settingsPage === "appearance" && <AppearanceSettings />}
             {settingsPage === "operating" && (
-              <OperatingHarnessSettings
+              <AgentsSettings
                 conn={conn}
+                onShowProviders={() => openSettings("connections")}
                 connected={status === "open"}
                 values={status === "open" ? userSettings : null}
                 error={settingsError}

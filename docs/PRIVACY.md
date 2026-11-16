@@ -35,6 +35,7 @@ Harness connects to these services only after you add them or turn them on:
 ## Connections that start when you do an action
 
 - **App updates.** "Install and restart" downloads the installer from the GitHub release.
+- **Agents.** Settings > Agents and the agent picker read the ACP registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`) and download the icon of each agent from the same address. The requests have no data about you. For Claude Agent, Harness runs the `claude` program of the daemon computer: `claude auth status` for the sign-in state, and a `claude -p` process with no prompt for the usage of the subscription. That process sends your Claude Code login to Anthropic, as Claude Code does. To read the models of an agent before its first session, Harness starts the agent with no prompt. The agent can then connect to its service with your login.
 - **PR status.** If you turn on "Show PR status" in the sidebar filter menu, Harness runs the GitHub CLI
   (`gh pr view`) each minute for each project folder. `gh` uses your own GitHub login. It sends the
   name of the repository and the branch to GitHub. This setting is off by default.

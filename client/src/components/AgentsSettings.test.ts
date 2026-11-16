@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { HarnessItem, UserSettings } from "../daemon/protocol";
-import { BUILTIN_HARNESS, currentHarness, filterHarnesses, harnessAction, modelGroups, progressText, sortHarnesses, splitHarnesses } from "./OperatingHarnessSettings";
+import { BUILTIN_AGENT } from "./AgentBits";
+import {
+  checkedText,
+  currentHarness,
+  filterHarnesses,
+  harnessAction,
+  listedAgents,
+  modelChange,
+  modelChoices,
+  modelGroups,
+  progressText,
+  sortHarnesses,
+  splitHarnesses,
+} from "./AgentsSettings";
 
 const harness = (id: string, name: string, extra: Partial<HarnessItem> = {}): HarnessItem => ({
   id,
@@ -23,19 +36,33 @@ const harness = (id: string, name: string, extra: Partial<HarnessItem> = {}): Ha
   provider_models: false,
   provider_model: null,
   provider_note: "",
+  enabled: false,
+  models: [],
+  native_model: null,
+  can_sign_in: false,
+  auth: null,
+  icon: null,
+  probing: false,
   ...extra,
 });
 
-describe("the Operating Harness page", () => {
+describe("the Agents page", () => {
   it("uses the built-in loop when the setting has no value", () => {
-    expect(currentHarness(null)).toBe(BUILTIN_HARNESS);
-    expect(currentHarness({ operating_harness: null } as UserSettings)).toBe(BUILTIN_HARNESS);
+    expect(currentHarness(null)).toBe(BUILTIN_AGENT);
+    expect(currentHarness({ operating_harness: null } as UserSettings)).toBe(BUILTIN_AGENT);
     expect(currentHarness({ operating_harness: "opencode" } as UserSettings)).toBe("opencode");
   });
 
   it("sorts by name, with the custom harnesses last", () => {
     const items = [harness("zed", "zeta"), harness("custom-a", "Alpha", { custom: true }), harness("goose", "goose"), harness("amp", "Amp")];
     expect(sortHarnesses(items).map((h) => h.id)).toEqual(["amp", "goose", "zed", "custom-a"]);
+  });
+
+  it("lists the enabled agents, and keeps the selected agent in the list", () => {
+    const items = [harness("zed", "zeta", { enabled: true }), harness("goose", "goose"), harness("amp", "Amp", { enabled: true })];
+    expect(listedAgents(items).map((h) => h.id)).toEqual(["amp", "zed"]);
+    expect(listedAgents(items, "goose").map((h) => h.id)).toEqual(["amp", "goose", "zed"]);
+    expect(listedAgents(items, BUILTIN_AGENT).map((h) => h.id)).toEqual(["amp", "zed"]);
   });
 
   it("puts the recommended harnesses first, in the order of the daemon", () => {
@@ -95,5 +122,63 @@ describe("the Operating Harness page", () => {
     // A saved model of a provider that does not answer stays as a choice.
     expect(modelGroups(models, "BugsAI/big")).toContainEqual({ provider: "BugsAI", values: ["BugsAI/big"] });
     expect(modelGroups(models, "local-ollama/llama3")).toHaveLength(2);
+  });
+});
+
+describe("the Model select of an agent", () => {
+  const providers = [{ provider: "openrouter", model: "openai/gpt-5" }];
+  const own = [
+    { id: "opus", name: "Opus", description: "" },
+    { id: "sonnet", name: "Sonnet", description: "" },
+  ];
+
+  it("has no select when the agent has no model choice", () => {
+    expect(modelChoices(harness("goose", "goose"), providers)).toBeNull();
+  });
+
+  it("shows the provider models with the settings of the agent first", () => {
+    const c = modelChoices(harness("codex", "Codex", { provider_models: true, provider_model: "openrouter/openai/gpt-5" }), providers);
+    expect(c?.defaultLabel).toBe("Codex settings");
+    expect(c?.value).toBe("provider:openrouter/openai/gpt-5");
+    expect(c?.groups).toEqual([{ label: "openrouter", options: [{ value: "provider:openrouter/openai/gpt-5", label: "openai/gpt-5" }] }]);
+  });
+
+  it("shows the own models of the agent, then the provider models", () => {
+    const c = modelChoices(harness("claude", "Claude Agent", { models: own, native_model: "haiku", provider_models: true }), providers);
+    expect(c?.defaultLabel).toBe("Default of Claude Agent");
+    expect(c?.value).toBe("native:haiku");
+    // A saved own model that the agent did not give stays as a choice.
+    expect(c?.groups[0]).toEqual({
+      label: "Claude Agent",
+      options: [
+        { value: "native:haiku", label: "haiku" },
+        { value: "native:opus", label: "Opus" },
+        { value: "native:sonnet", label: "Sonnet" },
+      ],
+    });
+    expect(c?.groups[1].label).toBe("openrouter");
+  });
+
+  it("sends one model: a provider model clears the own model, and the other way", () => {
+    const both = harness("claude", "Claude Agent", { models: own, native_model: "opus", provider_models: true });
+    expect(modelChange(both, "provider:openrouter/openai/gpt-5")).toEqual([
+      { type: "harnesses.model", id: "claude", model: "openrouter/openai/gpt-5" },
+      { type: "harnesses.native_model", id: "claude", model: null },
+    ]);
+    expect(modelChange({ ...both, native_model: null, provider_model: "openrouter/openai/gpt-5" }, "native:sonnet")).toEqual([
+      { type: "harnesses.native_model", id: "claude", model: "sonnet" },
+      { type: "harnesses.model", id: "claude", model: null },
+    ]);
+    expect(modelChange(both, "")).toEqual([
+      { type: "harnesses.model", id: "claude", model: null },
+      { type: "harnesses.native_model", id: "claude", model: null },
+    ]);
+    expect(modelChange(harness("codex", "Codex", { provider_models: true }), "")).toEqual([{ type: "harnesses.model", id: "codex", model: null }]);
+  });
+
+  it("says when Harness read the usage", () => {
+    const now = new Date(2026, 10, 16, 15, 0);
+    expect(checkedText(0, now)).toBe("");
+    expect(checkedText(new Date(2026, 10, 16, 14, 20).getTime() / 1000, now)).toMatch(/^Checked \S/);
   });
 });

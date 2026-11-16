@@ -296,6 +296,40 @@ export interface HarnessItem {
   provider_models: boolean; // It can use a model of a Harness provider (daemon acp_models.py).
   provider_model: string | null; // The chosen "<provider>/<model>". null: the model settings of the harness.
   provider_note: string; // What the server of the provider must have, for example the Responses API.
+  // Settings > Agents and the agent picker.
+  enabled: boolean; // In the picker rail and in the list of the Agents page (user setting agents_enabled).
+  models: AgentModel[]; // The models that the harness gave in its last session. Empty: not known yet.
+  native_model: string | null; // The chosen model id of the harness itself for new sessions. null: its default.
+  can_sign_in: boolean; // Harness can sign in to it and read its usage (daemon agent_auth.py).
+  auth: AgentAuth | null; // null: no check yet.
+  icon: string | null; // The icon of the ACP registry, as a data URL (daemon acp_icons.py). null: the initials.
+  probing: boolean; // The daemon reads the models of the agent now (agents.models).
+}
+
+/** A model that an ACP harness gives. */
+export interface AgentModel {
+  id: string;
+  name: string;
+  description: string;
+}
+
+/** The sign-in state and the subscription usage of an agent (daemon agent_auth.py). */
+export interface AgentAuth {
+  status: "authenticated" | "unauthenticated" | "unknown";
+  label: string; // For example "Claude Max" or "API key".
+  detail: string; // Why it is not signed in, or why the state is not known.
+  subscription: boolean;
+  install_url?: string; // The program of the agent is not installed.
+  usage: AgentUsage[] | null; // null: no usage (not a subscription, or not available).
+  usage_error: string;
+  checked_at: number; // Seconds since 1970.
+}
+
+export interface AgentUsage {
+  label: string; // "Session", "Weekly", "Weekly · Fable".
+  percent: number; // 0 to 100.
+  resets_at: string | null; // ISO time.
+  severity: string; // "normal", or a warning level.
 }
 
 /** The state of a harness download (harnesses.progress). total 0: the size is not known. */
@@ -311,6 +345,7 @@ export interface SessionHarness {
   name: string;
   models?: { id: string; name: string; description: string }[]; // The model menu. Empty: the harness gives none.
   model?: string | null; // The current model id. On the start screen (user_settings): the model of a Harness provider, "<provider>/<model>".
+  native_model?: string | null; // On the start screen: the chosen model id of the harness itself.
   commands?: { name: string; description: string; hint: string }[]; // The / commands of the harness.
 }
 
@@ -924,6 +959,14 @@ export type ClientMessage =
   | { type: "harnesses.install"; id: string } // Download the harness, or its update.
   | { type: "harnesses.uninstall"; id: string } // Delete the download.
   | { type: "harnesses.model"; id: string; model: string | null } // A model of a Harness provider. null: the harness settings.
+  | { type: "harnesses.native_model"; id: string; model: string | null } // A model of the harness itself. null: its default.
+  | { type: "agents.enable"; id: string; enabled: boolean } // Show the agent in the picker and on the Agents page.
+  | { type: "agents.check"; id: string } // Read the sign-in state and the usage again.
+  | { type: "agents.models"; id: string } // Read the models of the agent before its first session.
+  | { type: "agents.signin"; id: string; cols: number; rows: number } // Start the sign-in terminal.
+  | { type: "agents.signin.input"; id: string; data: string }
+  | { type: "agents.signin.resize"; id: string; cols: number; rows: number }
+  | { type: "agents.signin.cancel"; id: string }
   | { type: "harnesses.save"; name: string; command: string; id?: string }
   | { type: "harnesses.delete"; id: string }
   // Settings > Your Harness > Output style. create: a model drafts a style from the description.
@@ -1204,6 +1247,9 @@ export type DaemonMessage =
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
   | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
+  | { type: "agents.signin.started"; id: string } // The sign-in terminal of the agent runs.
+  | { type: "agents.signin.output"; id: string; data: string }
+  | { type: "agents.signin.exit"; id: string; code: number | null } // Then "harnesses" with the new state.
   | { type: "acp.state"; session_id?: string; harness: SessionHarness } // The models and the commands of an ACP harness.
   | { type: "memory.parsed"; items: MemoryFact[] }
   | ({ type: "disk.usage" } & DiskUsage)

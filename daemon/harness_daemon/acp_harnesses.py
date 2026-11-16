@@ -1,6 +1,6 @@
 """The harnesses that can run the agent loop of a session through ACP (Agent Client Protocol).
 
-Settings > Operating Harness lists them. The user setting ``operating_harness`` holds the id of the
+Settings > Agents lists them. The user setting ``operating_harness`` holds the id of the
 harness for new sessions. No value (or "harness") is the built-in agent loop of Harness (agent.py).
 
 The list comes from the ACP registry (https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json,
@@ -308,3 +308,54 @@ def public(spec: HarnessSpec) -> dict[str, Any]:
 
 def listing() -> list[dict[str, Any]]:
     return [public(s) for s in all_harnesses()]
+
+
+# -- Settings > Agents: the enabled agents, and the models that an agent gave in its last session -----------
+
+ENABLED_SETTING = "agents_enabled"  # The user setting: the ids of the agents in the picker rail and on the page.
+NATIVE_SETTING = "harness_native_models"  # The user setting: {"<harness id>": "<model id of the harness>"}.
+
+
+def enabled_ids(settings: dict[str, Any]) -> list[str]:
+    """The enabled agents. With no setting: the operating harness, if one is set. The operating harness is
+    always enabled."""
+    value = settings.get(ENABLED_SETTING)
+    ids = [v for v in value if isinstance(v, str) and v] if isinstance(value, list) else []
+    current = settings.get("operating_harness")
+    if isinstance(current, str) and current and current != BUILTIN_ID and current not in ids:
+        ids.append(current)
+    return ids
+
+
+def native_choice(settings: dict[str, Any], harness_id: str) -> str | None:
+    """The model of the harness itself that new sessions use, or None for the default of the harness."""
+    value = settings.get(NATIVE_SETTING)
+    choice = value.get(harness_id) if isinstance(value, dict) else None
+    return choice if isinstance(choice, str) and choice else None
+
+
+def _models_path():
+    return harness_home() / "harnesses" / "models.json"
+
+
+def cached_models(harness_id: str) -> list[dict[str, str]]:
+    """The models that the harness gave in its last session. The picker shows them before a session starts."""
+    data = read_json(_models_path(), {})
+    items = data.get(harness_id) if isinstance(data, dict) else None
+    return [m for m in items if isinstance(m, dict) and m.get("id")] if isinstance(items, list) else []
+
+
+def save_models(harness_id: str, models: list[dict[str, str]]) -> None:
+    """Keep the models of a harness for the picker. An error is not important: the next session tries again."""
+    if not models:
+        return
+    try:
+        data = read_json(_models_path(), {})
+        data = data if isinstance(data, dict) else {}
+        if data.get(harness_id) == models:
+            return
+        data[harness_id] = models
+        _models_path().parent.mkdir(parents=True, exist_ok=True)
+        write_json(_models_path(), data)
+    except OSError:
+        pass
