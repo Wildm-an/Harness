@@ -19,3 +19,16 @@ describe("the permission card", () => {
     expect(choiceForKey(permissionChoices(item(null)), "3")).toBeNull();
   });
 });
+
+describe("the card of another harness", () => {
+  it("keeps the harness that asks, for its name and its logo", async () => {
+    const { requestCard } = await import("../chat/state");
+    const card = requestCard({
+      request_id: "r2", tool: "preview_navigate", input: { url: "https://example.org" }, diff: null, rule: null,
+      harness: { id: "hermes", name: "Hermes Agent", icon: null },
+    });
+    expect(card.kind === "permission" && card.harness).toEqual({ id: "hermes", name: "Hermes Agent", icon: null });
+    const plain = requestCard({ request_id: "r3", tool: "bash", input: {}, diff: null, rule: null });
+    expect(plain.kind === "permission" && plain.harness).toBeNull();
+  });
+});

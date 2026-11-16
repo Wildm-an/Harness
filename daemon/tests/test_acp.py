@@ -70,7 +70,8 @@ def test_acp_permission_plan_and_diff(daemon, project, fake_acp):
     plan = next(m for m in seen if m["type"] == "tool.start" and m["name"] == "update_plan")
     assert plan["input"]["items"][0] == {"content": "Edit hello.py", "status": "in_progress"}
     assert request["tool"] == "edit" and request["input"] == {"path": "hello.py"}
-    assert "+    return 'hey'" in request["diff"] and request["remember"] == "Fake ACP"
+    # The Harness permission gate asks: "Always allow" saves a Harness rule in the project settings.
+    assert "+    return 'hey'" in request["diff"] and request["rule"] == "edit(hello.py)"
     c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
     end, seen = c.until("turn.end", timeout=30)
     result = next(m for m in seen if m["type"] == "tool.result" and m["id"] == "call_1")
@@ -92,6 +93,51 @@ def test_acp_denied_permission(daemon, project, fake_acp):
     assert result["is_error"] and result["output"] == "Rejected."
     assert "'hello'" in (project / "hello.py").read_text()
     c.close()
+
+
+def test_acp_permission_requests_use_the_harness_rules(daemon, project, fake_acp):
+    """The permission rules of Harness apply to the requests of another harness: an allow rule answers with no
+    question, and a deny rule rejects the call."""
+    from harness_daemon.permissions import PermissionRules
+    rules = PermissionRules(project)
+    rules.write(["edit(hello.py)"], [])
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "edit"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert not any(m["type"] == "permission.request" for m in seen)
+    assert "'hey'" in (project / "hello.py").read_text()
+    c.close()
+
+    (project / "hello.py").write_bytes(b"def greet():\n    return 'hello'\n\nprint(greet())\n")
+    rules.write([], ["edit(hello.py)"])
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "edit"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert not any(m["type"] == "permission.request" for m in seen)
+    result = next(m for m in seen if m["type"] == "tool.result" and m["id"] == "call_1")
+    assert result["is_error"] and "'hello'" in (project / "hello.py").read_text()
+    c.close()
+
+
+def test_auto_mode_of_another_harness_with_no_model_asks():
+    """Auto mode needs a model to check the calls. The model of another harness is not in Harness: with no Harness
+    provider model, the gate asks the user, as Manual mode does."""
+    from harness_daemon.acp import AcpAgent
+    agent = AcpAgent.__new__(AcpAgent)
+    agent.settings = {"permission_mode": "auto"}
+    agent.auto_client = None
+    agent._chosen_mode = None
+
+    class Gate:
+        auto = type("A", (), {"available": lambda self: False})()
+    agent.gate = Gate()
+    assert agent._gate_mode() == "default"
+    Gate.auto = type("A", (), {"available": lambda self: True})()
+    assert agent._gate_mode() == "auto"
+    agent.settings = {"permission_mode": "acceptEdits"}
+    assert agent._gate_mode() == "acceptEdits"
 
 
 def test_acp_interrupt(daemon, project, fake_acp):
@@ -369,6 +415,7 @@ def test_harness_tool_names_in_titles_and_the_instructions():
     assert "show_visual" not in acp_mcp.HIDDEN_TOOLS and "ask_user_question" not in acp_mcp.HIDDEN_TOOLS
     assert acp_mcp.tool_of_title("mcp__harness__show_visual", tools) == "show_visual"
     assert acp_mcp.tool_of_title("harness.preview_start", tools) == "preview_start"
+    assert acp_mcp.tool_of_title("mcp__editor_harness_aa5f56ca__preview_navigate", tools) == "preview_navigate"  # Hermes
     assert acp_mcp.tool_of_title("send_file (harness MCP Server)", tools) == "send_file"
     assert acp_mcp.tool_of_title("mcp__github__show_visual", tools) is None
     assert acp_mcp.tool_of_title("Run show_visual", tools) is None
@@ -377,3 +424,38 @@ def test_harness_tool_names_in_titles_and_the_instructions():
     assert block.startswith("<harness_instructions>") and block.endswith("</harness_instructions>")
     assert "ask_user_question" in block and "artifact" not in block  # Only the lines of the tools it has.
     assert acp_mcp.instructions({"cron_list"}) == ""
+
+
+def test_acp_mode_menu_shows_and_changes_the_mode_of_the_harness(daemon, project, fake_acp):
+    """The mode menu of an ACP session has the modes of the harness. A choice changes the mode of the harness, and
+    the permission gate of Harness follows it."""
+    c = Client(daemon)
+    c.new_session(project)
+    state = c.until("acp.state", timeout=30)[0]["harness"]
+    while not state.get("modes") or not state.get("mode"):
+        state = c.until("acp.state", timeout=30)[0]["harness"]
+    ids = [m["id"] for m in state["modes"]]
+    assert "default" in ids and state["mode"] == "default"
+    other = next(i for i in ids if i != "default")
+    c.send({"type": "acp.mode", "mode": other})
+    for _ in range(5):  # An older state can come first.
+        state = c.until("acp.state", timeout=30)[0]["harness"]
+        if state["mode"] == other:
+            break
+    assert state["mode"] == other
+    sent = [json.loads(line) for line in fake_acp.read_text().splitlines()]
+    assert any(m.get("method") == "session/set_mode" and m["params"]["modeId"] == other for m in sent)
+    c.send({"type": "acp.mode", "mode": "nope"})
+    assert "has no mode" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_the_harness_modes_map_to_harness_permission_modes():
+    from harness_daemon.acp import HARNESS_AUTO, MODE_MAP, AcpAgent
+    agent = AcpAgent.__new__(AcpAgent)
+    agent.settings = {"permission_mode": "acceptEdits"}
+    assert agent.gate_mode_of(None) == "acceptEdits"
+    assert agent.gate_mode_of(HARNESS_AUTO) == "auto"
+    assert [agent.gate_mode_of(m) for m in ("accept_edits", "dont_ask", "plan", "yolo", "strange")] == \
+        ["acceptEdits", "acceptEdits", "plan", "bypassPermissions", "default"]
+    assert MODE_MAP["bypassPermissions"] == "bypassPermissions"

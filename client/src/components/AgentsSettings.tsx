@@ -93,6 +93,17 @@ type ModelItem = Pick<HarnessItem, "id" | "name" | "models" | "native_model" | "
 
 /** The Model select of an agent: its own models ("native:<id>"), then the models of the providers
  * ("provider:<provider>/<model>"). The value "" is the default. null: the agent has no model choice. */
+/** The choices of "Auto mode model": the models of each provider. A saved model that the list does not have stays. */
+export function autoModelGroups(models: { provider: string; model: string }[], current: string | null): { provider: string; values: string[] }[] {
+  const groups = new Map<string, string[]>();
+  for (const m of models) groups.set(m.provider, [...(groups.get(m.provider) ?? []), `${m.provider}/${m.model}`]);
+  if (current && ![...groups.values()].some((v) => v.includes(current))) {
+    const provider = current.slice(0, Math.max(0, current.indexOf("/")));
+    groups.set(provider, [current, ...(groups.get(provider) ?? [])]);
+  }
+  return [...groups].map(([provider, values]) => ({ provider, values }));
+}
+
 export function modelChoices(
   item: ModelItem,
   providerModels: { provider: string; model: string }[],
@@ -171,6 +182,8 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
   const [progress, setProgress] = useState<Record<string, HarnessProgress>>({});
   // The models of the Harness providers (models.list), for the Model menu. null: not loaded yet.
   const [models, setModels] = useState<{ provider: string; model: string }[] | null>(null);
+  // The model of Auto mode for the agents of other harnesses (auto_mode.model). null: none, so Auto mode asks.
+  const [autoModel, setAutoModel] = useState<string | null>(null);
   const [checking, setChecking] = useState(false); // "Check again" of the page runs.
   const current = currentHarness(values);
   const [selected, setSelected] = useState<string>(current);
@@ -199,6 +212,7 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
       conn.onMessage((msg) => {
         if (msg.type === "harnesses") {
           setItems(msg.items);
+          setAutoModel(msg.auto_model ?? null);
           setPath(msg.path);
           setChecking(false);
           setListFailed(false);
@@ -385,6 +399,34 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
         An agent runs the agent loop: the model, the tools, and the context. Harness is the built-in agent. Other agents
         connect through the Agent Client Protocol (ACP), and Harness shows their work in the chat. Applies to new sessions.
       </p>
+      <div className="setting-row agents-auto-model">
+        <div className="setting-text">
+          <label htmlFor="agents-auto-model">Auto mode model</label>
+          <span className="setting-help">
+            In Auto mode, this model checks the actions of the other agents, as it does for Harness: their own model
+            is not in Harness. With no model, Auto mode asks you for each action that needs a permission.
+          </span>
+        </div>
+        <div className="setting-control">
+          <select
+            id="agents-auto-model"
+            value={autoModel ?? ""}
+            disabled={!connected}
+            onChange={(e) => send({ type: "agents.auto_model", model: e.target.value || null })}
+          >
+            <option value="">None: ask me</option>
+            {autoModelGroups(models ?? [], autoModel).map((g) => (
+              <optgroup key={g.provider} label={g.provider}>
+                {g.values.map((v) => (
+                  <option key={v} value={v}>
+                    {v.slice(g.provider.length + 1)}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+      </div>
       {!connected && <p className="settings-note setting-help">Connect to a computer to choose the agent.</p>}
       {(error || problem) && (
         <p className="settings-note harness-error" role="alert">

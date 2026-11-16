@@ -135,3 +135,20 @@ def test_the_logos_have_their_brand_colors(harness_home):
     hermes = svg("hermes")
     assert hermes.startswith(b"<svg") and len(hermes) <= acp_icons.MAX_BYTES and acp_icons.safe_svg(hermes)
     acp_icons._cache.clear()
+
+
+def test_the_auto_mode_model(daemon, harness_home):  # noqa: F811
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "harnesses.list"})
+    assert c.until("harnesses")[0]["auto_model"] is None
+    c.send({"type": "agents.auto_model", "model": "fake/smart"})
+    assert c.until("harnesses")[0]["auto_model"] == "fake/smart"
+    data = json.loads((harness_home / "settings.json").read_text())
+    assert data["auto_mode"]["model"] == "fake/smart"
+    c.send({"type": "agents.auto_model", "model": "nothing"})
+    assert "must be" in c.until("error")[0]["message"]
+    c.send({"type": "agents.auto_model", "model": None})
+    assert c.until("harnesses")[0]["auto_model"] is None
+    assert "auto_mode" not in json.loads((harness_home / "settings.json").read_text())
+    c.close()

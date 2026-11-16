@@ -32,6 +32,7 @@ from .tool_output import prune_outputs, remove_session_outputs, session_output_d
 from . import __version__
 from .agent import Agent
 from . import acp_harnesses, acp_icons, acp_install, acp_models, agent_auth
+from .auto_mode import global_auto_config
 from . import acp_mcp
 from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client, probe_models as acp_probe_models
 from .config import (
@@ -3965,8 +3966,11 @@ async def _send_harnesses(conn: Connection) -> None:
         item["probing"] = item["id"] in _PROBES
         if item["can_sign_in"] and item["enabled"] and not agent_auth.STATES.fresh(item["id"]):
             stale.append(item["id"])
+    auto_model = global_auto_config().get("model")
     await conn.send({"type": "harnesses", "items": items, "current": current,
-                     "path": str(harness_home() / "harnesses.json")})
+                     "path": str(harness_home() / "harnesses.json"),
+                     # The model that checks the actions of the agents in Auto mode ("auto_mode.model"). None: no model.
+                     "auto_model": auto_model if isinstance(auto_model, str) and auto_model.strip() else None})
     if stale:
         asyncio.create_task(_check_agents(conn, stale))
     icons = acp_icons.missing([i["id"] for i in items if not i["custom"]])
@@ -4169,6 +4173,34 @@ async def on_agents_models(conn: Connection, msg: dict[str, Any]) -> None:
         await _send_harnesses(conn)
 
     asyncio.create_task(run())
+
+
+@handler("agents.auto_model")
+async def on_agents_auto_model(conn: Connection, msg: dict[str, Any]) -> None:
+    """The model of Auto mode: {"model": "<provider>/<model>" or null}. It checks the actions of the agents of
+    other harnesses (their own model is not in Harness), and of a Harness session when it is set. It is
+    "auto_mode.model" in ~/.harness/settings.json. The reply is the list."""
+    model = msg.get("model")
+    if model is not None:
+        if not isinstance(model, str) or "/" not in model or len(model) > 300:
+            raise ProtocolError("'model' must be \"<provider>/<model>\" or null.")
+        try:
+            resolve_model(model.strip())
+        except ConfigError as e:
+            raise ProtocolError(str(e)) from None
+    path = _user_settings_path()
+    data = read_json(path, {})
+    config = data.get("auto_mode") if isinstance(data.get("auto_mode"), dict) else {}
+    if model is None:
+        config.pop("model", None)
+    else:
+        config["model"] = model.strip()
+    if config:
+        data["auto_mode"] = config
+    else:
+        data.pop("auto_mode", None)
+    write_json(path, data)
+    await _send_harnesses(conn)
 
 
 @handler("agents.check")
@@ -4620,6 +4652,24 @@ async def on_acp_model(conn: Connection, msg: dict[str, Any]) -> None:
     conn.require_idle()
     try:
         await session.agent.set_model(_text_arg(msg, "model"))
+    except AcpError as e:
+        raise ProtocolError(str(e)) from None
+
+
+@handler("acp.mode")
+async def on_acp_mode(conn: Connection, msg: dict[str, Any]) -> None:
+    """The mode menu of an ACP session: {"mode": <a mode id of the harness>, or "harness:auto"}. The Harness permission
+    gate follows the mode (acp.MODE_MAP). A mode that is bypass needs "Allow bypass permissions mode". The reply is
+    acp.state."""
+    session = conn.require_session()
+    if not isinstance(session.agent, AcpAgent):
+        raise ProtocolError("This session runs in the built-in loop. Use the mode menu of Harness.")
+    conn.require_idle()
+    mode = _text_arg(msg, "mode")
+    if session.agent.gate_mode_of(mode) == BYPASS:
+        _check_bypass(BYPASS)
+    try:
+        await session.agent.set_mode(mode)
     except AcpError as e:
         raise ProtocolError(str(e)) from None
 

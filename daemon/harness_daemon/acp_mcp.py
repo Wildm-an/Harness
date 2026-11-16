@@ -44,8 +44,9 @@ HIDDEN_TOOLS = {
 }
 
 # The name of a Harness MCP tool in the title of a tool call of the harness: "mcp__harness__show_visual" (Claude
-# Code), "harness.show_visual", "harness/show_visual", "harness_show_visual", or "show_visual (harness)".
-_TITLE_TOOL = re.compile(r"(?:^|[^A-Za-z0-9])(?:mcp__)?harness(?:__|[./:_])([a-z][a-z0-9_]*)")
+# Code), "mcp__editor_harness_aa5f56ca__preview_navigate" (Hermes Agent gives the server its own name),
+# "harness.show_visual", "harness/show_visual", "harness_show_visual", or "show_visual (harness)".
+_TITLE_TOOL = re.compile(r"(?:^|[^A-Za-z0-9])(?:mcp__[A-Za-z0-9_]*?harness[A-Za-z0-9_]*?__|harness(?:__|[./:_]))([a-z][a-z0-9_]*)")
 _TITLE_SUFFIX = re.compile(r"^([a-z][a-z0-9_]*)\s*\((?:mcp:?\s*)?harness(?:\s+mcp(?:\s+server)?)?\)", re.IGNORECASE)
 
 
@@ -63,8 +64,8 @@ _INSTRUCTION_LINES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("preview_start", "preview_navigate", "preview_snapshot"),
      "- Browser: the user sees the Browser pane of Harness. After a change to a web page or a web app, start its "
      "server with preview_start, open the page with preview_navigate, and check it with preview_snapshot (and "
-     "preview_screenshot when the look matters). Test with preview_click and preview_fill. Do not use the browser "
-     "tools when the task has no web interface."),
+     "preview_screenshot when the look matters). Test with preview_click and preview_fill. List, switch, and close "
+     "tabs with preview_tabs. Do not use the browser tools when the task has no web interface."),
     (("show_visual",),
      "- Visuals: to explain with a diagram, a flow, a chart, or a comparison, call show_visual. The visual shows in "
      "the chat. Do not repeat its content in your text."),

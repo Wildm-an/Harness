@@ -146,8 +146,8 @@ if (isTauri()) void browserView.closeAll().catch(() => undefined);
 
 // -- The tabs of the agent -------------------------------------------------------------------------
 // The agent and the user use the same tabs of the session (the user asked for this). The agent lists
-// them (Harness.listTabs), continues in a tab of the user (Harness.useTab), or opens a new tab
-// (Harness.newTab). "agentTabs" is the tab that the agent works in now. All tabs share the cookies, so the agent
+// them (Harness.listTabs), continues in a tab of the user (Harness.useTab), opens a new tab
+// (Harness.newTab), or closes a tab (Harness.closeTab). "agentTabs" is the tab that the agent works in now. All tabs share the cookies, so the agent
 // is signed in where the user is. While the agent works, a tab that the pane does not show is
 // "parked": it moves out of sight with a real size and stays visible, so the page keeps drawing.
 // The agent can then take its screenshots, and the session rail shows the page live.
@@ -408,6 +408,15 @@ export async function runAgentCall(session: string, method: string, params: unkn
   if (method === "Harness.newTab") {
     const id = await agentTabFor(session, true);
     return { tab: id, result: { id } };
+  }
+  if (method === "Harness.closeTab") {
+    // The agent closes a tab of its session, as the close button of the tab does (the user asked for this).
+    const id = String((params as { id?: unknown } | null)?.id ?? "");
+    if (!allTabs().tabs.some((t) => t.id === id && ownerOf(t) === session)) {
+      throw new Error(`The session has no tab ${id}. Use an id from preview_tabs.`);
+    }
+    closeTabById(id);
+    return { tab: agentTabs.get(session) ?? "", result: { closed: id } };
   }
   const tab = await agentTabFor(session);
   const info = agentInfo.get(tab);

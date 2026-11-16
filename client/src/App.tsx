@@ -111,6 +111,7 @@ import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater"
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
 import { AgentsSettings } from "./components/AgentsSettings";
+import { AgentModeMenu, agentModes, nextAgentMode } from "./components/AgentModeMenu";
 import { AgentPicker } from "./components/AgentPicker";
 import { StorageDialog } from "./components/StorageDialog";
 import { TasksPane } from "./components/TasksPane";
@@ -187,7 +188,7 @@ import { isModelUnavailable, networkModel, proposedModel, rememberModel } from "
 import { ModelChoice, isLocalProvider } from "./components/ModelChoice";
 import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
-import { setAllowBypass } from "./lib/bypass";
+import { bypassAllowed, setAllowBypass } from "./lib/bypass";
 import {
   LOCAL,
   closeTunnel,
@@ -2894,14 +2895,29 @@ export default function App() {
             sessions={mentionSessions}
             fileMatches={fileMatches}
             onFindFiles={(query) => sendSafely({ type: "fs.find", query })}
-            onCycleMode={() => changeMode(nextMode(permissionMode))}
+            onCycleMode={() => {
+              // Shift+Tab: the next mode of the agent in an ACP session, else the next Harness mode.
+              const harness = session?.harness;
+              if (harness?.modes?.length) {
+                if (chat.running) return;
+                const next = nextAgentMode(agentModes(harness, bypassAllowed()), harness.mode);
+                if (next && next !== harness.mode) sendSafely({ type: "acp.mode", mode: next });
+                return;
+              }
+              changeMode(nextMode(permissionMode));
+            }}
             suggestion={!chat.running && session && suggestion?.sessionId === session.id ? suggestion.text : null}
             onDismissSuggestion={() => setSuggestion(null)}
             imageNote={session && !session.harness && chat.imageInput === false ? noImageNote(modelName(session.model)) : null}
             below={
               session && (
                 <>
-                <ModeMenu mode={permissionMode} onChange={changeMode} />
+                {/* An ACP session shows the modes of its agent (the user asked for this), else the Harness modes. */}
+                {session.harness?.modes?.length ? (
+                  <AgentModeMenu harness={session.harness} disabled={chat.running} onChange={(mode) => sendSafely({ type: "acp.mode", mode })} />
+                ) : (
+                  <ModeMenu mode={permissionMode} onChange={changeMode} />
+                )}
                 <div className="prompt-below-right">
                 {/* The agent and model picker (rule C14). The agent of a session is fixed. */}
                 <AgentPicker

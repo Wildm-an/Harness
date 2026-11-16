@@ -975,6 +975,13 @@ class PaneBrowser:
             await self._send("Harness.useTab", {"id": tab}, 10)
         self.started = True  # The tab can have a page already: snapshot and click work on it.
 
+    async def close_tab(self, tab: str) -> None:
+        """Close a tab of the session, as its close button does. The pseudo method ``Harness.closeTab``."""
+        await self._send("Harness.closeTab", {"id": tab}, 10)
+        if tab == self._tab:
+            self._tab = None  # The next call works in another tab.
+            self.started = False
+
     async def navigate(self, url: str) -> dict[str, Any]:
         await self._eval(CONSOLE_HOOK_JS)  # The first call makes the tab.
         result = await self._call("Page.navigate", {"url": url}, NAVIGATE_TIMEOUT / 1000)

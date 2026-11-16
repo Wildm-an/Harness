@@ -46,9 +46,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .auto_mode import SafetyMatch, bypass_safety_rules, hard_rule, safety_match
-from .permissions import PROTECTED_ASK, SAFETY_ASK, SAFETY_BLOCK
-from . import __version__, acp_harnesses, acp_mcp, acp_models, agent_auth
+from .auto_mode import bypass_safety_rules, hard_rule
+from .permissions import SAFETY_BLOCK
+from . import __version__, acp_harnesses, acp_icons, acp_mcp, acp_models, agent_auth
 from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
 from .acp_terminal import TerminalError, TerminalHost
 from .agent import INTERRUPTED, Agent, user_message
@@ -58,6 +58,7 @@ from .files import file_hash, relpath
 from .permissions import PLAN_BLOCK
 from .providers import ModelClient, Provider
 from .tools import ToolResult, truncate
+from .tools.base import Approval
 
 log = logging.getLogger("harness.acp")
 
@@ -415,6 +416,30 @@ class _McpCard:
         return bool(self.args) and (raw == self.args or raw.get("arguments") == self.args)
 
 
+HARNESS_AUTO = "harness:auto"  # The mode menu: Auto mode of Harness for a harness with no Auto mode.
+# The Harness permission mode for a mode of a harness. The gate of Harness follows the mode that the menu shows.
+MODE_MAP = {
+    "default": "default", "ask": "default", "manual": "default",
+    "acceptEdits": "acceptEdits", "accept_edits": "acceptEdits", "dont_ask": "acceptEdits",
+    "plan": "plan", "read_only": "plan", "readonly": "plan",
+    "auto": "auto",
+    "bypassPermissions": "bypassPermissions", "bypass": "bypassPermissions", "yolo": "bypassPermissions",
+}
+
+AUTO_NO_MODEL = ("Auto mode has no model to check the actions of {name}: its own model is not in Harness. Choose "
+                 "an \"Auto mode model\" on Settings > Agents, then Harness checks these actions for you.")
+
+
+class _GateTool:
+    """The tool of a permission request of the harness, for the permission gate (permissions.PermissionGate)."""
+
+    needs_approval = True
+    read_only = False
+
+    def __init__(self, name: str):
+        self.name = name
+
+
 class AcpAgent(Agent):
     """An agent whose loop runs in another harness, through ACP."""
 
@@ -423,6 +448,22 @@ class AcpAgent(Agent):
         self.harness = harness
         # A model of the Harness providers for the titles and the prompt suggestions. None: no such model.
         self.aux_client = aux_client
+        # The model of auto mode (auto_mode.AutoReviewer): the model of the other harness is not in Harness.
+        self.auto_client = aux_client
+        # The permission gate of Harness decides the requests of the harness and the calls of the Harness MCP
+        # server. Auto mode with no model to check the calls asks the user, as Manual mode does, and says why.
+        self.gate.mode = self._gate_mode
+        ask = self.gate.approver
+
+        async def approver(request: dict[str, Any]) -> str:
+            if (request.get("kind") is None and "reason" not in request and self._mode_setting() == "auto"
+                    and self._gate_mode() != "auto"):
+                request = {**request, "reason": AUTO_NO_MODEL.format(name=self.harness.name)}
+            # The card names the harness that asks, with its logo (the user asked for this).
+            request = {**request, "harness": self._card_harness()}
+            return await ask(request)
+
+        self.gate.approver = approver
         self.model_checks_pending = False
         self.model_warnings: list[str] = []
         self._conn: AcpConnection | None = None
@@ -434,6 +475,10 @@ class AcpAgent(Agent):
         self._loaded = False  # True: the harness has the context of acp_session.
         self._modes: list[str] = []
         self._mode: str | None = None
+        self.acp_modes: list[dict[str, str]] = []  # The modes of the harness for the mode menu: id, name, description.
+        # The mode that the user chose in the mode menu of the session: a mode id of the harness, or HARNESS_AUTO.
+        # The permission gate of Harness follows it (MODE_MAP). None: the permission mode of Harness.
+        self._chosen_mode: str | None = None
         # The state of the current turn.
         self._calls: dict[str, _Call] = {}
         self._text: list[str] = []
@@ -514,6 +559,7 @@ class AcpAgent(Agent):
                                                              "mcpServers": self._mcp_servers()})
                 self._read_session(result)
                 self._loaded = True
+                await self._sync_mode(conn)  # The mode menu shows the mode of the harness at once.
                 await self._send_state()
                 return conn, False
             except AcpError as e:
@@ -537,6 +583,7 @@ class AcpAgent(Agent):
         prior = self.history[:-1] if self.in_turn else self.history
         self._needs_recap = any(m.get("role") in ("user", "assistant") for m in prior)
         await self._select_provider_model(conn)
+        await self._sync_mode(conn)  # The mode menu shows the mode of the harness from the start.
         await self._send_state()
         return conn, self._needs_recap
 
@@ -660,23 +707,77 @@ class AcpAgent(Agent):
         modes = result.get("modes") if isinstance(result, dict) else None
         if isinstance(modes, dict):
             available = modes.get("availableModes")
+            self.acp_modes = [{"id": str(m.get("id")), "name": str(m.get("name") or m.get("id")),
+                               "description": str(m.get("description") or "")}
+                              for m in available if isinstance(m, dict) and m.get("id")] \
+                if isinstance(available, list) else []
             self._modes = [str(m.get("id")) for m in available if isinstance(m, dict) and m.get("id")] \
                 if isinstance(available, list) else []
             self._mode = modes.get("currentModeId") if isinstance(modes.get("currentModeId"), str) else None
 
     async def _sync_mode(self, conn: AcpConnection) -> None:
-        """Use the ACP mode of the Harness permission mode, when the harness has a mode with that id."""
-        wanted = self._mode_setting()
-        if not self._modes or wanted not in self._modes or wanted == self._mode:
+        """The first time: use the mode of the harness that matches the Harness permission mode (the same id, or
+        an equal mode such as "accept_edits"). Auto mode of Harness for a harness with no Auto mode is HARNESS_AUTO:
+        the harness asks, and the Harness gate decides with its model. Then the mode menu shows the mode of the
+        harness, and the gate follows it."""
+        if self._chosen_mode is not None or not self._modes:
             return
-        try:
-            await conn.request("session/set_mode", {"sessionId": self.acp_session, "modeId": wanted})
-            self._mode = wanted
-        except AcpError as e:
-            log.info("%s did not change the mode to %s: %s", self.harness.name, wanted, e)
+        wanted = str(self.settings.get("permission_mode") or "default")
+        target = wanted if wanted in self._modes else next(
+            (m for m in self._modes if MODE_MAP.get(m) == wanted and wanted != "default"), None)
+        if target is None and wanted == "auto":
+            self._chosen_mode = HARNESS_AUTO
+            await self._send_state()
+            return
+        if target is not None and target != self._mode:
+            try:
+                await conn.request("session/set_mode", {"sessionId": self.acp_session, "modeId": target})
+                self._mode = target
+            except AcpError as e:
+                log.info("%s did not change the mode to %s: %s", self.harness.name, target, e)
+        self._chosen_mode = self._mode
+        await self._send_state()
+
+    async def set_mode(self, mode_id: str) -> None:
+        """The mode menu of an ACP session: a mode of the harness, or HARNESS_AUTO."""
+        if mode_id != HARNESS_AUTO and mode_id not in self._modes:
+            raise AcpError(f"{self.harness.name} has no mode {mode_id}.")
+        if mode_id == HARNESS_AUTO:
+            self._chosen_mode = HARNESS_AUTO
+            await self._send_state()
+            return
+        conn, _ = await self._ensure_session()
+        if mode_id != self._mode:
+            await conn.request("session/set_mode", {"sessionId": self.acp_session, "modeId": mode_id})
+            self._mode = mode_id
+        self._chosen_mode = mode_id
+        await self._send_state()
+
+    def gate_mode_of(self, mode_id: str | None) -> str:
+        """The Harness permission mode for a mode of the harness (MODE_MAP). An unknown mode is Manual."""
+        if mode_id is None:
+            return str(self.settings.get("permission_mode") or "default")
+        if mode_id == HARNESS_AUTO:
+            return "auto"
+        return MODE_MAP.get(mode_id, "default")
 
     def _mode_setting(self) -> str:
+        """The Harness permission mode of the session: the mode of the harness that the menu shows (gate_mode_of),
+        or the Harness setting before the harness gives its modes."""
+        if self._chosen_mode is not None:
+            return self.gate_mode_of(self._chosen_mode)
         return str(self.settings.get("permission_mode") or "default")
+
+    def _card_harness(self) -> dict[str, Any]:
+        """The harness for a card of the chat: its id, its name, and its logo (a data URL, or None)."""
+        icon = None if self.harness.custom else acp_icons.icon(self.harness.id)
+        return {"id": self.harness.id, "name": self.harness.name, "icon": icon}
+
+    def _gate_mode(self) -> str:
+        mode = self._mode_setting()
+        if mode == "auto" and (self.gate.auto is None or not self.gate.auto.available()):
+            return "default"
+        return mode
 
     async def close(self) -> None:
         conn, self._conn = self._conn, None
@@ -746,9 +847,12 @@ class AcpAgent(Agent):
                 if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
             await self._send_state()
             return True
+        if kind == "current_mode_update" and isinstance(update.get("currentModeId"), str) and self._chosen_mode != HARNESS_AUTO:
+            self._chosen_mode = update["currentModeId"]
         if kind == "current_mode_update":
             if isinstance(update.get("currentModeId"), str):
                 self._mode = update["currentModeId"]
+                await self._send_state()  # The mode menu shows the new mode.
             return True
         if kind == "config_option_update":
             if isinstance(update.get("configOptions"), list):
@@ -795,6 +899,9 @@ class AcpAgent(Agent):
         raise error
 
     async def _permission(self, params: dict[str, Any]) -> dict[str, Any]:
+        """A permission request of the harness. The permission gate of Harness decides it, as for a Harness tool:
+        the deny rules, Plan mode, the safety rules, the mode (also Auto), the allow rules, then a question. A call
+        of the Harness MCP server is allowed here: the gate checks it when the MCP call comes (run_harness_tool)."""
         options = [o for o in params.get("options") or [] if isinstance(o, dict) and o.get("optionId")]
 
         def pick(*kinds: str) -> dict[str, Any] | None:
@@ -809,6 +916,8 @@ class AcpAgent(Agent):
                 return {"outcome": {"outcome": "cancelled"}}
             return {"outcome": {"outcome": "selected", "optionId": option["optionId"]}}
 
+        allow = lambda: selected(pick("allow_once", "allow_always"))  # noqa: E731
+        reject = lambda: selected(pick("reject_once", "reject_always"))  # noqa: E731
         if self._cancelling:
             return {"outcome": {"outcome": "cancelled"}}
         data = params.get("toolCall") if isinstance(params.get("toolCall"), dict) else {}
@@ -819,48 +928,40 @@ class AcpAgent(Agent):
             if call_id:
                 self._calls[call_id] = call
         call.update(data)
+        if call.title and acp_mcp.tool_of_title(call.title, acp_mcp.exposed_tools(self)):
+            return allow()
         await self._start_call(call)
         name, args = self._view(call)
-        mode = self._mode_setting()
-        if mode == "plan" and call.kind in ("edit", "delete", "move"):
-            return selected(pick("reject_once", "reject_always"))
-        # The safety rules of Harness apply to the external harness too (permissions.py): a hard rule match or an
-        # edit of a protected path does not get the automatic answer of bypassPermissions or acceptEdits.
-        match = self._safety_match(name, args)
-        reason = None
-        if match is not None:
-            setting = bypass_safety_rules() if mode == "bypassPermissions" else "ask"
-            if match.kind == "hard" and setting == "block":
-                return selected(pick("reject_once", "reject_always"))
-            if (match.kind == "hard" and setting == "off") or (match.kind == "protected" and mode == "bypassPermissions"):
-                match = None
-            else:
-                reason = (SAFETY_ASK.format(label=match.label) if match.kind == "hard"
-                          else PROTECTED_ASK.format(path=args.get("path")))
-        if match is None and mode == "bypassPermissions":
-            return selected(pick("allow_once", "allow_always"))
-        if match is None and mode == "acceptEdits" and call.kind == "edit":
-            return selected(pick("allow_once", "allow_always"))
-        always = pick("allow_always") if match is None else None  # A safety question has no "Always allow".
-        request: dict[str, Any] = {
-            "request_id": uuid.uuid4().hex,
-            "tool": name,
-            "input": args,
-            "diff": self._diff(call) or None,
-            # "Always allow" needs a rule in the client. The harness keeps the choice, not the project settings.
-            "rule": f"{self.harness.name}: {call.title or name}" if always is not None else None,
-            "remember": self.harness.name if always is not None else None,
-        }
-        if reason:
-            request["reason"] = reason
-        decision = await self.gate.approver(request)
+        if call.kind in ("read", "search", "think") and name != "bash":
+            return allow()  # As read, grep, and glob of Harness: no question.
+        approval = self._approval(call, name, args)
+        tool = _GateTool(approval.tool or name)
+        result = await self.gate.check(tool, args, approval)
         if self._cancelling:
             return {"outcome": {"outcome": "cancelled"}}
-        if decision == "allow_always":
-            return selected(always or pick("allow_once"))
-        if decision == "allow_once":
-            return selected(pick("allow_once", "allow_always"))
-        return selected(pick("reject_once", "reject_always"))
+        return allow() if result is True else reject()
+
+    def _approval(self, call: _Call, name: str, args: dict[str, Any]) -> Approval:
+        """What the permission gate checks for a call of the harness: the Harness tool name, the key that the
+        rules match (a command, a path, a domain), and the rule that "Always allow" adds to the project settings."""
+        diff = self._diff(call) or None
+        if name == "bash":
+            command = str(args.get("command") or "")
+            return Approval(key=command, rule=f"bash({command})" if command else "", diff=diff)
+        if name in ("edit", "read") or call.kind in ("delete", "move"):
+            path = str(args.get("path") or self._path(call) or call.title)
+            return Approval(key=path, rule=f"edit({path})" if path else "", tool="edit", diff=diff, input=args)
+        if name == "web_fetch":
+            from urllib.parse import urlparse
+            host = (urlparse(str(args.get("url") or "")).hostname or "").lower()
+            return Approval(key=f"domain:{host}", rule=f"web_fetch(domain:{host})" if host else "", input=args)
+        if name == "web_search":
+            return Approval(key=str(args.get("query") or ""), rule="web_search", input=args)
+        # Another tool of the harness: the rules match its title, for example "acp(Open website)".
+        title = (call.title or call.kind or "tool").strip()
+        safe = bool(title) and not re.search(r"[()\n]", title)
+        return Approval(key=title, rule=f"{ACP_TOOL}({title})" if safe else "", tool=ACP_TOOL, diff=diff,
+                        input={"title": title, **({"input": call.raw_input} if call.raw_input else {})})
 
     # -- the features of Harness for the harness ------------------------------------------------------------
 
@@ -919,16 +1020,6 @@ class AcpAgent(Agent):
         await asyncio.to_thread(path.write_text, content, "utf-8", None, "")
         if rel is not None:
             await self._changed(str(path))
-        return None
-
-    def _safety_match(self, name: str, args: dict[str, Any]) -> SafetyMatch | None:
-        """A hard rule match of a command, or an edit of a protected path (auto_mode.safety_match)."""
-        if name == "bash":
-            return safety_match("bash", str(args.get("command") or ""))
-        if name == "edit" and isinstance(args.get("path"), str):
-            path = Path(args["path"])
-            rel = relpath(self.cwd, path) if path.is_absolute() else args["path"]
-            return safety_match("edit", rel)
         return None
 
     def _terminal_create(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1339,8 +1430,12 @@ class AcpAgent(Agent):
 
     def public_harness(self) -> dict[str, Any]:
         """The harness of the session for the client: its models and its / commands, when it has them."""
+        auto_extra = bool(self.acp_modes) and not any(MODE_MAP.get(m["id"]) == "auto" for m in self.acp_modes)
         return {"id": self.harness.id, "name": self.harness.name, "models": self.acp_models,
-                "model": self.acp_model, "commands": self.acp_commands}
+                "model": self.acp_model, "commands": self.acp_commands,
+                # The mode menu: the modes of the harness, the current one, and "Auto (Harness)" for a harness
+                # with no Auto mode of its own (the gate of Harness checks its requests with the auto model).
+                "modes": self.acp_modes, "mode": self._chosen_mode, "harness_auto": auto_extra}
 
 
 # -- the models of a harness before its first session (Settings > Agents, the picker of the start screen) --

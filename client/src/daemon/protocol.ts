@@ -54,6 +54,8 @@ export interface PermissionRequest {
   reason?: string | null; // Why a plugin asks for approval.
   agent?: string; // A background subagent asks. Its card stays open after the turn ends.
   background?: boolean;
+  // An ACP session: the harness that asks (its id, name, and logo as a data URL). The card names it.
+  harness?: { id: string; name: string; icon: string | null } | null;
   // A request that is not a permission (daemon tools/interact.py): a question card or a plan card.
   kind?: "question" | "plan";
   questions?: AskQuestion[];
@@ -346,6 +348,11 @@ export interface SessionHarness {
   models?: { id: string; name: string; description: string }[]; // The model menu. Empty: the harness gives none.
   model?: string | null; // The current model id. On the start screen (user_settings): the model of a Harness provider, "<provider>/<model>".
   native_model?: string | null; // On the start screen: the chosen model id of the harness itself.
+  // An ACP session: the permission modes of the harness for the mode menu, the current one (a mode id, or
+  // "harness:auto"), and harness_auto: the menu also has "Auto" of Harness (the harness has no Auto mode).
+  modes?: { id: string; name: string; description: string }[];
+  mode?: string | null;
+  harness_auto?: boolean;
   commands?: { name: string; description: string; hint: string }[]; // The / commands of the harness.
 }
 
@@ -962,6 +969,8 @@ export type ClientMessage =
   | { type: "harnesses.native_model"; id: string; model: string | null } // A model of the harness itself. null: its default.
   | { type: "agents.enable"; id: string; enabled: boolean } // Show the agent in the picker and on the Agents page.
   | { type: "agents.check"; id: string } // Read the sign-in state and the usage again.
+  | { type: "acp.mode"; mode: string } // The mode menu of an ACP session: a mode id of the harness, or "harness:auto".
+  | { type: "agents.auto_model"; model: string | null } // The model of Auto mode ("auto_mode.model"). null: none.
   | { type: "agents.models"; id: string } // Read the models of the agent before its first session.
   | { type: "agents.signin"; id: string; cols: number; rows: number } // Start the sign-in terminal.
   | { type: "agents.signin.input"; id: string; data: string }
@@ -1245,7 +1254,8 @@ export type DaemonMessage =
   | { type: "project_settings"; cwd: string; path: string; settings: ProjectSettings; saved?: boolean }
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
-  | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
+  // Settings > Agents. auto_model: the model of Auto mode for the agents of other harnesses ("provider/model"), or null.
+  | { type: "harnesses"; items: HarnessItem[]; current: string; path: string; auto_model?: string | null }
   | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
   | { type: "agents.signin.started"; id: string } // The sign-in terminal of the agent runs.
   | { type: "agents.signin.output"; id: string; data: string }
