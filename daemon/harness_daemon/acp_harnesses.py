@@ -4,7 +4,7 @@ Settings > Agents lists them. The user setting ``operating_harness`` holds the i
 harness for new sessions. No value (or "harness") is the built-in agent loop of Harness (agent.py).
 
 The list comes from the ACP registry (https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json,
-November 2026), plus Oh My Pi, which is not in the registry. An entry starts in one of three ways:
+November 2026), plus Oh My Pi and Hermes Agent (``hermes acp``), which are not in the registry. An entry starts in one of three ways:
 
 - ``bin``: a program on the PATH of the daemon computer, with its ACP arguments.
 - ``npx``: an npm package at a fixed version. Node.js must be installed. npx downloads the package
@@ -99,6 +99,7 @@ CATALOG: tuple[HarnessSpec, ...] = (
     _h("goose", "goose", "A local, open source AI agent of Block.", "https://block.github.io/goose/", "Apache-2.0", bin=("goose", ["acp"])),
     _h("grok-build", "Grok Build", "The coding agent of xAI.", "https://x.ai/cli", "Proprietary", npx=("@xai-official/grok@1.0.78", ["agent", "stdio"])),
     _h("harn", "Harn", "Runs .harn agent pipelines as an ACP coding agent.", "https://harnlang.com", "Apache-2.0", bin=("harn", ["serve", "acp"])),
+    _h("hermes", "Hermes Agent", "The agent of Nous Research, with many model providers, skills, and memory. Not in the ACP registry.", "https://github.com/NousResearch/hermes-agent", "MIT", bin=("hermes", ["acp"])),
     _h("junie", "Junie", "The coding agent of JetBrains.", "https://junie.jetbrains.com", "Proprietary", bin=("junie", ["--acp=true"])),
     _h("kilo", "Kilo", "An open source coding agent.", "https://kilo.ai/", "MIT", bin=("kilo", ["acp"]), npx=("@kilocode/cli@7.8.27", ["acp"])),
     _h("kimchi", "Kimchi", "A coding agent with multi-model orchestration.", "https://kimchi.dev", "Apache-2.0", bin=("kimchi", ["--mode", "acp"])),
@@ -123,14 +124,14 @@ CATALOG: tuple[HarnessSpec, ...] = (
 # an adapter of the ACP project, and they are in active use. "local": they can use a local model server, for
 # example the llama-server of the Local Models page.
 RECOMMENDED: dict[str, tuple[str, bool]] = {
-    "opencode": ("Open source, with native ACP. It works with many providers and with local models.", True),
-    "omp": ("Open source, with native ACP. A fork of Pi with more tools, LSP, and a debugger.", False),
-    "codex-acp": ("The ACP adapter of the ACP project for OpenAI Codex.", False),
-    "claude-acp": ("The ACP adapter of the ACP project for Claude Code. Needs an Anthropic account.", False),
+    # The top of "Add agent" on Settings > Agents, in this order (the user asked for it).
+    "claude-acp": ("Claude Code through ACP. It uses your Claude login, also a Pro or Max subscription.", False),
+    "codex-acp": ("The ACP adapter of the ACP project for OpenAI Codex. It uses your ChatGPT or OpenAI login.", False),
+    "grok-build": ("The coding agent of xAI, for the Grok models.", False),
     "gemini": ("Native ACP. Gemini CLI was the first harness with ACP, together with Zed.", False),
-    "goose": ("Open source, with native ACP. It works with many providers and with local models (Ollama).", True),
-    "qwen-code": ("Open source, with native ACP. It works with OpenAI-compatible servers, also local ones.", True),
-    "cline": ("Open source, with native ACP. It works with local models (Ollama, LM Studio).", True),
+    "cursor": ("The coding agent of Cursor, with the models of your Cursor plan.", False),
+    "opencode": ("Open source, with native ACP. It works with many providers and with local models.", True),
+    "hermes": ("The agent of Nous Research, with native ACP. It works with many providers and with local models.", True),
 }
 
 

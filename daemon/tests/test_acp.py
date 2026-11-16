@@ -146,8 +146,11 @@ def test_harness_list_custom_harnesses_and_the_setting(daemon, harness_home):
     assert {"opencode", "omp", "codex-acp", "claude-acp", "gemini"} <= ids and listing["current"] == "harness"
     recommended = sorted((i for i in listing["items"] if i["recommended"] is not None), key=lambda i: i["recommended"])
     assert [i["id"] for i in recommended] == list(acp_harnesses.RECOMMENDED)
-    assert recommended[0]["id"] == "opencode" and recommended[0]["local_models"] and recommended[0]["reason"]
+    assert [i["id"] for i in recommended] == ["claude-acp", "codex-acp", "grok-build", "gemini", "cursor", "opencode", "hermes"]
+    assert recommended[0]["reason"] and not recommended[0]["local_models"] and recommended[5]["local_models"]
     assert all(acp_harnesses.find(i) is not None for i in acp_harnesses.RECOMMENDED)
+    hermes = next(i for i in listing["items"] if i["id"] == "hermes")  # Not in the ACP registry.
+    assert hermes["name"] == "Hermes Agent" and hermes["command"] == "hermes acp" and hermes["license"] == "MIT"
     omp = next(i for i in listing["items"] if i["id"] == "omp")
     assert omp["command"] == "omp --mode acp" and omp["status"] in ("installed", "missing")
 
