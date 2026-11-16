@@ -340,3 +340,37 @@ def test_acp_bypass_mode_asks_for_a_hard_rule_match(daemon, project, fake_acp):
     end, seen = c.until("turn.end", timeout=30)
     assert "".join(m["text"] for m in seen if m["type"] == "token") == "outcome=no"
     c.close()
+
+
+def test_acp_first_prompt_has_the_harness_instructions(daemon, project, fake_acp):
+    """As T3 Code does for its ACP agents, the first prompt of a new ACP session tells the model about the tools
+    of the Harness interface. The next prompts do not repeat it, and the chat does not show it."""
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "blocks"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=2"
+    c.send({"type": "prompt", "text": "blocks"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=1"
+    prompts = [m for m in (json.loads(line) for line in fake_acp.read_text().splitlines()) if m.get("method") == "session/prompt"]
+    first = prompts[0]["params"]["prompt"][0]["text"]
+    assert first.startswith("<harness_instructions>") and "show_visual" in first and "preview_navigate" in first
+    assert "<harness_instructions>" not in json.dumps(prompts[1]["params"]["prompt"])
+    c.close()
+
+
+def test_harness_tool_names_in_titles_and_the_instructions():
+    from harness_daemon import acp_mcp
+    tools = {"show_visual", "ask_user_question", "send_file", "preview_start", "preview_navigate", "preview_snapshot"}
+    assert "show_visual" not in acp_mcp.HIDDEN_TOOLS and "ask_user_question" not in acp_mcp.HIDDEN_TOOLS
+    assert acp_mcp.tool_of_title("mcp__harness__show_visual", tools) == "show_visual"
+    assert acp_mcp.tool_of_title("harness.preview_start", tools) == "preview_start"
+    assert acp_mcp.tool_of_title("send_file (harness MCP Server)", tools) == "send_file"
+    assert acp_mcp.tool_of_title("mcp__github__show_visual", tools) is None
+    assert acp_mcp.tool_of_title("Run show_visual", tools) is None
+    assert acp_mcp.tool_of_title("mcp__harness__bash", tools) is None  # Not a tool of the server.
+    block = acp_mcp.instructions(tools)
+    assert block.startswith("<harness_instructions>") and block.endswith("</harness_instructions>")
+    assert "ask_user_question" in block and "artifact" not in block  # Only the lines of the tools it has.
+    assert acp_mcp.instructions({"cron_list"}) == ""

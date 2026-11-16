@@ -441,6 +441,7 @@ class AcpAgent(Agent):
         self._replaying = False  # session/load replays the old conversation: the client does not get it.
         self._cancelling = False
         self._needs_recap = False  # A new ACP session for a session with history: the next prompt has a recap.
+        self._needs_instructions = False  # A new ACP session: the next prompt has the <harness_instructions> block.
         # The Harness MCP server of this session (acp_mcp.py). The server sets the address of the daemon.
         self.mcp_base: str | None = None
         self._mcp_secret: str | None = None
@@ -530,6 +531,7 @@ class AcpAgent(Agent):
             raise AcpError(f"{self.harness.name} did not give a session id.")
         self.acp_session = sid
         self._loaded = True
+        self._needs_instructions = True  # A new ACP session: the next prompt tells the model about the Harness tools.
         self._read_session(result)
         # The conversation before this ACP session: in a turn, the last message is the prompt of the turn.
         prior = self.history[:-1] if self.in_turn else self.history
@@ -718,9 +720,14 @@ class AcpAgent(Agent):
                 call = self._calls[call_id] = _Call(call_id)
             call.update(update)
             self._thinking = False
-            if call.status in ("in_progress", "completed", "failed") or call.raw_input:
+            # A call of the Harness MCP server starts its row when the MCP call comes (run_harness_tool): then its
+            # input is complete. (The harness can report the input while the model still writes it, and a visual
+            # needs all of its code.) The end of the call starts the row too, if the MCP call did not come.
+            harness_tool = acp_mcp.tool_of_title(call.title, acp_mcp.exposed_tools(self)) if call.title else None
+            if harness_tool is None and (call.status in ("in_progress", "completed", "failed") or call.raw_input):
                 await self._start_call(call)
             if call.status in ("completed", "failed"):
+                await self._start_call(call)
                 await self._end_call(call)
         elif kind == "plan":
             entries = update.get("entries")
@@ -939,6 +946,13 @@ class AcpAgent(Agent):
     async def run_harness_tool(self, name: str, args: dict[str, Any]) -> ToolResult:
         """A call of the Harness MCP server (acp_mcp.py). The permissions and the hooks of Harness apply."""
         call_id = f"harness_{uuid.uuid4().hex[:12]}"
+        # The tool row of the harness for this call starts now, with the complete input of the MCP call.
+        tools = acp_mcp.exposed_tools(self)
+        waiting = next((c for c in self._calls.values() if not c.started and c.title
+                        and acp_mcp.tool_of_title(c.title, tools) == name), None)
+        if waiting is not None:
+            waiting.raw_input = dict(args)
+            await self._start_call(waiting)
         snapshot = await asyncio.to_thread(before_call, self.cwd, name, args)
         result = await self._execute(name, args, None, call_id)
         if not result.limited:
@@ -979,6 +993,11 @@ class AcpAgent(Agent):
         """The tool name and input for the tool row of the client."""
         raw = call.raw_input
         title = call.title or call.kind
+        # A call of the Harness MCP server gets the row of the Harness tool, with its card (a visual, the browser).
+        tool = acp_mcp.tool_of_title(title, acp_mcp.exposed_tools(self)) if call.title else None
+        if tool is not None:
+            args = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else raw
+            return tool, dict(args)
         if call.kind == "execute":
             command = _command_text(raw)
             if not command:
@@ -1164,6 +1183,11 @@ class AcpAgent(Agent):
 
     def _prompt_blocks(self, text: str, images: list[str] | None, recap: str | None) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
+        if self._needs_instructions:
+            self._needs_instructions = False
+            block = acp_mcp.instructions(acp_mcp.exposed_tools(self)) if self._mcp_servers() else ""
+            if block:
+                blocks.append({"type": "text", "text": block})
         if recap:
             blocks.append({"type": "text", "text": recap})
         blocks.append({"type": "text", "text": text})
