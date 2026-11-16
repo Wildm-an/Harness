@@ -18,16 +18,20 @@ export function agentInitials(name: string): string {
 }
 
 /**
- * The icon of an agent: the app icon for the built-in loop, the icon of the ACP registry (a data URL, shown as a
- * mask in the text color, so the SVG runs no code), else the initials in a small square.
+ * The icon of an agent: the app icon for the built-in loop, the logo of the agent (a data URL from the daemon, in an
+ * <img>, so the SVG runs no code) in its own colors on a light tile, else the initials in a small square.
  */
 export function AgentIcon({ id, name, icon, size = 16 }: { id: string; name: string; icon?: string | null; size?: number }) {
   if (id === BUILTIN_AGENT) {
     return <img className="agent-icon builtin" src="/app-icon.svg" alt="" width={size} height={size} aria-hidden />;
   }
   if (icon && icon.startsWith("data:image/svg+xml")) {
-    const mask = `url("${icon}") center / contain no-repeat`;
-    return <span className="agent-icon logo" style={{ width: size, height: size, WebkitMask: mask, mask }} aria-hidden />;
+    // Full color, as the brand shows it (the user asked for this): the logo on a light tile, as an app icon.
+    return (
+      <span className="agent-icon logo" style={{ width: size, height: size }} aria-hidden>
+        <img src={icon} alt="" draggable={false} />
+      </span>
+    );
   }
   return (
     <span className="agent-icon" style={{ width: size, height: size, fontSize: Math.max(7, Math.round(size * 0.45)) }} aria-hidden>

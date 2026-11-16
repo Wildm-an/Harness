@@ -118,3 +118,20 @@ def test_the_models_of_session_new():
         {"group": "A", "options": [{"value": "a1", "name": "A one"}]}, {"value": "b", "description": "B"}]}]}
     assert [m["id"] for m in parse_models(config)] == ["a1", "b"]
     assert parse_models(None) == []
+
+
+def test_the_logos_have_their_brand_colors(harness_home):
+    import base64
+    from harness_daemon import acp_icons
+    acp_icons._cache.clear()
+    folder = harness_home / "harnesses" / "icons"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("claude-acp", "opencode"):
+        (folder / f"{name}.svg").write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M0 0"/></svg>')
+    svg = lambda i: base64.b64decode(acp_icons.icon(i).split(",", 1)[1])
+    assert b'fill="#D97757"' in svg("claude-acp") and b"currentColor" not in svg("claude-acp")
+    assert b'fill="#000000"' in svg("opencode")
+    # Hermes Agent is not in the registry: Harness ships its logo.
+    hermes = svg("hermes")
+    assert hermes.startswith(b"<svg") and len(hermes) <= acp_icons.MAX_BYTES and acp_icons.safe_svg(hermes)
+    acp_icons._cache.clear()

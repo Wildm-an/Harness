@@ -13783,9 +13783,19 @@ input::-ms-clear {
   }
 }
 
-/* An agent icon of the ACP registry: the SVG is a mask, so it shows in the text color (AgentBits.tsx). */
+/* The logo of an agent in its own colors, on a light tile as an app icon, in both themes (AgentBits.tsx). */
 .agent-icon.logo {
-  background: currentColor;
+  position: relative;
+  background: #ffffff;
   border: none;
-  border-radius: 0;
+  border-radius: 22%;
+  overflow: hidden;
+}
+/* The logo fills the tile with a margin of 14% of the tile (a padding in percent would use the width of the row). */
+.agent-icon.logo img {
+  position: absolute;
+  inset: 14%;
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
 }
