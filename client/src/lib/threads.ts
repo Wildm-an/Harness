@@ -6,7 +6,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { RunningSession, SessionSummary } from "../daemon/protocol";
-import { formatClock, formatTime } from "./timeFormat";
+import { formatTime } from "./timeFormat";
 import { loadPref, savePref } from "./prefs";
 
 // -- the setting: Settings > General > "Sidebar organization" (per device) ----------------------------------
@@ -289,19 +289,18 @@ function at9(date: Date): Date {
   return d;
 }
 
-/** The choices of the "Snooze" submenu: "1 hour", "3 hours", "Tomorrow, 9:00 AM", "Next Monday, 9:00 AM". */
+/** The choices of the "Snooze" menus: "1 hour", "3 hours", "Tomorrow" (9:00 AM), "Next Monday" (9:00 AM). The menu shows the wake time of each. */
 export function snoozeChoices(now: Date = new Date()): SnoozeChoice[] {
   const ms = now.getTime();
   const tomorrow = at9(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
   // The next Monday after today: on a Monday, the Monday of the next week.
   const days = ((8 - now.getDay()) % 7) || 7;
   const monday = at9(new Date(now.getFullYear(), now.getMonth(), now.getDate() + days));
-  const nine = formatClock(9, 0);
   return [
     { label: "1 hour", until: (ms + 3600_000) / 1000 },
     { label: "3 hours", until: (ms + 3 * 3600_000) / 1000 },
-    { label: `Tomorrow, ${nine}`, until: tomorrow.getTime() / 1000 },
-    { label: `Next Monday, ${nine}`, until: monday.getTime() / 1000 },
+    { label: "Tomorrow", until: tomorrow.getTime() / 1000 },
+    { label: "Next Monday", until: monday.getTime() / 1000 },
   ];
 }
 
@@ -332,3 +331,38 @@ export function undoKeyAllowed(target: EventTarget | null): boolean {
   if (el.isContentEditable) return false;
   return !el.closest("input, textarea, select, [contenteditable=''], [contenteditable='true'], .monaco-editor, .xterm");
 }
+
+// -- the row of T3 Code -----------------------------------------------------------------------------
+
+/** The age of the last activity, short, as T3 Code: "now" (under a minute), "5m", "2h", "3d". */
+export function compactAge(at: number, now: number = nowSeconds()): string {
+  const seconds = Math.max(0, Math.floor(now - at));
+  if (seconds < 60) return "now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** The time of work, as T3 Code: "42s", "5m", "1h 20m". */
+export function workingDuration(seconds: number): string {
+  const s = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  if (s < 60) return `${s}s`;
+  const minutes = Math.floor(s / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/** The status of a card row, in place of the time: "Working", "Approval" (awaits input), "Done" (unread). */
+export type ThreadStatus = "working" | "approval" | "done";
+
+export function threadStatus(running: RunningSession | undefined, unread: boolean): ThreadStatus | null {
+  if (running?.waiting) return "approval";
+  if (running) return "working";
+  if (unread) return "done";
+  return null;
+}
+
+/** The time that a row shows: the settle time for a settled row, else the last activity. */
+export const rowTime = (s: SessionSummary): number => (s.archived ? (s.archived_at ?? s.updated_at) : s.updated_at);

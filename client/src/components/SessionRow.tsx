@@ -6,18 +6,19 @@
 // the right half of the main view does the same (lib/split.ts).
 // A session with nested sessions shows their count and an arrow at the far right. The arrow shows or
 // hides the nested sessions under the row.
-// In the Threads layout of the sidebar (ThreadsList.tsx), the menu also has "Regenerate title", "Move up",
-// "Move down", "Snooze" or "Wake", "Auto-settle", and "Settle" in place of "Archive" (docs/UI_RULES.md 3.7).
+// In the Threads layout of the sidebar (ThreadsList.tsx, ThreadRow.tsx), the menu is the thread menu of T3 Code:
+// "Pin thread", "Settle thread", "Snooze", "Rename thread", "Regenerate title", "Mark unread", "Auto-settle
+// behavior", "Copy", and "Delete" (docs/UI_RULES.md 3.7). The keys work, but the menu does not show them.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, BellOff, CalendarClock, Check, ChevronRight, Columns2, EllipsisVertical, GitBranch, GitPullRequest, Pencil, Pin, PinOff, RefreshCw, SquareArrowOutUpRight, Sun, Timer, Trash2, Mail, MailOpen } from "lucide-react";
+import { Archive, ArchiveRestore, CalendarClock, CircleCheck, Clock, Copy, Folder, Hash, Check, ChevronRight, Columns2, EllipsisVertical, GitBranch, GitPullRequest, Pencil, Pin, PinOff, RefreshCw, SquareArrowOutUpRight, Timer, Trash2, Mail, MailOpen } from "lucide-react";
 import type { PullRequest, RunningSession, SessionSummary } from "../daemon/protocol";
 import { PR_STATE_TEXT, prRefText } from "../lib/pr";
 import { PrIcon, PrMiniCard, useHoverCard } from "./PrCard";
 import { useOverlay } from "../lib/overlay";
 import { modelName } from "../lib/modelName";
 import { setDraggedSession, startSessionDrag } from "../lib/split";
-import { snoozeChoices } from "../lib/threads";
+import { snoozeChoices, whenText } from "../lib/threads";
 
 export interface SessionActions {
   onResume: (id: string) => void;
@@ -92,12 +93,12 @@ export function splitItem(actions: Pick<SessionActions, "onOpenSplit">, active: 
 export interface ThreadMenuInfo {
   snoozed: boolean; // "Wake" in place of the "Snooze" submenu.
   autoArchive: boolean; // "Auto-settle": true is "Follow settings", false is "Never".
-  canMove: { up: boolean; down: boolean } | null; // "Move up" and "Move down" (Pinned and Active only). null: no items.
   retitling: boolean; // A title is being made: "Regenerate title" is off.
+  branch: string | null; // "Copy" > "Branch".
+  path: string; // "Copy" > "Path".
   onSnooze: (until: number) => void;
   onWake: () => void;
   onAutoArchive: (on: boolean) => void;
-  onMove: (step: -1 | 1) => void;
   onRetitle: () => void;
 }
 
@@ -105,14 +106,14 @@ const MENU_WIDTH = 210;
 const SUB_WIDTH = 160;
 const SNOOZE_WIDTH = 200;
 
-type SubKey = "open" | "snooze" | "auto";
+type SubKey = "open" | "snooze" | "auto" | "copy";
 
 export type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split" | "pr";
 const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete", g: "pr" };
 
 /** The session menu: of a sidebar row, and of the caret button at the right of the title in the top bar. */
 export function SessionMenu({ session, unread, prItem, split, anchor, at, align = "right", thread, onAction, onClose }: {
-  session: Pick<SessionSummary, "title" | "pinned" | "archived">;
+  session: Pick<SessionSummary, "title" | "pinned" | "archived"> & Partial<Pick<SessionSummary, "id">>;
   unread: boolean;
   prItem: boolean; // "Open PR": the branch of the session has a pull request.
   split: "on" | "off" | null; // "Open in" > "Split view": "off" when the main view shows the session. null: no item.
@@ -160,7 +161,7 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
     const item = subTriggers.current.get(key)?.getBoundingClientRect();
     const box = ref.current?.getBoundingClientRect();
     if (!item || !box) return;
-    const width = key === "snooze" ? SNOOZE_WIDTH : SUB_WIDTH;
+    const width = key === "snooze" ? SNOOZE_WIDTH + 40 : SUB_WIDTH;
     const left = box.right + width + 4 > window.innerWidth ? box.left - width - 4 : box.right + 4;
     setSub({ key, top: item.top - 4, left: Math.max(8, left), width });
     if (focus) window.setTimeout(() => subRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true }), 0);
@@ -225,7 +226,8 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
     >
       <Icon size={14} aria-hidden />
       <span className="session-menu-label">{label}</span>
-      <kbd className="session-menu-key">{key}</kbd>
+      {/* The thread menu of T3 Code shows no keys. The keys work. */}
+      {!thread && <kbd className="session-menu-key">{key}</kbd>}
     </button>
   );
 
@@ -267,7 +269,7 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
     </button>
   );
 
-  const subItem = (label: string, run: () => void, checked?: boolean) => (
+  const subItem = (label: string, run: () => void, checked?: boolean, detail?: string, Icon?: typeof Pin) => (
     <button
       key={label}
       type="button"
@@ -278,10 +280,14 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
         run();
       }}
     >
+      {Icon && <Icon size={14} aria-hidden />}
       <span className="session-menu-label">{label}</span>
+      {detail && <span className="session-menu-detail">{detail}</span>}
       {checked !== undefined && <span className="menu-check">{checked && <Check size={14} aria-hidden />}</span>}
     </button>
   );
+
+  const copy = (text: string) => void navigator.clipboard?.writeText(text).catch(() => {});
 
   // The pointer on an item with no submenu closes the open submenu.
   const onMouseOver = (e: React.MouseEvent) => {
@@ -313,31 +319,38 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
           <div className="menu-sep" role="separator" />
         </>
       )}
-      {item("pin", session.pinned ? "Unpin" : "Pin", "P", session.pinned ? PinOff : Pin)}
-      {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
-      <div className="menu-sep" role="separator" />
-      {item("rename", "Rename", "R", Pencil)}
-      {thread && plain("Regenerate title", RefreshCw, thread.onRetitle, thread.retitling, thread.retitling ? "A title is being made" : undefined)}
-      {!thread && item("archive", session.archived ? "Unarchive" : "Archive", "A", session.archived ? ArchiveRestore : Archive)}
-      {thread && (
+      {thread ? (
         <>
+          {item("pin", session.pinned ? "Unpin thread" : "Pin thread", "P", session.pinned ? PinOff : Pin)}
+          {item("archive", session.archived ? "Un-settle thread" : "Settle thread", "A", CircleCheck)}
+          {!session.archived && (thread.snoozed ? plain("Wake thread", Clock, thread.onWake) : subTrigger("snooze", "Snooze", Clock))}
           <div className="menu-sep" role="separator" />
-          {thread.canMove && plain("Move up", ArrowUp, () => thread.onMove(-1), !thread.canMove.up)}
-          {thread.canMove && plain("Move down", ArrowDown, () => thread.onMove(1), !thread.canMove.down)}
-          {!session.archived && (thread.snoozed ? plain("Wake", Sun, thread.onWake) : subTrigger("snooze", "Snooze", Timer))}
-          {subTrigger("auto", "Auto-settle", BellOff)}
+          {item("rename", "Rename thread", "R", Pencil)}
+          {plain(thread.retitling ? "Regenerating…" : "Regenerate title", RefreshCw, thread.onRetitle, thread.retitling)}
+          {item("unread", unread ? "Mark read" : "Mark unread", "U", MailOpen)}
+          {subTrigger("auto", "Auto-settle behavior", Timer)}
           <div className="menu-sep" role="separator" />
-          {item("archive", session.archived ? "Un-settle" : "Settle", "A", session.archived ? ArchiveRestore : Archive)}
+          {subTrigger("copy", "Copy", Copy)}
+          <div className="menu-sep" role="separator" />
+          {item("delete", "Delete", "D", Trash2, true)}
+        </>
+      ) : (
+        <>
+          {item("pin", session.pinned ? "Unpin" : "Pin", "P", session.pinned ? PinOff : Pin)}
+          {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
+          <div className="menu-sep" role="separator" />
+          {item("rename", "Rename", "R", Pencil)}
+          {item("archive", session.archived ? "Unarchive" : "Archive", "A", session.archived ? ArchiveRestore : Archive)}
+          <div className="menu-sep" role="separator" />
+          {item("delete", "Delete", "D", Trash2, true)}
         </>
       )}
-      <div className="menu-sep" role="separator" />
-      {item("delete", "Delete", "D", Trash2, true)}
       {sub && (
         <div
           ref={subRef}
           className="menu session-menu session-submenu"
           role="menu"
-          aria-label={sub.key === "open" ? "Open in" : sub.key === "snooze" ? "Snooze" : "Auto-settle"}
+          aria-label={{ open: "Open in", snooze: "Snooze", auto: "Auto-settle behavior", copy: "Copy" }[sub.key]}
           style={{ top: sub.top, left: sub.left, width: sub.width }}
         >
           {sub.key === "open" && (
@@ -352,7 +365,15 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
               <span className="session-menu-label">Split view</span>
             </button>
           )}
-          {sub.key === "snooze" && thread && snoozeChoices(snoozeAt).map((c) => subItem(c.label, () => thread.onSnooze(c.until)))}
+          {sub.key === "snooze" && thread && snoozeChoices(snoozeAt).map((c) => subItem(c.label, () => thread.onSnooze(c.until), undefined, whenText(c.until, snoozeAt.getTime() / 1000)))}
+          {sub.key === "copy" && thread && (
+            <>
+              {subItem("Path", () => copy(thread.path), undefined, undefined, Folder)}
+              {thread.branch && subItem("Branch", () => copy(thread.branch!), undefined, undefined, GitBranch)}
+              {session.title && subItem("Thread", () => copy(session.title!), undefined, undefined, Mail)}
+              {session.id && subItem("Thread ID", () => copy(session.id!), undefined, undefined, Hash)}
+            </>
+          )}
           {sub.key === "auto" && thread && (
             <>
               {subItem("Follow settings", () => thread.onAutoArchive(true), thread.autoArchive)}
@@ -530,7 +551,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
 
 /** The pull request mark of a session row, as in the Claude app: the PR icon in the color of its
  * state, with a small card on hover (the title, "Merged · owner/name #5", the line counts). */
-function PrMark({ pr }: { pr: PullRequest }) {
+export function PrMark({ pr }: { pr: PullRequest }) {
   const hover = useHoverCard(() => <PrMiniCard pr={pr} />);
   return (
     <>

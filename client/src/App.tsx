@@ -3235,6 +3235,7 @@ export default function App() {
       if (sendSafely({ type: "session.retitle", session_id: id })) setRetitling((r) => new Set(r).add(id));
     },
     retitling,
+    agents,
   };
 
   // Ctrl+Z runs the last "Undo" popup when the focus is not in a text field, the editor, or the terminal.

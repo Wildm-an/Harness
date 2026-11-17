@@ -189,9 +189,9 @@ describe("snooze", () => {
     expect(hour.label).toBe("1 hour");
     expect(hour.until).toBe(wed.getTime() / 1000 + 3600);
     expect(three.until).toBe(wed.getTime() / 1000 + 3 * 3600);
-    expect(tomorrow.label).toMatch(/^Tomorrow, /);
+    expect(tomorrow.label).toBe("Tomorrow");
     expect(new Date(tomorrow.until * 1000)).toEqual(new Date(2026, 10, 19, 9, 0));
-    expect(monday.label).toMatch(/^Next Monday, /);
+    expect(monday.label).toBe("Next Monday");
     expect(new Date(monday.until * 1000)).toEqual(new Date(2026, 10, 23, 9, 0));
     // On a Monday, "Next Monday" is the Monday of the next week.
     const mon = new Date(2026, 10, 16, 8, 0);

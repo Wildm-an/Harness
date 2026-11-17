@@ -1,15 +1,17 @@
 // The Threads layout of the sidebar (docs/UI_RULES.md 3.7): the user asked for the thread list of T3 Code,
 // as a choice in Settings > General > "Sidebar organization". One list, not grouped by project: Pinned and
-// Active in the manual order, then the folded shelves Working, Snoozed, and Settled (the archive). The rows
-// are the session rows of the sidebar (SessionRow.tsx), with the project name as a muted suffix.
+// Active in the manual order, then the folded shelves Working, Snoozed, and Settled (the archive) at the bottom
+// of the sidebar, as in T3 Code. The rows are the thread rows of T3 Code (ThreadRow.tsx): a card for Pinned,
+// Active, and Working, and a slim row for Snoozed and Settled. The labels "Pinned" and "Active" show only
+// during a drag, as in T3 Code.
 //
 // Drag a row (pointer events) within Pinned or Active to move it, between them to pin or unpin it, onto the
 // Settled header to settle it, and from Settled or Snoozed into Pinned or Active to un-settle or wake it.
 // A line shows the drop place. The pill of rule S9 follows the pointer and names the action.
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Search } from "lucide-react";
-import type { PrStatus, ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
+import { ChevronDown, Search } from "lucide-react";
+import type { HarnessItem, PrStatus, ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
 import {
   DRAG_SECTIONS,
@@ -19,19 +21,19 @@ import {
   dropAction,
   dropUpdates,
   isSnoozed,
-  movePositions,
   nextWake,
   nowSeconds,
+  threadStatus,
   threadSections,
   topPosition,
   trackStarts,
   undoText,
-  wakesText,
   type DropAction,
   type ThreadSection,
   type ThreadUpdate,
 } from "../lib/threads";
-import { SessionRow, sessionState, type SessionActions, type ThreadMenuInfo } from "./SessionRow";
+import { sessionState, type SessionActions, type ThreadMenuInfo } from "./SessionRow";
+import { ThreadRow, sessionAgent } from "./ThreadRow";
 import { SkeletonRows } from "./Skeleton";
 import { ancestry, folderName, hiddenActivity, nestSessions, pathKey, topSessions } from "./Sidebar";
 
@@ -41,6 +43,7 @@ export interface ThreadsActions {
   apply: (updates: ThreadUpdate[], undo?: string) => void;
   retitle: (id: string) => void; // session.retitle.
   retitling: Set<string>; // The sessions with a title that is being made.
+  agents: HarnessItem[] | null; // The agent list: the icon of the agent of each row.
 }
 
 const OPEN_PREF = "sidebar.threads.open"; // The shelves that the user opened: {"working": true, ...}.
@@ -101,7 +104,7 @@ export function ThreadsList({
   onSearch: () => void;
   searchKey?: string;
 }) {
-  // A timer renders the list again when a snoozed session wakes.
+  // A timer renders the list again when a snoozed session wakes, and each minute for the ages ("5m").
   const [, setTick] = useState(0);
   const now = nowSeconds();
   const wake = nextWake(sessions, now);
@@ -110,6 +113,10 @@ export function ThreadsList({
     const timer = window.setTimeout(() => setTick((t) => t + 1), Math.min(Math.max(0, (wake - nowSeconds()) * 1000) + 500, 2_000_000_000));
     return () => window.clearTimeout(timer);
   }, [wake]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Working lists the session that started work last first: the app notes when each session starts.
   const starts = useRef(new Map<string, number>());
@@ -164,22 +171,17 @@ export function ThreadsList({
         ? threads.apply([{ id, fields: { ...SETTLE_FIELDS } }], undoText("settle", titleOf(id)))
         : threads.apply([{ id, fields: { archived: false, position: topPosition(sessions) } }]),
   };
-  const threadInfo = (s: SessionSummary, section: ThreadSection, top: boolean): ThreadMenuInfo => {
-    const list = nested[section].top;
-    const at = list.findIndex((x) => x.id === s.id);
-    const movable = top && (section === "pinned" || section === "active");
-    return {
-      snoozed: isSnoozed(s, now),
-      autoArchive: s.auto_archive !== false,
-      canMove: movable ? { up: at > 0, down: at >= 0 && at < list.length - 1 } : null,
-      retitling: threads.retitling.has(s.id),
-      onSnooze: (until) => threads.apply([{ id: s.id, fields: { snoozed_until: until } }], undoText("snooze", s.title, until)),
-      onWake: () => threads.apply([{ id: s.id, fields: { snoozed_until: null } }]),
-      onAutoArchive: (on) => threads.apply([{ id: s.id, fields: { auto_archive: on } }]),
-      onMove: (step) => threads.apply(movePositions(list, s.id, step).map((p) => ({ id: p.id, fields: { position: p.position } }))),
-      onRetitle: () => threads.retitle(s.id),
-    };
-  };
+  const threadInfo = (s: SessionSummary): ThreadMenuInfo => ({
+    snoozed: isSnoozed(s, now),
+    autoArchive: s.auto_archive !== false,
+    retitling: threads.retitling.has(s.id),
+    branch: s.branch ?? null,
+    path: s.cwd,
+    onSnooze: (until) => threads.apply([{ id: s.id, fields: { snoozed_until: until } }], undoText("snooze", s.title, until)),
+    onWake: () => threads.apply([{ id: s.id, fields: { snoozed_until: null } }]),
+    onAutoArchive: (on) => threads.apply([{ id: s.id, fields: { auto_archive: on } }]),
+    onRetitle: () => threads.retitle(s.id),
+  });
 
   // -- drag ------------------------------------------------------------------------------------------
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -274,19 +276,25 @@ export function ThreadsList({
     const children = nested[section].children.get(s.id);
     const listId = `side-thread-nested-${s.id}`;
     const opened = !!children && isNestedOpen(s.id);
-    const snoozed = section === "snoozed" && typeof s.snoozed_until === "number";
     const draggable = top && DRAG_SECTIONS.includes(section) && !disabled;
+    const shelf = section === "snoozed" || section === "settled";
     return (
-      <SessionRow
+      <ThreadRow
         key={s.id}
         session={s}
+        variant={top && !shelf ? "card" : "slim"}
+        action={section === "settled" ? "unsettle" : section === "snoozed" ? "wake" : "settle"}
         active={s.id === activeId}
-        state={stateOf(s.id)}
+        status={shelf && top ? null : threadStatus(running.get(s.id), unread.has(s.id))}
+        workingSince={starts.current.get(s.id) ?? null}
         unread={unread.has(s.id)}
         disabled={disabled}
+        project={projectOf(s)}
+        agent={sessionAgent(s, threads.agents)}
+        now={now}
         actions={rowActions}
-        suffix={snoozed ? wakesText(s.snoozed_until!, now) : projectOf(s)}
-        thread={threadInfo(s, section, top)}
+        canSnooze={top && (section === "active" || section === "working")}
+        thread={threadInfo(s)}
         pr={s.branch ? (prStatus.get(pathKey(s.cwd))?.pr ?? null) : null}
         drag={
           draggable
@@ -312,11 +320,11 @@ export function ThreadsList({
         }
       >
         {children && opened && (
-          <ul id={listId} className="side-nested" aria-label={`Nested sessions of ${s.title ?? "Untitled session"}`}>
+          <ul id={listId} className="side-nested thread-nested" aria-label={`Nested sessions of ${s.title ?? "Untitled session"}`}>
             {children.map((c) => renderRow(c, section, false))}
           </ul>
         )}
-      </SessionRow>
+      </ThreadRow>
     );
   };
 
@@ -348,17 +356,19 @@ export function ThreadsList({
     return (
       <section key={key} ref={sectionRef(key)} className={`thread-section thread-shelf${isOpen ? " open" : ""}${overClass(key)}`} aria-label={SECTION_LABELS[key]}>
         <button type="button" className="thread-shelf-toggle" onClick={() => toggleShelf(key)} aria-expanded={isOpen} aria-controls={listId}>
-          <ChevronRight size={14} className="side-chevron" aria-hidden />
-          <span>{SECTION_LABELS[key]}</span>
+          <span className="thread-shelf-label">{SECTION_LABELS[key]}</span>
+          <span className="thread-shelf-rule" aria-hidden />
           <span className="thread-count">{rows.length}</span>
+          <ChevronDown size={12} className="thread-shelf-chevron" aria-hidden />
         </button>
         {shown.length > 0 && (
-          <ul id={listId} className="side-pinned">
+          <ul id={listId} className="thread-list">
             {shown.map((s) => renderRow(s, key, true))}
             {isOpen && key === "settled" && rows.length > SHOWN_SETTLED && (
-              <li>
-                <button type="button" className="side-more" onClick={() => setAllSettled((v) => !v)}>
-                  {allSettled ? "Show less" : `Show ${rows.length - SHOWN_SETTLED} more`}
+              <li className="thread-item">
+                <button type="button" className="thread-more" onClick={() => setAllSettled((v) => !v)}>
+                  <ChevronDown size={14} className={allSettled ? "flip" : undefined} aria-hidden />
+                  {allSettled ? "Show less" : `Show ${Math.min(rows.length - SHOWN_SETTLED, SHOWN_SETTLED)} more`}
                 </button>
               </li>
             )}
@@ -375,34 +385,37 @@ export function ThreadsList({
 
   return (
     <div className={`threads${drag ? " threads-dragging" : ""}`}>
-      {showPinned && (
-        <section ref={sectionRef("pinned")} className={`thread-section${overClass("pinned")}`} aria-label="Pinned">
-          <h2 className="side-label">Pinned</h2>
-          {pinned.length === 0 ? <p className="side-empty thread-drop-tip">Drag a session here to pin it.</p> : renderList("pinned", pinned, "side-pinned")}
-        </section>
-      )}
-      <section ref={sectionRef("active")} className={`thread-section${overClass("active")}`} aria-label="Active">
-        <div className="side-label-row">
-          <h2 className="side-label">Active</h2>
-          <button
+      <div className="side-label-row">
+        <h2 className="side-label">Threads</h2>
+        <button
             type="button"
             className="icon-btn ghost side-label-btn"
             onClick={onSearch}
             aria-label={searchKey ? `Search the sessions (${searchKey})` : "Search the sessions"}
             title={searchKey ? `Search (${searchKey})` : "Search"}
           >
-            <Search size={14} aria-hidden />
-          </button>
-        </div>
+          <Search size={14} aria-hidden />
+        </button>
+      </div>
+      {showPinned && (
+        <section ref={sectionRef("pinned")} className={`thread-section${overClass("pinned")}`} aria-label="Pinned">
+          {/* As in T3 Code: the label shows only during a drag. A pinned card has a pin. */}
+          {drag && <h2 className="side-label thread-drag-label">Pinned</h2>}
+          {pinned.length === 0 ? <p className="side-empty thread-drop-tip">Drop here to pin.</p> : renderList("pinned", pinned, "thread-list")}
+        </section>
+      )}
+      <section ref={sectionRef("active")} className={`thread-section${overClass("active")}`} aria-label="Active">
+        {drag && <h2 className="side-label thread-drag-label">Active</h2>}
         {loading && sessions.length === 0 ? (
           <SkeletonRows count={5} className="side-skeleton" label="Loading the sessions" />
         ) : active.length === 0 ? (
           <p className="side-empty">{disabled ? "Connect to a computer to see its sessions." : empty ? "No sessions yet." : "No active sessions."}</p>
         ) : (
-          renderList("active", active, "side-pinned side-flat")
+          renderList("active", active, "thread-list")
         )}
       </section>
-      {SHELVES.map(shelf)}
+      {/* The shelves stay at the bottom of the sidebar, as in T3 Code. */}
+      <div className="thread-shelves">{SHELVES.map(shelf)}</div>
       {drag && (
         // The pill of rule S9: the title for a move in the same section, else the action of the drop.
         <div className="drag-pill thread-drag-pill" style={{ top: drag.y + 12, left: drag.x + 12 }} aria-hidden>
