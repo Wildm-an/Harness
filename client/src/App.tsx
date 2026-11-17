@@ -2944,6 +2944,7 @@ export default function App() {
                   onSelect={chooseModel}
                   onSessionModel={(model) => sendSafely({ type: "acp.model", model })}
                   onSessionEffort={(effort) => sendSafely({ type: "acp.effort", effort })}
+                  onSwitchAgent={(agent, model) => sendSafely({ type: "session.agent", agent, model })}
                   onManageProviders={showProviders}
                   onManageAgents={() => openSettings("operating")}
                 />

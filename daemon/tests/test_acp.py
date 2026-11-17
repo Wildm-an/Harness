@@ -490,3 +490,60 @@ def test_the_reasoning_level_for_new_sessions(daemon, harness_home):  # noqa: F8
     c.send({"type": "harnesses.native_effort", "id": "nope", "effort": "low"})
     assert "Unknown harness" in c.until("error")[0]["message"]
     c.close()
+
+
+def test_switch_the_agent_of_a_session(daemon, project, fake_acp):
+    """As the portable handoff of T3 Code: the agent of a session changes, the history stays, and the new agent
+    gets the earlier conversation (another harness: a handoff recap in its first prompt)."""
+    c = Client(daemon)
+    ready = c.new_session(project)
+    c.send({"type": "prompt", "text": "hello"})
+    c.until("turn.end", timeout=30)
+    # To the built-in loop: the history stays.
+    c.send({"type": "session.agent", "agent": "harness", "model": "fake/test-model"})
+    switched = c.until("session.ready", timeout=30)[0]
+    assert switched["session_id"] == ready["session_id"] and switched["harness"] is None
+    assert switched["model"] == "fake/test-model"
+    assert [m["role"] for m in switched["history"]][:2] == ["user", "assistant"]
+    # Back to the harness: a new ACP session, with the instructions, the recap, and the prompt.
+    c.send({"type": "session.agent", "agent": "custom-fake-acp"})
+    back = c.until("session.ready", timeout=30)[0]
+    assert back["harness"]["id"] == "custom-fake-acp"
+    c.send({"type": "prompt", "text": "blocks"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=3"
+    prompts = [m for m in (json.loads(line) for line in fake_acp.read_text().splitlines()) if m.get("method") == "session/prompt"]
+    recap = prompts[-1]["params"]["prompt"][1]["text"]
+    assert recap.startswith("[Harness: You continue a conversation that Harness had") and "User: hello" in recap
+    c.send({"type": "session.agent", "agent": "nope"})
+    assert "Unknown agent" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_the_handoff_recap_is_a_budgeted_selection():
+    from harness_daemon.acp import handoff_recap
+    history = [{"role": "user", "content": "First request"}]
+    for i in range(40):
+        history += [{"role": "assistant", "content": f"Answer {i} " + "x" * 200,
+                     "tool_calls": [{"id": f"c{i}", "function": {"name": "bash", "arguments": '{"command": "ls"}'}}]},
+                    {"role": "tool", "tool_call_id": f"c{i}", "content": "a.txt\nb.txt"},
+                    {"role": "user", "content": f"Request {i}"}]
+    short = handoff_recap(history[:4], None, "Claude Agent")
+    assert "Claude Agent had" in short and "left out" not in short and "Activity: bash" in short
+    long = handoff_recap(history, "Old part", "Hermes Agent", budget=3_000)
+    assert "User: First request" in long and "User: Request 39" in long and "left out" in long
+    assert len(long) < 3_600
+    assert handoff_recap([], None, None) is None
+
+
+def test_a_harness_continues_its_session_only_after_its_own_turn():
+    from harness_daemon.acp import AcpAgent
+    agent = AcpAgent.__new__(AcpAgent)
+    agent.harness = acp_harnesses.find("claude-acp")
+    agent.history = [{"role": "user", "content": "a", "acp_session": "s1", "acp_harness": "claude-acp"},
+                     {"role": "assistant", "content": "b"}]
+    assert agent._stored_session() == "s1"
+    agent.history.append({"role": "user", "content": "c"})  # The built-in loop ran this turn.
+    assert agent._stored_session() is None
+    agent.history.append({"role": "user", "content": "d", "acp_session": "s9", "acp_harness": "hermes"})
+    assert agent._stored_session() is None  # Another harness ran the last turn.

@@ -69,8 +69,8 @@ REQUEST_TIMEOUT = 60.0  # session/new, session/load, session/set_mode.
 CANCEL_WAIT = 5.0  # The time that the harness gets to end the prompt after session/cancel.
 LINE_LIMIT = 64 * 1024 * 1024  # The longest JSON line. A file read can be large.
 STDERR_LINES = 30
-RECAP_MESSAGES = 24
-RECAP_CHARS = 12_000
+HANDOFF_CHARS = 64_000  # About 16,000 tokens, the default budget of T3 Code (T3CODE_CONTEXT_HANDOFF_TOKEN_CAP).
+HANDOFF_ITEM_CHARS = 6_000  # One message or one result at most: a longer one is cut, with a note.
 AUTH_REQUIRED = -32000
 METHOD_NOT_FOUND = -32601
 MAX_READ_BYTES = 10 * 1024 * 1024  # fs/read_text_file: the largest file.
@@ -505,15 +505,22 @@ class AcpAgent(Agent):
         self._effort_option: str | None = None
         self._usage_known: tuple[int, int] | None = None  # usage_update: (used tokens, context size).
         self._provider_model: str | None = None  # The model id of a Harness provider in the harness (acp_models.py).
+        self.requested_model: str | None = None  # A model of the harness that a switch of the agent chose.
+        self.previous_agent: str | None = None  # The agent before a switch of the agent: the recap names it.
 
     # -- the harness process -------------------------------------------------------------------------------
 
     def _stored_session(self) -> str | None:
-        """The ACP session id of the last turn, from the history (a stored session that opens again)."""
+        """The ACP session id of the last turn, from the history (a stored session that opens again). Only when
+        this harness ran the last turn: after a switch of the agent (the built-in loop or another harness ran
+        it), the old ACP session misses that part, so a new ACP session starts with a handoff recap."""
         for m in reversed(self.history):
+            if m.get("role") != "user" or m.get("origin") == "harness":
+                continue
             sid = m.get("acp_session")
-            if isinstance(sid, str) and sid:
-                return sid
+            if not isinstance(sid, str) or not sid:
+                return None  # The built-in loop ran the last turn.
+            return sid if m.get("acp_harness", self.harness.id) == self.harness.id else None
         return None
 
     async def _ensure_started(self) -> AcpConnection:
@@ -598,9 +605,10 @@ class AcpAgent(Agent):
         self._provider_model = None
         settings = load_settings(None)
         spec = None if self.harness.custom else acp_models.choice(settings, self.harness.id)
-        if spec is None:
-            # A model of the harness itself, chosen in the picker of the start screen (Settings > Agents).
-            self._provider_model = acp_harnesses.native_choice(settings, self.harness.id)
+        if spec is None or self.requested_model:
+            # A model of the harness itself: the choice of the switch of the agent (session.agent), else the
+            # choice of the picker of the start screen (Settings > Agents).
+            self._provider_model = self.requested_model or acp_harnesses.native_choice(settings, self.harness.id)
             return argv, env
         try:
             target = await acp_models.resolve(spec)
@@ -1284,27 +1292,13 @@ class AcpAgent(Agent):
     # -- turns --------------------------------------------------------------------------------------------
 
     def _recap(self) -> str | None:
-        """The earlier conversation, for a new ACP session of a session with history."""
-        lines: list[str] = []
-        for m in self.history[:-1][-RECAP_MESSAGES:]:
-            role = m.get("role")
-            if role not in ("user", "assistant") or m.get("origin") == "harness":
-                continue
-            content = m.get("display") or m.get("content")
-            if isinstance(content, list):
-                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-            text = str(content or "").strip()
-            if text:
-                lines.append(f"{'User' if role == 'user' else 'Agent'}: {text}")
-        if self.summary:
-            lines.insert(0, f"Summary of the earliest part: {self.summary}")
-        if not lines:
-            return None
-        body = "\n\n".join(lines)
-        if len(body) > RECAP_CHARS:
-            body = "…" + body[-RECAP_CHARS:]
-        return ("[Harness: This conversation continues an earlier session. You do not have its context, so here "
-                "are the last messages. Use them as background only.]\n\n" + body)
+        """The earlier conversation, for a new ACP session of a session with history (a switch of the agent, or
+        an ACP session that the harness cannot load). As the portable handoff of T3 Code: a budgeted selection,
+        not a summary. A short conversation goes across whole. A long one: the first request, then the newest
+        messages and the key activity (tool calls with their result), each with its speaker, within HANDOFF_CHARS.
+        The new request is not in it (it is the prompt). The note says how many messages are left out, and the
+        agent can find them with conversation_search."""
+        return handoff_recap(self.history[:-1] if self.in_turn else self.history, self.summary, self.previous_agent)
 
     def _prompt_blocks(self, text: str, images: list[str] | None, recap: str | None) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
@@ -1350,6 +1344,7 @@ class AcpAgent(Agent):
                 await self.emit({"type": "notice", "level": "info", "text": f"Starting {self.harness.name}."})
             conn, _ = await self._ensure_session()
             message["acp_session"] = self.acp_session
+            message["acp_harness"] = self.harness.id
             await self._sync_mode(conn)
             recap = self._recap() if self._needs_recap else None
             self._needs_recap = False
@@ -1562,3 +1557,81 @@ async def probe_models(spec: HarnessSpec, cwd: Path) -> list[dict[str, str]]:
     if efforts and not spec.custom:
         await asyncio.to_thread(acp_harnesses.save_efforts, spec.id, efforts)
     return models
+
+
+
+# -- the handoff recap (a switch of the agent) ----------------------------------------------------------------------
+
+
+def _handoff_text(content: Any) -> str:
+    if isinstance(content, list):
+        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return str(content or "").strip()
+
+
+def _clip(text: str, limit: int = HANDOFF_ITEM_CHARS) -> str:
+    return text if len(text) <= limit else text[:limit] + f" […{len(text) - limit} more characters]"
+
+
+def handoff_items(history: list[dict[str, Any]]) -> list[str]:
+    """The items of a handoff, in order: the messages of the user and of the agent, and the activity (a tool call
+    with the first lines of its result), each with its speaker."""
+    calls: dict[str, str] = {}
+    items: list[str] = []
+    for m in history:
+        role = m.get("role")
+        if m.get("origin") == "harness":
+            continue
+        if role == "user":
+            text = _handoff_text(m.get("display") or m.get("content"))
+            if text:
+                items.append("User: " + _clip(text))
+        elif role == "assistant":
+            text = _handoff_text(m.get("content"))
+            if text:
+                items.append("Agent: " + _clip(text))
+            for call in m.get("tool_calls") or []:
+                fn = call.get("function") if isinstance(call, dict) else None
+                if isinstance(fn, dict):
+                    args = str(fn.get("arguments") or "")
+                    calls[str(call.get("id"))] = f"{fn.get('name')} {args[:300]}".strip()
+        elif role == "tool":
+            what = calls.get(str(m.get("tool_call_id")), "a tool")
+            result = _handoff_text(m.get("content"))
+            first = "\n".join(result.splitlines()[:8])
+            items.append(f"Activity: {what}\n  Result: {_clip(first, 1_500)}")
+    return items
+
+
+def handoff_recap(history: list[dict[str, Any]], summary: str | None, previous: str | None,
+                  budget: int = HANDOFF_CHARS) -> str | None:
+    """The handoff text for a new agent of a session. None: no earlier conversation."""
+    items = handoff_items(history)
+    if summary:
+        items.insert(0, "Summary of the earliest part: " + _clip(summary, 8_000))
+    if not items:
+        return None
+    total = sum(len(i) + 2 for i in items)
+    if total <= budget:
+        chosen, left_out = items, 0
+    else:
+        first = next((i for i in items if i.startswith("User: ")), items[0])
+        room = budget - len(first) - 2
+        tail: list[str] = []
+        for item in reversed(items):
+            if item is first:
+                break
+            if len(item) + 2 > room:
+                break
+            tail.insert(0, item)
+            room -= len(item) + 2
+        chosen = [first, *tail]
+        left_out = len(items) - len(chosen)
+    head = ("[Harness: You continue a conversation that " + (f"{previous} had" if previous else "another agent had")
+            + ". You do not have its context, so here is the earlier conversation, with the speaker of each part. "
+            "It is a selection, not a summary. Use it as background. The tool calls ran in the earlier agent: check "
+            "the files again before you change them.]")
+    if left_out:
+        head += (f"\n[{left_out} earlier parts are left out. To find one, use the conversation_search tool of the "
+                 "Harness MCP server.]")
+    return head + "\n\n" + "\n\n".join(chosen)

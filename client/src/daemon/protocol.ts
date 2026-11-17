@@ -1041,6 +1041,8 @@ export type ClientMessage =
   | { type: "usage.summary"; range: UsageRange; offset: number; providers?: string[]; refresh?: boolean }
   | { type: "acp.mode"; mode: string } // The mode menu of an ACP session: a mode id of the harness, or "harness:auto".
   | { type: "acp.effort"; effort: string } // The reasoning level of an ACP session (a value of its "efforts").
+  // Switch the agent of the current session (a portable handoff): "harness" or a harness id, and a model. Reply: session.ready.
+  | { type: "session.agent"; agent: string; model: string | null }
   | { type: "harnesses.native_effort"; id: string; effort: string | null } // The reasoning level of the harness for new sessions.
   | { type: "agents.auto_model"; model: string | null } // The model of Auto mode ("auto_mode.model"). null: none.
   | { type: "agents.models"; id: string } // Read the models of the agent before its first session.

@@ -2073,6 +2073,66 @@ async def on_session_move(conn: Connection, msg: dict[str, Any]) -> None:
     await _open_stored(conn, session_id)
 
 
+HANDOFF_NOTE = ("This session continues the work of {previous}: the earlier turns ran in that agent, and its tool calls "
+                "ran there. Check the files again before you change them.")
+
+
+@handler("session.agent")
+async def on_session_agent(conn: Connection, msg: dict[str, Any]) -> None:
+    """Switch the agent of the current session, as the portable handoff of T3 Code: {"agent": "harness" or a harness
+    id, "model"?: "<provider>/<model>" for Harness, or a model id of the harness}. Not during a turn.
+
+    The history stays. The session opens again with the new agent. Another harness gets the earlier conversation as a
+    budgeted handoff recap in its first prompt (acp.handoff_recap). The built-in loop gets the full history and a note.
+    The reply is session.ready."""
+    session = conn.require_session()
+    conn.require_idle()
+    target = _text_arg(msg, "agent")
+    model = msg.get("model") if isinstance(msg.get("model"), str) and msg.get("model") else None
+    old = session.agent
+    previous = old.harness.name if isinstance(old, AcpAgent) else "Harness"
+    if target == acp_harnesses.BUILTIN_ID:
+        if model is None:
+            settings = load_settings(session.cwd)
+            spec = settings.get("default_model") or settings.get("online_model") or settings.get("offline_model")
+            if not spec and not isinstance(old, AcpAgent):
+                spec = f"{old.client.provider.name}/{old.client.model}"
+            if not spec:
+                raise ProtocolError("Choose a model for Harness: no default model is set.")
+            model = str(spec)
+        try:
+            provider, model_name = resolve_model(model)
+        except ConfigError as e:
+            raise ProtocolError(str(e)) from None
+        fields = {"provider": provider.name, "model": model_name}
+    else:
+        spec = acp_harnesses.find(target)
+        if spec is None:
+            raise ProtocolError(f"Unknown agent: {target}.")
+        fields = {"provider": ACP_PROVIDER, "model": spec.id}
+    if isinstance(old, AcpAgent) and target == old.harness.id:
+        if model:
+            await old.set_model(model)
+        return
+    live = conn.require_live()
+    session.persist()  # The history is in storage before the session opens again.
+    if live is conn.current:
+        conn.current = None
+        conn.watched.clear()
+    await conn.close_live(live)
+    conn.storage.update_session(session.id, **fields)
+    fresh, warnings = await _load_stored(conn, session.id)
+    agent = fresh.session.agent if fresh.session is not None else None
+    if isinstance(agent, AcpAgent):
+        agent.previous_agent = previous
+        agent.requested_model = model
+        agent.acp_session = None  # A new ACP session, with the handoff recap in its first prompt.
+    elif agent is not None and agent.history:
+        agent._harness_notes.append(HANDOFF_NOTE.format(previous=previous))
+    await conn.open_session(fresh)
+    await conn.send_ready(warnings)
+
+
 MAX_TITLE = 120
 
 

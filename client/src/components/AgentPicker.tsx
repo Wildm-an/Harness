@@ -386,7 +386,7 @@ export function agentChoiceMessages(tab: AgentTab, row: PickRow, currentAgent: s
 
 /** The hover tip of a rail tab: the name, then the status of the agent. */
 export function tabTip(tab: AgentTab, lockedTo: string | null): string {
-  if (lockedTo !== null && tab.id !== lockedTo) return `${tab.name} is not available in this session. Start a new session to change the agent.`;
+  if (lockedTo !== null && tab.id !== lockedTo) return `${tab.name}: the agent changes only between turns.`;
   if (!tab.item) return tab.name;
   return `${tab.name}\n${agentStatus(tab.item).headline}`;
 }
@@ -414,6 +414,7 @@ export function AgentPicker({
   onAgentMessages,
   onSessionModel,
   onSessionEffort,
+  onSwitchAgent,
   onManageProviders,
   onManageAgents,
 }: {
@@ -432,6 +433,9 @@ export function AgentPicker({
   onAgentMessages?: (messages: ClientMessage[]) => void; // Start screen: a choice in an ACP tab.
   onSessionModel?: (model: string) => void; // An ACP session: acp.model.
   onSessionEffort?: (effort: string) => void; // An ACP session: acp.effort.
+  // A session: switch the agent of the session (session.agent, as the portable handoff of T3 Code, the user asked for
+  // this). model: a "provider/model" spec for Harness, a model id of an ACP agent, or null for the default.
+  onSwitchAgent?: (agent: string, model: string | null) => void;
   onManageProviders: () => void; // Opens the Providers page.
   onManageAgents: () => void; // Opens Settings > Agents.
 }) {
@@ -518,7 +522,8 @@ export function AgentPicker({
     const done = [...waiting].filter((id) => agents?.some((a) => a.id === id && (a.probing || a.models.length > 0)));
     if (done.length) setWaiting((w) => new Set([...w].filter((id) => !done.includes(id))));
   }, [agents, waiting]);
-  const lockedTo = inSession ? currentId : null;
+  // In a session the other agents can be chosen (a switch of the agent), but not while a turn runs.
+  const lockedTo = inSession && (!onSwitchAgent || !!session?.running) ? currentId : null;
   const usable = tabs.filter((t) => lockedTo === null || t.id === lockedTo);
   const local = localProviders ?? new Set<string>();
   const providerItems = models?.items ?? [];
@@ -527,7 +532,8 @@ export function AgentPicker({
   const checkedRow = (row: PickRow) => rowChecked(row, tabOf(row), value);
 
   const groupsOf = (t: AgentTab, all: boolean): PickGroup[] =>
-    t.id === BUILTIN_AGENT ? builtinGroups(models, allowDefault, local, all) : agentGroups(t, inSession ? [] : providerItems, !inSession);
+    t.id === BUILTIN_AGENT ? builtinGroups(models, allowDefault, local, all)
+      : agentGroups(t, inSession ? [] : providerItems, !inSession || t.id !== currentId);
   let shown: PickGroup[];
   let hidden = 0;
   if (searching) {
@@ -558,6 +564,12 @@ export function AgentPicker({
   const choose = (row: PickRow) => {
     close();
     const t = tabOf(row);
+    if (inSession && row.agent !== currentId) {
+      // Another agent: the session switches to it, with a handoff of the conversation.
+      const model = row.agent === BUILTIN_AGENT ? row.value || null : row.kind === "native" ? row.value : null;
+      onSwitchAgent?.(row.agent, model);
+      return;
+    }
     if (row.agent === BUILTIN_AGENT) {
       if (inSession) {
         if (row.value !== value) onSelect(row.value);
@@ -618,6 +630,9 @@ export function AgentPicker({
       };
     }
     const t = tabs.find((x) => x.id === agentId);
+    if (inSession && agentId !== currentId) {
+      return { kind: "note", note: `Choose a model of ${t?.name ?? "the agent"} to switch this session to it. Then choose its reasoning.` };
+    }
     if (!t?.efforts?.length) return { kind: "note", note: `${t?.name ?? "The agent"} chooses its own reasoning.` };
     const levels = resolveEfforts(t.efforts, t.id in picked ? picked[t.id] : t.effort);
     return {

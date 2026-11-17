@@ -86,7 +86,7 @@ describe("the rail of the agent picker", () => {
 
   it("tells why a tab is off in a session", () => {
     const tabs = railTabs([agent({ id: "codex", name: "Codex" })], null, true);
-    expect(tabTip(tabs[1], BUILTIN_AGENT)).toBe("Codex is not available in this session. Start a new session to change the agent.");
+    expect(tabTip(tabs[1], BUILTIN_AGENT)).toBe("Codex: the agent changes only between turns.");
     expect(tabTip(tabs[0], BUILTIN_AGENT)).toBe("Harness");
     expect(tabTip(tabs[1], null)).toBe("Codex\nAvailable");
   });
