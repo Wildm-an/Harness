@@ -308,6 +308,66 @@ export interface HarnessItem {
   probing: boolean; // The daemon reads the models of the agent now (agents.models).
 }
 
+/** The Usage page (daemon usage.py, as the Usage page of T3 Code): the token use and the API cost estimate of the
+ * agents on the daemon computer, from their local history (Claude Code, Codex, OpenCode, Hermes Agent) and from the
+ * run records of Harness. */
+export type UsageRange = "24h" | "7d" | "30d" | "90d";
+
+export interface UsageTotals {
+  tokens: number; // input + cache_read + cache_write + output (reasoning is a part of output).
+  input: number; // Input tokens with no cache.
+  cache_read: number;
+  cache_write: number;
+  output: number;
+  reasoning: number;
+  cost: number; // USD: the API estimate (LiteLLM prices), or the cost that the agent reported.
+  cache_savings: number; // USD: cache_read x (input price - cache read price).
+  sessions: number;
+  records: number; // The model requests.
+  unpriced_records: number; // The requests of a model with no price.
+}
+
+export interface UsageProvider extends UsageTotals {
+  id: string; // "claude", "codex", "opencode", "hermes", "harness".
+  name: string; // "Claude Code", "Codex", "OpenCode", "Hermes Agent", "Harness".
+  agent: string; // The agent id for AgentIcon: "claude-acp", "codex-acp", "opencode", "hermes", "harness".
+  icon: string | null; // The logo as a data URL (daemon acp_icons.py). null: the initials or the app icon.
+  color: string; // The color of the provider in the chart and the bars.
+}
+
+export interface UsagePoint {
+  key: string; // "2026-11-16" (a day), or "2026-11-16T14" (an hour, for "24h").
+  label: string; // "Nov 16", or "2 PM".
+  by_provider: Record<string, { cost: number; tokens: number }>;
+}
+
+export interface UsageModel {
+  model: string;
+  provider: string; // A UsageProvider id.
+  cost: number;
+  tokens: number;
+  input: number;
+  cache_read: number;
+  cache_write: number;
+  output: number;
+  unpriced: boolean; // No price for this model: its cost is 0, or the cost that the agent reported.
+}
+
+export interface UsageSummary {
+  range: UsageRange;
+  resolution: "hour" | "day";
+  generated_at: number; // Seconds since 1970.
+  scan_ms: number;
+  pricing: { status: "fresh" | "cached" | "unavailable"; updated_at: number | null };
+  totals: UsageTotals;
+  category_cost: { input: number; cache_read: number; cache_write: number; output: number; other: number };
+  providers: UsageProvider[]; // Sorted by cost, then tokens. Only the providers with use in the range.
+  series: UsagePoint[]; // Each hour (24h) or each day of the range, also with no use.
+  models: UsageModel[]; // Sorted by cost, then tokens.
+  limits: { provider: string; name: string; agent: string; icon: string | null; windows: AgentUsage[] }[]; // The Limits tab.
+  errors: { provider: string; message: string }[]; // A history that Harness could not read.
+}
+
 /** A model that an ACP harness gives. */
 export interface AgentModel {
   id: string;
@@ -969,6 +1029,9 @@ export type ClientMessage =
   | { type: "harnesses.native_model"; id: string; model: string | null } // A model of the harness itself. null: its default.
   | { type: "agents.enable"; id: string; enabled: boolean } // Show the agent in the picker and on the Agents page.
   | { type: "agents.check"; id: string } // Read the sign-in state and the usage again.
+  // The Usage page. offset: the minutes of the local time zone east of UTC (-new Date().getTimezoneOffset()), for the
+  // days and the hours. refresh: read the histories and the prices again now.
+  | { type: "usage.summary"; range: UsageRange; offset: number; providers?: string[]; refresh?: boolean }
   | { type: "acp.mode"; mode: string } // The mode menu of an ACP session: a mode id of the harness, or "harness:auto".
   | { type: "agents.auto_model"; model: string | null } // The model of Auto mode ("auto_mode.model"). null: none.
   | { type: "agents.models"; id: string } // Read the models of the agent before its first session.
@@ -1257,6 +1320,7 @@ export type DaemonMessage =
   // Settings > Agents. auto_model: the model of Auto mode for the agents of other harnesses ("provider/model"), or null.
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string; auto_model?: string | null }
   | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
+  | ({ type: "usage.summary" } & UsageSummary) // The reply to usage.summary. Errors have the ref usage.summary.
   | { type: "agents.signin.started"; id: string } // The sign-in terminal of the agent runs.
   | { type: "agents.signin.output"; id: string; data: string }
   | { type: "agents.signin.exit"; id: string; code: number | null } // Then "harnesses" with the new state.

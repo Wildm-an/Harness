@@ -31,7 +31,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from .tool_output import prune_outputs, remove_session_outputs, session_output_dir
 from . import __version__
 from .agent import Agent
-from . import acp_harnesses, acp_icons, acp_install, acp_models, agent_auth
+from . import acp_harnesses, acp_icons, acp_install, acp_models, agent_auth, usage
 from .auto_mode import global_auto_config
 from . import acp_mcp
 from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client, probe_models as acp_probe_models
@@ -4201,6 +4201,35 @@ async def on_agents_auto_model(conn: Connection, msg: dict[str, Any]) -> None:
         data.pop("auto_mode", None)
     write_json(path, data)
     await _send_harnesses(conn)
+
+
+_USAGE_LOCK = asyncio.Lock()  # One scan at a time: the first scan reads all the histories.
+
+
+@handler("usage.summary")
+async def on_usage_summary(conn: Connection, msg: dict[str, Any]) -> None:
+    """The Usage page (usage.py): {"range": "24h"|"7d"|"30d"|"90d", "offset": <minutes east of UTC>, "refresh"?}.
+    The reply is usage.summary. It needs no session. The first call reads all the histories, so it can take a while."""
+    range_id = msg.get("range")
+    offset = msg.get("offset", 0)
+    if range_id not in usage.RANGES:
+        raise ProtocolError(f"'range' must be one of: {', '.join(usage.RANGES)}.")
+    if not isinstance(offset, int) or not -14 * 60 <= offset <= 14 * 60:
+        raise ProtocolError("'offset' must be the minutes of the time zone east of UTC.")
+
+    async def run() -> None:
+        try:
+            async with _USAGE_LOCK:
+                data = await usage.summary(range_id, offset, refresh=msg.get("refresh") is True)
+            await conn.send({"type": "usage.summary", **data})
+        except Exception as e:  # noqa: BLE001
+            log.exception("The usage summary failed")
+            try:
+                await conn.error(f"Could not read the usage: {type(e).__name__}: {e}", ref="usage.summary")
+            except Exception:  # noqa: BLE001 - the connection closed.
+                pass
+
+    asyncio.create_task(run())
 
 
 @handler("agents.check")

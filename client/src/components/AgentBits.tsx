@@ -97,9 +97,15 @@ export function UsageBars({ auth, compact = false }: { auth: AgentAuth | null | 
   if (!auth?.usage?.length) {
     return auth?.usage_error && !compact ? <p className="setting-help agent-usage-error">{auth.usage_error}</p> : null;
   }
+  return <LimitRows usage={auth.usage} compact={compact} />;
+}
+
+/** The rows of the subscription limits: the label, a bar, the percent, and the reset time (not in compact rows).
+ * `used`: "41% used" in place of "41%" (the Limits tab of the Usage page). */
+export function LimitRows({ usage, compact = false, used = false }: { usage: AgentUsage[]; compact?: boolean; used?: boolean }) {
   return (
     <div className={`agent-usage${compact ? " compact" : ""}`}>
-      {auth.usage.map((u: AgentUsage) => {
+      {usage.map((u: AgentUsage) => {
         const pct = Math.round(u.percent);
         const tone = pct >= 90 ? " danger" : pct >= 75 ? " warn" : "";
         // The row has no box of its own (display: contents), so each part has the tip with the reset time.
@@ -110,7 +116,7 @@ export function UsageBars({ auth, compact = false }: { auth: AgentAuth | null | 
             <span className="agent-usage-bar" title={tip} role="progressbar" aria-label={`${u.label} usage`} aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={`agent-usage-fill${tone}`} style={{ width: `${Math.min(100, Math.max(0, u.percent))}%` }} />
             </span>
-            <span className="agent-usage-pct" title={tip}>{pct}%</span>
+            <span className="agent-usage-pct" title={tip}>{used ? `${pct}% used` : `${pct}%`}</span>
             {!compact && <span className="agent-usage-reset" title={tip}>{resetText(u.resets_at)}</span>}
           </div>
         );

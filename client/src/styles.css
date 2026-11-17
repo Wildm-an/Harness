@@ -13799,3 +13799,506 @@ input::-ms-clear {
   height: 72%;
   object-fit: contain;
 }
+
+/* -- Usage page (UsagePage.tsx) -- */
+/* As the Usage page of T3 Code (MIT): a header row with the breadcrumb and the controls, then a body of at most
+   1220px in the center. A container query puts the two columns under each other on a narrow page. */
+.usage-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  container-type: inline-size;
+}
+.usage-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.usage-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+.usage-crumb-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.usage-crumb-sep {
+  color: var(--text-muted);
+}
+.usage-crumb {
+  max-width: 16rem;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-provider-menu {
+  position: relative;
+}
+.usage-crumb-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease-out);
+}
+.usage-crumb-button:hover:not(:disabled),
+.usage-crumb-button[aria-expanded="true"] {
+  background: var(--hover);
+}
+.usage-crumb-button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.usage-menu {
+  right: auto;
+  left: 0;
+}
+.usage-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.usage-head-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.segmented.usage-seg button {
+  width: auto;
+  padding: 0 10px;
+  font: 500 12.5px var(--font-sans);
+  white-space: nowrap;
+}
+.usage-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* The content is 1220px or less, in the center. The scroll bar stays at the edge of the page. */
+  padding: 24px max(20px, calc((100% - 1180px) / 2)) 48px;
+}
+.usage-overview {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+.usage-side {
+  min-width: 0;
+}
+.usage-chart-col {
+  min-width: 0;
+}
+.usage-h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.usage-total {
+  font-size: 32px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.usage-total-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.usage-info {
+  display: inline-flex;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: help;
+}
+.usage-info:hover,
+.usage-info:focus-visible {
+  color: var(--text);
+}
+.usage-muted {
+  color: var(--text-muted);
+}
+.usage-strong {
+  font-weight: 500;
+}
+.usage-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.usage-empty {
+  margin: 40px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.usage-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.usage-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.usage-provider-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.usage-provider-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-provider-main .usage-muted {
+  flex: none;
+  font-size: 12px;
+}
+.usage-provider-value {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+/* Under the name: 16px is the dot and its gap. */
+.usage-provider-sub {
+  margin: 2px 0 0 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.usage-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  list-style: none;
+}
+
+/* The chart (UsageChart.tsx): the y labels in a left gutter, the SVG, and the x labels under it. */
+.usage-chart-frame {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  grid-template-rows: 224px auto;
+}
+.usage-chart-gutter {
+  position: relative;
+  grid-row: 1;
+  grid-column: 1;
+}
+.usage-chart-tick {
+  position: absolute;
+  right: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  translate: 0 -50%;
+}
+.usage-chart-plot {
+  position: relative;
+  grid-row: 1;
+  grid-column: 2;
+  height: 224px;
+  cursor: crosshair;
+}
+.usage-chart-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.usage-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.usage-chart-cursor {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.usage-chart-x {
+  position: relative;
+  grid-row: 2;
+  grid-column: 2;
+  height: 16px;
+  margin-top: 6px;
+}
+.usage-chart-xlabel {
+  position: absolute;
+  top: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  translate: -50% 0;
+}
+.usage-chart-xlabel.first {
+  translate: 0 0;
+}
+.usage-chart-xlabel.last {
+  translate: -100% 0;
+}
+.usage-chart-tip {
+  position: absolute;
+  top: 8px;
+  z-index: var(--z-sticky);
+  min-width: 160px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  pointer-events: none;
+  translate: 12px 0;
+}
+.usage-chart-tip.left {
+  translate: calc(-100% - 12px) 0;
+}
+.usage-chart-tip-head {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.usage-chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.6;
+}
+.usage-chart-tip-name {
+  flex: 1;
+  color: var(--text-muted);
+}
+.usage-chart-tip-value {
+  font-variant-numeric: tabular-nums;
+}
+.usage-chart-tip-row.total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.usage-chart-tip-row.total .usage-chart-tip-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Totals, Cost by type, and Breakdown. */
+.usage-section {
+  margin-top: 32px;
+}
+.usage-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.usage-section-head .usage-h2 {
+  margin: 0;
+}
+.usage-totals {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.usage-total-cell {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.usage-total-cell dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.usage-total-cell dd {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.usage-types-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+.usage-types-bar > span {
+  flex-basis: 0;
+  min-width: 2px;
+  border-radius: 2px;
+}
+.usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  list-style: none;
+}
+.usage-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.usage-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.usage-legend-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.usage-table-wrap {
+  overflow-x: auto;
+}
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.usage-table th,
+.usage-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.usage-table thead th {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.usage-table tbody th {
+  font-weight: 400;
+  white-space: nowrap;
+}
+.usage-table .num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.usage-table .narrow {
+  width: 2.5rem;
+}
+.usage-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.usage-model-name {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A 2px bar under the model name, in the color of the provider: the share of the largest model. */
+.usage-model-track {
+  display: block;
+  max-width: 12rem;
+  margin-top: 6px;
+}
+.usage-model-bar {
+  display: block;
+  max-width: 100%;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* The Limits tab. */
+.usage-limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 12px;
+}
+/* A wider bar than in Settings > Agents. */
+.usage-limit .agent-usage {
+  grid-template-columns: max-content minmax(120px, 1fr) max-content max-content;
+}
+.usage-limit {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.usage-limit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.usage-limit-head .usage-h2 {
+  margin: 0;
+}
+
+/* The skeleton while the daemon reads the histories (R8). */
+.usage-sk-total {
+  width: 60%;
+  height: 36px;
+}
+.usage-sk-line {
+  width: 45%;
+  height: 12px;
+  margin-top: 12px;
+}
+.usage-sk-rows {
+  gap: 16px;
+  margin-top: 24px;
+}
+.usage-sk-chart {
+  height: 246px;
+}
+
+@container (max-width: 760px) {
+  .usage-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .usage-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

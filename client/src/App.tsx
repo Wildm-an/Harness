@@ -23,6 +23,7 @@ import {
   SquareTerminal,
   Blocks,
   CalendarClock,
+  ChartNoAxesColumn,
 } from "lucide-react";
 import { chatReducer, emptyChat, type PermissionItem } from "./chat/state";
 import { DaemonConnection, type ConnectionStatus } from "./daemon/connection";
@@ -156,6 +157,7 @@ import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
 import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, HarnessItem, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
+import { UsagePage } from "./components/UsagePage";
 import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen, onOpenNewSession } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
@@ -215,7 +217,7 @@ import { SessionTitle } from "./components/SessionTitle";
 import type { SessionActions } from "./components/SessionRow";
 import { setTimeFormat, toTimeFormat, useTimeFormat } from "./lib/timeFormat";
 
-type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines";
+type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines" | "usage";
 
 const PROVIDER_REPLY_TIMEOUT = 15_000;
 
@@ -1234,6 +1236,7 @@ export default function App() {
           }
           if (msg.ref?.startsWith("memory.")) return; // Settings > Your Harness shows the error.
           if (msg.ref === "disk.usage") return; // The Storage dialog shows the error.
+          if (msg.ref === "usage.summary") return; // The Usage page shows the error.
           if (msg.ref === "daemon.update") {
             setRemoteUpdate((u) => (u ? { ...u, phase: "error", message: msg.message } : u));
             return;
@@ -2502,6 +2505,12 @@ export default function App() {
     if (!projects) sendSafely({ type: "projects.list" }); // The folder menu of the form.
   };
 
+  /** Opens the Usage page: the token use and the API cost estimate of the agents. The page asks the daemon itself. */
+  const openUsage = () => {
+    setSettingsPage(null);
+    setScreen("usage");
+  };
+
   const openSkill = useCallback(
     (name: string) => {
       setSkillDetail("loading");
@@ -3337,6 +3346,8 @@ export default function App() {
         return openCapabilities();
       case "routines":
         return openRoutines();
+      case "usage":
+        return openUsage();
     }
   };
   const canNav = status === "open" && !busy;
@@ -3434,6 +3445,15 @@ export default function App() {
     title: routinesFailed > 0 ? (routinesFailed === 1 ? "1 routine has a problem" : `${routinesFailed} routines have a problem`) : "Prompts that run on a schedule",
     onClick: fromSidebar(openRoutines),
   };
+  // The "Usage" nav item, under "Capabilities".
+  const usageNav: SessionTool = {
+    key: "usage",
+    icon: ChartNoAxesColumn,
+    label: "Usage",
+    active: screen === "usage",
+    title: "Token use and cost of the agents",
+    onClick: fromSidebar(openUsage),
+  };
 
   // The panes of the open session in the sidebar: Permission rules.
   const sessionTools: SessionTool[] =
@@ -3467,7 +3487,7 @@ export default function App() {
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
       head={titleNav()}
-      nav={[routinesNav, capabilitiesNav]}
+      nav={[routinesNav, capabilitiesNav, usageNav]}
       tools={sessionTools}
       prStatus={prStatus}
       onRequestPr={(paths) => {
@@ -3651,7 +3671,7 @@ export default function App() {
 
       <main className="main">
         {/* The chat has its own banner, in the chat column. The Computers screen shows the state of each connection. */}
-        {(screen === "start" || screen === "routines" || screen === "capabilities") && disconnectBanner}
+        {(screen === "start" || screen === "routines" || screen === "capabilities" || screen === "usage") && disconnectBanner}
         {screen === "starting" && (
           <div className="center-status" role="status">
             <LoaderCircle size={20} className="spin" aria-hidden />
@@ -3672,6 +3692,19 @@ export default function App() {
             onDelete={(c) => void deleteConnection(c)}
             onTest={testConnection}
             onReturn={() => setScreen(session ? "chat" : "start")}
+          />
+        )}
+        {screen === "usage" && (
+          <UsagePage
+            conn={conn}
+            computerKey={current?.id ?? ""}
+            computer={current?.name ?? hello?.hostname ?? "This computer"}
+            onClose={() => {
+              // Back to the previous view: the history, else the session or the new session page.
+              if (canNav && nav.index > 0) goNav(-1);
+              else if (session) setScreen("chat");
+              else newSession();
+            }}
           />
         )}
         {screen === "routines" && (
