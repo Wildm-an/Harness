@@ -184,6 +184,8 @@ import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { DeleteSessionConfirm } from "./components/DeleteSessionConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
+import type { ThreadsActions } from "./components/ThreadsList";
+import { THREAD_UNDO_MS, applyUpdates, nowSeconds, undoKeyAllowed, undoUpdates, type ThreadUpdate } from "./lib/threads";
 import type { ModelList } from "./components/ModelMenu";
 import { ModelUnavailable } from "./components/ModelUnavailable";
 import { isModelUnavailable, networkModel, proposedModel, rememberModel } from "./lib/modelAvailability";
@@ -421,10 +423,17 @@ export default function App() {
   const errorToastId = useRef(0);
   const showError = useCallback((text: string) => setErrorToasts((l) => addErrorToast(l, text, ++errorToastId.current)), []);
   // The "Undo" popup of an action that does not ask first (rule R7a).
-  const showUndo = useCallback(
-    (text: string, undo: () => void) => setErrorToasts((l) => addUndoToast(l, text, undo, ++errorToastId.current)),
-    [],
-  );
+  // ``ms``: the time on screen (the Threads sidebar: 5 seconds). The id of the last one, for Ctrl+Z and to remove it.
+  const lastUndoId = useRef(0);
+  const showUndo = useCallback((text: string, undo: () => void, ms?: number) => {
+    const id = ++errorToastId.current;
+    lastUndoId.current = id;
+    setErrorToasts((l) => addUndoToast(l, text, undo, id, ms));
+  }, []);
+  // The sessions with a "Regenerate title" request (the Threads sidebar), and the settles that wait for a
+  // worktree question ("Archive session with uncommitted changes?").
+  const [retitling, setRetitling] = useState<Set<string>>(() => new Set());
+  const pendingSettle = useRef(new Set<string>());
   // The popup of an MCP server that did not connect. A click opens its row on the MCP servers tab.
   const [mcpFocus, setMcpFocus] = useState<{ name: string; key: number } | null>(null);
   const showMcpFailure = useCallback((name: string, error: string | null) => {
@@ -855,6 +864,7 @@ export default function App() {
           return;
         }
         case "session.title":
+          setRetitling((r) => (r.has(msg.id) ? new Set([...r].filter((id) => id !== msg.id)) : r));
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
           return;
@@ -917,6 +927,12 @@ export default function App() {
         }
         case "session.archive_confirm":
           setArchiveAsk({ id: msg.id, branch: msg.branch });
+          if (pendingSettle.current.has(msg.id)) {
+            // The settle did not happen: the list shows the session again, and the "Undo" popup goes.
+            listRecent();
+            const undoId = lastUndoId.current;
+            setErrorToasts((l) => l.filter((t) => t.id !== undoId));
+          }
           return;
         case "session.deleted":
           if (sessionRef.current?.id === msg.id) showStartRef.current();
@@ -1234,6 +1250,8 @@ export default function App() {
             }
             return;
           }
+          if (msg.ref === "session.retitle") setRetitling(new Set());
+          if (msg.ref === "session.update") listRecent(); // The Threads sidebar showed the change at once: undo it.
           if (msg.ref?.startsWith("memory.")) return; // Settings > Your Harness shows the error.
           if (msg.ref === "disk.usage") return; // The Storage dialog shows the error.
           if (msg.ref === "usage.summary") return; // The Usage page shows the error.
@@ -3195,6 +3213,47 @@ export default function App() {
     onDelete: (id) => setDeleteAsk(id), // Delete always asks first (UI_RULES S8).
   };
 
+  // The Threads sidebar (docs/UI_RULES.md 3.7): session.update for each change, the change in the list at
+  // once, and the "Undo" popup (5 seconds) that puts the earlier values back, also the pinned position.
+  const applyThreadUpdates = (updates: ThreadUpdate[], undo?: string) => {
+    if (updates.length === 0) return;
+    const before = recent;
+    for (const u of updates) {
+      if (!sendSafely({ type: "session.update", session_id: u.id, ...u.fields })) return;
+      if (u.fields.archived) pendingSettle.current.add(u.id);
+      else if (u.fields.archived === false) pendingSettle.current.delete(u.id);
+    }
+    setRecent((list) => applyUpdates(list, updates, nowSeconds()));
+    if (undo) {
+      const back = undoUpdates(before, updates);
+      showUndo(undo, () => applyThreadUpdates(back), THREAD_UNDO_MS);
+    }
+  };
+  const threadsActions: ThreadsActions = {
+    apply: applyThreadUpdates,
+    retitle: (id) => {
+      if (sendSafely({ type: "session.retitle", session_id: id })) setRetitling((r) => new Set(r).add(id));
+    },
+    retitling,
+  };
+
+  // Ctrl+Z runs the last "Undo" popup when the focus is not in a text field, the editor, or the terminal.
+  const toastsRef = useRef(errorToasts);
+  toastsRef.current = errorToasts;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "z" || e.defaultPrevented) return;
+      if (!undoKeyAllowed(e.target)) return;
+      const toast = [...toastsRef.current].reverse().find((t) => t.undo);
+      if (!toast?.undo) return;
+      e.preventDefault();
+      setErrorToasts((l) => l.filter((t) => t.id !== toast.id));
+      toast.undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /** "Open in" > "Split view", or a drop on the main view: the session opens at the right of the shown session. */
   const openSplit = (id: string) => {
     if (screen !== "chat" || !session || view !== "code") {
@@ -3497,6 +3556,7 @@ export default function App() {
       }}
       onSearch={() => setSearchOpen(true)}
       searchKey={SEARCH_SHORTCUT}
+      threads={threadsActions}
       connection={
         <button
           type="button"
@@ -3886,9 +3946,14 @@ export default function App() {
           <ArchiveConfirm
             title={recent.find((r) => r.id === archiveAsk.id)?.title ?? "this session"}
             branch={archiveAsk.branch}
-            onCancel={() => setArchiveAsk(null)}
+            onCancel={() => {
+              pendingSettle.current.delete(archiveAsk.id);
+              setArchiveAsk(null);
+            }}
             onArchive={() => {
-              sendSafely({ type: "session.update", session_id: archiveAsk.id, archived: true, force: true });
+              // A settle of the Threads sidebar also removes the pin.
+              const settle = pendingSettle.current.has(archiveAsk.id) ? { pinned: false } : {};
+              sendSafely({ type: "session.update", session_id: archiveAsk.id, archived: true, force: true, ...settle });
               setArchiveAsk(null);
             }}
           />

@@ -59,6 +59,7 @@ import { MODES } from "./ModeMenu";
 import { shownModes } from "../lib/bypass";
 import { isTauri } from "../lib/tauri";
 import { useLinksInPane } from "../lib/openLink";
+import { setSidebarOrganization, toOrganization, useSidebarOrganization } from "../lib/threads";
 import { compareVersions } from "../lib/version";
 import { availableVersion, useUpdateState } from "../lib/updater";
 
@@ -735,6 +736,7 @@ export function GeneralSettings({
 }) {
   const [busy, setBusy] = useState<BusySend>(busySend);
   const [linksInPane, setLinksInPane] = useLinksInPane();
+  const organization = useSidebarOrganization();
   const off = !connected || values === null;
   // "Saving" until the daemon sends the new values, then "Saved" for a moment.
   const [status, setStatus] = useState<"" | "saving" | "saved">("");
@@ -784,6 +786,18 @@ export function GeneralSettings({
           <option value="queue">Queue</option>
           <option value="interrupt">Interrupt</option>
           <option value="steer">Steer</option>
+        </select>
+      </Row>
+
+      {/* Per device, as the other view choices. The user asked for the thread list of T3 Code (UI_RULES 3.7). */}
+      <Row
+        label="Sidebar organization"
+        help="How the sidebar lists the sessions. Threads: pinned, active, working, snoozed, and settled sections, as T3 Code."
+        htmlFor="setting-sidebar-organization"
+      >
+        <select id="setting-sidebar-organization" value={organization} onChange={(e) => setSidebarOrganization(toOrganization(e.target.value))}>
+          <option value="sessions">Sessions</option>
+          <option value="threads">Threads</option>
         </select>
       </Row>
 

@@ -27,7 +27,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     archived INTEGER NOT NULL DEFAULT 0,
     worktree TEXT,  -- JSON: the git worktree of the session (worktrees.py). NULL: the session works in cwd.
     routine_id TEXT,  -- The routine that started the session (routines.py). NULL: the user started it.
-    parent_id TEXT  -- The session that started this session (a fork, or the start_session tool). NULL: none.
+    parent_id TEXT,  -- The session that started this session (a fork, or the start_session tool). NULL: none.
+    -- The Threads sidebar (docs/UI_RULES.md 3.7). position: the manual order of Pinned and Active, low first.
+    -- NULL: after the sessions with a position, newest first. snoozed_until: the wake time. NULL: not snoozed.
+    -- auto_archive: 0 = "Never" (archive_inactive skips the session). archived_at: the archive time, or NULL.
+    position REAL,
+    snoozed_until REAL,
+    auto_archive INTEGER NOT NULL DEFAULT 1,
+    archived_at REAL
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -175,6 +182,14 @@ class Storage:
             self.db.execute("ALTER TABLE sessions ADD COLUMN routine_id TEXT")
         if "parent_id" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT")
+        if "position" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN position REAL")
+        if "snoozed_until" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN snoozed_until REAL")
+        if "auto_archive" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN auto_archive INTEGER NOT NULL DEFAULT 1")
+        if "archived_at" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN archived_at REAL")
         self._migrate_routines()
         state_columns = {row[1] for row in self.db.execute("PRAGMA table_info(routine_state)")}
         if "api_token_hash" not in state_columns:
@@ -292,13 +307,16 @@ class Storage:
     def create_session(self, cwd: str, provider: str, model: str, worktree: str | None = None,
                        parent_id: str | None = None) -> str:
         """``cwd``: the project folder. ``worktree``: the JSON of the git worktree of the session, or None.
-        ``parent_id``: the session that started this session (the sidebar shows it nested), or None."""
+        ``parent_id``: the session that started this session (the sidebar shows it nested), or None.
+        A new session goes to the top of the manual order: a position above the current top (NULL when no
+        session has a position, which also puts it at the top)."""
         session_id = uuid.uuid4().hex
         now = time.time()
+        top = self.db.execute("SELECT MIN(position) FROM sessions").fetchone()[0]
         self.db.execute(
-            "INSERT INTO sessions (id, cwd, provider, model, created_at, updated_at, worktree, parent_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (session_id, cwd, provider, model, now, now, worktree, parent_id),
+            "INSERT INTO sessions (id, cwd, provider, model, created_at, updated_at, worktree, parent_id, position) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, cwd, provider, model, now, now, worktree, parent_id, None if top is None else top - 1),
         )
         self.db.commit()
         return session_id
@@ -309,13 +327,14 @@ class Storage:
 
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         sql = ("SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived, worktree, routine_id, "
-               "parent_id FROM sessions")
+               "parent_id, position, snoozed_until, auto_archive, archived_at FROM sessions")
         params: tuple = ()
         sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
         for r in rows:
             r["pinned"] = bool(r["pinned"])
             r["archived"] = bool(r["archived"])
+            r["auto_archive"] = bool(r["auto_archive"])
             try:  # The branch of a worktree session, for the sidebar. None: the session works in cwd.
                 r["branch"] = json.loads(r.pop("worktree") or "null")["branch"]
             except (ValueError, TypeError, KeyError):
@@ -328,7 +347,8 @@ class Storage:
     def update_session(self, session_id: str, touch: bool = True, **fields: Any) -> None:
         """Change fields of a session. ``touch``: the session is newer (for example after a prompt).
         A rename or a pin does not change the age of the session."""
-        allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "archived", "cwd", "routine_id"}
+        allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "archived", "cwd", "routine_id",
+                   "position", "snoozed_until", "auto_archive", "archived_at"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if touch:
             fields["updated_at"] = time.time()

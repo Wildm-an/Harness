@@ -531,6 +531,11 @@ export interface SessionSummary {
   branch?: string | null; // The branch of a worktree session. null: the session works in its project folder.
   routine_id?: string | null; // The routine that started the session. null: the user started it.
   parent_id?: string | null; // The session that started it (a fork, or start_session). The sidebar shows it nested.
+  // The Threads sidebar (docs/UI_RULES.md 3.7). An older daemon does not send these fields.
+  position?: number | null; // The manual order of Pinned and Active, low first. null: after the others, newest first.
+  snoozed_until?: number | null; // Epoch seconds. null: not snoozed.
+  auto_archive?: boolean; // false: "Auto-settle" > "Never".
+  archived_at?: number | null; // The time of the archive (the settle time).
 }
 
 /** The branches of the repository of a folder, for the "Branch to start from" menu. */
@@ -982,7 +987,20 @@ export type ClientMessage =
   | { type: "session.adopt"; session_id: string }
   | { type: "session.leave" } // The start screen. A running turn of the session continues.
   // Rename, pin, or archive. force: archive a worktree session with uncommitted changes.
-  | { type: "session.update"; session_id: string; title?: string; pinned?: boolean; archived?: boolean; force?: boolean }
+  // The Threads sidebar also sends position, snoozed_until (null: wake), and auto_archive (false: "Never").
+  | {
+      type: "session.update";
+      session_id: string;
+      title?: string;
+      pinned?: boolean;
+      archived?: boolean;
+      force?: boolean;
+      position?: number | null;
+      snoozed_until?: number | null;
+      auto_archive?: boolean;
+    }
+  // "Regenerate title": the model makes a new title from the conversation. The reply is session.title.
+  | { type: "session.retitle"; session_id: string }
   // The branch and the pull request of project folders, for the sidebar. The reply is "pr_status".
   | { type: "git.pr_status"; paths: string[] }
   | { type: "git.changes"; cwd: string } // The changes of the folder against its base branch (the rail).

@@ -9,6 +9,8 @@ import { PointMenu } from "./PointMenu";
 import { SessionRow, sessionState, type NestedActivity, type SessionActions, type SessionState } from "./SessionRow";
 import { SkeletonRows } from "./Skeleton";
 import { SidebarFilter, loadView, saveView, type SidebarView, type SortBy, type StatusFilter } from "./SidebarFilter";
+import { ThreadsList, type ThreadsActions } from "./ThreadsList";
+import { useSidebarOrganization } from "../lib/threads";
 
 export { sessionState } from "./SessionRow";
 
@@ -428,7 +430,9 @@ export function Sidebar({
   onRequestPr,
   onSearch,
   searchKey,
+  threads,
 }: {
+  threads?: ThreadsActions; // The Threads layout (Settings > General > "Sidebar organization"). Absent: the Sessions layout.
   sessions: SessionSummary[];
   projects: ProjectItem[];
   running: RunningSession[]; // The sessions with a running turn.
@@ -452,6 +456,7 @@ export function Sidebar({
   onSearch: () => void; // Open the session search.
   searchKey?: string; // "Ctrl+K".
 }) {
+  const organization = useSidebarOrganization();
   const [expanded, setExpanded] = useState(loadExpanded);
   const [moreOpen, setMoreOpen] = useState(() => loadPref(MORE_PREF, "0") === "1");
   const toggleMore = () => {
@@ -607,6 +612,24 @@ export function Sidebar({
       </div>
 
       <div className="side-sessions">
+        {organization === "threads" && threads ? (
+          <ThreadsList
+            sessions={sessions}
+            projects={projects}
+            running={runningById}
+            runningList={running}
+            unread={unread}
+            activeId={activeId}
+            disabled={!open}
+            loading={loading}
+            actions={actions}
+            threads={threads}
+            prStatus={view.showPr ? prStatus : new Map()}
+            onSearch={onSearch}
+            searchKey={searchKey}
+          />
+        ) : (
+        <>
         {pinned.length > 0 && (
           <>
             <h2 className="side-label">Pinned</h2>
@@ -673,6 +696,8 @@ export function Sidebar({
               />
             ))}
           </ul>
+        )}
+        </>
         )}
       </div>
 

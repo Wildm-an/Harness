@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -100,7 +101,7 @@ from .cron import CronError, parse_cron
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
-from .titles import MAX_TITLE_TRIES, summarize_title
+from .titles import MAX_TITLE_TRIES, conversation_prompt, summarize_title
 
 # The first turn waits this many seconds for the model title (wait_title). A slow model does not stop the chat.
 TITLE_WAIT = 15
@@ -1801,18 +1802,22 @@ ARCHIVE_CHECK_SECONDS = 3600
 async def archive_inactive(storage: Storage, now: float | None = None) -> list[str]:
     """Archive the sessions with no activity for the days of the setting. Return their ids.
 
-    A session stays when it is open (in a window or with no window), pinned, or in a worktree with
-    changes that are not in a commit. The archive of a clean worktree session removes its folder, as
+    A session stays when it is open (in a window or with no window: also a running turn), pinned, snoozed,
+    set to "Never" (auto_archive = 0), or in a worktree with changes that are not in a commit. The archive of a clean worktree session removes its folder, as
     a manual archive does. The windows get the new session list.
     """
     await asyncio.to_thread(prune_outputs, now)  # The hourly check also removes old tool output files.
     days = load_settings(None).get("auto_archive_days")
     if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
         return []
-    cutoff = (time.time() if now is None else now) - days * 86400
+    current = time.time() if now is None else now
+    cutoff = current - days * 86400
     archived: list[str] = []
     for row in storage.list_sessions(limit=1_000_000):
         if row["archived"] or row["pinned"] or row["updated_at"] >= cutoff or _find_live(row["id"]) is not None:
+            continue
+        # "Auto-settle" > "Never" of the Threads sidebar, and a snoozed session: they stay.
+        if not row["auto_archive"] or (row["snoozed_until"] is not None and row["snoozed_until"] > current):
             continue
         worktree = worktrees.loads((storage.get_session(row["id"]) or {}).get("worktree"))
         if worktree:
@@ -1822,7 +1827,7 @@ async def archive_inactive(storage: Storage, now: float | None = None) -> list[s
                 await asyncio.to_thread(worktrees.remove, worktree)
             except WorktreeError:
                 continue  # Git cannot tell: keep the session.
-        storage.update_session(row["id"], touch=False, archived=1)
+        storage.update_session(row["id"], touch=False, archived=1, archived_at=current)
         archived.append(row["id"])
     if archived:
         log.info("Archived %d inactive sessions", len(archived))
@@ -2136,10 +2141,22 @@ async def on_session_agent(conn: Connection, msg: dict[str, Any]) -> None:
 MAX_TITLE = 120
 
 
+def _optional_number(msg: dict[str, Any], key: str) -> float | None:
+    """A number field that can be null (the Threads sidebar: "position", "snoozed_until")."""
+    value = msg.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ProtocolError(f"'{key}' must be a number or null.")
+    return float(value)
+
+
 @handler("session.update")
 async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
     """Rename, pin, or archive a session: {"session_id", "title"?, "pinned"?, "archived"?, "force"?}.
-    The age of the session stays.
+    The Threads sidebar also sends "position" (a number, or null), "snoozed_until" (a time, or null), and
+    "auto_archive" (false: "Never"). The age of the session stays. An archive sets "archived_at"; an
+    unarchive clears it.
 
     The archive of a worktree session removes the folder of the worktree. The branch stays. If the
     worktree has changes that are not in a commit, the daemon sends "session.archive_confirm" and
@@ -2163,8 +2180,17 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
         if not isinstance(msg["archived"], bool):
             raise ProtocolError("'archived' must be true or false.")
         fields["archived"] = int(msg["archived"])
+        if bool(msg["archived"]) != bool(row["archived"]):
+            fields["archived_at"] = time.time() if msg["archived"] else None
+    for key in ("position", "snoozed_until"):
+        if key in msg:
+            fields[key] = _optional_number(msg, key)
+    if "auto_archive" in msg:
+        if not isinstance(msg["auto_archive"], bool):
+            raise ProtocolError("'auto_archive' must be true or false.")
+        fields["auto_archive"] = int(msg["auto_archive"])
     if not fields:
-        raise ProtocolError("Give 'title', 'pinned', or 'archived'.")
+        raise ProtocolError("Give 'title', 'pinned', 'archived', 'position', 'snoozed_until', or 'auto_archive'.")
     worktree = worktrees.loads(row.get("worktree"))
     if worktree and fields.get("archived") and not row["archived"]:
         live = conn.live.get(session_id)
@@ -2192,6 +2218,76 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
     row = conn.storage.get_session(session_id)
     await conn.send({"type": "session.updated", "id": session_id, "title": row["title"], "pinned": bool(row["pinned"]),
                      "archived": bool(row["archived"])})
+
+
+# "Regenerate title" of the Threads sidebar: the sessions with a title request that runs now.
+RETITLING: set[str] = set()
+_RETITLE_TASKS: set[asyncio.Task] = set()
+
+
+def _stored_title_client(row: dict[str, Any]) -> ModelClient | None:
+    """The model for the title of a session that is not open: its own model, or the default model for an ACP
+    session (as its aux client)."""
+    try:
+        settings = load_settings(Path(row["cwd"]))
+    except Exception:  # noqa: BLE001 - a bad project settings file: use the user settings.
+        settings = load_settings(None)
+    if row.get("provider") == ACP_PROVIDER:
+        return _aux_client(settings)
+    try:
+        provider, model = resolve_model(f"{row['provider']}/{row['model']}")
+    except ConfigError:
+        return _aux_client(settings)
+    return ModelClient(provider, model)
+
+
+@handler("session.retitle")
+async def on_session_retitle(conn: Connection, msg: dict[str, Any]) -> None:
+    """"Regenerate title": {"session_id"}. The model makes a new title from the conversation, with the code of the
+    first title (titles.conversation_prompt, summarize_title). The request runs beside the other messages. The
+    reply is "session.title", then "session.updated" (the client lists the sessions again). An error has the ref
+    "session.retitle": no messages, no model, a title that is being made, or a model that gave no title."""
+    session_id = _text_arg(msg, "session_id")
+    row = conn.storage.get_session(session_id)
+    if row is None:
+        raise ProtocolError(f"Unknown session: {session_id}")
+    live = _find_live(session_id)
+    if session_id in RETITLING or (live is not None and live.title_task is not None and not live.title_task.done()):
+        raise ProtocolError("A title is being made for this session now.")
+    prompt = conversation_prompt(conn.storage.all_messages(session_id))
+    if prompt is None:
+        raise ProtocolError("The session has no messages to make a title from.")
+    client = model_client(live.session.agent) if live is not None and live.session is not None else None
+    if client is None:
+        client = _stored_title_client(row)
+    if client is None:
+        raise ProtocolError("No model can make the title. Set a default model in Settings > Providers.")
+    RETITLING.add(session_id)
+
+    async def work() -> None:
+        try:
+            title = await summarize_title(client, prompt)
+        finally:
+            RETITLING.discard(session_id)
+        if not title:
+            await conn.error("The model did not make a title. Try again.", ref="session.retitle")
+            return
+        if conn.storage.get_session(session_id) is None:
+            return  # The session was deleted.
+        title = title[:MAX_TITLE]
+        conn.storage.update_session(session_id, touch=False, title=title)
+        target = _find_live(session_id)
+        if target is not None and target.session is not None:
+            target.session.title = title
+            target.title_prompt = None  # The new title stays: no first-prompt title replaces it.
+        current = conn.storage.get_session(session_id) or row
+        await conn.send({"type": "session.title", "id": session_id, "title": title})
+        await conn.send({"type": "session.updated", "id": session_id, "title": title,
+                         "pinned": bool(current["pinned"]), "archived": bool(current["archived"])})
+
+    task = asyncio.create_task(work())
+    _RETITLE_TASKS.add(task)
+    task.add_done_callback(_RETITLE_TASKS.discard)
 
 
 @handler("session.delete")
