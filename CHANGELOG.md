@@ -3,6 +3,45 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.86 (2026-11-17)
+
+### Agents
+
+- Settings > Agents replaces "Operating Harness", as the Providers page of T3 Code. It lists the
+  agents with their status, downloads agents from the ACP registry, and has "+ Add agent" with
+  the Recommended agents: Claude, Codex, Grok, Gemini, Cursor, OpenCode, and Hermes.
+- Sign in to Claude Code from Harness, and use your Claude subscription. The page shows the
+  usage of the subscription: "5-hour limit" and "Weekly". A hover shows the reset time.
+- New agents: Hermes Agent, Oh My Pi (downloaded from its GitHub releases, with a SHA-256 check),
+  and Google Antigravity. The logos show in full color.
+- The model picker under the prompt box is the picker of T3 Code: a rail of agents, favorites
+  with stars, Ctrl+1 to Ctrl+9, and a Reasoning column. Drag a favorite (or press Alt+Up and
+  Alt+Down) to change the order.
+- Switch the agent of a chat between turns. The new agent gets a recap of the earlier
+  conversation.
+
+### The Harness interface for other agents
+
+- Other agents use the Harness tools through the `harness` MCP server: visual cards, questions,
+  the Browser pane, and its tabs.
+- The permission requests of other agents follow the Harness rules and modes. "Auto mode model"
+  (Settings > Agents) chooses the model that checks their actions in Auto mode.
+- A permission card names the agent and shows its logo. The mode menu under the prompt box shows
+  the modes of the agent, and can change them.
+
+### Usage
+
+- The Usage page shows the tokens and the cost of each agent and model, by day.
+
+### Sidebar and Settings
+
+- Settings > General > "Sidebar organization" > "Threads": the thread list of T3 Code. Cards show
+  the project, the status or the last activity, the title, the branch, and the agent. Snooze and
+  Settle show on hover. The Working, Snoozed, and Settled shelves are at the bottom.
+- Settings has a search field at the top (Ctrl+F). A result opens its page and shows the
+  setting.
+- Permission rules are a Settings page, with a project select. The sidebar has no "More" list.
+
 ## 0.1.85 (2026-11-14)
 
 ### Agent
