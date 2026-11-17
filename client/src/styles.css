@@ -15235,3 +15235,15 @@ input::-ms-clear {
 .rules-path {
   margin-top: 4px;
 }
+
+/* The Favorites tab of the agent picker: drag a row to change the order (AgentPicker.tsx). The held row follows
+   the pointer with an accent ring, and the other rows slide, as the sections of the session rail (useSortable.ts). */
+.agent-picker-dropdown .ap-row.sortable,
+.menu.agent-picker-dropdown .ap-row.sortable .ap-row-main {
+  cursor: grab;
+}
+
+.agent-picker-dropdown .ap-row.dragging {
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow);
+}

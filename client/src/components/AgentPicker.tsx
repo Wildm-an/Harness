@@ -4,11 +4,13 @@
 //   first, then the ACP agents that are on (Settings > Agents). A gear at the bottom opens Settings > Agents.
 // - The middle column: a search field, then the models of the selected tab in a panel with a border. Each row
 //   has the agent logo, the name, a check mark on the current model, a star (favorites), and Ctrl+1 to Ctrl+9.
+//   On the Favorites tab, a drag of a row (or Alt+Up and Alt+Down) changes the order of the favorites.
 // - The right column: the reasoning levels of the agent ("Reasoning"), with "Default" and a check mark.
 // On the start screen, a model of an ACP tab also makes that agent the agent of new sessions. In a session, the
 // agent is fixed: the other tabs are off.
 
 import { useEffect, useRef, useState } from "react";
+import { useSortable } from "../lib/useSortable";
 import { Check, LoaderCircle, Search, Settings, Star, TriangleAlert } from "lucide-react";
 import type { AgentModel, ClientMessage, Effort, HarnessItem, SessionHarness } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
@@ -264,6 +266,22 @@ export function splitFavorite(key: string): { agent: string; value: string } | n
 /** Adds the key to the favorites, or removes it when it is there. */
 export function toggleFavorite(list: string[], key: string): string[] {
   return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
+}
+
+/**
+ * The favorites after a move of ``key`` to the drop place ``index`` of the Favorites tab. ``shown``: the keys of the
+ * rows of the tab, in their order (a favorite of a model that no agent gives now does not show). ``index`` counts the
+ * shown rows without the moved one. The favorites that do not show keep their places.
+ */
+export function moveFavorite(list: string[], shown: string[], key: string, index: number): string[] {
+  if (!list.includes(key)) return list;
+  const others = shown.filter((k) => k !== key && list.includes(k));
+  const at = Math.max(0, Math.min(index, others.length));
+  const rest = list.filter((k) => k !== key);
+  // After the shown row above the drop place (the top: first), so the hidden favorites keep their places.
+  const pos = at === 0 ? 0 : rest.indexOf(others[at - 1]) + 1;
+  const next = [...rest.slice(0, pos), key, ...rest.slice(pos)];
+  return next.every((k, i) => k === list[i]) ? list : next;
 }
 
 /**
@@ -587,10 +605,32 @@ export function AgentPicker({
     if (messages.length) onAgentMessages?.(messages);
   };
 
-  const toggleStar = (row: PickRow) => {
-    const next = toggleFavorite(favorites, favoriteKey(row.agent, row.value));
+  const saveFavorites = (next: string[]) => {
+    if (next === favorites) return;
     setFavorites(next);
     savePref(FAVORITES_PREF, JSON.stringify(next));
+  };
+  const toggleStar = (row: PickRow) => saveFavorites(toggleFavorite(favorites, favoriteKey(row.agent, row.value)));
+
+  // The order of the Favorites tab (the user asked for it): drag a row, or Alt+Up and Alt+Down on a row. The drag
+  // is the drag of the session rail (useSortable.ts): the held row follows the pointer, and the others slide.
+  const canSort = favTab && !searching && rows.length > 1;
+  const shownKeys = canSort ? rows.map((r) => favoriteKey(r.agent, r.value)) : [];
+  const latestFav = useRef({ favorites, shownKeys });
+  latestFav.current = { favorites, shownKeys };
+  const favSort = useSortable(shownKeys, (key, target) => {
+    const { favorites: list, shownKeys: keys } = latestFav.current;
+    const next = moveFavorite(list, keys, key, target);
+    if (next === list) return;
+    setFavorites(next);
+    savePref(FAVORITES_PREF, JSON.stringify(next));
+  });
+
+  const stepFavorite = (row: PickRow, step: -1 | 1) => {
+    const key = favoriteKey(row.agent, row.value);
+    const at = shownKeys.indexOf(key);
+    if (at < 0 || at + step < 0 || at + step >= shownKeys.length) return;
+    saveFavorites(moveFavorite(favorites, shownKeys, key, at + step));
   };
 
   const switchTab = (step: number) => {
@@ -752,9 +792,38 @@ export function AgentPicker({
     const t = tabOf(row);
     const checked = checkedRow(row);
     const key = rowKeyLabel(rows.indexOf(row));
-    const fav = favorites.includes(favoriteKey(row.agent, row.value));
+    const favKey = favoriteKey(row.agent, row.value);
+    const fav = favorites.includes(favKey);
+    const sortable = canSort && fav;
     return (
-      <div key={row.key} className={`ap-row${checked ? " current" : ""}`} role="none" onMouseEnter={() => setHot(row)} onFocus={() => setHot(row)}>
+      <div
+        key={row.key}
+        ref={sortable ? favSort.itemRef(favKey) : undefined}
+        style={sortable ? favSort.styleOf(favKey) : undefined}
+        className={`ap-row${checked ? " current" : ""}${sortable ? " sortable" : ""}${favSort.dragging === favKey ? " dragging" : ""}`}
+        role="none"
+        title={sortable ? "Drag to change the order (Alt+Up, Alt+Down)" : undefined}
+        onMouseEnter={() => setHot(row)}
+        onFocus={() => setHot(row)}
+        onPointerDown={
+          sortable
+            ? (e) => {
+                if (!(e.target as Element).closest(".ap-star")) favSort.onPointerDown(favKey, e);
+              }
+            : undefined
+        }
+        onClickCapture={sortable ? favSort.swallowClick : undefined}
+        onKeyDown={
+          sortable
+            ? (e) => {
+                if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                e.preventDefault();
+                e.stopPropagation();
+                stepFavorite(row, e.key === "ArrowUp" ? -1 : 1);
+              }
+            : undefined
+        }
+      >
         <button
           type="button"
           role="menuitemradio"

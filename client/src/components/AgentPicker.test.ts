@@ -21,6 +21,7 @@ import {
   splitFavorite,
   tabTip,
   toggleFavorite,
+  moveFavorite,
   type AgentTab,
   type PickGroup,
 } from "./AgentPicker";
@@ -194,6 +195,19 @@ describe("the favorites of the agent picker", () => {
   it("adds and removes a favorite", () => {
     expect(toggleFavorite(["a|1"], "b|2")).toEqual(["a|1", "b|2"]);
     expect(toggleFavorite(["a|1", "b|2"], "a|1")).toEqual(["b|2"]);
+  });
+
+  it("moves a favorite to the drop place, and keeps the hidden favorites in their places", () => {
+    const list = ["a|1", "gone|x", "b|2", "c|3"];
+    const shown = ["a|1", "b|2", "c|3"]; // "gone|x": no agent gives the model now.
+    // The drop place counts the shown rows without the moved one.
+    expect(moveFavorite(list, shown, "c|3", 0)).toEqual(["c|3", "a|1", "gone|x", "b|2"]);
+    expect(moveFavorite(list, shown, "a|1", 1)).toEqual(["gone|x", "b|2", "a|1", "c|3"]);
+    expect(moveFavorite(list, shown, "a|1", 2)).toEqual(["gone|x", "b|2", "c|3", "a|1"]);
+    expect(moveFavorite(list, shown, "b|2", 9)).toEqual(["a|1", "gone|x", "c|3", "b|2"]);
+    // The same place gives the same list, and a key that is not a favorite changes nothing.
+    expect(moveFavorite(list, shown, "a|1", 0)).toBe(list);
+    expect(moveFavorite(list, shown, "z|9", 0)).toBe(list);
   });
 
   it("lists the favorites that a group gives, in their order, with the group as the detail", () => {
