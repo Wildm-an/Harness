@@ -3,8 +3,10 @@
 Each agent of the ACP registry has an ``icon``: a small SVG in one color (``currentColor``) that the agent
 gives for ACP clients (Zed and T3 Code show the same icons). Harness does not ship these icons. The daemon
 downloads the icon of each agent from the registry address and keeps it in ``~/.harness/harnesses/icons``.
-The client gets it as a ``data:`` URL in an ``<img>``, so the SVG runs no code. The logo shows in its brand
-color (``BRAND_COLORS``, else black) on a light tile.
+The client gets it as a ``data:`` URL (an ``<img>`` or a CSS mask), so the SVG runs no code. A logo with a brand
+color (``BRAND_COLORS``) shows in that color. A one-color logo with no brand color keeps ``currentColor``: the client
+shows it in the text color of the theme, with no tile (the user asked for no white background, as T3 Code shows the
+registry icons). A logo in full color shows as it is.
 
 An agent that is not in the registry can have an icon that Harness ships (``agent_icons/<id>.svg``, for example
 Hermes Agent). An icon that is not safe or too large is not kept: the client shows the initials of the agent.
@@ -39,9 +41,8 @@ def _folder() -> Path:
 # the official logo of the agent, with its source and license in THIRD_PARTY_LICENSES.md.
 BUNDLED = Path(__file__).resolve().parent / "agent_icons"
 
-# The brand color of a logo that is one color (``currentColor``). The client shows each logo in full color on a
-# light tile, as an app icon (the user asked for this). An agent that is not here keeps the color of its SVG:
-# black for ``currentColor``, as the official marks of OpenAI, xAI, Cursor, and OpenCode are.
+# The brand color of a logo that is one color (``currentColor``). An agent that is not here keeps ``currentColor``,
+# and the client shows its logo in the text color of the theme.
 BRAND_COLORS = {
     "claude-acp": "#D97757",  # The Claude orange of Anthropic.
 }
@@ -66,8 +67,9 @@ def icon(harness_id: str) -> str | None:
             except OSError:
                 continue
             if safe_svg(data):
-                color = BRAND_COLORS.get(harness_id, "#000000").encode("ascii")
-                data = data.replace(b"currentColor", color)  # An <img> has no text color: the brand color.
+                color = BRAND_COLORS.get(harness_id)
+                if color:
+                    data = data.replace(b"currentColor", color.encode("ascii"))
                 value = "data:image/svg+xml;base64," + base64.b64encode(data).decode("ascii")
                 break
     _cache[harness_id] = value

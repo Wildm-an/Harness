@@ -607,8 +607,10 @@ class AcpAgent(Agent):
         spec = None if self.harness.custom else acp_models.choice(settings, self.harness.id)
         if spec is None or self.requested_model:
             # A model of the harness itself: the choice of the switch of the agent (session.agent), else the
-            # choice of the picker of the start screen (Settings > Agents).
-            self._provider_model = self.requested_model or acp_harnesses.native_choice(settings, self.harness.id)
+            # choice of the picker of the start screen (Settings > Agents), else the model that the picker shows
+            # with no choice (the current model of the harness, else its first model: no default alias).
+            self._provider_model = (self.requested_model or acp_harnesses.native_choice(settings, self.harness.id)
+                                    or (None if self.harness.custom else acp_harnesses.implied_model(self.harness.id)))
             return argv, env
         try:
             target = await acp_models.resolve(spec)
@@ -693,7 +695,8 @@ class AcpAgent(Agent):
     async def _send_state(self) -> None:
         if self.acp_models and not self.harness.custom:
             # The picker of the start screen shows these models before the next session starts.
-            await asyncio.to_thread(acp_harnesses.save_models, self.harness.id, self.acp_models)
+            await asyncio.to_thread(acp_harnesses.save_models, self.harness.id,
+                                    mark_current(self.acp_models, self.acp_model))
         if self.acp_efforts and not self.harness.custom:
             await asyncio.to_thread(acp_harnesses.save_efforts, self.harness.id, self.acp_efforts)
         await self.emit({"type": "acp.state", "harness": self.public_harness()})
@@ -1495,14 +1498,14 @@ def parse_efforts(result: Any) -> list[dict[str, str]]:
     return []
 
 
-def parse_models(result: Any) -> list[dict[str, str]]:
+def parse_models(result: Any) -> list[dict[str, Any]]:
     """The models of session/new: a configOptions entry of the category "model", else "models"."""
     if not isinstance(result, dict):
         return []
     for option in result.get("configOptions") or []:
         if not isinstance(option, dict) or option.get("category") != "model" or option.get("type") != "select":
             continue
-        values: list[dict[str, str]] = []
+        values: list[dict[str, Any]] = []
         for item in option.get("options") or []:
             group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
             for value in group:
@@ -1510,13 +1513,19 @@ def parse_models(result: Any) -> list[dict[str, str]]:
                     values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
                                    "description": str(value.get("description") or "")})
         if values:
-            return values
+            return mark_current(values, option.get("currentValue"))
     models = result.get("models")
     if isinstance(models, dict) and isinstance(models.get("availableModels"), list):
-        return [{"id": str(m.get("modelId")), "name": str(m.get("name") or m.get("modelId")),
-                 "description": str(m.get("description") or "")}
-                for m in models["availableModels"] if isinstance(m, dict) and m.get("modelId")]
+        found = [{"id": str(m.get("modelId")), "name": str(m.get("name") or m.get("modelId")),
+                  "description": str(m.get("description") or "")}
+                 for m in models["availableModels"] if isinstance(m, dict) and m.get("modelId")]
+        return mark_current(found, models.get("currentModelId"))
     return []
+
+
+def mark_current(models: list[dict[str, Any]], current: Any) -> list[dict[str, Any]]:
+    """The models, with ``current`` true on the model that the harness uses now (T3 Code: ``isDefault``)."""
+    return [{**m, "current": True} if current is not None and m["id"] == str(current) else m for m in models]
 
 
 async def probe_models(spec: HarnessSpec, cwd: Path) -> list[dict[str, str]]:

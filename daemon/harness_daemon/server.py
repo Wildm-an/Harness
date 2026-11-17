@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from .tool_output import prune_outputs, remove_session_outputs, session_output_dir
 from . import __version__
 from .agent import Agent
-from . import acp_harnesses, acp_icons, acp_install, acp_models, agent_auth, usage
+from . import acp_harnesses, acp_icons, acp_install, acp_models, agent_auth, agent_updates, usage
 from .auto_mode import global_auto_config
 from . import acp_mcp
 from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client, probe_models as acp_probe_models
@@ -3988,6 +3988,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "bash_timeout": (int,),
     "terminal_shell": (str, type(None)),
     "subagents": (bool,),
+    "agents_auto_update": (bool,),  # Settings > Agents > "Update agents automatically" (the Harness downloads).
     "auto_model": (bool,),
     "online_model": (str, type(None)),
     "offline_model": (str, type(None)),
@@ -4130,6 +4131,8 @@ async def _send_harnesses(conn: Connection) -> None:
         # Settings > Agents: the picker rail, the models of the last session, and the sign-in state.
         item["enabled"] = item["id"] in enabled
         item["models"] = [] if item["custom"] else acp_harnesses.cached_models(item["id"])
+        # When Harness last read the models (the picker reads them again after 5 minutes, as T3 Code does).
+        item["models_checked"] = None if item["custom"] else acp_harnesses.models_checked(item["id"])
         item["native_model"] = acp_harnesses.native_choice(settings, item["id"])
         item["efforts"] = [] if item["custom"] else acp_harnesses.cached_efforts(item["id"])
         item["native_effort"] = acp_harnesses.native_effort(settings, item["id"])
@@ -4137,7 +4140,12 @@ async def _send_harnesses(conn: Connection) -> None:
         item["auth"] = agent_auth.STATES.cached(item["id"])
         item["icon"] = None if item["custom"] else acp_icons.icon(item["id"])  # A data URL from the ACP registry.
         item["probing"] = item["id"] in _PROBES
+        # The program that the user installed, with its own update command (agent_updates.py). None: no updater,
+        # or the program is not on this computer.
+        item["program"] = None if item["custom"] else agent_updates.STATES.cached(item["id"])
         if item["can_sign_in"] and item["enabled"] and not agent_auth.STATES.fresh(item["id"]):
+            stale.append(item["id"])
+        elif item["program"] and item["enabled"] and not agent_updates.STATES.fresh(item["id"]):
             stale.append(item["id"])
     auto_model = global_auto_config().get("model")
     await conn.send({"type": "harnesses", "items": items, "current": current,
@@ -4168,10 +4176,13 @@ async def _download_icons(conn: Connection, ids: list[str]) -> None:
 
 
 async def _check_agents(conn: Connection, ids: list[str], force: bool = False) -> None:
-    """Read the sign-in state and the usage of the agents, then send the list again."""
+    """Read the sign-in state, the usage, and the program version of the agents, then send the list again."""
     try:
         for harness_id in ids:
-            await agent_auth.STATES.check(harness_id, force=force)
+            if agent_auth.supports(harness_id):
+                await agent_auth.STATES.check(harness_id, force=force)
+            if harness_id in agent_updates.UPDATERS:
+                await agent_updates.STATES.check(harness_id, force=force)
         await _send_harnesses(conn)
     except Exception:  # noqa: BLE001 - the connection closed.
         log.debug("The agent states did not go to the client", exc_info=True)
@@ -4182,6 +4193,7 @@ async def _refresh_harness_registry(conn: Connection) -> None:
     try:
         if await acp_install.refresh_registry():
             await _send_harnesses(conn)
+            await _auto_update_agents(conn)
     except Exception:  # noqa: BLE001 - the connection closed.
         log.debug("The harness list did not go to the client", exc_info=True)
 
@@ -4192,9 +4204,50 @@ async def on_harnesses_list(conn: Connection, msg: dict[str, Any]) -> None:
     registry is read in the background, and a new list follows when the versions changed."""
     if msg.get("refresh") is True:
         await acp_install.refresh_registry(force=True)
+        # "Check again" also reads the versions of the programs of the enabled agents.
+        enabled = acp_harnesses.enabled_ids(load_settings(None))
+        programs = [i for i in agent_updates.UPDATERS if i in enabled]
+        if programs:
+            asyncio.create_task(_check_programs(conn, programs))
     elif acp_install.registry_stale():
         asyncio.create_task(_refresh_harness_registry(conn))
     await _send_harnesses(conn)
+    if msg.get("refresh") is True:
+        await _auto_update_agents(conn)
+
+
+async def _check_programs(conn: Connection, ids: list[str]) -> None:
+    try:
+        for harness_id in ids:
+            await agent_updates.STATES.check(harness_id, force=True)
+        await _send_harnesses(conn)
+    except Exception:  # noqa: BLE001 - the connection closed.
+        log.debug("The program versions did not go to the client", exc_info=True)
+
+
+def _download_updates(enabled_only: bool) -> list[acp_harnesses.HarnessSpec]:
+    """The agents with a Harness download that has a newer version, and no download that runs now."""
+    enabled = acp_harnesses.enabled_ids(load_settings(None))
+    found = []
+    for spec in acp_harnesses.all_harnesses():
+        if spec.custom or acp_install.busy(spec.id) or (enabled_only and spec.id not in enabled):
+            continue
+        if acp_install.summary(spec).get("update"):
+            found.append(spec)
+    return found
+
+
+_AUTO_UPDATE: set[str] = set()  # An automatic update runs (one at a time for the daemon).
+
+
+async def _auto_update_agents(conn: Connection) -> None:
+    """"Update agents automatically": download the new versions of the enabled agents that Harness downloaded."""
+    if load_settings(None).get("agents_auto_update") is not True or _AUTO_UPDATE:
+        return
+    specs = await asyncio.to_thread(_download_updates, True)
+    if specs:
+        _AUTO_UPDATE.add("run")
+        asyncio.create_task(_install_all(conn, specs, done=lambda: _AUTO_UPDATE.discard("run")))
 
 
 @handler("harnesses.install")
@@ -4208,24 +4261,65 @@ async def on_harnesses_install(conn: Connection, msg: dict[str, Any]) -> None:
     if acp_install.busy(harness_id):
         raise ProtocolError(f"{spec.name} downloads now.")
 
+    async def run() -> None:
+        await _install_one(conn, spec)
+        await _send_harnesses(conn)
+
+    asyncio.create_task(run())
+
+
+async def _install_one(conn: Connection, spec: acp_harnesses.HarnessSpec) -> bool:
+    """Download a harness (or its update), with harnesses.progress. An error goes to the client. True: done."""
+
     async def progress(stage: str, received: int, total: int) -> None:
         try:
-            await conn.send({"type": "harnesses.progress", "id": harness_id, "stage": stage,
+            await conn.send({"type": "harnesses.progress", "id": spec.id, "stage": stage,
                              "received": received, "total": total})
         except Exception:  # noqa: BLE001 - the window closed: the download goes on.
             pass
 
-    async def run() -> None:
-        try:
-            await acp_install.install(spec, progress)
-        except acp_install.InstallError as e:
-            await conn.error(str(e), ref="harnesses.install")
-        except Exception as e:  # noqa: BLE001
-            log.exception("The download of %s failed", harness_id)
-            await conn.error(f"Could not download {spec.name}: {type(e).__name__}: {e}", ref="harnesses.install")
-        await _send_harnesses(conn)
+    try:
+        await acp_install.install(spec, progress)
+        return True
+    except acp_install.InstallError as e:
+        await _safe_error(conn, str(e), "harnesses.install")
+    except Exception as e:  # noqa: BLE001
+        log.exception("The download of %s failed", spec.id)
+        await _safe_error(conn, f"Could not download {spec.name}: {type(e).__name__}: {e}", "harnesses.install")
+    return False
 
-    asyncio.create_task(run())
+
+async def _safe_error(conn: Connection, text: str, ref: str) -> None:
+    try:
+        await conn.error(text, ref=ref)
+    except Exception:  # noqa: BLE001 - the connection closed.
+        pass
+
+
+async def _install_all(conn: Connection, specs: list[acp_harnesses.HarnessSpec], done: Any = None) -> None:
+    """Download the updates one at a time, and send the list after each one."""
+    try:
+        for spec in specs:
+            if acp_install.busy(spec.id):
+                continue
+            await _install_one(conn, spec)
+            try:
+                await _send_harnesses(conn)
+            except Exception:  # noqa: BLE001 - the connection closed: the updates go on.
+                pass
+    finally:
+        if done is not None:
+            done()
+
+
+@handler("harnesses.update_all")
+async def on_harnesses_update_all(conn: Connection, msg: dict[str, Any]) -> None:
+    """"Update all" of Settings > Agents: download the new version of each agent that Harness downloaded and
+    that has one, one at a time. The client gets harnesses.progress and the list, as for harnesses.install."""
+    specs = await asyncio.to_thread(_download_updates, False)
+    if not specs:
+        raise ProtocolError("No agent that Harness downloaded has an update.")
+    asyncio.create_task(_install_all(conn, specs))
 
 
 @handler("harnesses.model")
@@ -4407,10 +4501,11 @@ async def on_usage_summary(conn: Connection, msg: dict[str, Any]) -> None:
 
 @handler("agents.check")
 async def on_agents_check(conn: Connection, msg: dict[str, Any]) -> None:
-    """Read the sign-in state and the usage of an agent again now: {"id"}. The reply is the list."""
+    """Read the sign-in state, the usage, and the program version of an agent again now: {"id"}. The reply is
+    the list."""
     harness_id = _text_arg(msg, "id")
-    if not agent_auth.supports(harness_id):
-        raise ProtocolError(f"Harness cannot check the sign-in of {harness_id}.")
+    if not agent_auth.supports(harness_id) and harness_id not in agent_updates.UPDATERS:
+        raise ProtocolError(f"Harness cannot check {harness_id}.")
     await _check_agents(conn, [harness_id], force=True)
 
 
@@ -4439,7 +4534,37 @@ async def on_agents_signin(conn: Connection, msg: dict[str, Any]) -> None:
     except Exception as e:  # noqa: BLE001 - report any start error to the client.
         raise ProtocolError(f"The sign-in did not start: {e}") from None
     _SIGNIN = signin
-    await conn.send({"type": "agents.signin.started", "id": harness_id})
+    await conn.send({"type": "agents.signin.started", "id": harness_id, "kind": "signin"})
+
+
+@handler("agents.update_program")
+async def on_agents_update_program(conn: Connection, msg: dict[str, Any]) -> None:
+    """Update the program of an agent with its own update command, in the terminal of the sign-in: {"id",
+    "cols", "rows"}. The client gets agents.signin.started (kind "update"), the output, the exit, then the list
+    with the new version. agents.signin.input, .resize, and .cancel work for it."""
+    global _SIGNIN
+    harness_id = _text_arg(msg, "id")
+    try:
+        argv = await asyncio.to_thread(agent_updates.update_argv, harness_id)
+    except LookupError as e:
+        raise ProtocolError(str(e)) from None
+    if _SIGNIN is not None and _SIGNIN.alive:
+        raise ProtocolError("A sign-in or an update runs now. Wait for its end, or cancel it.")
+    cols, rows = _term_size(msg)
+
+    def finished(run: agent_auth.SignIn, code: int | None) -> None:
+        agent_updates.STATES.invalidate(run.harness_id)
+        agent_auth.STATES.invalidate(run.harness_id)
+        asyncio.ensure_future(_check_agents(conn, [run.harness_id], force=True))
+
+    run = agent_auth.SignIn(harness_id, conn.send, finished, argv=argv, kind="update")
+    try:
+        run.start(cols, rows)
+    except Exception as e:  # noqa: BLE001 - report any start error to the client.
+        raise ProtocolError(f"The update did not start: {e}") from None
+    _SIGNIN = run
+    await conn.send({"type": "agents.signin.started", "id": harness_id, "kind": "update",
+                     "command": agent_updates.command_text(harness_id)})
 
 
 def _signin(msg: dict[str, Any]) -> agent_auth.SignIn:
@@ -4469,7 +4594,7 @@ async def on_agents_signin_cancel(conn: Connection, msg: dict[str, Any]) -> None
     was_alive = signin.alive
     signin.cancel()
     if was_alive:
-        await conn.send({"type": "agents.signin.exit", "id": signin.harness_id, "code": None})
+        await conn.send({"type": "agents.signin.exit", "id": signin.harness_id, "kind": signin.kind, "code": None})
         await _check_agents(conn, [signin.harness_id], force=True)
 
 

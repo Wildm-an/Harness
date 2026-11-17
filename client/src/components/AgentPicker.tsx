@@ -49,6 +49,33 @@ export interface AgentTab {
 
 export type RowKind = "default" | "builtin" | "native" | "provider";
 
+/** A model that only names the default of the agent ("default", "Default (recommended)"): the picker does not show
+ * it. The user chooses a real model (the user asked for this, as T3 Code). Daemon acp_harnesses.is_default_alias. */
+export function isDefaultAlias(m: Pick<AgentModel, "id" | "name">): boolean {
+  return m.id.toLowerCase() === "default" || m.name.toLowerCase().startsWith("default");
+}
+
+/** The models of an agent that the picker lists. */
+export function listedModels(models: AgentModel[]): AgentModel[] {
+  return models.filter((m) => !isDefaultAlias(m));
+}
+
+/** The model of new sessions when the user chose none, as in T3 Code: the current model of the agent, else its
+ * first model. The daemon starts the session on the same model (acp_harnesses.implied_model). */
+export function impliedModel(models: AgentModel[]): string | null {
+  const listed = listedModels(models);
+  return (listed.find((m) => m.current) ?? listed[0])?.id ?? null;
+}
+
+/** The picker reads the models of an agent again after this time (T3 Code refreshes its providers each 5 minutes). */
+export const MODELS_TTL = 5 * 60;
+
+/** The agent needs a model check: no models are known, or the list is older than MODELS_TTL. */
+export function needsModelCheck(item: Pick<HarnessItem, "models" | "models_checked">, now = Date.now() / 1000): boolean {
+  if (item.models.length === 0) return true;
+  return typeof item.models_checked !== "number" || now - item.models_checked > MODELS_TTL;
+}
+
 /** One model row. ``value``: the built-in spec ("" for "Default model"), the model id of the agent, or "<provider>/<model>". */
 export interface PickRow {
   key: string;
@@ -108,7 +135,8 @@ export function railTabs(items: HarnessItem[] | null, current: SessionHarness | 
       name: item.name,
       item,
       models: item.models.length ? item.models : (fallback?.models ?? []),
-      nativeModel: item.native_model,
+      // No choice: the model that the session will use (the current model, else the first), as in T3 Code.
+      nativeModel: item.native_model ?? (item.provider_model ? null : impliedModel(item.models.length ? item.models : (fallback?.models ?? []))),
       providerModel: item.provider_model,
       providerModels: item.provider_models,
       efforts: item.efforts?.length ? item.efforts : (fallback?.efforts ?? []),
@@ -179,31 +207,26 @@ export function builtinGroups(models: ModelList | null, allowDefault: boolean, l
  * The groups of an ACP tab: "Default of {name}" (``withDefault``), the models of the agent itself, then a
  * group for each provider when the agent can use a model of a Harness provider (``providerItems``).
  */
-export function agentGroups(tab: AgentTab, providerItems: string[], withDefault: boolean): PickGroup[] {
+export function agentGroups(tab: AgentTab, providerItems: string[]): PickGroup[] {
+  // As T3 Code: the models that the agent gives, with no "Default" row (the user asked for this). For an agent that
+  // can use the Harness providers (OpenCode, Codex), the providers come first (the user asked for this).
   const out: PickGroup[] = [];
   const providers = tab.providerModels ? groupModels(providerItems) : [];
-  if (withDefault) {
-    out.push({
-      key: `${tab.id}:default`,
-      heading: null,
-      searchHeading: tab.name,
-      rows: [{ key: `${tab.id}:default`, agent: tab.id, kind: "default", value: "", label: `Default of ${tab.name}` }],
-    });
-  }
-  if (tab.models.length) {
-    out.push({
-      key: `${tab.id}:own`,
-      heading: providers.length ? tab.name : null,
-      searchHeading: tab.name,
-      rows: tab.models.map((m) => ({ key: `${tab.id}:own:${m.id}`, agent: tab.id, kind: "native", value: m.id, label: m.name, sub: m.description || undefined })),
-    });
-  }
   for (const g of providers) {
     out.push({
       key: `${tab.id}:p:${g.provider}`,
       heading: g.provider,
       searchHeading: `${tab.name} · ${g.provider}`,
       rows: g.models.map((spec) => ({ key: `${tab.id}:p:${spec}`, agent: tab.id, kind: "provider", value: spec, label: spec.slice(g.provider.length + 1) })),
+    });
+  }
+  const own = listedModels(tab.models);
+  if (own.length) {
+    out.push({
+      key: `${tab.id}:own`,
+      heading: providers.length ? tab.name : null,
+      searchHeading: tab.name,
+      rows: own.map((m) => ({ key: `${tab.id}:own:${m.id}`, agent: tab.id, kind: "native", value: m.id, label: m.name, sub: m.description || undefined })),
     });
   }
   return out;
@@ -381,7 +404,9 @@ export function agentChipLabel(harness: SessionHarness, inSession: boolean): str
   if (inSession) return harness.models?.find((m) => m.id === harness.model)?.name ?? harness.name;
   if (harness.native_model) return harness.models?.find((m) => m.id === harness.native_model)?.name ?? harness.native_model;
   if (harness.model) return modelName(harness.model);
-  return harness.name;
+  // No choice: the model that the session will use, as in T3 Code.
+  const implied = impliedModel(harness.models ?? []);
+  return (implied && harness.models?.find((m) => m.id === implied)?.name) || harness.name;
 }
 
 /**
@@ -480,6 +505,7 @@ export function AgentPicker({
   };
 
   const show = () => {
+    asked.current.clear(); // Each opening can read the models again when the list is old (as T3 Code).
     selectTab(currentId);
     setPicked({});
     setFavorites(parseFavorites(loadPref(FAVORITES_PREF, "[]"))); // The other prompt box can change them.
@@ -529,7 +555,7 @@ export function AgentPicker({
   const [waiting, setWaiting] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
     const item = agentTab?.item;
-    if (!open || inSession || !item || item.custom || item.models.length > 0 || item.probing || !agentReady(item)) return;
+    if (!open || inSession || !item || item.custom || item.probing || !agentReady(item) || !needsModelCheck(item)) return;
     if (asked.current.has(item.id)) return;
     asked.current.add(item.id);
     setWaiting((w) => new Set(w).add(item.id));
@@ -551,7 +577,7 @@ export function AgentPicker({
 
   const groupsOf = (t: AgentTab, all: boolean): PickGroup[] =>
     t.id === BUILTIN_AGENT ? builtinGroups(models, allowDefault, local, all)
-      : agentGroups(t, inSession ? [] : providerItems, !inSession || t.id !== currentId);
+      : agentGroups(t, inSession ? [] : providerItems);
   let shown: PickGroup[];
   let hidden = 0;
   if (searching) {
@@ -919,7 +945,7 @@ export function AgentPicker({
         {groupList(shown)}
         {moreButton()}
         {t.models.length === 0 && (inSession || !(item?.probing || waiting.has(t.id))) && (
-          <p className="menu-note">{inSession ? `${t.name} chooses its own model.` : `${t.name} gave no models. Use "Default of ${t.name}".`}</p>
+          <p className="menu-note">{inSession ? `${t.name} chooses its own model.` : `${t.name} gave no models. It uses its own model settings.`}</p>
         )}
         {!inSession && t.models.length === 0 && (item?.probing || waiting.has(t.id)) && (
           <p className="menu-note">

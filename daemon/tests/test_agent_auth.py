@@ -54,8 +54,25 @@ def test_the_enabled_agents_include_the_operating_harness():
 
 def test_the_models_of_the_last_session(harness_home):
     assert acp_harnesses.cached_models("claude-acp") == []
+    assert acp_harnesses.models_checked("claude-acp") is None and acp_harnesses.implied_model("claude-acp") is None
     acp_harnesses.save_models("claude-acp", [{"id": "default", "name": "Default", "description": ""}])
     assert acp_harnesses.cached_models("claude-acp")[0]["id"] == "default"
+    assert acp_harnesses.models_checked("claude-acp") is not None
+    # Only a default alias: no model to imply.
+    assert acp_harnesses.implied_model("claude-acp") is None
+
+
+def test_the_model_of_new_sessions_with_no_choice(harness_home):
+    """As T3 Code: the current model of the harness, else its first model. A default alias does not count."""
+    default = {"id": "default", "name": "Default (recommended)", "description": "", "current": True}
+    opus = {"id": "opus", "name": "Opus", "description": ""}
+    sonnet = {"id": "sonnet", "name": "Sonnet", "description": ""}
+    acp_harnesses.save_models("claude-acp", [default, opus, sonnet])
+    assert acp_harnesses.implied_model("claude-acp") == "opus"
+    acp_harnesses.save_models("claude-acp", [default, opus, {**sonnet, "current": True}])
+    assert acp_harnesses.implied_model("claude-acp") == "sonnet"
+    assert acp_harnesses.is_default_alias({"id": "auto", "name": "Default model"})
+    assert not acp_harnesses.is_default_alias(opus)
 
 
 def test_enable_and_the_model_choices(daemon):  # noqa: F811
@@ -77,7 +94,7 @@ def test_enable_and_the_model_choices(daemon):  # noqa: F811
 
     c.send({"type": "harnesses.native_model", "id": "nope", "model": "x"})
     assert "Unknown harness" in c.until("error")[0]["message"]
-    c.send({"type": "agents.check", "id": "opencode"})
+    c.send({"type": "agents.check", "id": "gemini"})  # No sign-in and no program update.
     assert "cannot check" in c.until("error")[0]["message"]
     c.send({"type": "agents.signin.input", "id": "claude-acp", "data": "x"})
     assert "No sign-in runs" in c.until("error")[0]["message"]
@@ -113,10 +130,10 @@ def test_the_icon_of_a_kept_file(harness_home):
 def test_the_models_of_session_new():
     from harness_daemon.acp import parse_models
     result = {"models": {"availableModels": [{"modelId": "opus", "name": "Opus"}, {"name": "no id"}], "currentModelId": "opus"}}
-    assert parse_models(result) == [{"id": "opus", "name": "Opus", "description": ""}]
-    config = {"configOptions": [{"category": "model", "type": "select", "options": [
+    assert parse_models(result) == [{"id": "opus", "name": "Opus", "description": "", "current": True}]
+    config = {"configOptions": [{"category": "model", "type": "select", "currentValue": "b", "options": [
         {"group": "A", "options": [{"value": "a1", "name": "A one"}]}, {"value": "b", "description": "B"}]}]}
-    assert [m["id"] for m in parse_models(config)] == ["a1", "b"]
+    assert [(m["id"], m.get("current", False)) for m in parse_models(config)] == [("a1", False), ("b", True)]
     assert parse_models(None) == []
 
 
@@ -130,7 +147,7 @@ def test_the_logos_have_their_brand_colors(harness_home):
         (folder / f"{name}.svg").write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M0 0"/></svg>')
     svg = lambda i: base64.b64decode(acp_icons.icon(i).split(",", 1)[1])
     assert b'fill="#D97757"' in svg("claude-acp") and b"currentColor" not in svg("claude-acp")
-    assert b'fill="#000000"' in svg("opencode")
+    assert b"currentColor" in svg("opencode")  # No brand color: the client shows it in the text color of the theme.
     # Hermes Agent is not in the registry: Harness ships its logo.
     hermes = svg("hermes")
     assert hermes.startswith(b"<svg") and len(hermes) <= acp_icons.MAX_BYTES and acp_icons.safe_svg(hermes)

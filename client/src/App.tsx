@@ -99,7 +99,7 @@ import {
   isSearchShortcut,
   NEW_SESSION_SHORTCUT,
   SEARCH_SHORTCUT,
-  navShortcut,
+  navMouseButton, navShortcut,
   shortcutLabel,
   shortcutPane,
 } from "./layout/shortcuts";
@@ -112,7 +112,7 @@ import { ToastStack } from "./components/ToastStack";
 import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
-import { AgentsSettings } from "./components/AgentsSettings";
+import { AgentsSettings, agentUpdateCount } from "./components/AgentsSettings";
 import { AgentModeMenu, agentModes, nextAgentMode } from "./components/AgentModeMenu";
 import { AgentPicker } from "./components/AgentPicker";
 import { StorageDialog } from "./components/StorageDialog";
@@ -3428,6 +3428,29 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
+  // The Back and Forward side buttons of a mouse go back and forward too (the user asked for this). The press
+  // and the click of these buttons do nothing else: the webview does not change its own page.
+  useEffect(() => {
+    const block = (e: MouseEvent) => {
+      if (navMouseButton(e) !== null) e.preventDefault();
+    };
+    const onUp = (e: MouseEvent) => {
+      const delta = navMouseButton(e);
+      if (delta === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      goNavRef.current(delta);
+    };
+    window.addEventListener("mousedown", block, true);
+    window.addEventListener("auxclick", block, true);
+    window.addEventListener("mouseup", onUp, true);
+    return () => {
+      window.removeEventListener("mousedown", block, true);
+      window.removeEventListener("auxclick", block, true);
+      window.removeEventListener("mouseup", onUp, true);
+    };
+  }, []);
+
   // The sidebar button and the back and forward buttons. They are at the far left of the title
   // bar: in the sidebar when it is open, and in the top bar when it is closed.
   // The logo, the sidebar toggle, and Back and Forward. The Code / IDE view is in the ⋮ menu and on Ctrl+E.
@@ -3953,6 +3976,7 @@ export default function App() {
             onClose={() => setSettingsPage(null)}
             closeRef={settingsClose}
             configPath={userSettingsInfo?.path ?? null}
+            agentUpdates={agentUpdateCount(agents)}
             onOpenConfig={
               userSettingsInfo && isTauri() && current?.kind === "local"
                 ? () => void openLocalPath(userSettingsInfo.path).catch((e) => setSettingsError(errorText(e)))

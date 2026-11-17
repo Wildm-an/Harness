@@ -17,8 +17,27 @@ export function agentInitials(name: string): string {
   return word[0].toUpperCase();
 }
 
-/** The agents whose logo has light parts for a dark background (Oh My Pi): their tile is dark. */
+/** The logos whose true form has a tile (the user asked for no tile on the other logos): Hermes Agent is a black
+ * figure on a white square, and the Oh My Pi logo has light parts on a dark square. */
+const LIGHT_TILES = new Set(["hermes"]);
 const DARK_TILES = new Set(["omp"]);
+
+/** The SVG text of a data URL (base64 or text), or "" when it cannot be read. */
+function svgText(url: string): string {
+  const comma = url.indexOf(",");
+  if (comma < 0) return "";
+  const body = url.slice(comma + 1);
+  try {
+    return url.slice(0, comma).endsWith(";base64") ? atob(body) : decodeURIComponent(body);
+  } catch {
+    return "";
+  }
+}
+
+/** A logo in one color (``currentColor``): it takes the text color of the theme, as in T3 Code. */
+export function isMonochromeLogo(url: string): boolean {
+  return svgText(url).includes("currentColor");
+}
 
 /**
  * The icon of an agent: the app icon for the built-in loop, the logo of the agent (a data URL from the daemon, in an
@@ -26,13 +45,24 @@ const DARK_TILES = new Set(["omp"]);
  */
 export function AgentIcon({ id, name, icon, size = 16 }: { id: string; name: string; icon?: string | null; size?: number }) {
   if (id === BUILTIN_AGENT) {
-    return <img className="agent-icon builtin" src="/app-icon.svg" alt="" width={size} height={size} aria-hidden />;
+    // The logo of the title bar (app-logo.png). app-icon.svg squeezes "{H}" into its width, so it looked stretched.
+    return <img className="agent-icon builtin" src="/app-logo.png" alt="" width={size} height={size} draggable={false} aria-hidden />;
   }
   if (icon && icon.startsWith("data:image/svg+xml")) {
-    // Full color, as the brand shows it (the user asked for this): the logo on a light tile, as an app icon. A logo
-    // that the brand shows on a dark background (light parts) gets a dark tile.
+    const tile = LIGHT_TILES.has(id) ? " tile" : DARK_TILES.has(id) ? " tile dark" : "";
+    if (isMonochromeLogo(icon) && !tile) {
+      // A one-color logo with no brand color: the text color of the theme, with no tile (a CSS mask of the SVG).
+      return (
+        <span
+          className="agent-icon logo mono"
+          style={{ width: size, height: size, WebkitMaskImage: `url("${icon}")`, maskImage: `url("${icon}")` }}
+          aria-hidden
+        />
+      );
+    }
+    // A logo in its own colors, as the brand shows it, with no tile. Only a logo whose true form has a tile gets one.
     return (
-      <span className={`agent-icon logo${DARK_TILES.has(id) ? " dark" : ""}`} style={{ width: size, height: size }} aria-hidden>
+      <span className={`agent-icon logo${tile}`} style={{ width: size, height: size }} aria-hidden>
         <img src={icon} alt="" draggable={false} />
       </span>
     );

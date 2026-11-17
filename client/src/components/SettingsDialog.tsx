@@ -118,6 +118,7 @@ export function SettingsDialog({
   onClose,
   closeRef,
   configPath,
+  agentUpdates = 0,
   onOpenConfig,
   children,
 }: {
@@ -128,6 +129,7 @@ export function SettingsDialog({
   configPath: string | null; // ~/.harness/settings.json of the daemon. null: not connected.
   onOpenConfig: (() => void) | null; // null: the file is on another computer.
   children: ReactNode; // The current page.
+  agentUpdates?: number; // The enabled agents with an update: a dot on "Agents".
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(document.activeElement);
@@ -345,6 +347,9 @@ export function SettingsDialog({
                 >
                   <Icon size={16} aria-hidden />
                   {p.label}
+                  {p.id === "operating" && agentUpdates > 0 && (
+                    <span className="settings-nav-dot" role="img" aria-label={`${agentUpdates} ${agentUpdates === 1 ? "agent has an update" : "agents have updates"}`} />
+                  )}
                   {p.id === "updates" && update && (
                     <span className="settings-nav-dot" role="img" aria-label={`Version ${update} is available`} />
                   )}

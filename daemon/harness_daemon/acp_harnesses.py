@@ -24,6 +24,7 @@ import os
 import re
 import shlex
 import shutil
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -374,11 +375,35 @@ def _models_path():
     return harness_home() / "harnesses" / "models.json"
 
 
-def cached_models(harness_id: str) -> list[dict[str, str]]:
-    """The models that the harness gave in its last session. The picker shows them before a session starts."""
+def cached_models(harness_id: str) -> list[dict[str, Any]]:
+    """The models that the harness gave in its last session or model check. The picker shows them before a session
+    starts. ``current``: the model that the harness used then."""
     data = read_json(_models_path(), {})
-    items = data.get(harness_id) if isinstance(data, dict) and harness_id != "__efforts__" else None
+    items = data.get(harness_id) if isinstance(data, dict) and not harness_id.startswith("__") else None
     return [m for m in items if isinstance(m, dict) and m.get("id")] if isinstance(items, list) else []
+
+
+def models_checked(harness_id: str) -> int | None:
+    """When Harness last read the models of the harness (epoch seconds), or None."""
+    data = read_json(_models_path(), {})
+    times = data.get("__checked__") if isinstance(data, dict) else None
+    value = times.get(harness_id) if isinstance(times, dict) else None
+    return int(value) if isinstance(value, (int, float)) else None
+
+
+def is_default_alias(model: dict[str, Any]) -> bool:
+    """A model that only names the default of the harness ("default", "Default (recommended)"). The picker does not
+    show it: the user chooses a real model (the user asked for this, as T3 Code does)."""
+    return str(model.get("id", "")).lower() == "default" or str(model.get("name", "")).lower().startswith("default")
+
+
+def implied_model(harness_id: str) -> str | None:
+    """The model of new sessions when the user chose none, as in T3 Code: the model that the harness uses now, else
+    the first model of its list. A default alias does not count. None: no models are known."""
+    models = [m for m in cached_models(harness_id) if not is_default_alias(m)]
+    current = next((m for m in models if m.get("current")), None)
+    chosen = current or (models[0] if models else None)
+    return str(chosen["id"]) if chosen else None
 
 
 def save_models(harness_id: str, models: list[dict[str, str]]) -> None:
@@ -388,8 +413,9 @@ def save_models(harness_id: str, models: list[dict[str, str]]) -> None:
     try:
         data = read_json(_models_path(), {})
         data = data if isinstance(data, dict) else {}
-        if data.get(harness_id) == models:
-            return
+        times = data.get("__checked__") if isinstance(data.get("__checked__"), dict) else {}
+        times[harness_id] = int(time.time())
+        data["__checked__"] = times
         data[harness_id] = models
         _models_path().parent.mkdir(parents=True, exist_ok=True)
         write_json(_models_path(), data)
