@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { HarnessItem, UserSettings } from "../daemon/protocol";
 import { BUILTIN_AGENT } from "./AgentBits";
 import {
+  agentHasUpdate,
+  agentUpdateCount,
   checkedText,
+  downloadUpdates,
+  programStateText,
   currentHarness,
   filterHarnesses,
   harnessAction,
@@ -145,12 +149,13 @@ describe("the Model select of an agent", () => {
     expect(c?.groups).toEqual([{ label: "openrouter", options: [{ value: "provider:openrouter/openai/gpt-5", label: "openai/gpt-5" }] }]);
   });
 
-  it("shows the own models of the agent, then the provider models", () => {
+  it("shows the provider models first, then the own models of the agent, with no Default", () => {
     const c = modelChoices(harness("claude", "Claude Agent", { models: own, native_model: "haiku", provider_models: true }), providers);
-    expect(c?.defaultLabel).toBe("Default of Claude Agent");
+    expect(c?.defaultLabel).toBeNull();
     expect(c?.value).toBe("native:haiku");
+    expect(c?.groups[0].label).toBe("openrouter");
     // A saved own model that the agent did not give stays as a choice.
-    expect(c?.groups[0]).toEqual({
+    expect(c?.groups[c.groups.length - 1]).toEqual({
       label: "Claude Agent",
       options: [
         { value: "native:haiku", label: "haiku" },
@@ -158,7 +163,15 @@ describe("the Model select of an agent", () => {
         { value: "native:sonnet", label: "Sonnet" },
       ],
     });
-    expect(c?.groups[1].label).toBe("openrouter");
+  });
+
+  it("selects the model of new sessions when nothing is chosen, and hides a default alias", () => {
+    const models = [{ id: "default", name: "Default (recommended)", description: "", current: true }, ...own];
+    const c = modelChoices(harness("claude", "Claude Agent", { models }), providers);
+    expect(c?.value).toBe(`native:${own[0].id}`);
+    expect(c?.groups.flatMap((g) => g.options.map((o) => o.value))).not.toContain("native:default");
+    // No models yet: the agent uses its own settings.
+    expect(modelChoices(harness("x", "X", { models: [], provider_models: true }), providers)?.defaultLabel).toBe("X settings");
   });
 
   it("sends one model: a provider model clears the own model, and the other way", () => {
@@ -182,5 +195,50 @@ describe("the Model select of an agent", () => {
     const now = new Date(2026, 10, 16, 15, 0);
     expect(checkedText(0, now)).toBe("");
     expect(checkedText(new Date(2026, 10, 16, 14, 20).getTime() / 1000, now)).toMatch(/^Checked \S/);
+  });
+});
+
+describe("the updates of the agents", () => {
+  const program = (extra: Partial<NonNullable<HarnessItem["program"]>> = {}): NonNullable<HarnessItem["program"]> => ({
+    label: "Hermes Agent",
+    path: "/bin/hermes",
+    version: "0.22.5",
+    latest: "0.23.2",
+    update: true,
+    command: "hermes update",
+    checked: 1,
+    error: null,
+    ...extra,
+  });
+  const dl = { version: "1.0.0", kind: "binary" as const };
+
+  it("finds the agents with an update: a download, or a program that the user installed", () => {
+    expect(agentHasUpdate(harness("a", "A", { download: dl, update: true }))).toBe(true);
+    expect(agentHasUpdate(harness("b", "B", { download: dl, update: false }))).toBe(false);
+    expect(agentHasUpdate(harness("c", "C", { program: program() }))).toBe(true);
+    expect(agentHasUpdate(harness("d", "D", { program: program({ update: false }) }))).toBe(false);
+    expect(agentHasUpdate(harness("e", "E", { update: true }))).toBe(false); // No download: "Download", not "Update".
+  });
+
+  it("lists the downloads for Update all, and counts the enabled agents for the nav dot", () => {
+    const items = [
+      harness("a", "A", { download: dl, update: true, enabled: true }),
+      harness("b", "B", { download: dl, update: true, busy: { stage: "Downloading", received: 1, total: 2 } }),
+      harness("c", "C", { download: dl, update: true }),
+      harness("d", "D", { program: program(), enabled: true }),
+    ];
+    expect(downloadUpdates(items).map((h) => h.id)).toEqual(["a", "c"]);
+    expect(downloadUpdates(items, { c: { stage: "Waiting", received: 0, total: 0 } }).map((h) => h.id)).toEqual(["a"]);
+    expect(agentUpdateCount(items)).toBe(2);
+    expect(agentUpdateCount(null)).toBe(0);
+  });
+
+  it("says the version state of a program", () => {
+    expect(programStateText(program())).toBe("Version 0.23.2 is available.");
+    expect(programStateText(program({ update: false, latest: "0.22.5" }))).toBe("Up to date.");
+    expect(programStateText(program({ update: false, latest: null, error: "Could not check the version: TimeoutError" }))).toBe(
+      "Could not check the version: TimeoutError",
+    );
+    expect(programStateText(program({ update: false, latest: null, version: null }))).toBeNull();
   });
 });

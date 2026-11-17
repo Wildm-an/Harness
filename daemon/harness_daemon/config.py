@@ -47,6 +47,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "allow_bypass_permissions": False,
     "prompt_suggestions": True,  # After a turn, the model suggests the next prompt (suggestions.py).
     "subagents": True,  # The agent tool: the agent can start subagents, also several at once in the background.
+    # Settings > Agents > "Update agents automatically": Harness downloads the new version of each enabled agent
+    # that it downloaded, when the ACP registry or the GitHub release has one (server.py _auto_update_agents).
+    "agents_auto_update": False,
     # The global instructions of the user (Settings > Your Harness). The system prompt includes them (prompt.py).
     "auto_memory": True,  # The agent keeps notes between sessions (memory.py).
     "memory_sensitive": False,  # The memory can have sensitive topics, for example health conditions.

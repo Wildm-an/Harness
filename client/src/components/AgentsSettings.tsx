@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUpCircle, Download, ExternalLink, LoaderCircle, LogIn, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { DaemonConnection } from "../daemon/connection";
-import type { ClientMessage, HarnessItem, HarnessProgress, UserSettings } from "../daemon/protocol";
+import type { AgentProgram, ClientMessage, HarnessItem, HarnessProgress, UserSettings } from "../daemon/protocol";
 import { openLink } from "../lib/openLink";
 import { formatDateTime, formatTime } from "../lib/timeFormat";
 import { AgentIcon, BUILTIN_AGENT, UsageBars, agentStatus, type AgentTone } from "./AgentBits";
@@ -16,6 +16,7 @@ import { AgentSignInTerminal } from "./AgentSignInTerminal";
 import { BackLink } from "./BackLink";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Switch } from "./Switch";
+import { impliedModel, listedModels } from "./AgentPicker";
 
 const STATUS_TEXT: Record<HarnessItem["status"], string> = {
   downloaded: "Downloaded",
@@ -57,6 +58,21 @@ export function splitHarnesses(items: HarnessItem[]): { recommended: HarnessItem
  * its switch goes off, so the row does not go away under the pointer. */
 export function listedAgents(items: HarnessItem[], selected: string | null = null): HarnessItem[] {
   return sortHarnesses(items.filter((h) => h.enabled || h.id === selected));
+}
+
+/** An agent with an update: a newer version of the Harness download, or of the program that the user installed. */
+export function agentHasUpdate(h: Pick<HarnessItem, "download" | "update" | "program">): boolean {
+  return (!!h.download && h.update) || !!h.program?.update;
+}
+
+/** The agents for "Update all": a Harness download with a newer version, and no download that runs now. */
+export function downloadUpdates(items: HarnessItem[], progress: Record<string, HarnessProgress> = {}): HarnessItem[] {
+  return items.filter((h) => h.download && h.update && !h.busy && !progress[h.id]);
+}
+
+/** The enabled agents with an update: the dot on "Agents" in the Settings nav. */
+export function agentUpdateCount(items: HarnessItem[] | null): number {
+  return (items ?? []).filter((h) => h.enabled && agentHasUpdate(h)).length;
 }
 
 /** The download button of a harness row: "busy" (a download runs), "update", "download", or null. A harness
@@ -107,25 +123,37 @@ export function autoModelGroups(models: { provider: string; model: string }[], c
 export function modelChoices(
   item: ModelItem,
   providerModels: { provider: string; model: string }[],
-): { value: string; defaultLabel: string; groups: { label: string; options: { value: string; label: string }[] }[] } | null {
-  const own = item.models.length > 0 || item.native_model !== null;
+): { value: string; defaultLabel: string | null; groups: { label: string; options: { value: string; label: string }[] }[] } | null {
+  // As the picker (and T3 Code): the models that the agent gives, with no "Default" (the user asked for this), and
+  // the Harness providers first. With no choice, the model that new sessions use is selected.
+  const listed = listedModels(item.models);
+  const own = listed.length > 0 || item.native_model !== null;
   if (!own && !item.provider_models) return null;
   const groups: { label: string; options: { value: string; label: string }[] }[] = [];
-  if (own) {
-    const options = item.models.map((m) => ({ value: `native:${m.id}`, label: m.name || m.id }));
-    // A saved model that the agent did not give in its last session stays as a choice.
-    if (item.native_model && !item.models.some((m) => m.id === item.native_model)) {
-      options.unshift({ value: `native:${item.native_model}`, label: item.native_model });
-    }
-    groups.push({ label: item.name, options });
-  }
   if (item.provider_models) {
     for (const g of modelGroups(providerModels, item.provider_model)) {
       groups.push({ label: g.provider, options: g.values.map((v) => ({ value: `provider:${v}`, label: v.slice(g.provider.length + 1) })) });
     }
   }
-  const value = item.provider_models && item.provider_model ? `provider:${item.provider_model}` : item.native_model ? `native:${item.native_model}` : "";
-  const defaultLabel = own ? `Default of ${item.name}` : `${item.name} settings`;
+  if (own) {
+    const options = listed.map((m) => ({ value: `native:${m.id}`, label: m.name || m.id }));
+    // A saved model that the agent did not give in its last session stays as a choice.
+    if (item.native_model && !listed.some((m) => m.id === item.native_model)) {
+      options.unshift({ value: `native:${item.native_model}`, label: item.native_model });
+    }
+    groups.push({ label: item.name, options });
+  }
+  const implied = impliedModel(item.models);
+  const value =
+    item.provider_models && item.provider_model
+      ? `provider:${item.provider_model}`
+      : item.native_model
+        ? `native:${item.native_model}`
+        : implied
+          ? `native:${implied}`
+          : "";
+  // "{name} settings" only while the agent gave no models: then the agent uses its own settings.
+  const defaultLabel = listed.length ? null : `${item.name} settings`;
   return { value, defaultLabel, groups };
 }
 
@@ -190,6 +218,8 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
   const [adding, setAdding] = useState(false); // The right pane shows "Add agent".
   const [signingIn, setSigningIn] = useState<string | null>(null); // The agent with the sign-in terminal.
   const [authBusy, setAuthBusy] = useState<string | null>(null); // The agent whose sign-in state Harness reads again.
+  const [updatingProgram, setUpdatingProgram] = useState<string | null>(null); // The agent with the update terminal.
+  const [programBusy, setProgramBusy] = useState<string | null>(null); // The agent whose version Harness reads again.
   const chose = useRef(false); // The user selected a row. Before that, the selection follows the setting.
   const saving = useRef(false); // A save was sent: the next list closes the form.
   const enableNew = useRef<string | null>(null); // The name of a new custom agent: the next list enables it.
@@ -219,6 +249,7 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
           setProgress({});
           // The list after a sign-in has the new state. "Checking the sign-in…" ends.
           if (!signingRef.current) setAuthBusy(null);
+          setProgramBusy(null);
           if (saving.current) {
             saving.current = false;
             setDraft(null);
@@ -244,9 +275,11 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
           enableNew.current = null;
           setChecking(false);
           setAuthBusy(null);
+          setProgramBusy(null);
           setProblem(msg.message);
           if (msg.ref === "harnesses.list") setListFailed(true);
           if (msg.ref === "agents.signin") setSigningIn(null); // The sign-in did not start.
+          if (msg.ref === "agents.update_program") setUpdatingProgram(null); // The update did not start.
         }
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- send uses only the connection.
@@ -259,6 +292,7 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
       send({ type: "models.list" });
     } else {
       setSigningIn(null);
+      setUpdatingProgram(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- send uses only the connection.
   }, [conn, connected]);
@@ -301,6 +335,15 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
   const checkAuth = (h: HarnessItem) => {
     setAuthBusy(h.id);
     send({ type: "agents.check", id: h.id });
+  };
+  const checkProgram = (h: HarnessItem) => {
+    setProgramBusy(h.id);
+    send({ type: "agents.check", id: h.id });
+  };
+  const updates = downloadUpdates(items ?? [], progress);
+  const updateAll = () => {
+    setProgress((p) => ({ ...p, ...Object.fromEntries(updates.map((h) => [h.id, { stage: "Waiting", received: 0, total: 0 }])) }));
+    send({ type: "harnesses.update_all" });
   };
   const saveDraft = () => {
     if (!draft) return;
@@ -382,6 +425,17 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
       <div className="settings-page-head">
         <h2 className="settings-page-title">Agents</h2>
         <span className="spacer" />
+        {updates.length > 0 && (
+          <button
+            type="button"
+            className="btn btn-small btn-primary"
+            disabled={!connected}
+            onClick={updateAll}
+            title={`Download the new version of ${updates.map((h) => h.name).join(", ")}`}
+          >
+            <ArrowUpCircle size={14} aria-hidden /> Update all ({updates.length})
+          </button>
+        )}
         <button
           type="button"
           className="btn btn-small"
@@ -427,6 +481,23 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
           </select>
         </div>
       </div>
+      <div className="setting-row agents-auto-update">
+        <div className="setting-text">
+          <span className="setting-label">Update agents automatically</span>
+          <span className="setting-help">
+            Harness downloads the new version of each enabled agent that it downloaded, when one comes out. An agent that
+            you installed yourself updates with its own command: see Updates in its pane.
+          </span>
+        </div>
+        <div className="setting-control">
+          <Switch
+            checked={values?.agents_auto_update === true}
+            label="Update agents automatically"
+            disabled={!connected || values === null}
+            onChange={(on) => onSet({ agents_auto_update: on })}
+          />
+        </div>
+      </div>
       {!connected && <p className="settings-note setting-help">Connect to a computer to choose the agent.</p>}
       {(error || problem) && (
         <p className="settings-note harness-error" role="alert">
@@ -463,7 +534,8 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
                       id={h.id}
                       name={h.name}
                       icon={h.icon}
-                      version={h.download?.version}
+                      version={h.download?.version ?? h.program?.version ?? undefined}
+                      update={agentHasUpdate(h)}
                       tone={status.tone}
                       headline={status.headline}
                       isDefault={current === h.id}
@@ -642,6 +714,18 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
                 setAuthBusy(item.id); // "Checking the sign-in…" until the next list.
               }}
               onCheck={() => checkAuth(item)}
+              updatingProgram={updatingProgram === item.id}
+              programBusy={programBusy === item.id}
+              onUpdateProgram={() => {
+                setProblem(null);
+                setUpdatingProgram(item.id);
+              }}
+              onCancelUpdate={() => send({ type: "agents.signin.cancel", id: item.id })}
+              onUpdateExit={() => {
+                setUpdatingProgram(null);
+                setProgramBusy(item.id); // "Checking the version…" until the next list.
+              }}
+              onCheckProgram={() => checkProgram(item)}
             />
           )}
         </section>
@@ -680,11 +764,12 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
 }
 
 /** A row of the left list: the icon, the name, the version, the status line, and the switch. */
-function AgentRow({ id, name, icon, version, tone, headline, isDefault, selected, onSelect, enabled, disabled, onEnable }: {
+function AgentRow({ id, name, icon, version, update, tone, headline, isDefault, selected, onSelect, enabled, disabled, onEnable }: {
   id: string;
   name: string;
   icon?: string | null;
   version?: string;
+  update?: boolean; // A newer version is available: an arrow after the version.
   tone: AgentTone;
   headline: string;
   isDefault: boolean;
@@ -702,6 +787,7 @@ function AgentRow({ id, name, icon, version, tone, headline, isDefault, selected
           <span className="agents-row-name">
             <span className="agents-row-label">{name}</span>
             {version && <span className="agents-row-version">v{version}</span>}
+            {update && <ArrowUpCircle size={12} className="agents-row-update" role="img" aria-label="Update available" />}
             {isDefault && (
               <span className="agents-default" title="New sessions use this agent">
                 Default
@@ -760,6 +846,12 @@ function AgentDetail({
   onCancelSignIn,
   onSignInExit,
   onCheck,
+  updatingProgram,
+  programBusy,
+  onUpdateProgram,
+  onCancelUpdate,
+  onUpdateExit,
+  onCheckProgram,
 }: {
   item: HarnessItem;
   conn: DaemonConnection;
@@ -780,6 +872,12 @@ function AgentDetail({
   onCancelSignIn: () => void;
   onSignInExit: () => void;
   onCheck: () => void;
+  updatingProgram: boolean;
+  programBusy: boolean;
+  onUpdateProgram: () => void;
+  onCancelUpdate: () => void;
+  onUpdateExit: () => void;
+  onCheckProgram: () => void;
 }) {
   const status = agentStatus(item);
   const auth = item.auth;
@@ -869,6 +967,21 @@ function AgentDetail({
         </>
       )}
 
+      {item.program && (
+        <ProgramUpdates
+          item={item}
+          program={item.program}
+          conn={conn}
+          connected={connected}
+          updating={updatingProgram}
+          busy={programBusy}
+          onUpdate={onUpdateProgram}
+          onCancel={onCancelUpdate}
+          onExit={onUpdateExit}
+          onCheck={onCheckProgram}
+        />
+      )}
+
       {auth && Boolean(auth.usage?.length || auth.usage_error) && (
         <>
           <h4 className="agents-section-title">Usage</h4>
@@ -889,7 +1002,7 @@ function AgentDetail({
               disabled={!connected}
               onChange={(e) => modelChange(item, e.target.value).forEach(onSend)}
             >
-              <option value="">{choices.defaultLabel}</option>
+              {choices.defaultLabel && <option value="">{choices.defaultLabel}</option>}
               {choices.groups.map((g) => (
                 <optgroup key={g.label} label={g.label}>
                   {g.options.map((o) => (
@@ -908,6 +1021,76 @@ function AgentDetail({
       )}
 
       <UseForNew isDefault={isDefault} disabled={!connected} onUse={onUse} />
+    </>
+  );
+}
+
+/** The text of the version state of a program: "Version 0.23.2 is available.", "Up to date.", or null. */
+export function programStateText(program: AgentProgram): string | null {
+  if (program.update && program.latest) return `Version ${program.latest} is available.`;
+  if (program.error) return program.error;
+  if (program.version && program.latest) return "Up to date.";
+  return null;
+}
+
+/** The Updates section of an agent whose program the user installed: its version, the newest version, "Update"
+ * (its own update command in a terminal on the page), and "Check for updates". */
+function ProgramUpdates({ item, program, conn, connected, updating, busy, onUpdate, onCancel, onExit, onCheck }: {
+  item: HarnessItem;
+  program: AgentProgram;
+  conn: DaemonConnection;
+  connected: boolean;
+  updating: boolean;
+  busy: boolean;
+  onUpdate: () => void;
+  onCancel: () => void;
+  onExit: () => void;
+  onCheck: () => void;
+}) {
+  const state = programStateText(program);
+  return (
+    <>
+      <h4 className="agents-section-title">Updates</h4>
+      {updating ? (
+        <div className="agents-signin">
+          <p className="setting-help">
+            Harness runs <code>{program.command}</code> on the daemon computer. If it asks a question, answer it here.
+          </p>
+          <AgentSignInTerminal conn={conn} id={item.id} name={program.label} kind="update" onExit={onExit} />
+          <div className="harness-form-actions">
+            <button type="button" className="btn btn-small" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : busy ? (
+        <p className="setting-help agents-checking" role="status">
+          <LoaderCircle size={13} className="spin" aria-hidden /> Checking the version…
+        </p>
+      ) : (
+        <div className="agents-inline agents-program">
+          <span className="agents-program-text">
+            <span>
+              {program.label} {program.version ? `${program.version}` : ""}
+            </span>
+            {state && <span className={`setting-help${program.update ? " agents-update-note" : ""}`}>{state}</span>}
+          </span>
+          <span className="spacer" />
+          <button
+            type="button"
+            className={`btn btn-small${program.update ? " btn-primary" : ""}`}
+            disabled={!connected}
+            title={`Run ${program.command} on the daemon computer`}
+            onClick={onUpdate}
+          >
+            <ArrowUpCircle size={14} aria-hidden /> Update
+          </button>
+          <button type="button" className="btn btn-small" disabled={!connected} title="Read the version and the newest version again" onClick={onCheck}>
+            <RefreshCw size={13} aria-hidden /> Check for updates
+          </button>
+        </div>
+      )}
+      {!updating && program.checked && <p className="setting-help agents-checked">{checkedText(program.checked)}</p>}
     </>
   );
 }

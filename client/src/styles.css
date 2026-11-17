@@ -13328,6 +13328,11 @@ input::-ms-clear {
 .agent-icon.builtin {
   background: none;
   border: none;
+  object-fit: contain;
+}
+/* The logo is white, as the title bar logo: black on the light theme. */
+:root[data-theme="light"] .agent-icon.builtin {
+  filter: invert(1);
 }
 .agent-usage {
   display: grid;
@@ -13635,24 +13640,47 @@ input::-ms-clear {
   }
 }
 
-/* The logo of an agent in its own colors, on a light tile as an app icon, in both themes (AgentBits.tsx). */
+/* The logo of an agent in its own colors, with no tile (AgentBits.tsx). The user asked for no white background,
+   except for a logo whose true form has a tile (Hermes Agent: white, Oh My Pi: dark). */
 .agent-icon.logo {
   position: relative;
-  background: #ffffff;
+  background: none;
   border: none;
-  border-radius: 22%;
-  overflow: hidden;
-}
-/* The logo fills the tile with a margin of 14% of the tile (a padding in percent would use the width of the row). */
-.agent-icon.logo.dark {
-  background: #0d0d0d; /* The background of the Oh My Pi logo. */
+  border-radius: 0;
+  overflow: visible;
 }
 .agent-icon.logo img {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+/* A one-color logo: a mask of the SVG, in the text color of the theme. */
+.agent-icon.logo.mono {
+  background: currentColor;
+  color: var(--text);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+/* A logo with a tile: the logo fills the tile with a margin of 14% (a padding in percent would use the row width). */
+.agent-icon.logo.tile {
+  background: #ffffff;
+  border-radius: 22%;
+  overflow: hidden;
+  color: #000000; /* A one-color logo on the white tile is black. */
+}
+.agent-icon.logo.tile.dark {
+  background: #0d0d0d; /* The background of the Oh My Pi logo. */
+}
+.agent-icon.logo.tile img {
   inset: 14%;
   width: 72%;
   height: 72%;
-  object-fit: contain;
 }
 
 /* -- Usage page (UsagePage.tsx) -- */
@@ -15246,4 +15274,21 @@ input::-ms-clear {
 .agent-picker-dropdown .ap-row.dragging {
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--accent), var(--shadow);
+}
+
+/* Settings > Agents: the updates (AgentsSettings.tsx). An arrow after the version of a row with an update. */
+.agents-row-update {
+  flex: none;
+  color: var(--accent);
+}
+
+.agents-program-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agents-update-note {
+  color: var(--accent);
 }

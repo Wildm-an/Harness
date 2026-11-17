@@ -236,30 +236,39 @@ STATES = AgentStates()
 
 class SignIn:
     """``claude auth login`` in a pseudo terminal. The client gets ``agents.signin.output`` and
-    ``agents.signin.exit`` with the id of the agent. One sign-in runs at a time."""
+    ``agents.signin.exit`` with the id of the agent. One sign-in runs at a time. With ``argv``, the terminal runs
+    that command: the update of an agent program (agent_updates.py, ``kind`` "update")."""
 
-    def __init__(self, harness_id: str, emit: Emit, on_exit: Callable[[SignIn, int | None], None]):
+    def __init__(self, harness_id: str, emit: Emit, on_exit: Callable[[SignIn, int | None], None],
+                 argv: list[str] | None = None, kind: str = "signin"):
         self.harness_id = harness_id
+        self.argv = argv
+        self.kind = kind
         self._emit = emit
         self._on_exit = on_exit
         self.terminal: Terminal | None = None
         self.code: int | None = None
 
     def start(self, cols: int, rows: int) -> None:
-        binary = claude_binary()
-        if binary is None:
-            raise RuntimeError(f"Install Claude Code first: {INSTALL_URL}")
-        pty = _Pty([binary, "auth", "login"], Path.home(), cols, rows)
+        argv = self.argv
+        if argv is None:
+            binary = claude_binary()
+            if binary is None:
+                raise RuntimeError(f"Install Claude Code first: {INSTALL_URL}")
+            argv = [binary, "auth", "login"]
+        pty = _Pty(argv, Path.home(), cols, rows)
         self.terminal = Terminal(pty, self._forward, asyncio.get_running_loop(), self._stopped)
 
     async def _forward(self, event: dict[str, Any]) -> None:
         kind = event.get("type")
         if kind == "term.output":
-            await self._emit({"type": "agents.signin.output", "id": self.harness_id, "data": event["data"]})
+            await self._emit({"type": "agents.signin.output", "id": self.harness_id, "kind": self.kind,
+                              "data": event["data"]})
         elif kind == "term.exit":
             self.code = event.get("code")
             try:
-                await self._emit({"type": "agents.signin.exit", "id": self.harness_id, "code": self.code})
+                await self._emit({"type": "agents.signin.exit", "id": self.harness_id, "kind": self.kind,
+                                  "code": self.code})
             finally:
                 self._on_exit(self, self.code)
 

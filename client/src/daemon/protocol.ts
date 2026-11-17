@@ -236,6 +236,7 @@ export interface UserSettings {
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
   subagents?: boolean; // false: the agent cannot start subagents (the agent tool).
+  agents_auto_update?: boolean; // Settings > Agents > "Update agents automatically" (the downloads of Harness).
   auto_memory?: boolean; // false: no memory tool and no memory in the prompt (daemon memory.py).
   memory_sensitive?: boolean; // true: the memory can have sensitive topics, for example health conditions.
   chat_search?: boolean; // false: no conversation_search tool (the search of the past sessions of the project).
@@ -308,6 +309,22 @@ export interface HarnessItem {
   efforts: AgentModel[]; // The reasoning levels that the harness gave in its last session (or a model check).
   native_effort: string | null; // The chosen reasoning level for new sessions. null: the default of the harness.
   probing: boolean; // The daemon reads the models of the agent now (agents.models).
+  models_checked?: number | null; // Epoch seconds of the last model list. The picker reads it again after 5 minutes.
+  // The program that the user installed, with its own update command (daemon agent_updates.py). null: no update
+  // command, or the program is not on the daemon computer. An older daemon does not send it.
+  program?: AgentProgram | null;
+}
+
+/** The version state of an agent program that the user installed. */
+export interface AgentProgram {
+  label: string; // The name of the program: "Claude Code", "Hermes Agent".
+  path: string;
+  version: string | null; // null: not checked yet, or the check failed.
+  latest: string | null; // The newest version. null: not known.
+  update: boolean; // A newer version is available.
+  command: string; // The update command: "hermes update".
+  checked: number | null; // Epoch seconds of the last check.
+  error: string | null;
 }
 
 /** The Usage page (daemon usage.py, as the Usage page of T3 Code): the token use and the API cost estimate of the
@@ -375,6 +392,7 @@ export interface AgentModel {
   id: string;
   name: string;
   description: string;
+  current?: boolean; // The model that the agent used in its last session or model check.
 }
 
 /** The sign-in state and the subscription usage of an agent (daemon agent_auth.py). */
@@ -407,7 +425,7 @@ export interface HarnessProgress {
 export interface SessionHarness {
   id: string;
   name: string;
-  models?: { id: string; name: string; description: string }[]; // The model menu. Empty: the harness gives none.
+  models?: AgentModel[]; // The model menu. Empty: the harness gives none.
   model?: string | null; // The current model id. On the start screen (user_settings): the model of a Harness provider, "<provider>/<model>".
   native_model?: string | null; // On the start screen: the chosen model id of the harness itself.
   // An ACP session: the permission modes of the harness for the mode menu, the current one (a mode id, or
@@ -1068,6 +1086,9 @@ export type ClientMessage =
   | { type: "agents.signin.input"; id: string; data: string }
   | { type: "agents.signin.resize"; id: string; cols: number; rows: number }
   | { type: "agents.signin.cancel"; id: string }
+  // Update the program of an agent with its own command, in the sign-in terminal (kind "update").
+  | { type: "agents.update_program"; id: string; cols: number; rows: number }
+  | { type: "harnesses.update_all" } // Download the update of each agent that Harness downloaded.
   | { type: "harnesses.save"; name: string; command: string; id?: string }
   | { type: "harnesses.delete"; id: string }
   // Settings > Your Harness > Output style. create: a model drafts a style from the description.
@@ -1350,9 +1371,10 @@ export type DaemonMessage =
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string; auto_model?: string | null }
   | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
   | ({ type: "usage.summary" } & UsageSummary) // The reply to usage.summary. Errors have the ref usage.summary.
-  | { type: "agents.signin.started"; id: string } // The sign-in terminal of the agent runs.
-  | { type: "agents.signin.output"; id: string; data: string }
-  | { type: "agents.signin.exit"; id: string; code: number | null } // Then "harnesses" with the new state.
+  // The sign-in terminal of the agent runs. kind "update": the update command of the program (agents.update_program).
+  | { type: "agents.signin.started"; id: string; kind?: "signin" | "update"; command?: string }
+  | { type: "agents.signin.output"; id: string; kind?: "signin" | "update"; data: string }
+  | { type: "agents.signin.exit"; id: string; kind?: "signin" | "update"; code: number | null } // Then "harnesses".
   | { type: "acp.state"; session_id?: string; harness: SessionHarness } // The models and the commands of an ACP harness.
   | { type: "memory.parsed"; items: MemoryFact[] }
   | ({ type: "disk.usage" } & DiskUsage)

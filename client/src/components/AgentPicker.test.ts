@@ -21,6 +21,10 @@ import {
   splitFavorite,
   tabTip,
   toggleFavorite,
+  impliedModel,
+  isDefaultAlias,
+  listedModels,
+  needsModelCheck,
   moveFavorite,
   type AgentTab,
   type PickGroup,
@@ -107,35 +111,51 @@ describe("the model lists of the agent picker", () => {
     expect(builtinGroups({ ...models, items: ["cloud/big"] }, false, new Set())[0].heading).toBeNull();
   });
 
-  it("lists the default, the models of the agent, then the provider models", () => {
-    const tab: AgentTab = { id: "opencode", name: "OpenCode", item: null, models: [fast], nativeModel: null, providerModel: null, providerModels: true };
-    const groups = agentGroups(tab, ["BugsAI/qwen3"], true);
+  it("lists the Harness providers first, then the models of the agent, with no Default row (as T3 Code)", () => {
+    const alias = { id: "default", name: "Default (recommended)", description: "" };
+    const tab: AgentTab = { id: "hermes", name: "Hermes Agent", item: null, models: [alias, fast], nativeModel: null, providerModel: null, providerModels: true };
+    const groups = agentGroups(tab, ["BugsAI/qwen3"]);
     expect(groups.map((g) => [g.heading, g.rows.map((r) => `${r.kind}:${r.value}`)])).toEqual([
-      [null, ["default:"]],
-      ["OpenCode", ["native:fast"]],
       ["BugsAI", ["provider:BugsAI/qwen3"]],
+      ["Hermes Agent", ["native:fast"]],
     ]);
-    expect(groups[0].rows[0].label).toBe("Default of OpenCode");
-    expect(agentGroups({ ...tab, providerModels: false }, ["BugsAI/qwen3"], false)).toHaveLength(1);
+    expect(agentGroups({ ...tab, providerModels: false }, ["BugsAI/qwen3"]).map((g) => g.heading)).toEqual([null]);
+  });
+
+  it("chooses the model of new sessions with no choice: the current model, else the first", () => {
+    const alias = { id: "default", name: "Default (recommended)", description: "", current: true };
+    expect(isDefaultAlias(alias)).toBe(true);
+    expect(listedModels([alias, fast, smart]).map((m) => m.id)).toEqual(["fast", "smart"]);
+    expect(impliedModel([alias, fast, smart])).toBe("fast");
+    expect(impliedModel([fast, { ...smart, current: true }])).toBe("smart");
+    expect(impliedModel([alias])).toBeNull();
+  });
+
+  it("reads the models again when none are known, or after 5 minutes", () => {
+    const now = 10_000;
+    expect(needsModelCheck({ models: [], models_checked: now }, now)).toBe(true);
+    expect(needsModelCheck({ models: [fast], models_checked: now - 60 }, now)).toBe(false);
+    expect(needsModelCheck({ models: [fast], models_checked: now - 301 }, now)).toBe(true);
+    expect(needsModelCheck({ models: [fast] }, now)).toBe(true);
   });
 
   it("searches the rows by each word, with a heading for each group", () => {
     expect(matchesQuery("Claude Sonnet", "son cla")).toBe(true);
     expect(matchesQuery("Claude Sonnet", "opus")).toBe(false);
     const tab: AgentTab = { id: "opencode", name: "OpenCode", item: null, models: [fast, smart], nativeModel: null, providerModel: null, providerModels: true };
-    const found = [...searchGroups(builtinGroups(models, true, new Set(["ollama"]), true), "qwen"), ...searchGroups(agentGroups(tab, ["BugsAI/qwen3"], true), "qwen")];
+    const found = [...searchGroups(builtinGroups(models, true, new Set(["ollama"]), true), "qwen"), ...searchGroups(agentGroups(tab, ["BugsAI/qwen3"]), "qwen")];
     expect(found.map((g) => [g.heading, g.rows.map((r) => r.label)])).toEqual([
       ["ollama", ["qwen3"]],
       ["OpenCode · BugsAI", ["qwen3"]],
     ]);
-    expect(searchGroups(agentGroups(tab, [], true), "default")).toEqual([]); // "Default of" is not a search result.
+    expect(searchGroups(agentGroups(tab, []), "default")).toEqual([]); // No Default row.
   });
 
   it("checks the current choice of each tab", () => {
     const tab: AgentTab = { id: "opencode", name: "OpenCode", item: null, models: [fast], nativeModel: null, providerModel: "BugsAI/qwen3", providerModels: true };
-    const [def, own, prov] = agentGroups(tab, ["BugsAI/qwen3"], true).map((g) => g.rows[0]);
-    expect([def, own, prov].map((r) => rowChecked(r, tab, ""))).toEqual([false, false, true]);
-    expect(rowChecked(def, { ...tab, providerModel: null }, "")).toBe(true);
+    const [prov, own] = agentGroups(tab, ["BugsAI/qwen3"]).map((g) => g.rows[0]);
+    expect([prov, own].map((r) => rowChecked(r, tab, ""))).toEqual([true, false]);
+    expect(rowChecked(own, { ...tab, providerModel: null, nativeModel: "fast" }, "")).toBe(true);
   });
 });
 
@@ -152,12 +172,14 @@ describe("the chip of the agent picker", () => {
     expect(agentChipLabel({ id: "opencode", name: "OpenCode", models, native_model: "fast" }, false)).toBe("Fast");
     expect(agentChipLabel({ id: "opencode", name: "OpenCode", model: "BugsAI/qwen3" }, false)).toBe("qwen3");
     expect(agentChipLabel({ id: "opencode", name: "OpenCode" }, false)).toBe("OpenCode");
+    // No choice: the model that the session will use.
+    expect(agentChipLabel({ id: "opencode", name: "OpenCode", models: [fast, { ...smart, current: true }] }, false)).toBe("Smart");
   });
 });
 
 describe("a choice in an ACP tab on the start screen", () => {
   const tab: AgentTab = { id: "opencode", name: "OpenCode", item: null, models: [fast], nativeModel: null, providerModel: "BugsAI/qwen3", providerModels: true };
-  const [def, own, prov] = agentGroups(tab, ["BugsAI/qwen3"], true).map((g) => g.rows[0]);
+  const [prov, own] = agentGroups(tab, ["BugsAI/qwen3"]).map((g) => g.rows[0]);
 
   it("sets the model and makes the agent the agent of new sessions", () => {
     expect(agentChoiceMessages(tab, own, null)).toEqual([
@@ -168,10 +190,9 @@ describe("a choice in an ACP tab on the start screen", () => {
     expect(agentChoiceMessages(tab, prov, "opencode")).toEqual([]);
   });
 
-  it("clears both models for the default of the agent", () => {
-    expect(agentChoiceMessages({ ...tab, nativeModel: "fast" }, def, "opencode")).toEqual([
-      { type: "harnesses.native_model", id: "opencode", model: null },
-      { type: "harnesses.model", id: "opencode", model: null },
+  it("sets a provider model of the agent", () => {
+    expect(agentChoiceMessages({ ...tab, providerModel: null }, prov, "opencode")).toEqual([
+      { type: "harnesses.model", id: "opencode", model: "BugsAI/qwen3" },
     ]);
   });
 });
@@ -213,7 +234,7 @@ describe("the favorites of the agent picker", () => {
   it("lists the favorites that a group gives, in their order, with the group as the detail", () => {
     const models = { items: ["cloud/big", "ollama/qwen3"], errors: [], default: null };
     const tab: AgentTab = { id: "opencode", name: "OpenCode", item: null, models: [fast, smart], nativeModel: null, providerModel: null, providerModels: false };
-    const groups = [...builtinGroups(models, true, new Set(["ollama"]), true), ...agentGroups(tab, [], true)];
+    const groups = [...builtinGroups(models, true, new Set(["ollama"]), true), ...agentGroups(tab, [])];
     const rows = favoriteRows(["opencode|smart", "harness|gone/model", "harness|ollama/qwen3", "opencode|"], groups);
     expect(rows.map((r) => [r.agent, r.value, r.label, r.detail])).toEqual([
       ["opencode", "smart", "Smart", "OpenCode"],
