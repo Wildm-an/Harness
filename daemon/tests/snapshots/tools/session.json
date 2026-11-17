@@ -794,13 +794,20 @@
     "type": "function",
     "function": {
       "name": "preview_tabs",
-      "description": "List the tabs of the Browser pane of this session, or switch to one. You and the user use the same tabs. Before you open a page for a task, list the tabs: if the user opened a tab for this task, continue in it (give its id in 'use'), and read it with preview_snapshot. If no tab is about the task, open the page with preview_navigate and tab \"new\". Each tab has its id, URL, title, \"shown\" (the user sees it now), and \"used\" (you work in it).",
+      "description": "List the tabs of the Browser pane of this session, switch to one, or close tabs. You and the user use the same tabs. Before you open a page for a task, list the tabs: if the user opened a tab for this task, continue in it (give its id in 'use'), and read it with preview_snapshot. If no tab is about the task, open the page with preview_navigate and tab \"new\". Close the tabs that you opened when you do not need them any more, or when the user asks (give their ids in 'close'). Each tab has its id, URL, title, \"shown\" (the user sees it now), and \"used\" (you work in it).",
       "parameters": {
         "type": "object",
         "properties": {
           "use": {
             "type": "string",
             "description": "Optional: the id of a tab to work in, or \"new\"."
+          },
+          "close": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional: the ids of the tabs to close."
           }
         }
       }
