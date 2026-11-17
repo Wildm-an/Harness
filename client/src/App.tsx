@@ -69,6 +69,7 @@ import { FolderPicker } from "./components/FolderPicker";
 import { DiffReview } from "./components/DiffReview";
 import { ChangesView } from "./components/ChangesView";
 import { RulesPanel, type Rules } from "./components/RulesPanel";
+import { PermissionRulesSettings } from "./components/PermissionRulesSettings";
 import { Workspace, type PaneSpec } from "./layout/Workspace";
 import {
   closePane,
@@ -1114,6 +1115,7 @@ export default function App() {
           return;
         }
         case "permissions":
+          if (msg.cwd !== undefined) return; // The reply to Settings > Permission rules (PermissionRulesSettings.tsx).
           setRules({ path: msg.path, allow: msg.allow, deny: msg.deny });
           setRulesBusy(false);
           if (rulesSaving.current) setRulesSavedAt(Date.now());
@@ -2160,18 +2162,6 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  const openRules = () => {
-    setLayout((l) => openPane(l, "rules"));
-    setRules(null);
-    setRulesBusy(true);
-    try {
-      conn.send({ type: "permissions.get" });
-    } catch (e) {
-      setRulesBusy(false);
-      dispatch({ type: "notice", level: "error", text: errorText(e) });
-    }
-  };
 
   const saveRules = useCallback(
     (allow: string[], deny: string[]) => {
@@ -3517,20 +3507,6 @@ export default function App() {
     onClick: fromSidebar(openUsage),
   };
 
-  // The panes of the open session in the sidebar: Permission rules.
-  const sessionTools: SessionTool[] =
-    screen === "chat" && session
-      ? [
-          {
-            key: "rules",
-            icon: ShieldCheck,
-            label: "Permission rules",
-            active: paneVisible("rules"),
-            onClick: fromSidebar(paneVisible("rules") ? () => hidePane("rules") : openRules),
-          },
-        ]
-      : [];
-
   const statusText = status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected";
 
   const sidebarView = (
@@ -3550,7 +3526,6 @@ export default function App() {
       newSessionKey={NEW_SESSION_SHORTCUT}
       head={titleNav()}
       nav={[routinesNav, capabilitiesNav, usageNav]}
-      tools={sessionTools}
       prStatus={prStatus}
       onRequestPr={(paths) => {
         if (conn.status === "open") conn.send({ type: "git.pr_status", paths });
@@ -4032,6 +4007,9 @@ export default function App() {
                   />
                 }
               />
+            )}
+            {settingsPage === "rules" && (
+              <PermissionRulesSettings conn={conn} connected={status === "open"} projects={projects} currentProject={session?.cwd ?? null} />
             )}
             {settingsPage === "harness" && (
               <YourHarnessSettings

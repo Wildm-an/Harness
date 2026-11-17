@@ -96,9 +96,9 @@ Transport: WebSocket at `ws://<host>:<port>/ws`. Each message is one JSON object
 | `server.restart` | `name` | Stops a server, then starts it. |
 | `server.logs` | `name` | Asks for the stored log lines of a server (up to 1000). |
 | `skills.get` | `name` | Asks for one skill: the SKILL.md text and the files in its folder. |
-| `permissions.get` | — | Asks for the permission rules of the session project. |
+| `permissions.get` | `cwd`? | Asks for the permission rules of a project: `cwd` (an absolute path, Settings > Permission rules), else the project of the open session. |
 
-| `permissions.set` | `allow`, `deny` | Replaces the permission rules. The daemon rejects a rule that is not `tool` or `tool(pattern)`. |
+| `permissions.set` | `allow`, `deny`, `cwd`? | Replaces the permission rules of the project (`cwd` as in `permissions.get`). The daemon rejects a rule that is not `tool` or `tool(pattern)`. |
 | `providers.list` | — | Asks for the providers of `~/.harness/providers.json` on the daemon computer. This needs no session. |
 | `providers.save` | `name`, `base_url`, `kind`, `context_length`, `ssh`, `key`, `api_key_env`, `previous_name` | Adds a provider, or changes the provider `previous_name` (also a rename). `kind` is `auto`, `ollama`, or `openai`. `key` is `keep`, `client` (the key is in the keychain of the client), `env` (with `api_key_env`), or `none`. Other fields of the entry, for example `models`, stay the same. |
 | `providers.delete` | `name` | Deletes a provider. The last provider cannot be deleted. |
@@ -252,7 +252,7 @@ An ACP session differs from a session of the built-in loop:
 | `server.status` | `error`, `last_lines` | Additions to SPEC.md: `error` explains a stop (for example, the port is in use). A `crashed` status has the `last_lines` (50) of the log. |
 | `server.log` | `name`, `stream`, `text` | `text` can hold several lines. The daemon sends the new lines about 10 times a second. |
 | `server.logs` | `name`, `lines` | Reply to `server.logs`. Each line has `stream` and `text`. |
-| `permissions` | `path`, `allow`, `deny` | Reply to `permissions.get` and `permissions.set`. `path` is the settings file, relative to the project. |
+| `permissions` | `path`, `allow`, `deny` | Reply to `permissions.get` and `permissions.set`. `path` is the settings file, relative to the project. `cwd`: only in the reply to a request with `cwd`, the same text. |
 | `settings` | `auto_verify`, `permission_mode` | Reply to `settings.get` and `settings.set`. |
 | `mcp` | `items`, `problems`, `paths` | The MCP servers of the session. The daemon sends it when a server state or a tool list changes, and as the reply to `mcp.list`. Each item has `name`, `scope` (`plugin`, `user`, or `project`), `transport`, `target` (the command or the URL), `state` (`starting`, `connected`, `failed`, `disabled`, or `stopped`), `error`, `server_name`, `tools` (`name`, `agent_name`, `description`), and `log` (the last output lines of a failed server). `problems` holds the configuration errors and warnings. |
 | `mcp.init` | `path`, `created` | Reply to `mcp.init`. `path` is relative to the project. |

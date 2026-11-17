@@ -559,37 +559,6 @@ textarea:focus-visible {
   color: var(--accent);
 }
 
-/* The "More" accordion: the pane buttons of the open session. */
-.side-more-chevron {
-  transition: transform var(--duration) var(--ease-out);
-}
-
-.side-more-toggle.open .side-more-chevron {
-  transform: rotate(90deg);
-}
-
-.side-more-toggle,
-.side-more-list .side-item {
-  color: var(--text-muted);
-}
-
-.side-more-toggle:hover:not(:disabled),
-.side-more-list .side-item:hover:not(:disabled),
-.side-more-list .side-item.active {
-  color: var(--text);
-}
-
-.side-more-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.side-more-list .side-item > svg,
-.side-more-list .side-item > .glyph-icon {
-  flex: none;
-  color: var(--text-muted);
-}
-
 /* The "/" icon sets its size inline. In the sidebar it takes the icon size of the density. */
 .side-item > .glyph-icon {
   width: var(--side-icon) !important;
@@ -15122,4 +15091,147 @@ input::-ms-clear {
   color: var(--text-muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* -- Settings search (docs/UI_RULES.md G1a) ----------------------------------------------------------------- */
+
+.settings-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 0 8px;
+}
+
+.settings-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.settings-search-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: 13px var(--font-sans);
+  outline: none;
+}
+
+.settings-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.settings-search-input:focus {
+  border-color: var(--text-muted);
+}
+
+/* The page stays during a search, hidden, so a form keeps its text. */
+.settings-body[hidden] {
+  display: none;
+}
+
+.settings-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 13.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-result:hover,
+.settings-result:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.settings-result > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.settings-result-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-result-label {
+  font-weight: 500;
+}
+
+.settings-result-help {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-result-where {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-results-empty {
+  margin-top: 12px;
+  color: var(--text-muted);
+}
+
+/* The setting that a search result opened: a short flash of the accent color. */
+.setting-found {
+  border-radius: var(--radius-sm);
+  animation: setting-found 1.6s var(--ease-out);
+}
+
+@keyframes setting-found {
+  0%,
+  30% {
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setting-found {
+    animation: none;
+  }
+}
+
+.settings-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rules-path {
+  margin-top: 4px;
 }

@@ -1126,8 +1126,8 @@ export type ClientMessage =
   | { type: "server.stop_agent" } // Stop the servers that an agent started, in all sessions of the window.
   | { type: "server.restart"; name: string }
   | { type: "server.logs"; name: string }
-  | { type: "permissions.get" }
-  | { type: "permissions.set"; allow: string[]; deny: string[] }
+  | { type: "permissions.get"; cwd?: string } // cwd: a project (Settings > Permission rules). No cwd: the open session.
+  | { type: "permissions.set"; allow: string[]; deny: string[]; cwd?: string }
   | { type: "providers.list" }
   | ({ type: "providers.save"; key: KeyMode; api_key_env?: string } & ProviderFields)
   | { type: "providers.delete"; name: string }
@@ -1383,7 +1383,7 @@ export type DaemonMessage =
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
   | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[]; card?: ToolCardData; verify?: VerifyInfo }
   | ({ type: "permission.request" } & PermissionRequest)
-  | { type: "permissions"; path: string; allow: string[]; deny: string[] }
+  | { type: "permissions"; path: string; allow: string[]; deny: string[]; cwd?: string } // cwd: the reply to a request with cwd.
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason; verify?: VerifyInfo }
   // A steer message went into the history. text: the text that the user sees.
   | { type: "steer.taken"; id: string; text: string; origin?: "task" }

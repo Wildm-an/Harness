@@ -40,12 +40,12 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 
 1. A "Search" field. It opens the command menu (Ctrl+K). The key hint shows on hover or focus.
 2. "New session" (Ctrl+N), with a round "+" icon.
-3. Nav items: "Routines", then "Capabilities", then "Usage". Claude shows "Routines" and "Customize". Harness shows "Capabilities" in place of "Customize" (the user asked for this name). "Routines" opens the Routines page (section 3.5). It opens the Capabilities page with the skills, the MCP servers, and the plugins (section 3.4). Permission rules are not on this page yet. See section 9. "Usage" opens the Usage page (section 3.6). Claude has no Usage page: the user asked for the Usage page of T3 Code.
+3. Nav items: "Routines", then "Capabilities", then "Usage". Claude shows "Routines" and "Customize". Harness shows "Capabilities" in place of "Customize" (the user asked for this name). "Routines" opens the Routines page (section 3.5). It opens the Capabilities page with the skills, the MCP servers, and the plugins (section 3.4). Permission rules are in Settings > Permission rules (G2). "Usage" opens the Usage page (section 3.6). Claude has no Usage page: the user asked for the Usage page of T3 Code.
 4. "Pinned". Show the first 20 items, then "Show more". The empty text is "Tip: you can drag sessions here to pin them".
 5. The session sections (projects, date groups, or custom sections).
 6. A bottom tray: the update strip (section 7.4), then the account button. The account button opens a menu with "Settings", "View changelog", "Keyboard shortcuts", "Get help".
 
-Harness now has a "More" accordion for Permission rules, and a Settings gear in the footer. Move these to the Capabilities page and the account menu.
+Harness has no "More" accordion: the user asked to move Permission rules into Settings (G2). Harness has a Settings gear in the footer. Move it to the account menu.
 
 - **S18.** The footer of the sidebar is one row, 28px high (the user asked for a compact footer): the status dot (6px), the icon of the computer, the name of the connection, then "· {computer}" in muted text, and the Settings button (28px) at the right. A green dot shows "Connected", so the row does not show that word. A state that is not "Connected" shows as text in place of the computer: "· Connecting" or "· Disconnected". With no connection, the row shows only "No connection". The hover tip has the full state.
 
@@ -561,9 +561,10 @@ Notes:
   - When a form closes, the focus goes to the current page in the nav, so Esc still works.
 
 - **G1.** Settings is a page with a left nav in groups and a search field. Claude groups: "Account", "Customize" (Plugins, Skills, Connectors), "Products" (Claude Code), "This computer" (System, Extensions, Developer).
+- **G1a.** The search field "Search settings" is at the top of the left nav (the user asked for it, `lib/settingsIndex.ts`). Ctrl+F in Settings puts the focus in it. While the field has text, the right side shows "Search results" in place of the page: each result has the name of the setting, its help, and "{page} › {section}" at the right. A search word can be in the name, the help, the page, the section, or other words of the index (for example "dark mode" finds "Theme"). A name that starts with the search comes first. With no match: "No settings match "{text}"." Enter opens the first result, and the arrow keys move between the field and the results. Esc clears the field, and the next Esc closes Settings. A result opens its page (with the "Leave this page?" question of G0), scrolls to the setting, gives the focus to its control, and flashes the row. A click on a page in the nav clears the search. The page stays open, hidden, during a search, so a form keeps its text. Each setting row must be in the index: a test checks it.
 - **G2.** Harness groups, in this order:
   1. "Claude Code": the page with sections in G3.
-  2. "Customize": "Permission rules". The skills, the MCP servers, and the plugins are not in Settings: they are on the Capabilities page (section 3.4).
+  2. "Customize": "Permission rules". The skills, the MCP servers, and the plugins are not in Settings: they are on the Capabilities page (section 3.4). Harness has the page "Permission rules" after "Agents" (the user asked to move it from the "More" list of the sidebar, `PermissionRulesSettings.tsx`). The page has the row "Project" (the project of the open session, else the last project), the path of the rules file, and the lists "Allow" and "Deny" with a field and "Add" each. A change saves at once ("Saved"). The rules of the project apply to all its sessions and to the other agents.
   3. "Models": "Providers" (the model providers) and "Local models". These are Harness-only (P6). The user asked for the name "Providers" (it was "Connections").
   4. "This computer": "System", "Computers" (remote daemons).
   5. The changelog moves to the account menu ("View changelog"). Harness now shows it on the Updates page, under the update status (V9a).

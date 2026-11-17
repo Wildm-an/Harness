@@ -14,7 +14,7 @@ import { useSidebarOrganization } from "../lib/threads";
 
 export { sessionState } from "./SessionRow";
 
-/** A nav item ("Capabilities") or a pane button of the "More" group ("Permission rules"). */
+/** A nav item of the sidebar ("Routines", "Capabilities", "Usage"). */
 export interface SessionTool {
   key: string;
   icon: LucideIcon;
@@ -29,7 +29,6 @@ export interface SessionTool {
 // A project shows this many sessions. "Show more" shows the rest.
 const SHOWN_SESSIONS = 8;
 const EXPANDED_PREF = "sidebar.expanded";
-const MORE_PREF = "sidebar.more"; // "1": the "More" accordion is open.
 const ORDER_PREF = "sidebar.order"; // The project keys, in the order of the user.
 const NESTED_PREF = "sidebar.nested"; // The sessions with nested sessions that the user opened or closed.
 
@@ -425,7 +424,6 @@ export function Sidebar({
   newSessionKey,
   head,
   nav = [],
-  tools = [],
   prStatus,
   onRequestPr,
   onSearch,
@@ -450,7 +448,6 @@ export function Sidebar({
   newSessionKey?: string; // "Ctrl+N".
   head: React.ReactNode; // The sidebar, back, and forward buttons at the top left.
   nav?: SessionTool[]; // The page items under "New session", always shown: "Capabilities".
-  tools?: SessionTool[]; // The pane buttons of the open session. Empty on the other screens.
   prStatus: Map<string, PrStatus>; // By pathKey of the folder.
   onRequestPr: (paths: string[]) => void; // Ask the daemon for the pull requests of these folders.
   onSearch: () => void; // Open the session search.
@@ -458,11 +455,6 @@ export function Sidebar({
 }) {
   const organization = useSidebarOrganization();
   const [expanded, setExpanded] = useState(loadExpanded);
-  const [moreOpen, setMoreOpen] = useState(() => loadPref(MORE_PREF, "0") === "1");
-  const toggleMore = () => {
-    setMoreOpen(!moreOpen);
-    savePref(MORE_PREF, moreOpen ? "0" : "1");
-  };
   const open = status === "open";
   const [view, setView] = useState<SidebarView>(loadView);
   const changeView = (next: SidebarView) => {
@@ -582,33 +574,7 @@ export function Sidebar({
         {nav.map((item) => (
           <ToolButton key={item.key} tool={item} disabled={!open} page />
         ))}
-        {/* The panes of the open session, in an accordion as the "More" row of Claude. */}
-        {tools.length > 0 && (
-          <>
-            <button
-              type="button"
-              className={`side-item side-more-toggle${moreOpen ? " open" : ""}`}
-              onClick={toggleMore}
-              aria-expanded={moreOpen}
-              aria-controls="side-more-list"
-            >
-              <ChevronRight size={16} className="side-more-chevron" aria-hidden />
-              <span>More</span>
-              {!moreOpen && tools.some((t) => t.alert) && (
-                <span className="side-item-end">
-                  <span className="side-item-alert" role="img" aria-label="A server failed" />
-                </span>
-              )}
-            </button>
-            {moreOpen && (
-              <div id="side-more-list" className="side-more-list" role="group" aria-label="More">
-                {tools.map((tool) => (
-                  <ToolButton key={tool.key} tool={tool} disabled={!open} />
-                ))}
-              </div>
-            )}
-          </>
-        )}
+        {/* No "More" list: Permission rules are in Settings (the user asked for this, docs/UI_RULES.md G2). */}
       </div>
 
       <div className="side-sessions">

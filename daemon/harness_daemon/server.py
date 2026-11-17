@@ -3665,27 +3665,40 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
 # -- permission rules ----------------------------------------------------------
 
 
-async def _send_rules(conn: Connection, session: Session) -> None:
-    rules = PermissionRules(session.cwd)
-    await conn.send({"type": "permissions", "path": relpath(session.cwd, rules.path), **rules.read()})
+def _rules_place(conn: Connection, msg: dict[str, Any]) -> tuple[Path, str | None]:
+    """The project of a rules request: {"cwd"} (Settings > Permission rules), else the open session. The second
+    value is the "cwd" of the request, which the reply repeats."""
+    if msg.get("cwd") is not None:
+        return _project_note_cwd(msg), str(msg["cwd"])
+    return Path(conn.require_session().cwd), None
+
+
+async def _send_rules(conn: Connection, cwd: Path, requested: str | None) -> None:
+    rules = PermissionRules(cwd)
+    reply: dict[str, Any] = {"type": "permissions", "path": relpath(cwd, rules.path), **rules.read()}
+    if requested is not None:
+        reply["cwd"] = requested  # Settings > Permission rules: the reply of a request with "cwd".
+    await conn.send(reply)
 
 
 @handler("permissions.get")
 async def on_permissions_get(conn: Connection, msg: dict[str, Any]) -> None:
-    await _send_rules(conn, conn.require_session())
+    """The permission rules of a project: {"cwd"?}. No "cwd": the project of the open session."""
+    await _send_rules(conn, *_rules_place(conn, msg))
 
 
 @handler("permissions.set")
 async def on_permissions_set(conn: Connection, msg: dict[str, Any]) -> None:
-    session = conn.require_session()
+    """Replace the permission rules of a project: {"cwd"?, "allow", "deny"}. No "cwd": the open session."""
+    cwd, requested = _rules_place(conn, msg)
     allow, deny = msg.get("allow"), msg.get("deny")
     if not isinstance(allow, list) or not isinstance(deny, list):
         raise ProtocolError("'allow' and 'deny' must be lists of rules.")
     try:
-        PermissionRules(session.cwd).write(allow, deny)
+        PermissionRules(cwd).write(allow, deny)
     except ValueError as e:
         raise ProtocolError(str(e)) from e
-    await _send_rules(conn, session)
+    await _send_rules(conn, cwd, requested)
 
 
 # -- providers (the Providers screen) ---------------------------------------------------
