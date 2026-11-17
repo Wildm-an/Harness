@@ -2,9 +2,9 @@
 // "Create PR" button, the PR row of the Changes section, the PR mark of a session row, and the
 // hover card of a pull request link in the chat.
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { ChatItem } from "../chat/state";
-import type { GitChanges, PrState, PullRequest, WorkPart } from "../daemon/protocol";
+import type { CheckState, GitChanges, PrChecks, PrState, PullRequest, WorkPart } from "../daemon/protocol";
 import { loadPref, savePref } from "./prefs";
 
 export const PR_STATE_TEXT: Record<PrState, string> = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" };
@@ -302,6 +302,131 @@ export const ACTION_PROMPTS: Record<GitAction, string> = {
 3. Give the remote branch and the pushed commits at the end.`,
 };
 
+// -- the CI checks of a pull request ------------------------------------------------------------
+
+export const CHECK_STATE_TEXT: Record<CheckState, string> = { pass: "Passed", fail: "Failed", pending: "Running", skip: "Skipped", cancel: "Cancelled" };
+
+/** The CI line of a pull request: its state and a short text ("2 of 4 checks failed"). */
+export interface CiSummary {
+  state: "pass" | "fail" | "pending" | "skip";
+  text: string;
+  tip: string;
+}
+
+/** The CI line of a pull request, else null: no checks, or a daemon with no checks. */
+export function ciSummary(checks: PrChecks | null | undefined): CiSummary | null {
+  if (!checks || checks.total === 0) return null;
+  const { total, failed, pending, passed, skipped } = checks;
+  const parts = [failed && `${failed} failed`, pending && `${pending} running`, passed && `${passed} passed`, skipped && `${skipped} skipped`].filter(Boolean).join(", ");
+  const tip = `${plural(total, "check")}: ${parts}.`;
+  if (checks.state === "fail") return { state: "fail", text: failed === total ? `${plural(total, "check")} failed` : `${failed} of ${total} checks failed`, tip };
+  if (checks.state === "pending") return { state: "pending", text: pending === total ? `${plural(total, "check")} running` : `${pending} of ${total} checks running`, tip };
+  if (checks.state === "pass") return { state: "pass", text: "All checks passed", tip };
+  return { state: "skip", text: "Checks skipped", tip };
+}
+
+/** The GitHub page of the checks of a pull request, else null. */
+export function checksUrl(url: string | null | undefined): string | null {
+  const key = prKeyUrl(url);
+  return key ? `${key}/checks` : null;
+}
+
+/** The label of the CI fix action, as in the Claude app. */
+export const FIX_CI_LABEL = "Fix CI";
+
+/** The prompt of "Fix CI": the agent reads the failed runs, fixes the cause, and pushes the fix. */
+export function fixCiPrompt(pr: Pick<PullRequest, "url" | "number" | "head">, failed: readonly string[] = []): string {
+  const ref = pr.url ?? `#${pr.number}`;
+  const names = failed.length > 0 ? `\n\nThe failed checks: ${failed.join(", ")}.` : "";
+  const branch = pr.head ? ` (${pr.head})` : "";
+  return `Fix the failed CI checks of the pull request ${ref}.${names}
+
+1. If this folder is not on the branch of the pull request${branch}, stop and tell me.
+2. Read the failed checks with \`gh pr checks ${ref}\`. Read the log of each failed run with \`gh run view <run-id> --log-failed\`.
+3. Find the cause of each failure. If possible, run the same test or command on this computer.
+4. Fix the cause in the code. Do not skip, disable, or weaken a test to make a check pass.
+5. Commit the fix, and push it to the branch of the pull request. Do not force the push.
+6. Give the cause and the fix of each failure at the end.`;
+}
+
+/**
+ * The CI runs that finished since the last call: a pull request whose checks were "pending" and are now
+ * "pass" or "fail". ``last`` keeps the last state of each URL, and this function updates it. The first
+ * state of a URL is not a change: a pull request that failed before the app opened does not count.
+ */
+export function finishedCi(
+  last: Map<string, PrChecks["state"]>,
+  urls: readonly string[],
+  info: (url: string) => PullRequest | null | undefined,
+): { url: string; pr: PullRequest; state: "pass" | "fail" }[] {
+  const done: { url: string; pr: PullRequest; state: "pass" | "fail" }[] = [];
+  for (const url of urls) {
+    const pr = info(url);
+    if (!pr || pr.checks === undefined) continue;
+    const now = pr.checks?.state ?? null;
+    const before = last.get(url);
+    last.set(url, now);
+    if (before === "pending" && (now === "pass" || now === "fail")) done.push({ url, pr, state: now });
+  }
+  return done;
+}
+
+// -- Auto-fix: the agent fixes a failed CI run with no click -------------------------------------
+
+/** The label of the switch, as in the Claude app. */
+export const AUTO_FIX_LABEL = "Auto-fix";
+
+/** The fixes that Auto-fix starts for one pull request before it stops. A passed CI run sets the count to 0. */
+export const MAX_AUTO_FIXES = 3;
+
+const AUTO_FIX_PREF = "ci.autoFix";
+const MAX_AUTO_FIX_SESSIONS = 200;
+
+function autoFixMap(): Record<string, boolean> {
+  try {
+    const v: unknown = JSON.parse(loadPref(AUTO_FIX_PREF, "{}"));
+    return v && typeof v === "object" ? (v as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** True when Auto-fix is on for a session. The default is off. */
+export function autoFixOn(sessionId: string | null | undefined): boolean {
+  return !!sessionId && autoFixMap()[sessionId] === true;
+}
+
+export function setAutoFix(sessionId: string, on: boolean): void {
+  const map = autoFixMap();
+  delete map[sessionId];
+  if (on) map[sessionId] = true;
+  const keys = Object.keys(map);
+  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_AUTO_FIX_SESSIONS))) delete map[k];
+  savePref(AUTO_FIX_PREF, JSON.stringify(map));
+}
+
+/** The names of the failed and the cancelled checks of a pull request. */
+export function failedCheckNames(pr: PullRequest): string[] {
+  return (pr.checks?.items ?? []).filter((c) => c.state === "fail" || c.state === "cancel").map((c) => c.name);
+}
+
+/**
+ * What Auto-fix does for a pull request with a new CI state. ``tries`` keeps the fixes of each URL, and
+ * this function updates it. "fix": start a fix. "limit": the last fix also failed, so Auto-fix stops for
+ * this pull request until a CI run passes. null: nothing to do.
+ */
+export function autoFixStep(tries: Map<string, number>, url: string, pr: PullRequest, state: "pass" | "fail"): "fix" | "limit" | null {
+  if (state === "pass") {
+    tries.delete(url);
+    return null;
+  }
+  if (pr.state !== "open" && pr.state !== "draft") return null;
+  const n = tries.get(url) ?? 0;
+  if (n > MAX_AUTO_FIXES) return null; // Stopped: the user knows already.
+  tries.set(url, n + 1);
+  return n < MAX_AUTO_FIXES ? "fix" : "limit";
+}
+
 // -- the pull requests of chat links ---------------------------------------------------------
 
 /**
@@ -384,6 +509,25 @@ export function usePrRefresh(urls: readonly string[], again: unknown = null): vo
       document.removeEventListener("visibilitychange", back);
     };
   }, [key, again]);
+}
+
+/**
+ * Watch the CI checks of some pull requests: ``onFinish`` gets each pull request whose checks were
+ * running and are now passed or failed. It reads the store with no new render. A new list of URLs keeps
+ * the last state of the URLs that stay.
+ */
+export function useCiWatch(urls: readonly string[], onFinish: (done: { url: string; pr: PullRequest; state: "pass" | "fail" }) => void): void {
+  const last = useRef(new Map<string, PrChecks["state"]>());
+  const list = useRef(urls);
+  const finish = useRef(onFinish);
+  list.current = urls;
+  finish.current = onFinish;
+  useEffect(() => {
+    const check = () => finishedCi(last.current, list.current, prInfoStore.get).forEach((d) => finish.current(d));
+    check();
+    const stop = prInfoStore.subscribe(check);
+    return () => void stop();
+  }, []);
 }
 
 /** Reads the pull requests of the store, and renders again with each reply of the daemon. */

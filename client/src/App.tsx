@@ -153,9 +153,9 @@ import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, PullRequest, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
-import { notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen, onOpenNewSession } from "./lib/notify";
+import { notifyCiDone, notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen, onOpenNewSession } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
 import { OpenPathContext } from "./lib/openPath";
@@ -208,7 +208,7 @@ import { appVersionOf, daemonWheel, forwardCloseAll, forwardOpen, isTauri, openE
 import { filesPromptText } from "./lib/fileRefs";
 import { noImageNote } from "./lib/images";
 import { modelName } from "./lib/modelName";
-import { ACTION_LABELS, ACTION_PROMPTS, prInfoStore, sessionPrUrls } from "./lib/pr";
+import { ACTION_LABELS, ACTION_PROMPTS, AUTO_FIX_LABEL, FIX_CI_LABEL, MAX_AUTO_FIXES, autoFixOn, autoFixStep, failedCheckNames, fixCiPrompt, prInfoStore, setAutoFix, prKeyUrl, prShortRef, sessionPrUrls, useCiWatch, usePrRefresh } from "./lib/pr";
 import { FolderMenu } from "./components/FolderMenu";
 import { SessionTitle } from "./components/SessionTitle";
 import type { SessionActions } from "./components/SessionRow";
@@ -2030,6 +2030,60 @@ export default function App() {
   const serverApprovals = useMemo(() => pendingServerApprovals(chat.items), [chat.items]);
   // The pull requests that the agent made in this session: the PR list of the Changes section.
   const sessionPrs = useMemo(() => sessionPrUrls(chat.items), [chat.items]);
+  // The pull requests of the session and the pull request of its branch. The app keeps their state and
+  // their CI checks current while the session shows, with or without the rail (usePrRefresh), and shows a
+  // notification when a CI run of one of them finishes and the user does not see the session.
+  const branchPrUrl = prKeyUrl(
+    (session && gitChanges && samePath(gitChanges.cwd, session.cwd) && gitChanges.pr !== undefined
+      ? gitChanges.pr
+      : session
+        ? prStatus.get(pathKey(session.cwd))?.pr
+        : null)?.url,
+  );
+  const watchedPrUrls = useMemo(
+    () => (branchPrUrl && !sessionPrs.includes(branchPrUrl) ? [...sessionPrs, branchPrUrl] : sessionPrs),
+    [sessionPrs, branchPrUrl],
+  );
+  usePrRefresh(screen === "chat" ? watchedPrUrls : [], chat.running);
+  // Auto-fix, as in the Claude app: when a CI run of a pull request of the session fails, the agent fixes
+  // it with no click. The switch is for each session (default off). Auto-fix stops for a pull request
+  // after MAX_AUTO_FIXES fixes that did not pass, until a CI run passes.
+  const [autoFix, setAutoFixState] = useState(false);
+  const autoFixTries = useRef(new Map<string, number>());
+  useEffect(() => {
+    setAutoFixState(autoFixOn(session?.id));
+    autoFixTries.current.clear();
+  }, [session?.id]);
+  useCiWatch(watchedPrUrls, (done) => {
+    const id = sessionRef.current?.id;
+    if (!id) return;
+    const step = autoFix && status === "open" ? autoFixStep(autoFixTries.current, done.url, done.pr, done.state) : null;
+    const ref = prShortRef(done.pr);
+    if (step === "fix") fixCi(done.pr, true);
+    if (step === "limit") {
+      dispatch({ type: "notice", level: "warning", text: `Auto-fix stopped for ${ref}: CI failed after ${MAX_AUTO_FIXES} fixes. Use "Fix CI" to try again.` });
+    }
+    const note = step === "fix" ? "Auto-fix started." : step === "limit" ? `Auto-fix stopped after ${MAX_AUTO_FIXES} fixes.` : undefined;
+    void notifyCiDone(
+      { session_id: id, state: done.state, ref, title: done.pr.title, failed: done.pr.checks?.failed ?? 0, total: done.pr.checks?.total ?? 0, note },
+      { windowVisible: !document.hidden, windowFocused: document.hasFocus(), shownSessionId: shownIdRef.current },
+    );
+  });
+  const fixCi = (pr: PullRequest, auto = false) => {
+    submitOrQueue({ kind: "prompt", text: fixCiPrompt(pr, failedCheckNames(pr)), display: auto ? `${FIX_CI_LABEL} (${AUTO_FIX_LABEL})` : FIX_CI_LABEL });
+  };
+  const toggleAutoFix = (on: boolean) => {
+    if (!session) return;
+    setAutoFix(session.id, on);
+    setAutoFixState(on);
+    autoFixTries.current.clear();
+    // On: a pull request that fails now gets a fix at once.
+    if (!on || status !== "open") return;
+    for (const url of watchedPrUrls) {
+      const pr = prInfoStore.get(url);
+      if (pr?.checks?.state === "fail" && autoFixStep(autoFixTries.current, url, pr, "fail") === "fix") fixCi(pr, true);
+    }
+  };
 
   const decide = useCallback(
     (requestId: string, decision: Decision) => {
@@ -4046,6 +4100,8 @@ export default function App() {
                   onChangesAction={
                     status === "open" ? (action) => submitOrQueue({ kind: "prompt", text: ACTION_PROMPTS[action], display: ACTION_LABELS[action] }) : null
                   }
+                  onFixCi={status === "open" ? (pr) => fixCi(pr) : null}
+                  autoFix={{ on: autoFix, onToggle: toggleAutoFix }}
                   tasks={tasks ?? []}
                   onShowTasks={() => showPane("tasks")}
                   keepAwake={keepAwake}

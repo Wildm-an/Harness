@@ -10,11 +10,11 @@
 // The colors are hues of the Clear Sight palette (styles.css), as the other status colors.
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, Check, ChevronDown, CloudCheck, Copy, Diff, Ellipsis, ExternalLink, FilePen, GitCommitHorizontal } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, CloudCheck, Copy, Diff, Ellipsis, ExternalLink, FilePen, GitCommitHorizontal, ListChecks, Wrench } from "lucide-react";
 import type { GitChanges, PullRequest } from "../daemon/protocol";
-import { ACTION_LABELS, ACTION_TIPS, PR_STATE_TEXT, prShortRef, chosenAction, compareUrl, dismiss, gitActions, hasWorkParts, isDismissed, setChosenAction, workRows, workSignature, type GitAction, type GitButton, type ListedPr, type WorkKind } from "../lib/pr";
+import { ACTION_LABELS, ACTION_TIPS, AUTO_FIX_LABEL, CHECK_STATE_TEXT, FIX_CI_LABEL, MAX_AUTO_FIXES, PR_STATE_TEXT, checksUrl, ciSummary, prShortRef, chosenAction, compareUrl, dismiss, gitActions, hasWorkParts, isDismissed, setChosenAction, workRows, workSignature, type GitAction, type GitButton, type ListedPr, type WorkKind } from "../lib/pr";
 import { DiffCounts } from "./DiffStats";
-import { PrCard, PrIcon, useHoverCard } from "./PrCard";
+import { CiIcon, PrCard, PrIcon, useHoverCard } from "./PrCard";
 
 const CLICK_WAIT = 10_000; // ms. With no turn after a click of the git button, the button shows again.
 
@@ -29,7 +29,11 @@ export function RailChanges({
   onAction,
   onOpenChanges,
   onOpenPr,
+  onFixCi = null,
+  autoFix = null,
 }: {
+  onFixCi?: ((pr: PullRequest) => void) | null; // "Fix CI" of a pull request with failed checks. null: not connected.
+  autoFix?: AutoFix | null;
   sessionId: string;
   changes: GitChanges;
   pr: PullRequest | null; // The pull request of the branch: the git button and "All work is in the pull request" use it.
@@ -69,7 +73,7 @@ export function RailChanges({
   }, [clicked, running]);
   return (
     <div className="rail-changes-box">
-      <RailPrList prs={prs} onOpen={onOpenPr} />
+      <RailPrList prs={prs} onOpen={onOpenPr} onFixCi={onFixCi} running={running} autoFix={autoFix} />
       {parts && rows.length > 0 && (
         <ul className="rail-work" aria-label="The work of the session">
           {rows.map((r) => {
@@ -237,20 +241,115 @@ function ActionButton({ button, manualUrl, onAction, onChoose, onViewChanges, on
  * The pull requests of the session, as in the Claude app: the newest first. Each row has the icon in
  * the color of the state, the title, "Harness #18", and ⋯.
  */
-export function RailPrList({ prs, onOpen }: { prs: ListedPr[]; onOpen: (url: string) => void }) {
+/** The Auto-fix switch of a session: on, the agent fixes a failed CI run with no click. */
+export interface AutoFix {
+  on: boolean;
+  onToggle: (on: boolean) => void;
+}
+
+export function RailPrList({ prs, onOpen, onFixCi = null, running = false, autoFix = null }: {
+  prs: ListedPr[];
+  onOpen: (url: string) => void;
+  onFixCi?: ((pr: PullRequest) => void) | null; // null: not connected, or no session.
+  running?: boolean; // A turn of the session runs: "Fix CI" does not show.
+  autoFix?: AutoFix | null; // null: no switch.
+}) {
   if (prs.length === 0) return null;
+  // The switch shows when a pull request of the list has CI checks.
+  const hasCi = prs.some((p) => p.info?.checks);
   return (
-    <ul className="rail-prs" aria-label="Pull requests">
-      {prs.map((p) => (
-        <li key={p.url ?? `#${p.number}`}>
-          <RailPr item={p} onOpen={onOpen} />
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="rail-prs" aria-label="Pull requests">
+        {prs.map((p) => (
+          <li key={p.url ?? `#${p.number}`}>
+            <RailPr item={p} onOpen={onOpen} />
+            {p.info && <RailCi pr={p.info} url={p.info.url ?? p.url} onOpen={onOpen} onFixCi={running ? null : onFixCi} />}
+          </li>
+        ))}
+      </ul>
+      {autoFix && hasCi && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoFix.on}
+          className="rail-awake rail-autofix"
+          disabled={!onFixCi}
+          onClick={() => autoFix.onToggle(!autoFix.on)}
+          aria-label={AUTO_FIX_LABEL}
+          title={`Only for this session. When a CI run of a pull request fails, the agent fixes it with no click (${MAX_AUTO_FIXES} times at most for each pull request).`}
+        >
+          <Wrench size={13} aria-hidden className="rail-awake-icon" />
+          <span className="rail-awake-text">{AUTO_FIX_LABEL}</span>
+          <span className={`switch switch-small${autoFix.on ? " on" : ""}`} aria-hidden>
+            <span className="switch-knob" />
+          </span>
+        </button>
+      )}
+    </>
   );
 }
 
-/** One pull request: the icon, the title, "Harness #18", and ⋯ ("Open pull request", "Copy link"). */
+/**
+ * The CI line of a pull request in the rail: the state icon and "2 of 4 checks failed". A click shows
+ * or hides the checks. Each check opens its page. "Fix CI" asks the agent to fix the failed checks.
+ */
+function RailCi({ pr, url, onOpen, onFixCi }: { pr: PullRequest; url: string | null; onOpen: (url: string) => void; onFixCi: ((pr: PullRequest) => void) | null }) {
+  const ci = ciSummary(pr.checks);
+  const [open, setOpen] = useState(false);
+  const [asked, setAsked] = useState(false);
+  // A new CI state shows "Fix CI" again.
+  const signature = `${pr.checks?.state}:${pr.checks?.failed}:${pr.checks?.total}`;
+  useEffect(() => setAsked(false), [signature]);
+  if (!ci || !pr.checks) return null;
+  const live = pr.state === "open" || pr.state === "draft";
+  const all = checksUrl(url);
+  return (
+    <div className={`rail-ci ci-text-${ci.state}`}>
+      <div className="rail-ci-row">
+        <button type="button" className="rail-ci-summary" aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${ci.tip} Click to ${open ? "hide" : "show"} the checks.`}>
+          <CiIcon state={ci.state} size={13} />
+          <span className="rail-ci-text">{ci.text}</span>
+          <ChevronDown size={12} aria-hidden className={`rail-ci-chevron${open ? " open" : ""}`} />
+        </button>
+        {ci.state === "fail" && live && onFixCi && !asked && (
+          <button
+            type="button"
+            className="btn btn-small rail-ci-fix"
+            title="Ask the agent to read the failed checks, fix the cause, and push the fix"
+            onClick={() => {
+              setAsked(true);
+              onFixCi(pr);
+            }}
+          >
+            <Wrench size={12} aria-hidden /> {FIX_CI_LABEL}
+          </button>
+        )}
+      </div>
+      {open && (
+        <ul className="rail-ci-list" aria-label="Checks">
+          {pr.checks.items.map((c) => (
+            <li key={`${c.workflow ?? ""}/${c.name}`}>
+              <button type="button" className="rail-ci-check" disabled={!c.url} onClick={() => c.url && onOpen(c.url)} title={`${CHECK_STATE_TEXT[c.state]}${c.url ? ". Click to open the check." : ""}`}>
+                <CiIcon state={c.state} size={12} />
+                <span className="rail-ci-name">{c.name}</span>
+                {c.workflow && <span className="rail-ci-workflow">{c.workflow}</span>}
+              </button>
+            </li>
+          ))}
+          {all && pr.checks.total > pr.checks.items.length && (
+            <li>
+              <button type="button" className="rail-ci-check rail-ci-more" onClick={() => onOpen(all)}>
+                {pr.checks.total - pr.checks.items.length} more on GitHub
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** One pull request: the icon, the title, "Harness #18", and ⋯ ("Open pull request", "View checks", "Copy link"). */
 function RailPr({ item, onOpen }: { item: ListedPr; onOpen: (url: string) => void }) {
   const pr = item.info;
   const url = pr?.url ?? item.url;
@@ -308,6 +407,11 @@ function RailPr({ item, onOpen }: { item: ListedPr; onOpen: (url: string) => voi
           <button type="button" role="menuitem" disabled={!url} onClick={() => (setMenu(false), url && onOpen(url))}>
             <ExternalLink size={14} aria-hidden /> Open pull request
           </button>
+          {pr?.checks && checksUrl(url) && (
+            <button type="button" role="menuitem" onClick={() => (setMenu(false), onOpen(checksUrl(url)!))}>
+              <ListChecks size={14} aria-hidden /> View checks
+            </button>
+          )}
           <button type="button" role="menuitem" disabled={!url} onClick={() => void copy()}>
             {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
             {copied ? "Copied" : "Copy link"}

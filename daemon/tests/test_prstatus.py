@@ -26,6 +26,45 @@ def test_parse_pr():
     assert prstatus.parse_pr("{}") is None
 
 
+def _run(name, status="COMPLETED", conclusion="SUCCESS", workflow="test"):
+    return {"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion if status == "COMPLETED" else "",
+            "detailsUrl": f"https://github.com/o/r/actions/runs/1/job/{name}", "workflowName": workflow}
+
+
+def test_parse_checks():
+    rollup = [
+        _run("daemon (ubuntu)", conclusion="FAILURE"),
+        _run("client (ubuntu)"),
+        _run("lint", status="IN_PROGRESS"),
+        _run("docs", conclusion="SKIPPED"),
+        {"__typename": "StatusContext", "context": "ci/legacy", "state": "PENDING", "targetUrl": "https://ci.example/1"},
+    ]
+    checks = prstatus.parse_checks(rollup)
+    assert {k: checks[k] for k in ("state", "total", "passed", "failed", "pending", "skipped")} == {
+        "state": "fail", "total": 5, "passed": 1, "failed": 1, "pending": 2, "skipped": 1}
+    # The failed checks first, then the pending, the passed, and the skipped checks.
+    assert [i["name"] for i in checks["items"]] == ["daemon (ubuntu)", "ci/legacy", "lint", "client (ubuntu)", "docs"]
+    assert checks["items"][1] == {"name": "ci/legacy", "workflow": None, "state": "pending", "url": "https://ci.example/1"}
+    assert checks["items"][0]["workflow"] == "test"
+
+
+def test_parse_checks_overall_state():
+    assert prstatus.parse_checks([_run("a"), _run("b", status="QUEUED")])["state"] == "pending"
+    assert prstatus.parse_checks([_run("a"), _run("b", conclusion="NEUTRAL")])["state"] == "pass"
+    cancelled = prstatus.parse_checks([_run("a"), _run("b", conclusion="CANCELLED")])
+    assert (cancelled["state"], cancelled["failed"]) == ("fail", 1)
+    assert prstatus.parse_checks([_run("a", conclusion="SKIPPED")])["state"] is None
+    assert prstatus.parse_checks([]) is None
+    assert prstatus.parse_checks(None) is None
+
+
+def test_parse_pr_has_checks():
+    data = {"number": 7, "state": "OPEN", "url": "https://github.com/o/r/pull/7", "statusCheckRollup": [_run("a")]}
+    assert prstatus.parse_pr(json.dumps(data))["checks"]["state"] == "pass"
+    assert prstatus.parse_pr(json.dumps({**data, "statusCheckRollup": []}))["checks"] is None
+    assert "statusCheckRollup" in prstatus.PR_FIELDS
+
+
 def test_folder_that_is_not_a_repository(tmp_path):
     prstatus._cache.clear()
     [item] = asyncio.run(prstatus.pr_status([str(tmp_path)]))

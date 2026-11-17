@@ -12692,6 +12692,139 @@ body.sorting * {
   cursor: pointer;
 }
 
+/* The CI checks of a pull request: green passed, vermilion failed, yellow running, gray skipped. */
+.ci-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+.ci-icon.ci-pass {
+  color: var(--success);
+}
+.ci-icon.ci-fail {
+  color: var(--danger);
+}
+.ci-icon.ci-pending {
+  color: var(--warning);
+}
+.ci-icon.ci-skip,
+.ci-icon.ci-cancel {
+  color: var(--text-muted);
+}
+.pr-card-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pr-card-ci {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.pr-card-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 0 18px;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.pr-card-check-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pr-card-check-name,
+.rail-ci-name,
+.rail-ci-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The CI line under a pull request row of the rail. */
+.rail-ci {
+  display: flex;
+  flex-direction: column;
+  padding-left: 29px; /* Under the title of the row: the row padding, the icon, and the gap. */
+}
+.rail-ci-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.rail-ci-summary,
+.rail-ci-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: 12px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.rail-ci-summary {
+  flex: 1;
+  margin-left: -6px;
+}
+.rail-ci.ci-text-fail .rail-ci-summary {
+  color: var(--danger);
+}
+.rail-ci-summary:hover,
+.rail-ci-check:hover:not(:disabled) {
+  background: var(--hover);
+}
+.rail-ci-summary:focus-visible,
+.rail-ci-check:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: -2px;
+}
+.rail-ci-check:disabled {
+  cursor: default;
+}
+.rail-ci-chevron {
+  flex: none;
+  transform: rotate(-90deg);
+  transition: transform 0.12s;
+}
+.rail-ci-chevron.open {
+  transform: none;
+}
+.rail-ci-fix {
+  flex: none;
+  gap: 4px;
+}
+.rail-ci-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 4px -6px;
+  padding: 0;
+  list-style: none;
+}
+.rail-ci-check {
+  width: 100%;
+  color: var(--text);
+}
+.rail-ci-workflow {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text-muted);
+}
+.rail-ci-more {
+  color: var(--text-muted);
+}
+
 /* The parts of the work: each part has its own color and icon. */
 .rail-work {
   display: flex;

@@ -455,6 +455,28 @@ export interface PullRequest {
   updated_at?: string | null; // ISO time of the merge, the close, or the last update.
   head?: string | null;
   base?: string | null;
+  checks?: PrChecks | null; // The CI checks of the last commit. null: no checks. Missing: an older daemon.
+}
+
+/** The state of one CI check (daemon prstatus.parse_checks). */
+export type CheckState = "pass" | "fail" | "pending" | "skip" | "cancel";
+
+export interface PrCheck {
+  name: string;
+  workflow: string | null; // The GitHub Actions workflow, for example "test".
+  state: CheckState;
+  url: string | null; // The page of the check run.
+}
+
+/** The CI checks of a pull request. state null: only skipped checks. */
+export interface PrChecks {
+  state: "pass" | "fail" | "pending" | null;
+  total: number;
+  passed: number;
+  failed: number; // The failed and the cancelled checks.
+  pending: number;
+  skipped: number;
+  items: PrCheck[]; // The failed checks first, then the pending, the passed, and the skipped checks.
 }
 
 export interface PrStatus {

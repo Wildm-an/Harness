@@ -5,9 +5,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Archive, Check, ChevronDown, ChevronRight, Coffee, Folder, GitBranch, Globe, GripVertical, KeyRound, Maximize2, Monitor, Square, X } from "lucide-react";
 import { useSortable } from "../lib/useSortable";
-import type { GitChanges } from "../daemon/protocol";
-import { RailChanges, RailPrList } from "./RailChanges";
-import { listedPrs, prKeyUrl, usePrInfos, usePrRefresh, type GitAction } from "../lib/pr";
+import type { GitChanges, PullRequest } from "../daemon/protocol";
+import { RailChanges, RailPrList, type AutoFix } from "./RailChanges";
+import { listedPrs, usePrInfos, type GitAction } from "../lib/pr";
 import { captureAgentTab } from "../browser/BrowserPane";
 import type { ConnectorItem, McpServerItem, PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
 import { ConnectorLogo } from "./ConnectorLogo";
@@ -81,6 +81,8 @@ export function SessionRail({
   sessionId,
   changes,
   onChangesAction,
+  onFixCi = null,
+  autoFix = null,
   onOpenChanges,
   browser,
   onShowBrowser,
@@ -114,6 +116,9 @@ export function SessionRail({
   changes: GitChanges | null; // The changes of the session folder against its base branch.
   // Asks the agent to open a pull request, commit, or push. null: not possible now.
   onChangesAction: ((action: GitAction) => void) | null;
+  // Asks the agent to fix the failed CI checks of a pull request ("Fix CI"). null: not possible now.
+  onFixCi?: ((pr: PullRequest) => void) | null;
+  autoFix?: AutoFix | null; // The Auto-fix switch of the session. null: no switch.
   onOpenChanges?: () => void; // Open the Changes pane (the diff of the session), as a click on the counts in the Claude app.
   browser: RailBrowser | null;
   onShowBrowser: () => void; // Open the Browser pane on the page of the agent.
@@ -197,11 +202,9 @@ export function SessionRail({
   const branch = environment.worktree?.branch ?? environment.branch;
   // The pull request of the branch: from git.changes (a newer daemon), else from the sidebar status.
   const branchPr = changes && changes.pr !== undefined ? changes.pr : pr;
-  // The pull requests of the session, as in the Claude app. The rail keeps their state current: it asks
-  // when it opens, every 30 seconds while the window shows, when the window comes back, and after each turn.
+  // The pull requests of the session, as in the Claude app. The app keeps their state and their CI checks
+  // current (watchedPrUrls in App.tsx): every 30 seconds while the window shows, and after each turn.
   const prInfo = usePrInfos();
-  const branchKey = prKeyUrl(branchPr?.url);
-  usePrRefresh(branchKey && !sessionPrs.includes(branchKey) ? [...sessionPrs, branchKey] : sessionPrs, running);
   const prs = listedPrs(sessionPrs, branchPr, prInfo);
   // All the connectors, the active connectors first. The heading shows how many are active.
   const connectorRows = connectors ? railConnectors(connectors, mcpServers) : [];
@@ -235,7 +238,7 @@ export function SessionRail({
     // The pull request of the branch, the work in three parts (uncommitted, not pushed, pushed),
     // and the git button ("Create PR", "Commit", "Push"), as in the Claude app.
     changes: changes?.repo ? (
-      <RailChanges sessionId={sessionId} changes={changes} pr={branchPr} prs={prs} running={running} onAction={onChangesAction} onOpenChanges={onOpenChanges} onOpenPr={onOpenPr} />
+      <RailChanges sessionId={sessionId} changes={changes} pr={branchPr} prs={prs} running={running} onAction={onChangesAction} onOpenChanges={onOpenChanges} onOpenPr={onOpenPr} onFixCi={onFixCi} autoFix={autoFix} />
     ) : null,
     environment: (
       <>
@@ -319,7 +322,7 @@ export function SessionRail({
           ))}
         </ul>
       ) : null,
-    pullRequests: prs.length > 0 && !changes?.repo ? <RailPrList prs={prs} onOpen={onOpenPr} /> : null,
+    pullRequests: prs.length > 0 && !changes?.repo ? <RailPrList prs={prs} onOpen={onOpenPr} onFixCi={onFixCi} running={running} autoFix={autoFix} /> : null,
     servers:
       servers.length > 0 ? (
         <ul className="rail-list">
