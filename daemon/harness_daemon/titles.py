@@ -85,6 +85,33 @@ def title_messages(prompt: str) -> list[dict]:
     ]
 
 
+RETITLE_MESSAGES = 6  # "Regenerate title": the first user message, then the last user messages.
+RETITLE_CHARS = 400  # The longest part of one message in the conversation text.
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("display") or message.get("content")
+    if isinstance(content, list):
+        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+    return " ".join(str(content or "").split())
+
+
+def conversation_prompt(messages: list[dict]) -> str | None:
+    """The text that "Regenerate title" names: the first user message, then the last user messages of the
+    session, each one short. The model gets it as the first message (title_messages), so the same rules
+    make the title. None: the session has no user text."""
+    texts = [t for m in messages
+             if m.get("role") == "user" and m.get("origin") != "harness" and (t := _message_text(m))]
+    if not texts:
+        return None
+    picked = [texts[0], *texts[1:][-(RETITLE_MESSAGES - 1):]]
+    if len(picked) == 1:
+        return picked[0][:MAX_PROMPT_CHARS]
+    parts = [picked[0][:RETITLE_CHARS], "Later messages of the same session:"]
+    parts += [f"- {t[:RETITLE_CHARS]}" for t in picked[1:]]
+    return "\n".join(parts)[:MAX_PROMPT_CHARS]
+
+
 def is_local(client: ModelClient) -> bool:
     """True for a provider on this computer, on the private network, or through an SSH tunnel."""
     provider = client.provider

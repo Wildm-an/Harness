@@ -22,7 +22,8 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function terminalTheme(): ITheme {
+/** The colors of the terminal, from the theme tokens. The sign-in terminal of Settings > Agents uses them too. */
+export function terminalTheme(): ITheme {
   return {
     background: cssVar("--surface-sunken"),
     foreground: cssVar("--text"),

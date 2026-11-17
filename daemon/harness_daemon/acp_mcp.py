@@ -36,11 +36,71 @@ if TYPE_CHECKING:
 SERVER_NAME = "harness"
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 # The tools that the other harness has itself, and the tools that need the model or the chat of Harness.
+# show_visual and ask_user_question are open to the harness: their cards show in the chat at the tool row of the
+# call (acp.py ``_view``), as T3 Code shows the cards of its MCP tools.
 HIDDEN_TOOLS = {
     "read", "glob", "grep", "edit", "write", "apply_patch", "bash", "web_search", "web_fetch", "update_plan", "wrap_up",
-    "ask_user_question", "exit_plan_mode", "skill", "tool_search", "agent", "offer_session", "start_session",
-    "show_visual",
+    "exit_plan_mode", "skill", "tool_search", "agent", "offer_session", "start_session",
 }
+
+# The name of a Harness MCP tool in the title of a tool call of the harness: "mcp__harness__show_visual" (Claude
+# Code), "mcp__editor_harness_aa5f56ca__preview_navigate" (Hermes Agent gives the server its own name),
+# "harness.show_visual", "harness/show_visual", "harness_show_visual", or "show_visual (harness)".
+_TITLE_TOOL = re.compile(r"(?:^|[^A-Za-z0-9])(?:mcp__[A-Za-z0-9_]*?harness[A-Za-z0-9_]*?__|harness(?:__|[./:_]))([a-z][a-z0-9_]*)")
+_TITLE_SUFFIX = re.compile(r"^([a-z][a-z0-9_]*)\s*\((?:mcp:?\s*)?harness(?:\s+mcp(?:\s+server)?)?\)", re.IGNORECASE)
+
+
+def tool_of_title(title: str, tools: set[str] | list[str]) -> str | None:
+    """The Harness tool of a tool call of the harness, from its title. None: not a Harness MCP tool."""
+    for pattern in (_TITLE_TOOL, _TITLE_SUFFIX):
+        m = pattern.search(title.strip())
+        if m and m.group(1) in tools:
+            return m.group(1)
+    return None
+
+
+# The lines of the instructions block. Each line shows only when the harness gets all of its tools.
+_INSTRUCTION_LINES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("preview_start", "preview_navigate", "preview_snapshot"),
+     "- Browser: the user sees the Browser pane of Harness. After a change to a web page or a web app, start its "
+     "server with preview_start, open the page with preview_navigate, and check it with preview_snapshot (and "
+     "preview_screenshot when the look matters). Test with preview_click and preview_fill. List, switch, and close "
+     "tabs with preview_tabs. Do not use the browser tools when the task has no web interface."),
+    (("show_visual",),
+     "- Visuals: to explain with a diagram, a flow, a chart, or a comparison, call show_visual. The visual shows in "
+     "the chat. Do not repeat its content in your text."),
+    (("ask_user_question",),
+     "- Questions: when a choice belongs to the user and the request and the code do not settle it, call "
+     "ask_user_question. The user answers on a card in the chat. Do not ask such a question in plain text."),
+    (("send_file",),
+     "- Files: to give the user a file of the project (a report, an image, a PDF), call send_file. The chat shows a "
+     "file card."),
+    (("artifact",),
+     "- Pages: to publish a finished HTML page for the user, call artifact."),
+    (("memory",),
+     "- Memory: save facts about the user and the project that help later sessions with memory."),
+    (("conversation_search", "session_read"),
+     "- Other sessions: find earlier work with conversation_search, and read a session with session_read."),
+    (("monitor", "task_output"),
+     "- Background work: watch a long command with monitor, and read its output with task_output."),
+)
+
+
+def instructions(tools: set[str] | list[str]) -> str:
+    """The block that tells the model of another harness about the tools of the Harness interface. Harness puts it
+    before the first prompt of each new ACP session, as T3 Code does for its ACP agents. Empty: no such tools."""
+    tools = set(tools)
+    lines = [text for needs, text in _INSTRUCTION_LINES if all(t in tools for t in needs)]
+    if not lines:
+        return ""
+    return ("<harness_instructions>\n"
+            "You run inside Harness, a desktop app for coding agents. The user reads your work in the Harness chat. "
+            f"The MCP server \"{SERVER_NAME}\" gives you the tools of the Harness interface. Use them:\n"
+            + "\n".join(lines) + "\n"
+            f"Call them through the \"{SERVER_NAME}\" MCP server, for example mcp__{SERVER_NAME}__show_visual. "
+            "The user does not see this block.\n"
+            "</harness_instructions>")
+
 BRIDGE_FLAG = "--mcp-bridge"
 
 # The secret of the URL -> the agent of the session. The secret is the only access control: the

@@ -357,18 +357,29 @@ class PreviewScreenshotTool(_PreviewTool):
 class PreviewTabsTool(_PreviewTool):
     name = "preview_tabs"
     description = (
-        "List the tabs of the Browser pane of this session, or switch to one. You and the user use the same "
-        "tabs. Before you open a page for a task, list the tabs: if the user opened a tab for this task, "
+        "List the tabs of the Browser pane of this session, switch to one, or close tabs. You and the user use "
+        "the same tabs. Before you open a page for a task, list the tabs: if the user opened a tab for this task, "
         "continue in it (give its id in 'use'), and read it with preview_snapshot. If no tab is about the "
-        "task, open the page with preview_navigate and tab \"new\". Each tab has its id, URL, title, "
-        "\"shown\" (the user sees it now), and \"used\" (you work in it)."
+        "task, open the page with preview_navigate and tab \"new\". Close the tabs that you opened when you do "
+        "not need them any more, or when the user asks (give their ids in 'close'). Each tab has its id, URL, "
+        "title, \"shown\" (the user sees it now), and \"used\" (you work in it)."
     )
     parameters = {
         "type": "object",
-        "properties": {"use": {"type": "string", "description": "Optional: the id of a tab to work in, or \"new\"."}},
+        "properties": {
+            "use": {"type": "string", "description": "Optional: the id of a tab to work in, or \"new\"."},
+            "close": {"type": "array", "items": {"type": "string"},
+                      "description": "Optional: the ids of the tabs to close."},
+        },
     }
 
     async def act(self, host: "PreviewHost", args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        close = args.get("close")
+        ids = [close] if isinstance(close, str) else [str(c) for c in close] if isinstance(close, list) else []
+        closed = []
+        for tab in [i.strip() for i in ids if str(i).strip()]:
+            await host.browser.close_tab(tab)
+            closed.append(tab)
         use = str(args.get("use") or "").strip()
         if use:
             await host.browser.use_tab(use)
@@ -376,9 +387,10 @@ class PreviewTabsTool(_PreviewTool):
         if tabs is None:
             return ToolResult("The Browser pane is not available. The headless browser has one page: open it with "
                               "preview_navigate.")
+        done = f"Closed {', '.join(closed)}. " if closed else ""
         if not tabs:
-            return ToolResult("The session has no tabs. Open a page with preview_navigate.")
-        lines = [f"Now in the tab {use}." if use else "The tabs of this session:"]
+            return ToolResult(done + "The session has no tabs. Open a page with preview_navigate.")
+        lines = [done + (f"Now in the tab {use}." if use else "The tabs of this session:")]
         for t in tabs:
             marks = [m for m, on in (("shown", t.get("shown")), ("used", t.get("used"))) if on]
             lines.append(f"- {t.get('id')}: {t.get('title') or 'New tab'} {t.get('url') or '(no page)'}"

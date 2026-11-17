@@ -559,37 +559,6 @@ textarea:focus-visible {
   color: var(--accent);
 }
 
-/* The "More" accordion: the pane buttons of the open session. */
-.side-more-chevron {
-  transition: transform var(--duration) var(--ease-out);
-}
-
-.side-more-toggle.open .side-more-chevron {
-  transform: rotate(90deg);
-}
-
-.side-more-toggle,
-.side-more-list .side-item {
-  color: var(--text-muted);
-}
-
-.side-more-toggle:hover:not(:disabled),
-.side-more-list .side-item:hover:not(:disabled),
-.side-more-list .side-item.active {
-  color: var(--text);
-}
-
-.side-more-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.side-more-list .side-item > svg,
-.side-more-list .side-item > .glyph-icon {
-  flex: none;
-  color: var(--text-muted);
-}
-
 /* The "/" icon sets its size inline. In the sidebar it takes the icon size of the density. */
 .side-item > .glyph-icon {
   width: var(--side-icon) !important;
@@ -12799,7 +12768,7 @@ body.sorting * {
   color: var(--info-mark);
 }
 
-/* Settings > Operating Harness (OperatingHarnessSettings.tsx). */
+/* Settings > Agents: the older parts that AgentsSettings.tsx still uses. */
 
 .harness-intro {
   display: block;
@@ -12982,11 +12951,6 @@ body.sorting * {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-
-/* The harness of an ACP session, in place of the model menu under the prompt box. */
-.harness-label {
-  cursor: default;
 }
 
 .harness-group-title {
@@ -13345,4 +13309,1941 @@ body.sorting * {
 input::-ms-reveal,
 input::-ms-clear {
   display: none;
+}
+
+/* -- Agents: shared parts (AgentBits.tsx) ------------------------------------------------------------- */
+.agent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.agent-icon.builtin {
+  background: none;
+  border: none;
+}
+.agent-usage {
+  display: grid;
+  grid-template-columns: max-content minmax(60px, 1fr) max-content max-content;
+  gap: 6px 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.agent-usage.compact {
+  grid-template-columns: max-content minmax(40px, 1fr) max-content;
+  gap: 4px 8px;
+  font-size: 11px;
+}
+.agent-usage-row {
+  display: contents;
+}
+.agent-usage-label {
+  color: var(--text);
+}
+.agent-usage-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.agent-usage-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.agent-usage-fill.warn {
+  background: var(--warning-mark);
+}
+.agent-usage-fill.danger {
+  background: var(--danger-mark);
+}
+.agent-usage-pct {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.agent-usage-reset {
+  color: var(--text-muted);
+}
+
+/* -- Settings > Agents (AgentsSettings.tsx) -- */
+/* The page has two panes, as the Providers settings of T3 Code: the agents at the left, the detail at the right. */
+.settings-page.agents-page {
+  max-width: 960px;
+}
+.agents-panes {
+  display: grid;
+  grid-template-columns: 17rem minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 12px;
+}
+.agents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.agents-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 6px;
+  border-radius: var(--radius-sm);
+}
+.agents-row:hover {
+  background: var(--hover);
+}
+.agents-row.selected {
+  background: var(--surface-2);
+}
+.agents-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agents-row-main:focus-visible,
+.agents-add-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+.agents-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agents-row-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.agents-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agents-row-version {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.agents-default {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+.agents-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+.agents-status.small {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agents-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.agents-dot.ok {
+  background: var(--success-mark);
+}
+.agents-dot.warn {
+  background: var(--warning-mark);
+}
+.agents-dot.error {
+  background: var(--danger-mark);
+}
+.agents-row-skeleton {
+  height: 44px;
+  margin: 2px 0;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  animation: skeleton-pulse 1.6s ease-in-out infinite; /* The shared pulse of the skeletons (M16). */
+}
+.agents-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.agents-add-row:hover:not(:disabled),
+.agents-add-row.selected {
+  background: var(--hover);
+  color: var(--text);
+}
+.agents-add-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.agents-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agents-detail > .cap-back {
+  align-self: flex-start;
+}
+.agents-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agents-detail-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+.agents-meta {
+  margin-bottom: 4px;
+}
+.agents-section-title {
+  margin: 14px 0 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.agents-section-title label {
+  cursor: default;
+}
+.agents-status-detail {
+  margin: 0;
+}
+.agents-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.agents-signed-in {
+  color: var(--text);
+  font-size: 13px;
+}
+.agents-auth-skeleton {
+  width: 60%;
+  height: 28px;
+}
+.agents-checking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.agents-checked {
+  margin: 2px 0 0;
+}
+.agents-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-signin-screen {
+  box-sizing: border-box;
+  height: 240px;
+  padding: 6px 4px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+.agent-signin-screen .xterm {
+  height: 100%;
+}
+.agents-model {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.agents-model select {
+  min-width: 220px;
+  max-width: 100%;
+  cursor: pointer;
+}
+.agents-use {
+  margin-top: 16px;
+}
+.agents-add-item {
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 8px;
+}
+.agents-add-item > .agent-icon,
+.agents-add-item > .agent-icon.builtin {
+  margin-top: 2px;
+}
+.agents-add-item .harness-actions {
+  padding-top: 0;
+}
+@media (max-width: 760px) {
+  .agents-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The logo of an agent in its own colors, on a light tile as an app icon, in both themes (AgentBits.tsx). */
+.agent-icon.logo {
+  position: relative;
+  background: #ffffff;
+  border: none;
+  border-radius: 22%;
+  overflow: hidden;
+}
+/* The logo fills the tile with a margin of 14% of the tile (a padding in percent would use the width of the row). */
+.agent-icon.logo.dark {
+  background: #0d0d0d; /* The background of the Oh My Pi logo. */
+}
+.agent-icon.logo img {
+  position: absolute;
+  inset: 14%;
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+}
+
+/* -- Usage page (UsagePage.tsx) -- */
+/* As the Usage page of T3 Code (MIT): a header row with the breadcrumb and the controls, then a body of at most
+   1220px in the center. A container query puts the two columns under each other on a narrow page. */
+.usage-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  container-type: inline-size;
+}
+.usage-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.usage-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+.usage-crumb-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.usage-crumb-sep {
+  color: var(--text-muted);
+}
+.usage-crumb {
+  max-width: 16rem;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-provider-menu {
+  position: relative;
+}
+.usage-crumb-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease-out);
+}
+.usage-crumb-button:hover:not(:disabled),
+.usage-crumb-button[aria-expanded="true"] {
+  background: var(--hover);
+}
+.usage-crumb-button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.usage-menu {
+  right: auto;
+  left: 0;
+}
+.usage-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.usage-head-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.segmented.usage-seg button {
+  width: auto;
+  padding: 0 10px;
+  font: 500 12.5px var(--font-sans);
+  white-space: nowrap;
+}
+.usage-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* The content is 1220px or less, in the center. The scroll bar stays at the edge of the page. */
+  padding: 24px max(20px, calc((100% - 1180px) / 2)) 48px;
+}
+.usage-overview {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+.usage-side {
+  min-width: 0;
+}
+.usage-chart-col {
+  min-width: 0;
+}
+.usage-h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.usage-total {
+  font-size: 32px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.usage-total-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.usage-info {
+  display: inline-flex;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: help;
+}
+.usage-info:hover,
+.usage-info:focus-visible {
+  color: var(--text);
+}
+.usage-muted {
+  color: var(--text-muted);
+}
+.usage-strong {
+  font-weight: 500;
+}
+.usage-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.usage-empty {
+  margin: 40px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.usage-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.usage-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.usage-provider-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.usage-provider-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-provider-main .usage-muted {
+  flex: none;
+  font-size: 12px;
+}
+.usage-provider-value {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+/* Under the name: 16px is the dot and its gap. */
+.usage-provider-sub {
+  margin: 2px 0 0 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.usage-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  list-style: none;
+}
+
+/* The chart (UsageChart.tsx): the y labels in a left gutter, the SVG, and the x labels under it. */
+.usage-chart-frame {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  grid-template-rows: 224px auto;
+}
+.usage-chart-gutter {
+  position: relative;
+  grid-row: 1;
+  grid-column: 1;
+}
+.usage-chart-tick {
+  position: absolute;
+  right: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  translate: 0 -50%;
+}
+.usage-chart-plot {
+  position: relative;
+  grid-row: 1;
+  grid-column: 2;
+  height: 224px;
+  cursor: crosshair;
+}
+.usage-chart-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.usage-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.usage-chart-cursor {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.usage-chart-x {
+  position: relative;
+  grid-row: 2;
+  grid-column: 2;
+  height: 16px;
+  margin-top: 6px;
+}
+.usage-chart-xlabel {
+  position: absolute;
+  top: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  translate: -50% 0;
+}
+.usage-chart-xlabel.first {
+  translate: 0 0;
+}
+.usage-chart-xlabel.last {
+  translate: -100% 0;
+}
+.usage-chart-tip {
+  position: absolute;
+  top: 8px;
+  z-index: var(--z-sticky);
+  min-width: 160px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  pointer-events: none;
+  translate: 12px 0;
+}
+.usage-chart-tip.left {
+  translate: calc(-100% - 12px) 0;
+}
+.usage-chart-tip-head {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.usage-chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.6;
+}
+.usage-chart-tip-name {
+  flex: 1;
+  color: var(--text-muted);
+}
+.usage-chart-tip-value {
+  font-variant-numeric: tabular-nums;
+}
+.usage-chart-tip-row.total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.usage-chart-tip-row.total .usage-chart-tip-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Totals, Cost by type, and Breakdown. */
+.usage-section {
+  margin-top: 32px;
+}
+.usage-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.usage-section-head .usage-h2 {
+  margin: 0;
+}
+.usage-totals {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.usage-total-cell {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.usage-total-cell dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.usage-total-cell dd {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.usage-types-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+.usage-types-bar > span {
+  flex-basis: 0;
+  min-width: 2px;
+  border-radius: 2px;
+}
+.usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  list-style: none;
+}
+.usage-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.usage-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.usage-legend-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.usage-table-wrap {
+  overflow-x: auto;
+}
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.usage-table th,
+.usage-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.usage-table thead th {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.usage-table tbody th {
+  font-weight: 400;
+  white-space: nowrap;
+}
+.usage-table .num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.usage-table .narrow {
+  width: 2.5rem;
+}
+.usage-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.usage-model-name {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A 2px bar under the model name, in the color of the provider: the share of the largest model. */
+.usage-model-track {
+  display: block;
+  max-width: 12rem;
+  margin-top: 6px;
+}
+.usage-model-bar {
+  display: block;
+  max-width: 100%;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* The Limits tab. */
+.usage-limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 12px;
+}
+/* A wider bar than in Settings > Agents. */
+.usage-limit .agent-usage {
+  grid-template-columns: max-content minmax(120px, 1fr) max-content max-content;
+}
+.usage-limit {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.usage-limit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.usage-limit-head .usage-h2 {
+  margin: 0;
+}
+
+/* The skeleton while the daemon reads the histories (R8). */
+.usage-sk-total {
+  width: 60%;
+  height: 36px;
+}
+.usage-sk-line {
+  width: 45%;
+  height: 12px;
+  margin-top: 12px;
+}
+.usage-sk-rows {
+  gap: 16px;
+  margin-top: 24px;
+}
+.usage-sk-chart {
+  height: 246px;
+}
+
+@container (max-width: 760px) {
+  .usage-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .usage-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* -- Agent picker v2 (AgentPicker.tsx) -- */
+/* As the model picker of T3 Code (the user asked for this, rules C14 to C15): a rail with the Favorites tab and
+   one tab for each agent, a middle column with the search field and the models, and a Reasoning column at the
+   right. A picker below 560px wide hides the Reasoning column and shows the levels as chips under the list. */
+.menu.agent-picker-dropdown {
+  container: agent-picker / inline-size;
+  display: flex;
+  flex-direction: row;
+  width: min(690px, calc(100vw - 32px));
+  height: min(430px, calc(100vh - 120px));
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--prompt-radius);
+}
+.pane-content .menu.agent-picker-dropdown {
+  width: min(690px, calc(100cqw - 56px));
+}
+.model-button > .agent-icon {
+  flex: none;
+}
+
+/* The rail: the star (Favorites), a divider, the agent tabs, and the gear at the bottom. */
+.agent-picker-dropdown .agent-picker-rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  width: 56px;
+  padding: 8px 0;
+  border-right: 1px solid var(--border);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.agent-picker-dropdown .agent-picker-tabs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.agent-picker-dropdown .ap-rail-sep {
+  flex: none;
+  width: 24px;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border);
+}
+.menu.agent-picker-dropdown .agent-picker-tab {
+  position: relative;
+  flex: none;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  color: var(--text-muted);
+}
+.menu.agent-picker-dropdown .agent-picker-tab.selected {
+  background: var(--surface-2);
+  color: var(--text);
+}
+/* A 3px bar in the focus color at the right edge of the rail marks the selected tab. */
+.agent-picker-dropdown .agent-picker-tab.selected::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -9px;
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--focus);
+  transform: translateY(-50%);
+}
+.agent-picker-dropdown .agent-picker-tab.not-ready > .agent-icon {
+  opacity: 0.5;
+}
+.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.menu.agent-picker-dropdown .agent-picker-manage {
+  margin-top: auto;
+}
+
+/* The middle column: the search row, then the list in a panel with a border. */
+.agent-picker-dropdown .ap-mid {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 0 10px;
+}
+.agent-picker-dropdown .ap-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.agent-picker-dropdown .ap-search > svg {
+  flex: none;
+}
+.agent-picker-dropdown .ap-search input,
+.agent-picker-dropdown .ap-search input:focus-visible {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font: 14px var(--font-sans);
+}
+.agent-picker-dropdown .ap-list {
+  flex: 1;
+  min-height: 0;
+  margin: 10px 10px 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--prompt-radius);
+}
+/* The list has the keyboard focus: its border has the focus color. */
+.agent-picker-dropdown .ap-list:focus-within {
+  border-color: var(--focus);
+}
+.agent-picker-dropdown .ap-heading {
+  padding: 10px 10px 4px;
+}
+
+/* A model row: the logo, the name, the check mark, then the star and the key at the right. */
+.agent-picker-dropdown .ap-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding-right: 8px;
+  border-radius: var(--radius-sm);
+}
+.agent-picker-dropdown .ap-row:hover,
+.agent-picker-dropdown .ap-row:focus-within {
+  background: var(--surface-2);
+}
+.menu.agent-picker-dropdown .ap-row-main {
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 6px 0 10px;
+  background: transparent;
+  font-size: 14px;
+}
+.menu.agent-picker-dropdown .ap-row-main:hover:not(:disabled),
+.menu.agent-picker-dropdown .ap-row-main:focus-visible {
+  outline: none;
+  background: transparent;
+}
+.agent-picker-dropdown .ap-row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-picker-dropdown .ap-row-check {
+  flex: none;
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-row-detail {
+  flex: 0 3 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 8px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu.agent-picker-dropdown .ap-star {
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  color: var(--text-muted);
+}
+.menu.agent-picker-dropdown .ap-star:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.menu.agent-picker-dropdown .ap-star.on {
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-star-space {
+  flex: none;
+  width: 28px;
+}
+.agent-picker-dropdown .ap-key {
+  flex: none;
+  min-width: 46px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font: 11.5px/16px var(--font-sans);
+  text-align: center;
+}
+.agent-picker-dropdown .ap-key.none {
+  visibility: hidden;
+}
+.menu.agent-picker-dropdown .ap-more {
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.menu.agent-picker-dropdown .ap-more:hover:not(:disabled),
+.menu.agent-picker-dropdown .ap-more:focus-visible {
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-foot {
+  flex: none;
+  padding: 10px 14px 0;
+}
+
+/* The notes and the links of an agent tab. */
+.agent-picker-dropdown .agent-picker-usage {
+  padding: 6px 10px 8px;
+}
+.agent-picker-dropdown .agent-picker-notice {
+  margin: 4px 10px 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.agent-picker-dropdown .agent-picker-notice > svg {
+  color: var(--warning);
+  vertical-align: -2px;
+}
+.menu.agent-picker-dropdown button.agent-picker-link {
+  display: inline;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+}
+.menu.agent-picker-dropdown .agent-picker-notice button.agent-picker-link {
+  font-size: inherit;
+}
+.menu.agent-picker-dropdown button.agent-picker-link:hover,
+.menu.agent-picker-dropdown button.agent-picker-link:focus-visible {
+  background: none;
+  text-decoration: underline;
+}
+
+/* The Reasoning column: "Reasoning" and the model name, then the levels. */
+.agent-picker-dropdown .ap-reason {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 225px;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+}
+.agent-picker-dropdown .ap-reason-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.agent-picker-dropdown .ap-reason-title {
+  flex: none;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.agent-picker-dropdown .ap-reason-model {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-picker-dropdown .ap-reason-list {
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+.menu.agent-picker-dropdown .ap-level {
+  min-height: 42px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+.agent-picker-dropdown .ap-level-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-picker-dropdown .ap-level-end {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.agent-picker-dropdown .ap-level-default {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.agent-picker-dropdown .ap-reason-note {
+  margin: 10px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.agent-picker-dropdown .ap-reason-help {
+  flex: none;
+  margin: 0;
+  padding: 10px 14px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* A narrow picker: the levels show as chips under the list. */
+.agent-picker-dropdown .ap-reason-chips {
+  display: none;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 0;
+}
+.agent-picker-dropdown .ap-reason-chips-label {
+  margin-right: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.menu.agent-picker-dropdown .ap-chip {
+  width: auto;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--prompt-radius);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.menu.agent-picker-dropdown .ap-chip.on {
+  border-color: var(--focus);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-chip-default,
+.agent-picker-dropdown .ap-reason-chips-note {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+@container agent-picker (max-width: 559px) {
+  .agent-picker-dropdown .ap-reason {
+    display: none;
+  }
+  .agent-picker-dropdown .ap-reason-chips {
+    display: flex;
+  }
+}
+@container agent-picker (max-width: 380px) {
+  .agent-picker-dropdown .ap-key {
+    display: none;
+  }
+}
+
+/* ---------- the Threads layout of the sidebar (ThreadsList.tsx, docs/UI_RULES.md 3.7) ---------- */
+
+/* The project of a row, or "Wakes 9:00 AM": a small muted suffix after the title. */
+.side-session-suffix {
+  flex: 0 1 auto;
+  max-width: 45%;
+  margin-left: 6px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-section {
+  border-radius: var(--side-radius);
+}
+
+/* The section under the pointer during a drag takes the accent color. */
+.thread-section.drop-target .side-label,
+.thread-section.drop-target .thread-shelf-toggle {
+  color: var(--accent);
+}
+
+.threads-dragging .thread-section.drop-target {
+  background: var(--accent-soft, var(--hover));
+}
+
+.thread-shelf-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 4px;
+  padding: var(--side-group-pt) var(--side-label-x) 4px calc(var(--side-label-x) - 4px);
+  border: none;
+  border-radius: var(--side-radius);
+  background: transparent;
+  color: var(--text-muted);
+  font: 500 var(--side-group-font) var(--font-sans);
+  line-height: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-shelf-toggle:hover {
+  color: var(--text);
+}
+
+.thread-shelf.open .side-chevron {
+  transform: rotate(90deg);
+}
+
+.thread-count {
+  margin-left: 2px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The row that the user drags stays in its place, dim. The pill follows the pointer. */
+.side-session-item.thread-dragging {
+  opacity: 0.45;
+}
+
+.threads-dragging .side-session-more,
+.threads-dragging .side-session-status {
+  visibility: hidden;
+}
+
+/* The drop place: a line with no height, so the rows do not move. */
+.thread-drop-line {
+  position: relative;
+  height: 0;
+  list-style: none;
+}
+
+.thread-drop-line::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.thread-drag-pill {
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.thread-drop-tip {
+  margin-top: 2px;
+  margin-bottom: 6px;
+}
+
+/* -- The Threads layout: the thread rows of T3 Code (ThreadRow.tsx, docs/UI_RULES.md 3.7) ---------------- */
+
+/* The list fills the sidebar: the shelves (Working, Snoozed, Settled) stay at the bottom, as in T3 Code. */
+.threads {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.thread-shelves {
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.thread-list,
+.thread-nested {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-nested {
+  padding-left: 12px;
+}
+
+.thread-item {
+  list-style: none;
+}
+
+.thread-row {
+  position: relative;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  transition: background var(--duration) var(--ease-out), opacity var(--duration) var(--ease-out);
+}
+
+.thread-row:hover,
+.thread-row.menu-open {
+  background: var(--hover);
+}
+
+.thread-row.active {
+  background: var(--surface-2);
+}
+
+.thread-row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.thread-row.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A working session that is not open recedes, as in T3 Code, until the pointer is on it. */
+.thread-row.recede {
+  opacity: 0.7;
+}
+
+.thread-row.recede:hover,
+.thread-row.recede:focus-within {
+  opacity: 1;
+}
+
+/* The card: three lines. */
+.thread-row.card {
+  padding: 8px 10px;
+}
+
+.thread-top,
+.thread-title-line,
+.thread-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.thread-top {
+  height: 20px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.thread-project-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.thread-project {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-title-line {
+  margin-top: 4px;
+}
+
+.thread-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-title.retitling {
+  opacity: 0.55;
+}
+
+.thread-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 0 -4px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font: 500 13px var(--font-sans);
+  outline: none;
+}
+
+.thread-rename:focus {
+  border-color: var(--text-muted);
+}
+
+.thread-meta {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.thread-meta svg {
+  flex: none;
+}
+
+.thread-branch,
+.thread-spacer {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-agent {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  opacity: 0.6;
+}
+
+.thread-row:hover .thread-agent {
+  opacity: 1;
+}
+
+/* The pin: the pin icon, and "Unpin" (a crossed pin) on hover of the pin. */
+.thread-pin {
+  display: inline-flex;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.thread-pin:hover {
+  color: var(--text);
+}
+
+.thread-pin .thread-pin-off,
+.thread-pin:hover .thread-pin-on {
+  display: none;
+}
+
+.thread-pin:hover .thread-pin-off {
+  display: block;
+}
+
+/* The status slot at the right: the status or the age. On hover, the buttons take its place. */
+.thread-slot {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  justify-content: flex-end;
+  min-width: 32px;
+  height: 20px;
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.thread-time {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.thread-acts {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.thread-row:hover .thread-time,
+.thread-row.menu-open .thread-time,
+.thread-row:has(.thread-acts :focus-visible) .thread-time {
+  display: none;
+}
+
+.thread-row:hover .thread-acts,
+.thread-row.menu-open .thread-acts,
+.thread-acts:has(:focus-visible) {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.threads-dragging .thread-acts {
+  display: none;
+}
+
+.thread-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 12px var(--font-sans);
+  cursor: pointer;
+}
+
+.thread-act:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.thread-act:last-child {
+  margin-right: -4px;
+}
+
+/* The status: "Working 1m" (blue), "Approval" (yellow), "Done" (green), as in T3 Code. */
+.thread-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.thread-status.working {
+  color: var(--info);
+}
+
+.thread-status.approval {
+  color: var(--warning);
+}
+
+.thread-status.done {
+  color: var(--success);
+}
+
+.thread-duration {
+  font-weight: 400;
+}
+
+.thread-wake {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--info);
+}
+
+/* The slim row: one line (Snoozed, Settled, and a nested session). */
+.thread-row.slim {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+}
+
+.thread-row.slim .thread-title {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.thread-row.slim:hover .thread-title,
+.thread-row.slim.active .thread-title,
+.thread-row.slim.unread .thread-title {
+  color: var(--text);
+}
+
+.thread-project-icon.faded {
+  opacity: 0.4;
+  filter: grayscale(1);
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+.thread-row:hover .thread-project-icon.faded,
+.thread-row.active .thread-project-icon.faded {
+  opacity: 1;
+  filter: none;
+}
+
+/* The count of the nested sessions, and the arrow that shows them. */
+.thread-nest {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+  padding: 0 2px 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font: 11.5px var(--font-sans);
+  cursor: pointer;
+}
+
+.thread-nest:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.thread-nest svg {
+  transition: transform var(--duration) var(--ease-out);
+}
+
+.thread-nest.open svg {
+  transform: rotate(90deg);
+}
+
+/* The shelf header of T3 Code: the label, the count at the right, and a chevron. */
+.thread-shelf-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 500 12px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-shelf-toggle:hover {
+  color: var(--text);
+}
+
+.thread-shelf-rule {
+  flex: 1;
+  min-width: 8px;
+  height: 1px;
+}
+
+.thread-shelf-toggle .thread-count {
+  margin: 0;
+  font-weight: 400;
+}
+
+.thread-shelf-chevron {
+  flex: none;
+  transform: rotate(-90deg);
+  transition: transform var(--duration) var(--ease-out);
+}
+
+.thread-shelf.open .thread-shelf-chevron {
+  transform: none;
+}
+
+.thread-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-more:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.thread-more .flip {
+  transform: rotate(180deg);
+}
+
+.thread-drag-label {
+  padding-top: 6px;
+}
+
+.thread-item.thread-dragging {
+  opacity: 0.45;
+}
+
+/* The Snooze menu of the clock button, and the detail column of a menu item (the wake time). */
+.thread-snooze-menu {
+  min-width: 240px;
+}
+
+.session-menu-detail {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* -- Settings search (docs/UI_RULES.md G1a) ----------------------------------------------------------------- */
+
+.settings-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 0 8px;
+}
+
+.settings-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.settings-search-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: 13px var(--font-sans);
+  outline: none;
+}
+
+.settings-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.settings-search-input:focus {
+  border-color: var(--text-muted);
+}
+
+/* The page stays during a search, hidden, so a form keeps its text. */
+.settings-body[hidden] {
+  display: none;
+}
+
+.settings-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: 13.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-result:hover,
+.settings-result:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.settings-result > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.settings-result-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-result-label {
+  font-weight: 500;
+}
+
+.settings-result-help {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-result-where {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-results-empty {
+  margin-top: 12px;
+  color: var(--text-muted);
+}
+
+/* The setting that a search result opened: a short flash of the accent color. */
+.setting-found {
+  border-radius: var(--radius-sm);
+  animation: setting-found 1.6s var(--ease-out);
+}
+
+@keyframes setting-found {
+  0%,
+  30% {
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setting-found {
+    animation: none;
+  }
+}
+
+.settings-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rules-path {
+  margin-top: 4px;
+}
+
+/* The Favorites tab of the agent picker: drag a row to change the order (AgentPicker.tsx). The held row follows
+   the pointer with an accent ring, and the other rows slide, as the sections of the session rail (useSortable.ts). */
+.agent-picker-dropdown .ap-row.sortable,
+.menu.agent-picker-dropdown .ap-row.sortable .ap-row-main {
+  cursor: grab;
+}
+
+.agent-picker-dropdown .ap-row.dragging {
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow);
 }

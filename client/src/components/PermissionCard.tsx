@@ -6,6 +6,7 @@ import { parseUnifiedDiff } from "../lib/diff";
 import { InSplitPane, keyForPane, usePromptInputId } from "../lib/split";
 import { useCardKeys } from "../lib/cardKeys";
 import { DECIDED } from "../lib/decisions";
+import { AgentIcon } from "./AgentBits";
 import { DiffStats } from "./DiffStats";
 import { toolSummary } from "./ToolCard";
 
@@ -62,15 +63,22 @@ function describe(item: PermissionItem): { action: string; prefix?: string; obje
   return { action: "use", object: item.tool, detail: summary || null };
 }
 
-/** "Allow the agent to **{action}** {object}?" (docs/UI_RULES.md M7). */
+/** "Allow the agent to **{action}** {object}?" (docs/UI_RULES.md M7). In an ACP session the card names the
+ * harness that asks: "Allow Hermes Agent to ..." (the user asked for this). */
 export function PermissionTitle({ item }: { item: PermissionItem }) {
   const { action, prefix, object } = describe(item);
   return (
     <span className="permission-title">
-      Allow the agent to <b>{action}</b> {prefix && `${prefix} `}
+      Allow {item.harness?.name ?? "the agent"} to <b>{action}</b> {prefix && `${prefix} `}
       <code>{object}</code>?
     </span>
   );
+}
+
+/** The icon of the card: the logo of the harness that asks (an ACP session), else the shield. */
+export function PermissionIcon({ item }: { item: PermissionItem }) {
+  if (item.harness) return <AgentIcon id={item.harness.id} name={item.harness.name} icon={item.harness.icon} size={16} />;
+  return <ShieldAlert size={16} aria-hidden />;
 }
 
 /** Where "Always allow" saves the rule (docs/UI_RULES.md M9). The daemon adds it to .harness/settings.json of the project.
@@ -199,7 +207,7 @@ export const PermissionCard = memo(function PermissionCard({
   return (
     <section className={`permission-card${decided ? " decided" : ""}`} aria-label="Permission request">
       <header className="permission-head">
-        <ShieldAlert size={16} aria-hidden />
+        <PermissionIcon item={item} />
         <span id={`perm-q-${item.id}`} className="permission-head-title">
           <PermissionTitle item={item} />
         </span>

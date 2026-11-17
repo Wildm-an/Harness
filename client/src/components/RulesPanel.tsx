@@ -12,7 +12,7 @@ type Kind = "allow" | "deny";
 // The same rule form as the daemon: tool, tool(pattern), or a tool prefix with "*" (mcp__server__*).
 const RULE_RE = /^[A-Za-z0-9_-]+\*?(\(.*\))?$/s;
 
-function RuleList({
+export function RuleList({
   kind,
   rules,
   busy,

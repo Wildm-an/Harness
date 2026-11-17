@@ -46,9 +46,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .auto_mode import SafetyMatch, bypass_safety_rules, hard_rule, safety_match
-from .permissions import PROTECTED_ASK, SAFETY_ASK, SAFETY_BLOCK
-from . import __version__, acp_mcp, acp_models
+from .auto_mode import bypass_safety_rules, hard_rule
+from .permissions import SAFETY_BLOCK
+from . import __version__, acp_harnesses, acp_icons, acp_mcp, acp_models, agent_auth
 from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
 from .acp_terminal import TerminalError, TerminalHost
 from .agent import INTERRUPTED, Agent, user_message
@@ -58,6 +58,7 @@ from .files import file_hash, relpath
 from .permissions import PLAN_BLOCK
 from .providers import ModelClient, Provider
 from .tools import ToolResult, truncate
+from .tools.base import Approval
 
 log = logging.getLogger("harness.acp")
 
@@ -68,8 +69,8 @@ REQUEST_TIMEOUT = 60.0  # session/new, session/load, session/set_mode.
 CANCEL_WAIT = 5.0  # The time that the harness gets to end the prompt after session/cancel.
 LINE_LIMIT = 64 * 1024 * 1024  # The longest JSON line. A file read can be large.
 STDERR_LINES = 30
-RECAP_MESSAGES = 24
-RECAP_CHARS = 12_000
+HANDOFF_CHARS = 64_000  # About 16,000 tokens, the default budget of T3 Code (T3CODE_CONTEXT_HANDOFF_TOKEN_CAP).
+HANDOFF_ITEM_CHARS = 6_000  # One message or one result at most: a longer one is cut, with a note.
 AUTH_REQUIRED = -32000
 METHOD_NOT_FOUND = -32601
 MAX_READ_BYTES = 10 * 1024 * 1024  # fs/read_text_file: the largest file.
@@ -415,6 +416,30 @@ class _McpCard:
         return bool(self.args) and (raw == self.args or raw.get("arguments") == self.args)
 
 
+HARNESS_AUTO = "harness:auto"  # The mode menu: Auto mode of Harness for a harness with no Auto mode.
+# The Harness permission mode for a mode of a harness. The gate of Harness follows the mode that the menu shows.
+MODE_MAP = {
+    "default": "default", "ask": "default", "manual": "default",
+    "acceptEdits": "acceptEdits", "accept_edits": "acceptEdits", "dont_ask": "acceptEdits",
+    "plan": "plan", "read_only": "plan", "readonly": "plan",
+    "auto": "auto",
+    "bypassPermissions": "bypassPermissions", "bypass": "bypassPermissions", "yolo": "bypassPermissions",
+}
+
+AUTO_NO_MODEL = ("Auto mode has no model to check the actions of {name}: its own model is not in Harness. Choose "
+                 "an \"Auto mode model\" on Settings > Agents, then Harness checks these actions for you.")
+
+
+class _GateTool:
+    """The tool of a permission request of the harness, for the permission gate (permissions.PermissionGate)."""
+
+    needs_approval = True
+    read_only = False
+
+    def __init__(self, name: str):
+        self.name = name
+
+
 class AcpAgent(Agent):
     """An agent whose loop runs in another harness, through ACP."""
 
@@ -423,6 +448,22 @@ class AcpAgent(Agent):
         self.harness = harness
         # A model of the Harness providers for the titles and the prompt suggestions. None: no such model.
         self.aux_client = aux_client
+        # The model of auto mode (auto_mode.AutoReviewer): the model of the other harness is not in Harness.
+        self.auto_client = aux_client
+        # The permission gate of Harness decides the requests of the harness and the calls of the Harness MCP
+        # server. Auto mode with no model to check the calls asks the user, as Manual mode does, and says why.
+        self.gate.mode = self._gate_mode
+        ask = self.gate.approver
+
+        async def approver(request: dict[str, Any]) -> str:
+            if (request.get("kind") is None and "reason" not in request and self._mode_setting() == "auto"
+                    and self._gate_mode() != "auto"):
+                request = {**request, "reason": AUTO_NO_MODEL.format(name=self.harness.name)}
+            # The card names the harness that asks, with its logo (the user asked for this).
+            request = {**request, "harness": self._card_harness()}
+            return await ask(request)
+
+        self.gate.approver = approver
         self.model_checks_pending = False
         self.model_warnings: list[str] = []
         self._conn: AcpConnection | None = None
@@ -434,6 +475,10 @@ class AcpAgent(Agent):
         self._loaded = False  # True: the harness has the context of acp_session.
         self._modes: list[str] = []
         self._mode: str | None = None
+        self.acp_modes: list[dict[str, str]] = []  # The modes of the harness for the mode menu: id, name, description.
+        # The mode that the user chose in the mode menu of the session: a mode id of the harness, or HARNESS_AUTO.
+        # The permission gate of Harness follows it (MODE_MAP). None: the permission mode of Harness.
+        self._chosen_mode: str | None = None
         # The state of the current turn.
         self._calls: dict[str, _Call] = {}
         self._text: list[str] = []
@@ -441,6 +486,7 @@ class AcpAgent(Agent):
         self._replaying = False  # session/load replays the old conversation: the client does not get it.
         self._cancelling = False
         self._needs_recap = False  # A new ACP session for a session with history: the next prompt has a recap.
+        self._needs_instructions = False  # A new ACP session: the next prompt has the <harness_instructions> block.
         # The Harness MCP server of this session (acp_mcp.py). The server sets the address of the daemon.
         self.mcp_base: str | None = None
         self._mcp_secret: str | None = None
@@ -453,17 +499,28 @@ class AcpAgent(Agent):
         self.acp_models: list[dict[str, str]] = []  # id, name, description.
         self.acp_model: str | None = None
         self._model_option: str | None = None  # The configOptions id of the model, when the harness uses one.
+        # The reasoning levels of the harness (a configOptions entry of the category "thought_level").
+        self.acp_efforts: list[dict[str, str]] = []
+        self.acp_effort: str | None = None
+        self._effort_option: str | None = None
         self._usage_known: tuple[int, int] | None = None  # usage_update: (used tokens, context size).
         self._provider_model: str | None = None  # The model id of a Harness provider in the harness (acp_models.py).
+        self.requested_model: str | None = None  # A model of the harness that a switch of the agent chose.
+        self.previous_agent: str | None = None  # The agent before a switch of the agent: the recap names it.
 
     # -- the harness process -------------------------------------------------------------------------------
 
     def _stored_session(self) -> str | None:
-        """The ACP session id of the last turn, from the history (a stored session that opens again)."""
+        """The ACP session id of the last turn, from the history (a stored session that opens again). Only when
+        this harness ran the last turn: after a switch of the agent (the built-in loop or another harness ran
+        it), the old ACP session misses that part, so a new ACP session starts with a handoff recap."""
         for m in reversed(self.history):
+            if m.get("role") != "user" or m.get("origin") == "harness":
+                continue
             sid = m.get("acp_session")
-            if isinstance(sid, str) and sid:
-                return sid
+            if not isinstance(sid, str) or not sid:
+                return None  # The built-in loop ran the last turn.
+            return sid if m.get("acp_harness", self.harness.id) == self.harness.id else None
         return None
 
     async def _ensure_started(self) -> AcpConnection:
@@ -513,6 +570,7 @@ class AcpAgent(Agent):
                                                              "mcpServers": self._mcp_servers()})
                 self._read_session(result)
                 self._loaded = True
+                await self._sync_mode(conn)  # The mode menu shows the mode of the harness at once.
                 await self._send_state()
                 return conn, False
             except AcpError as e:
@@ -530,25 +588,32 @@ class AcpAgent(Agent):
             raise AcpError(f"{self.harness.name} did not give a session id.")
         self.acp_session = sid
         self._loaded = True
+        self._needs_instructions = True  # A new ACP session: the next prompt tells the model about the Harness tools.
         self._read_session(result)
         # The conversation before this ACP session: in a turn, the last message is the prompt of the turn.
         prior = self.history[:-1] if self.in_turn else self.history
         self._needs_recap = any(m.get("role") in ("user", "assistant") for m in prior)
         await self._select_provider_model(conn)
+        await self._select_effort(conn)
+        await self._sync_mode(conn)  # The mode menu shows the mode of the harness from the start.
         await self._send_state()
         return conn, self._needs_recap
 
     async def _provider_model_options(self, argv: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
         """The command and the environment with the model of a Harness provider, when the user chose one in
-        Settings > Operating Harness (only the user settings: a project cannot change it)."""
+        Settings > Agents (only the user settings: a project cannot change it)."""
         self._provider_model = None
-        spec = None if self.harness.custom else acp_models.choice(load_settings(None), self.harness.id)
-        if spec is None:
+        settings = load_settings(None)
+        spec = None if self.harness.custom else acp_models.choice(settings, self.harness.id)
+        if spec is None or self.requested_model:
+            # A model of the harness itself: the choice of the switch of the agent (session.agent), else the
+            # choice of the picker of the start screen (Settings > Agents).
+            self._provider_model = self.requested_model or acp_harnesses.native_choice(settings, self.harness.id)
             return argv, env
         try:
             target = await acp_models.resolve(spec)
         except acp_models.ModelChoiceError as e:
-            raise AcpError(f"{e} Change the model of {self.harness.name} in Settings > Operating Harness.") from None
+            raise AcpError(f"{e} Change the model of {self.harness.name} in Settings > Agents.") from None
         extra_args, extra_env = acp_models.launch_options(self.harness.id, target)
         self._provider_model = acp_models.session_model_id(self.harness.id, target)
         return [*argv, *extra_args], {**env, **extra_env}
@@ -567,6 +632,9 @@ class AcpAgent(Agent):
     def _auth_text(self, error: str) -> str:
         names = [str(m.get("name") or m.get("id")) for m in self._auth_methods]
         how = f" Sign-in methods: {', '.join(names)}." if names else ""
+        if agent_auth.supports(self.harness.id):
+            return (f"{self.harness.name} needs a sign-in ({error}). Open Settings > Agents > {self.harness.name}, "
+                    "select \"Sign in\", then send the prompt again.")
         return (f"{self.harness.name} needs a sign-in ({error}). Sign in to {self.harness.name} in a terminal on the "
                 f"daemon computer, then send the prompt again.{how}")
 
@@ -605,25 +673,57 @@ class AcpAgent(Agent):
             self._read_config(result["configOptions"])
 
     def _read_config(self, options: list[Any]) -> None:
-        """A configOptions entry of the category "model" is the model menu (it replaces "models")."""
+        """The configOptions of the category "model" (the model menu, it replaces "models") and "thought_level"
+        (the reasoning levels of the picker)."""
         for option in options:
-            if not isinstance(option, dict) or option.get("category") != "model" or option.get("type") != "select":
+            if not isinstance(option, dict) or option.get("type") != "select":
                 continue
-            values: list[dict[str, str]] = []
-            for item in option.get("options") or []:
-                group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
-                for value in group:
-                    if isinstance(value, dict) and value.get("value") is not None:
-                        values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
-                                       "description": str(value.get("description") or "")})
-            if values:
-                self.acp_models = values
-                self.acp_model = str(option.get("currentValue")) if option.get("currentValue") is not None else None
-                self._model_option = str(option.get("id"))
-            return
+            category = option.get("category")
+            if category not in ("model", "thought_level"):
+                continue
+            values = _option_values(option)
+            if not values:
+                continue
+            current = str(option.get("currentValue")) if option.get("currentValue") is not None else None
+            if category == "model":
+                self.acp_models, self.acp_model, self._model_option = values, current, str(option.get("id"))
+            else:
+                self.acp_efforts, self.acp_effort, self._effort_option = values, current, str(option.get("id"))
 
     async def _send_state(self) -> None:
+        if self.acp_models and not self.harness.custom:
+            # The picker of the start screen shows these models before the next session starts.
+            await asyncio.to_thread(acp_harnesses.save_models, self.harness.id, self.acp_models)
+        if self.acp_efforts and not self.harness.custom:
+            await asyncio.to_thread(acp_harnesses.save_efforts, self.harness.id, self.acp_efforts)
         await self.emit({"type": "acp.state", "harness": self.public_harness()})
+
+    async def set_effort(self, effort: str) -> None:
+        """Change the reasoning level of the ACP session (the picker)."""
+        if effort not in {e["id"] for e in self.acp_efforts} or self._effort_option is None:
+            raise AcpError(f"{self.harness.name} has no reasoning level {effort}.")
+        conn, _ = await self._ensure_session()
+        await self._change_effort(conn, effort)
+        await self._send_state()
+
+    async def _change_effort(self, conn: AcpConnection, effort: str) -> None:
+        result = await conn.request("session/set_config_option", {
+            "sessionId": self.acp_session, "configId": self._effort_option, "value": effort})
+        if isinstance(result, dict) and isinstance(result.get("configOptions"), list):
+            self._read_config(result["configOptions"])
+        else:
+            self.acp_effort = effort
+
+    async def _select_effort(self, conn: AcpConnection) -> None:
+        """A new ACP session starts on the reasoning level that the user chose on the start screen."""
+        wanted = None if self.harness.custom else acp_harnesses.native_effort(load_settings(None), self.harness.id)
+        if not wanted or wanted == self.acp_effort or self._effort_option is None \
+                or wanted not in {e["id"] for e in self.acp_efforts}:
+            return
+        try:
+            await self._change_effort(conn, wanted)
+        except AcpError as e:
+            log.info("%s did not change the reasoning level to %s: %s", self.harness.name, wanted, e)
 
     async def set_model(self, model_id: str) -> None:
         """Change the model of the ACP session (the model menu)."""
@@ -649,23 +749,77 @@ class AcpAgent(Agent):
         modes = result.get("modes") if isinstance(result, dict) else None
         if isinstance(modes, dict):
             available = modes.get("availableModes")
+            self.acp_modes = [{"id": str(m.get("id")), "name": str(m.get("name") or m.get("id")),
+                               "description": str(m.get("description") or "")}
+                              for m in available if isinstance(m, dict) and m.get("id")] \
+                if isinstance(available, list) else []
             self._modes = [str(m.get("id")) for m in available if isinstance(m, dict) and m.get("id")] \
                 if isinstance(available, list) else []
             self._mode = modes.get("currentModeId") if isinstance(modes.get("currentModeId"), str) else None
 
     async def _sync_mode(self, conn: AcpConnection) -> None:
-        """Use the ACP mode of the Harness permission mode, when the harness has a mode with that id."""
-        wanted = self._mode_setting()
-        if not self._modes or wanted not in self._modes or wanted == self._mode:
+        """The first time: use the mode of the harness that matches the Harness permission mode (the same id, or
+        an equal mode such as "accept_edits"). Auto mode of Harness for a harness with no Auto mode is HARNESS_AUTO:
+        the harness asks, and the Harness gate decides with its model. Then the mode menu shows the mode of the
+        harness, and the gate follows it."""
+        if self._chosen_mode is not None or not self._modes:
             return
-        try:
-            await conn.request("session/set_mode", {"sessionId": self.acp_session, "modeId": wanted})
-            self._mode = wanted
-        except AcpError as e:
-            log.info("%s did not change the mode to %s: %s", self.harness.name, wanted, e)
+        wanted = str(self.settings.get("permission_mode") or "default")
+        target = wanted if wanted in self._modes else next(
+            (m for m in self._modes if MODE_MAP.get(m) == wanted and wanted != "default"), None)
+        if target is None and wanted == "auto":
+            self._chosen_mode = HARNESS_AUTO
+            await self._send_state()
+            return
+        if target is not None and target != self._mode:
+            try:
+                await conn.request("session/set_mode", {"sessionId": self.acp_session, "modeId": target})
+                self._mode = target
+            except AcpError as e:
+                log.info("%s did not change the mode to %s: %s", self.harness.name, target, e)
+        self._chosen_mode = self._mode
+        await self._send_state()
+
+    async def set_mode(self, mode_id: str) -> None:
+        """The mode menu of an ACP session: a mode of the harness, or HARNESS_AUTO."""
+        if mode_id != HARNESS_AUTO and mode_id not in self._modes:
+            raise AcpError(f"{self.harness.name} has no mode {mode_id}.")
+        if mode_id == HARNESS_AUTO:
+            self._chosen_mode = HARNESS_AUTO
+            await self._send_state()
+            return
+        conn, _ = await self._ensure_session()
+        if mode_id != self._mode:
+            await conn.request("session/set_mode", {"sessionId": self.acp_session, "modeId": mode_id})
+            self._mode = mode_id
+        self._chosen_mode = mode_id
+        await self._send_state()
+
+    def gate_mode_of(self, mode_id: str | None) -> str:
+        """The Harness permission mode for a mode of the harness (MODE_MAP). An unknown mode is Manual."""
+        if mode_id is None:
+            return str(self.settings.get("permission_mode") or "default")
+        if mode_id == HARNESS_AUTO:
+            return "auto"
+        return MODE_MAP.get(mode_id, "default")
 
     def _mode_setting(self) -> str:
+        """The Harness permission mode of the session: the mode of the harness that the menu shows (gate_mode_of),
+        or the Harness setting before the harness gives its modes."""
+        if self._chosen_mode is not None:
+            return self.gate_mode_of(self._chosen_mode)
         return str(self.settings.get("permission_mode") or "default")
+
+    def _card_harness(self) -> dict[str, Any]:
+        """The harness for a card of the chat: its id, its name, and its logo (a data URL, or None)."""
+        icon = None if self.harness.custom else acp_icons.icon(self.harness.id)
+        return {"id": self.harness.id, "name": self.harness.name, "icon": icon}
+
+    def _gate_mode(self) -> str:
+        mode = self._mode_setting()
+        if mode == "auto" and (self.gate.auto is None or not self.gate.auto.available()):
+            return "default"
+        return mode
 
     async def close(self) -> None:
         conn, self._conn = self._conn, None
@@ -709,9 +863,14 @@ class AcpAgent(Agent):
                 call = self._calls[call_id] = _Call(call_id)
             call.update(update)
             self._thinking = False
-            if call.status in ("in_progress", "completed", "failed") or call.raw_input:
+            # A call of the Harness MCP server starts its row when the MCP call comes (run_harness_tool): then its
+            # input is complete. (The harness can report the input while the model still writes it, and a visual
+            # needs all of its code.) The end of the call starts the row too, if the MCP call did not come.
+            harness_tool = acp_mcp.tool_of_title(call.title, acp_mcp.exposed_tools(self)) if call.title else None
+            if harness_tool is None and (call.status in ("in_progress", "completed", "failed") or call.raw_input):
                 await self._start_call(call)
             if call.status in ("completed", "failed"):
+                await self._start_call(call)
                 await self._end_call(call)
         elif kind == "plan":
             entries = update.get("entries")
@@ -730,9 +889,12 @@ class AcpAgent(Agent):
                 if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
             await self._send_state()
             return True
+        if kind == "current_mode_update" and isinstance(update.get("currentModeId"), str) and self._chosen_mode != HARNESS_AUTO:
+            self._chosen_mode = update["currentModeId"]
         if kind == "current_mode_update":
             if isinstance(update.get("currentModeId"), str):
                 self._mode = update["currentModeId"]
+                await self._send_state()  # The mode menu shows the new mode.
             return True
         if kind == "config_option_update":
             if isinstance(update.get("configOptions"), list):
@@ -779,6 +941,9 @@ class AcpAgent(Agent):
         raise error
 
     async def _permission(self, params: dict[str, Any]) -> dict[str, Any]:
+        """A permission request of the harness. The permission gate of Harness decides it, as for a Harness tool:
+        the deny rules, Plan mode, the safety rules, the mode (also Auto), the allow rules, then a question. A call
+        of the Harness MCP server is allowed here: the gate checks it when the MCP call comes (run_harness_tool)."""
         options = [o for o in params.get("options") or [] if isinstance(o, dict) and o.get("optionId")]
 
         def pick(*kinds: str) -> dict[str, Any] | None:
@@ -793,6 +958,8 @@ class AcpAgent(Agent):
                 return {"outcome": {"outcome": "cancelled"}}
             return {"outcome": {"outcome": "selected", "optionId": option["optionId"]}}
 
+        allow = lambda: selected(pick("allow_once", "allow_always"))  # noqa: E731
+        reject = lambda: selected(pick("reject_once", "reject_always"))  # noqa: E731
         if self._cancelling:
             return {"outcome": {"outcome": "cancelled"}}
         data = params.get("toolCall") if isinstance(params.get("toolCall"), dict) else {}
@@ -803,48 +970,40 @@ class AcpAgent(Agent):
             if call_id:
                 self._calls[call_id] = call
         call.update(data)
+        if call.title and acp_mcp.tool_of_title(call.title, acp_mcp.exposed_tools(self)):
+            return allow()
         await self._start_call(call)
         name, args = self._view(call)
-        mode = self._mode_setting()
-        if mode == "plan" and call.kind in ("edit", "delete", "move"):
-            return selected(pick("reject_once", "reject_always"))
-        # The safety rules of Harness apply to the external harness too (permissions.py): a hard rule match or an
-        # edit of a protected path does not get the automatic answer of bypassPermissions or acceptEdits.
-        match = self._safety_match(name, args)
-        reason = None
-        if match is not None:
-            setting = bypass_safety_rules() if mode == "bypassPermissions" else "ask"
-            if match.kind == "hard" and setting == "block":
-                return selected(pick("reject_once", "reject_always"))
-            if (match.kind == "hard" and setting == "off") or (match.kind == "protected" and mode == "bypassPermissions"):
-                match = None
-            else:
-                reason = (SAFETY_ASK.format(label=match.label) if match.kind == "hard"
-                          else PROTECTED_ASK.format(path=args.get("path")))
-        if match is None and mode == "bypassPermissions":
-            return selected(pick("allow_once", "allow_always"))
-        if match is None and mode == "acceptEdits" and call.kind == "edit":
-            return selected(pick("allow_once", "allow_always"))
-        always = pick("allow_always") if match is None else None  # A safety question has no "Always allow".
-        request: dict[str, Any] = {
-            "request_id": uuid.uuid4().hex,
-            "tool": name,
-            "input": args,
-            "diff": self._diff(call) or None,
-            # "Always allow" needs a rule in the client. The harness keeps the choice, not the project settings.
-            "rule": f"{self.harness.name}: {call.title or name}" if always is not None else None,
-            "remember": self.harness.name if always is not None else None,
-        }
-        if reason:
-            request["reason"] = reason
-        decision = await self.gate.approver(request)
+        if call.kind in ("read", "search", "think") and name != "bash":
+            return allow()  # As read, grep, and glob of Harness: no question.
+        approval = self._approval(call, name, args)
+        tool = _GateTool(approval.tool or name)
+        result = await self.gate.check(tool, args, approval)
         if self._cancelling:
             return {"outcome": {"outcome": "cancelled"}}
-        if decision == "allow_always":
-            return selected(always or pick("allow_once"))
-        if decision == "allow_once":
-            return selected(pick("allow_once", "allow_always"))
-        return selected(pick("reject_once", "reject_always"))
+        return allow() if result is True else reject()
+
+    def _approval(self, call: _Call, name: str, args: dict[str, Any]) -> Approval:
+        """What the permission gate checks for a call of the harness: the Harness tool name, the key that the
+        rules match (a command, a path, a domain), and the rule that "Always allow" adds to the project settings."""
+        diff = self._diff(call) or None
+        if name == "bash":
+            command = str(args.get("command") or "")
+            return Approval(key=command, rule=f"bash({command})" if command else "", diff=diff)
+        if name in ("edit", "read") or call.kind in ("delete", "move"):
+            path = str(args.get("path") or self._path(call) or call.title)
+            return Approval(key=path, rule=f"edit({path})" if path else "", tool="edit", diff=diff, input=args)
+        if name == "web_fetch":
+            from urllib.parse import urlparse
+            host = (urlparse(str(args.get("url") or "")).hostname or "").lower()
+            return Approval(key=f"domain:{host}", rule=f"web_fetch(domain:{host})" if host else "", input=args)
+        if name == "web_search":
+            return Approval(key=str(args.get("query") or ""), rule="web_search", input=args)
+        # Another tool of the harness: the rules match its title, for example "acp(Open website)".
+        title = (call.title or call.kind or "tool").strip()
+        safe = bool(title) and not re.search(r"[()\n]", title)
+        return Approval(key=title, rule=f"{ACP_TOOL}({title})" if safe else "", tool=ACP_TOOL, diff=diff,
+                        input={"title": title, **({"input": call.raw_input} if call.raw_input else {})})
 
     # -- the features of Harness for the harness ------------------------------------------------------------
 
@@ -905,16 +1064,6 @@ class AcpAgent(Agent):
             await self._changed(str(path))
         return None
 
-    def _safety_match(self, name: str, args: dict[str, Any]) -> SafetyMatch | None:
-        """A hard rule match of a command, or an edit of a protected path (auto_mode.safety_match)."""
-        if name == "bash":
-            return safety_match("bash", str(args.get("command") or ""))
-        if name == "edit" and isinstance(args.get("path"), str):
-            path = Path(args["path"])
-            rel = relpath(self.cwd, path) if path.is_absolute() else args["path"]
-            return safety_match("edit", rel)
-        return None
-
     def _terminal_create(self, params: dict[str, Any]) -> dict[str, Any]:
         command = " ".join([str(params.get("command") or ""), *[str(a) for a in params.get("args") or []]]).strip()
         if command and self.gate.rules.denies("bash", command):
@@ -930,6 +1079,13 @@ class AcpAgent(Agent):
     async def run_harness_tool(self, name: str, args: dict[str, Any]) -> ToolResult:
         """A call of the Harness MCP server (acp_mcp.py). The permissions and the hooks of Harness apply."""
         call_id = f"harness_{uuid.uuid4().hex[:12]}"
+        # The tool row of the harness for this call starts now, with the complete input of the MCP call.
+        tools = acp_mcp.exposed_tools(self)
+        waiting = next((c for c in self._calls.values() if not c.started and c.title
+                        and acp_mcp.tool_of_title(c.title, tools) == name), None)
+        if waiting is not None:
+            waiting.raw_input = dict(args)
+            await self._start_call(waiting)
         snapshot = await asyncio.to_thread(before_call, self.cwd, name, args)
         result = await self._execute(name, args, None, call_id)
         if not result.limited:
@@ -970,6 +1126,11 @@ class AcpAgent(Agent):
         """The tool name and input for the tool row of the client."""
         raw = call.raw_input
         title = call.title or call.kind
+        # A call of the Harness MCP server gets the row of the Harness tool, with its card (a visual, the browser).
+        tool = acp_mcp.tool_of_title(title, acp_mcp.exposed_tools(self)) if call.title else None
+        if tool is not None:
+            args = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else raw
+            return tool, dict(args)
         if call.kind == "execute":
             command = _command_text(raw)
             if not command:
@@ -1131,30 +1292,21 @@ class AcpAgent(Agent):
     # -- turns --------------------------------------------------------------------------------------------
 
     def _recap(self) -> str | None:
-        """The earlier conversation, for a new ACP session of a session with history."""
-        lines: list[str] = []
-        for m in self.history[:-1][-RECAP_MESSAGES:]:
-            role = m.get("role")
-            if role not in ("user", "assistant") or m.get("origin") == "harness":
-                continue
-            content = m.get("display") or m.get("content")
-            if isinstance(content, list):
-                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-            text = str(content or "").strip()
-            if text:
-                lines.append(f"{'User' if role == 'user' else 'Agent'}: {text}")
-        if self.summary:
-            lines.insert(0, f"Summary of the earliest part: {self.summary}")
-        if not lines:
-            return None
-        body = "\n\n".join(lines)
-        if len(body) > RECAP_CHARS:
-            body = "…" + body[-RECAP_CHARS:]
-        return ("[Harness: This conversation continues an earlier session. You do not have its context, so here "
-                "are the last messages. Use them as background only.]\n\n" + body)
+        """The earlier conversation, for a new ACP session of a session with history (a switch of the agent, or
+        an ACP session that the harness cannot load). As the portable handoff of T3 Code: a budgeted selection,
+        not a summary. A short conversation goes across whole. A long one: the first request, then the newest
+        messages and the key activity (tool calls with their result), each with its speaker, within HANDOFF_CHARS.
+        The new request is not in it (it is the prompt). The note says how many messages are left out, and the
+        agent can find them with conversation_search."""
+        return handoff_recap(self.history[:-1] if self.in_turn else self.history, self.summary, self.previous_agent)
 
     def _prompt_blocks(self, text: str, images: list[str] | None, recap: str | None) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
+        if self._needs_instructions:
+            self._needs_instructions = False
+            block = acp_mcp.instructions(acp_mcp.exposed_tools(self)) if self._mcp_servers() else ""
+            if block:
+                blocks.append({"type": "text", "text": block})
         if recap:
             blocks.append({"type": "text", "text": recap})
         blocks.append({"type": "text", "text": text})
@@ -1192,6 +1344,7 @@ class AcpAgent(Agent):
                 await self.emit({"type": "notice", "level": "info", "text": f"Starting {self.harness.name}."})
             conn, _ = await self._ensure_session()
             message["acp_session"] = self.acp_session
+            message["acp_harness"] = self.harness.id
             await self._sync_mode(conn)
             recap = self._recap() if self._needs_recap else None
             self._needs_recap = False
@@ -1306,5 +1459,179 @@ class AcpAgent(Agent):
 
     def public_harness(self) -> dict[str, Any]:
         """The harness of the session for the client: its models and its / commands, when it has them."""
+        auto_extra = bool(self.acp_modes) and not any(MODE_MAP.get(m["id"]) == "auto" for m in self.acp_modes)
         return {"id": self.harness.id, "name": self.harness.name, "models": self.acp_models,
-                "model": self.acp_model, "commands": self.acp_commands}
+                "model": self.acp_model, "commands": self.acp_commands,
+                # The mode menu: the modes of the harness, the current one, and "Auto (Harness)" for a harness
+                # with no Auto mode of its own (the gate of Harness checks its requests with the auto model).
+                "modes": self.acp_modes, "mode": self._chosen_mode, "harness_auto": auto_extra,
+                "efforts": self.acp_efforts, "effort": self.acp_effort}
+
+
+# -- the models of a harness before its first session (Settings > Agents, the picker of the start screen) --
+
+PROBE_TIMEOUT = 90.0  # Seconds: an npx harness can download its package at the first start.
+
+
+def _option_values(option: dict[str, Any]) -> list[dict[str, str]]:
+    """The values of a select config option: id, name, description (also in groups)."""
+    values: list[dict[str, str]] = []
+    for item in option.get("options") or []:
+        group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
+        for value in group:
+            if isinstance(value, dict) and value.get("value") is not None:
+                values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
+                               "description": str(value.get("description") or "")})
+    return values
+
+
+def parse_efforts(result: Any) -> list[dict[str, str]]:
+    """The reasoning levels of session/new: a configOptions entry of the category "thought_level"."""
+    if not isinstance(result, dict):
+        return []
+    for option in result.get("configOptions") or []:
+        if isinstance(option, dict) and option.get("category") == "thought_level" and option.get("type") == "select":
+            return _option_values(option)
+    return []
+
+
+def parse_models(result: Any) -> list[dict[str, str]]:
+    """The models of session/new: a configOptions entry of the category "model", else "models"."""
+    if not isinstance(result, dict):
+        return []
+    for option in result.get("configOptions") or []:
+        if not isinstance(option, dict) or option.get("category") != "model" or option.get("type") != "select":
+            continue
+        values: list[dict[str, str]] = []
+        for item in option.get("options") or []:
+            group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
+            for value in group:
+                if isinstance(value, dict) and value.get("value") is not None:
+                    values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
+                                   "description": str(value.get("description") or "")})
+        if values:
+            return values
+    models = result.get("models")
+    if isinstance(models, dict) and isinstance(models.get("availableModels"), list):
+        return [{"id": str(m.get("modelId")), "name": str(m.get("name") or m.get("modelId")),
+                 "description": str(m.get("description") or "")}
+                for m in models["availableModels"] if isinstance(m, dict) and m.get("modelId")]
+    return []
+
+
+async def probe_models(spec: HarnessSpec, cwd: Path) -> list[dict[str, str]]:
+    """Start the harness, open an ACP session with no prompt, and read its models. The harness stops after it.
+    The session uses no tokens. The models go to the cache of the picker (acp_harnesses.save_models)."""
+    try:
+        argv, env = launch_argv(spec)
+    except HarnessError as e:
+        raise AcpError(str(e)) from None
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    async def no_notification(method: str, params: dict[str, Any]) -> None:
+        return None
+
+    async def no_request(method: str, params: dict[str, Any]) -> Any:
+        raise AcpError(f"Harness does not answer {method} during a model check.")
+
+    conn = AcpConnection(argv, env, cwd, spec.name, no_notification, no_request)
+    await conn.start()
+    try:
+        await conn.request("initialize", {
+            "protocolVersion": PROTOCOL_VERSION,
+            "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False},
+            "clientInfo": {"name": "harness", "title": "Harness", "version": __version__},
+        }, timeout=PROBE_TIMEOUT)
+        try:
+            result = await conn.request("session/new", {"cwd": str(cwd), "mcpServers": []}, timeout=PROBE_TIMEOUT)
+        except AcpError as e:
+            if getattr(e, "code", None) == AUTH_REQUIRED or "auth" in str(e).lower():
+                raise AcpError(f"{spec.name} needs a sign-in before it can list its models.") from None
+            raise
+    finally:
+        await conn.close()
+    models = parse_models(result)
+    if models and not spec.custom:
+        await asyncio.to_thread(acp_harnesses.save_models, spec.id, models)
+    efforts = parse_efforts(result)
+    if efforts and not spec.custom:
+        await asyncio.to_thread(acp_harnesses.save_efforts, spec.id, efforts)
+    return models
+
+
+
+# -- the handoff recap (a switch of the agent) ----------------------------------------------------------------------
+
+
+def _handoff_text(content: Any) -> str:
+    if isinstance(content, list):
+        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return str(content or "").strip()
+
+
+def _clip(text: str, limit: int = HANDOFF_ITEM_CHARS) -> str:
+    return text if len(text) <= limit else text[:limit] + f" […{len(text) - limit} more characters]"
+
+
+def handoff_items(history: list[dict[str, Any]]) -> list[str]:
+    """The items of a handoff, in order: the messages of the user and of the agent, and the activity (a tool call
+    with the first lines of its result), each with its speaker."""
+    calls: dict[str, str] = {}
+    items: list[str] = []
+    for m in history:
+        role = m.get("role")
+        if m.get("origin") == "harness":
+            continue
+        if role == "user":
+            text = _handoff_text(m.get("display") or m.get("content"))
+            if text:
+                items.append("User: " + _clip(text))
+        elif role == "assistant":
+            text = _handoff_text(m.get("content"))
+            if text:
+                items.append("Agent: " + _clip(text))
+            for call in m.get("tool_calls") or []:
+                fn = call.get("function") if isinstance(call, dict) else None
+                if isinstance(fn, dict):
+                    args = str(fn.get("arguments") or "")
+                    calls[str(call.get("id"))] = f"{fn.get('name')} {args[:300]}".strip()
+        elif role == "tool":
+            what = calls.get(str(m.get("tool_call_id")), "a tool")
+            result = _handoff_text(m.get("content"))
+            first = "\n".join(result.splitlines()[:8])
+            items.append(f"Activity: {what}\n  Result: {_clip(first, 1_500)}")
+    return items
+
+
+def handoff_recap(history: list[dict[str, Any]], summary: str | None, previous: str | None,
+                  budget: int = HANDOFF_CHARS) -> str | None:
+    """The handoff text for a new agent of a session. None: no earlier conversation."""
+    items = handoff_items(history)
+    if summary:
+        items.insert(0, "Summary of the earliest part: " + _clip(summary, 8_000))
+    if not items:
+        return None
+    total = sum(len(i) + 2 for i in items)
+    if total <= budget:
+        chosen, left_out = items, 0
+    else:
+        first = next((i for i in items if i.startswith("User: ")), items[0])
+        room = budget - len(first) - 2
+        tail: list[str] = []
+        for item in reversed(items):
+            if item is first:
+                break
+            if len(item) + 2 > room:
+                break
+            tail.insert(0, item)
+            room -= len(item) + 2
+        chosen = [first, *tail]
+        left_out = len(items) - len(chosen)
+    head = ("[Harness: You continue a conversation that " + (f"{previous} had" if previous else "another agent had")
+            + ". You do not have its context, so here is the earlier conversation, with the speaker of each part. "
+            "It is a selection, not a summary. Use it as background. The tool calls ran in the earlier agent: check "
+            "the files again before you change them.]")
+    if left_out:
+        head += (f"\n[{left_out} earlier parts are left out. To find one, use the conversation_search tool of the "
+                 "Harness MCP server.]")
+    return head + "\n\n" + "\n\n".join(chosen)

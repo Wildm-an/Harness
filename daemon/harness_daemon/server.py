@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -31,9 +32,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from .tool_output import prune_outputs, remove_session_outputs, session_output_dir
 from . import __version__
 from .agent import Agent
-from . import acp_harnesses, acp_install, acp_models
+from . import acp_harnesses, acp_icons, acp_install, acp_models, agent_auth, usage
+from .auto_mode import global_auto_config
 from . import acp_mcp
-from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client
+from .acp import PROVIDER_NAME as ACP_PROVIDER, AcpAgent, AcpError, placeholder_client, probe_models as acp_probe_models
 from .config import (
     BYPASS, ConfigError, bypass_allowed, harness_home, load_settings, project_settings_path, read_json, store_mode,
     write_json,
@@ -99,7 +101,7 @@ from .cron import CronError, parse_cron
 from .terminal import TerminalError, TerminalHost
 from .suggestions import suggest_prompt
 from .completions import complete_code
-from .titles import MAX_TITLE_TRIES, summarize_title
+from .titles import MAX_TITLE_TRIES, conversation_prompt, summarize_title
 
 # The first turn waits this many seconds for the model title (wait_title). A slow model does not stop the chat.
 TITLE_WAIT = 15
@@ -1200,7 +1202,7 @@ class Connection:
         if spec is None:
             spec = acp_harnesses.HarnessSpec(id=harness_id, name=harness_id, description="", website="", license="",
                                              bin=(harness_id, ()))
-            warnings.append(f"The harness {harness_id} is not in Settings > Operating Harness. Add it again, or "
+            warnings.append(f"The harness {harness_id} is not in Settings > Agents. Add it again, or "
                             "start a new session.")
         agent = AcpAgent(harness=spec, aux_client=_aux_client(settings), cwd=cwd,
                          client=placeholder_client(spec.id), emit=live.send, approver=live.approve,
@@ -1800,18 +1802,22 @@ ARCHIVE_CHECK_SECONDS = 3600
 async def archive_inactive(storage: Storage, now: float | None = None) -> list[str]:
     """Archive the sessions with no activity for the days of the setting. Return their ids.
 
-    A session stays when it is open (in a window or with no window), pinned, or in a worktree with
-    changes that are not in a commit. The archive of a clean worktree session removes its folder, as
+    A session stays when it is open (in a window or with no window: also a running turn), pinned, snoozed,
+    set to "Never" (auto_archive = 0), or in a worktree with changes that are not in a commit. The archive of a clean worktree session removes its folder, as
     a manual archive does. The windows get the new session list.
     """
     await asyncio.to_thread(prune_outputs, now)  # The hourly check also removes old tool output files.
     days = load_settings(None).get("auto_archive_days")
     if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
         return []
-    cutoff = (time.time() if now is None else now) - days * 86400
+    current = time.time() if now is None else now
+    cutoff = current - days * 86400
     archived: list[str] = []
     for row in storage.list_sessions(limit=1_000_000):
         if row["archived"] or row["pinned"] or row["updated_at"] >= cutoff or _find_live(row["id"]) is not None:
+            continue
+        # "Auto-settle" > "Never" of the Threads sidebar, and a snoozed session: they stay.
+        if not row["auto_archive"] or (row["snoozed_until"] is not None and row["snoozed_until"] > current):
             continue
         worktree = worktrees.loads((storage.get_session(row["id"]) or {}).get("worktree"))
         if worktree:
@@ -1821,7 +1827,7 @@ async def archive_inactive(storage: Storage, now: float | None = None) -> list[s
                 await asyncio.to_thread(worktrees.remove, worktree)
             except WorktreeError:
                 continue  # Git cannot tell: keep the session.
-        storage.update_session(row["id"], touch=False, archived=1)
+        storage.update_session(row["id"], touch=False, archived=1, archived_at=current)
         archived.append(row["id"])
     if archived:
         log.info("Archived %d inactive sessions", len(archived))
@@ -1949,7 +1955,7 @@ async def on_session_new(conn: Connection, msg: dict[str, Any]) -> None:
     provider, model = msg.get("provider"), msg.get("model")
     harness = load_settings(None).get("operating_harness")
     if isinstance(harness, str) and harness and harness != acp_harnesses.BUILTIN_ID:
-        provider, model = ACP_PROVIDER, harness  # Settings > Operating Harness: another harness runs the loop.
+        provider, model = ACP_PROVIDER, harness  # Settings > Agents: another harness runs the loop.
     live, warnings = await create_session(conn, _project_dir(msg.get("cwd")), provider, model,
                                           msg.get("permission_mode"), _worktree_arg(msg))
     await conn.open_session(live)
@@ -2072,13 +2078,85 @@ async def on_session_move(conn: Connection, msg: dict[str, Any]) -> None:
     await _open_stored(conn, session_id)
 
 
+HANDOFF_NOTE = ("This session continues the work of {previous}: the earlier turns ran in that agent, and its tool calls "
+                "ran there. Check the files again before you change them.")
+
+
+@handler("session.agent")
+async def on_session_agent(conn: Connection, msg: dict[str, Any]) -> None:
+    """Switch the agent of the current session, as the portable handoff of T3 Code: {"agent": "harness" or a harness
+    id, "model"?: "<provider>/<model>" for Harness, or a model id of the harness}. Not during a turn.
+
+    The history stays. The session opens again with the new agent. Another harness gets the earlier conversation as a
+    budgeted handoff recap in its first prompt (acp.handoff_recap). The built-in loop gets the full history and a note.
+    The reply is session.ready."""
+    session = conn.require_session()
+    conn.require_idle()
+    target = _text_arg(msg, "agent")
+    model = msg.get("model") if isinstance(msg.get("model"), str) and msg.get("model") else None
+    old = session.agent
+    previous = old.harness.name if isinstance(old, AcpAgent) else "Harness"
+    if target == acp_harnesses.BUILTIN_ID:
+        if model is None:
+            settings = load_settings(session.cwd)
+            spec = settings.get("default_model") or settings.get("online_model") or settings.get("offline_model")
+            if not spec and not isinstance(old, AcpAgent):
+                spec = f"{old.client.provider.name}/{old.client.model}"
+            if not spec:
+                raise ProtocolError("Choose a model for Harness: no default model is set.")
+            model = str(spec)
+        try:
+            provider, model_name = resolve_model(model)
+        except ConfigError as e:
+            raise ProtocolError(str(e)) from None
+        fields = {"provider": provider.name, "model": model_name}
+    else:
+        spec = acp_harnesses.find(target)
+        if spec is None:
+            raise ProtocolError(f"Unknown agent: {target}.")
+        fields = {"provider": ACP_PROVIDER, "model": spec.id}
+    if isinstance(old, AcpAgent) and target == old.harness.id:
+        if model:
+            await old.set_model(model)
+        return
+    live = conn.require_live()
+    session.persist()  # The history is in storage before the session opens again.
+    if live is conn.current:
+        conn.current = None
+        conn.watched.clear()
+    await conn.close_live(live)
+    conn.storage.update_session(session.id, **fields)
+    fresh, warnings = await _load_stored(conn, session.id)
+    agent = fresh.session.agent if fresh.session is not None else None
+    if isinstance(agent, AcpAgent):
+        agent.previous_agent = previous
+        agent.requested_model = model
+        agent.acp_session = None  # A new ACP session, with the handoff recap in its first prompt.
+    elif agent is not None and agent.history:
+        agent._harness_notes.append(HANDOFF_NOTE.format(previous=previous))
+    await conn.open_session(fresh)
+    await conn.send_ready(warnings)
+
+
 MAX_TITLE = 120
+
+
+def _optional_number(msg: dict[str, Any], key: str) -> float | None:
+    """A number field that can be null (the Threads sidebar: "position", "snoozed_until")."""
+    value = msg.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ProtocolError(f"'{key}' must be a number or null.")
+    return float(value)
 
 
 @handler("session.update")
 async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
     """Rename, pin, or archive a session: {"session_id", "title"?, "pinned"?, "archived"?, "force"?}.
-    The age of the session stays.
+    The Threads sidebar also sends "position" (a number, or null), "snoozed_until" (a time, or null), and
+    "auto_archive" (false: "Never"). The age of the session stays. An archive sets "archived_at"; an
+    unarchive clears it.
 
     The archive of a worktree session removes the folder of the worktree. The branch stays. If the
     worktree has changes that are not in a commit, the daemon sends "session.archive_confirm" and
@@ -2102,8 +2180,17 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
         if not isinstance(msg["archived"], bool):
             raise ProtocolError("'archived' must be true or false.")
         fields["archived"] = int(msg["archived"])
+        if bool(msg["archived"]) != bool(row["archived"]):
+            fields["archived_at"] = time.time() if msg["archived"] else None
+    for key in ("position", "snoozed_until"):
+        if key in msg:
+            fields[key] = _optional_number(msg, key)
+    if "auto_archive" in msg:
+        if not isinstance(msg["auto_archive"], bool):
+            raise ProtocolError("'auto_archive' must be true or false.")
+        fields["auto_archive"] = int(msg["auto_archive"])
     if not fields:
-        raise ProtocolError("Give 'title', 'pinned', or 'archived'.")
+        raise ProtocolError("Give 'title', 'pinned', 'archived', 'position', 'snoozed_until', or 'auto_archive'.")
     worktree = worktrees.loads(row.get("worktree"))
     if worktree and fields.get("archived") and not row["archived"]:
         live = conn.live.get(session_id)
@@ -2131,6 +2218,76 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
     row = conn.storage.get_session(session_id)
     await conn.send({"type": "session.updated", "id": session_id, "title": row["title"], "pinned": bool(row["pinned"]),
                      "archived": bool(row["archived"])})
+
+
+# "Regenerate title" of the Threads sidebar: the sessions with a title request that runs now.
+RETITLING: set[str] = set()
+_RETITLE_TASKS: set[asyncio.Task] = set()
+
+
+def _stored_title_client(row: dict[str, Any]) -> ModelClient | None:
+    """The model for the title of a session that is not open: its own model, or the default model for an ACP
+    session (as its aux client)."""
+    try:
+        settings = load_settings(Path(row["cwd"]))
+    except Exception:  # noqa: BLE001 - a bad project settings file: use the user settings.
+        settings = load_settings(None)
+    if row.get("provider") == ACP_PROVIDER:
+        return _aux_client(settings)
+    try:
+        provider, model = resolve_model(f"{row['provider']}/{row['model']}")
+    except ConfigError:
+        return _aux_client(settings)
+    return ModelClient(provider, model)
+
+
+@handler("session.retitle")
+async def on_session_retitle(conn: Connection, msg: dict[str, Any]) -> None:
+    """"Regenerate title": {"session_id"}. The model makes a new title from the conversation, with the code of the
+    first title (titles.conversation_prompt, summarize_title). The request runs beside the other messages. The
+    reply is "session.title", then "session.updated" (the client lists the sessions again). An error has the ref
+    "session.retitle": no messages, no model, a title that is being made, or a model that gave no title."""
+    session_id = _text_arg(msg, "session_id")
+    row = conn.storage.get_session(session_id)
+    if row is None:
+        raise ProtocolError(f"Unknown session: {session_id}")
+    live = _find_live(session_id)
+    if session_id in RETITLING or (live is not None and live.title_task is not None and not live.title_task.done()):
+        raise ProtocolError("A title is being made for this session now.")
+    prompt = conversation_prompt(conn.storage.all_messages(session_id))
+    if prompt is None:
+        raise ProtocolError("The session has no messages to make a title from.")
+    client = model_client(live.session.agent) if live is not None and live.session is not None else None
+    if client is None:
+        client = _stored_title_client(row)
+    if client is None:
+        raise ProtocolError("No model can make the title. Set a default model in Settings > Providers.")
+    RETITLING.add(session_id)
+
+    async def work() -> None:
+        try:
+            title = await summarize_title(client, prompt)
+        finally:
+            RETITLING.discard(session_id)
+        if not title:
+            await conn.error("The model did not make a title. Try again.", ref="session.retitle")
+            return
+        if conn.storage.get_session(session_id) is None:
+            return  # The session was deleted.
+        title = title[:MAX_TITLE]
+        conn.storage.update_session(session_id, touch=False, title=title)
+        target = _find_live(session_id)
+        if target is not None and target.session is not None:
+            target.session.title = title
+            target.title_prompt = None  # The new title stays: no first-prompt title replaces it.
+        current = conn.storage.get_session(session_id) or row
+        await conn.send({"type": "session.title", "id": session_id, "title": title})
+        await conn.send({"type": "session.updated", "id": session_id, "title": title,
+                         "pinned": bool(current["pinned"]), "archived": bool(current["archived"])})
+
+    task = asyncio.create_task(work())
+    _RETITLE_TASKS.add(task)
+    task.add_done_callback(_RETITLE_TASKS.discard)
 
 
 @handler("session.delete")
@@ -3508,27 +3665,40 @@ async def on_command(conn: Connection, msg: dict[str, Any]) -> None:
 # -- permission rules ----------------------------------------------------------
 
 
-async def _send_rules(conn: Connection, session: Session) -> None:
-    rules = PermissionRules(session.cwd)
-    await conn.send({"type": "permissions", "path": relpath(session.cwd, rules.path), **rules.read()})
+def _rules_place(conn: Connection, msg: dict[str, Any]) -> tuple[Path, str | None]:
+    """The project of a rules request: {"cwd"} (Settings > Permission rules), else the open session. The second
+    value is the "cwd" of the request, which the reply repeats."""
+    if msg.get("cwd") is not None:
+        return _project_note_cwd(msg), str(msg["cwd"])
+    return Path(conn.require_session().cwd), None
+
+
+async def _send_rules(conn: Connection, cwd: Path, requested: str | None) -> None:
+    rules = PermissionRules(cwd)
+    reply: dict[str, Any] = {"type": "permissions", "path": relpath(cwd, rules.path), **rules.read()}
+    if requested is not None:
+        reply["cwd"] = requested  # Settings > Permission rules: the reply of a request with "cwd".
+    await conn.send(reply)
 
 
 @handler("permissions.get")
 async def on_permissions_get(conn: Connection, msg: dict[str, Any]) -> None:
-    await _send_rules(conn, conn.require_session())
+    """The permission rules of a project: {"cwd"?}. No "cwd": the project of the open session."""
+    await _send_rules(conn, *_rules_place(conn, msg))
 
 
 @handler("permissions.set")
 async def on_permissions_set(conn: Connection, msg: dict[str, Any]) -> None:
-    session = conn.require_session()
+    """Replace the permission rules of a project: {"cwd"?, "allow", "deny"}. No "cwd": the open session."""
+    cwd, requested = _rules_place(conn, msg)
     allow, deny = msg.get("allow"), msg.get("deny")
     if not isinstance(allow, list) or not isinstance(deny, list):
         raise ProtocolError("'allow' and 'deny' must be lists of rules.")
     try:
-        PermissionRules(session.cwd).write(allow, deny)
+        PermissionRules(cwd).write(allow, deny)
     except ValueError as e:
         raise ProtocolError(str(e)) from e
-    await _send_rules(conn, session)
+    await _send_rules(conn, cwd, requested)
 
 
 # -- providers (the Providers screen) ---------------------------------------------------
@@ -3823,7 +3993,7 @@ USER_SETTINGS: dict[str, tuple[type, ...]] = {
     "offline_model": (str, type(None)),
     "effort": (str, type(None)),  # The effort level of the model menu. None: the default level, High.
     "new_task_prompt": (str,),
-    "operating_harness": (str, type(None)),  # Settings > Operating Harness: an ACP harness id (acp_harnesses.py).
+    "operating_harness": (str, type(None)),  # Settings > Agents: an ACP harness id (acp_harnesses.py).
     "tool_search": (str,),  # MCP tools by name only until the model loads them: auto, on, or off (agent.py).
     "auto_archive_days": (int,),  # "Archive inactive sessions": 0 (never), 1, 2, 7, 14, or 30 days.  # "When you ask for an unrelated task": ask, here, or new_session (offer_session).
     "web_search": (str,),
@@ -3857,7 +4027,11 @@ async def _send_user_settings(conn: Connection) -> None:
     await conn.send({"type": "user_settings", "path": str(_user_settings_path()), "version": __version__,
                      "values": {k: values.get(k) for k in USER_SETTINGS},
                      "sandbox": await asyncio.to_thread(sandbox_status),
-                     "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id)}
+                     "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id),
+                                 "native_model": acp_harnesses.native_choice(values, spec.id),
+                                 "native_effort": acp_harnesses.native_effort(values, spec.id),
+                                 "efforts": [] if spec.custom else acp_harnesses.cached_efforts(spec.id),
+                                 "models": [] if spec.custom else acp_harnesses.cached_models(spec.id)}
                      if spec is not None else None})
 
 
@@ -3903,7 +4077,7 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
             raise ProtocolError(f"'effort' must be null or one of: {', '.join(EFFORT_API)}.")
         if (key == "operating_harness" and isinstance(value, str) and value.strip()
                 and value.strip() != acp_harnesses.BUILTIN_ID and acp_harnesses.find(value.strip()) is None):
-            raise ProtocolError(f"Unknown harness: {value}. See Settings > Operating Harness.")
+            raise ProtocolError(f"Unknown harness: {value}. See Settings > Agents.")
         if key == "output_style" and output_styles.find(value) is None:
             raise ProtocolError(f"Unknown output style: {value}. The styles are: "
                                 f"{', '.join(s.id for s in output_styles.all_styles())}.")
@@ -3940,19 +4114,67 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
         await archive_inactive(conn.storage)
 
 
-# Settings > Operating Harness: the harnesses that can run the agent loop through ACP (acp_harnesses.py).
+# Settings > Agents: the harnesses that can run the agent loop through ACP (acp_harnesses.py).
 # They need no session.
 
 async def _send_harnesses(conn: Connection) -> None:
     items = await asyncio.to_thread(acp_harnesses.listing)  # shutil.which reads the PATH folders.
     settings = load_settings(None)
     current = settings.get("operating_harness") or acp_harnesses.BUILTIN_ID
+    enabled = acp_harnesses.enabled_ids(settings)
+    stale: list[str] = []
     for item in items:  # The model of a Harness provider (acp_models.py).
         item["provider_models"] = not item["custom"] and acp_models.supports(item["id"])
         item["provider_model"] = acp_models.choice(settings, item["id"])
         item["provider_note"] = acp_models.NOTES.get(item["id"], "")
+        # Settings > Agents: the picker rail, the models of the last session, and the sign-in state.
+        item["enabled"] = item["id"] in enabled
+        item["models"] = [] if item["custom"] else acp_harnesses.cached_models(item["id"])
+        item["native_model"] = acp_harnesses.native_choice(settings, item["id"])
+        item["efforts"] = [] if item["custom"] else acp_harnesses.cached_efforts(item["id"])
+        item["native_effort"] = acp_harnesses.native_effort(settings, item["id"])
+        item["can_sign_in"] = agent_auth.supports(item["id"])
+        item["auth"] = agent_auth.STATES.cached(item["id"])
+        item["icon"] = None if item["custom"] else acp_icons.icon(item["id"])  # A data URL from the ACP registry.
+        item["probing"] = item["id"] in _PROBES
+        if item["can_sign_in"] and item["enabled"] and not agent_auth.STATES.fresh(item["id"]):
+            stale.append(item["id"])
+    auto_model = global_auto_config().get("model")
     await conn.send({"type": "harnesses", "items": items, "current": current,
-                     "path": str(harness_home() / "harnesses.json")})
+                     "path": str(harness_home() / "harnesses.json"),
+                     # The model that checks the actions of the agents in Auto mode ("auto_mode.model"). None: no model.
+                     "auto_model": auto_model if isinstance(auto_model, str) and auto_model.strip() else None})
+    if stale:
+        asyncio.create_task(_check_agents(conn, stale))
+    icons = acp_icons.missing([i["id"] for i in items if not i["custom"]])
+    if icons and not _ICON_DOWNLOADS:
+        asyncio.create_task(_download_icons(conn, icons))
+
+
+_ICON_DOWNLOADS: set[str] = set()  # A download of icons runs (one at a time).
+_PROBES: set[str] = set()  # The agents whose models the daemon reads now (agents.models).
+
+
+async def _download_icons(conn: Connection, ids: list[str]) -> None:
+    """Download the icons of the agents from the ACP registry, then send the list again."""
+    _ICON_DOWNLOADS.add("run")
+    try:
+        if await acp_icons.download(ids):
+            await _send_harnesses(conn)
+    except Exception:  # noqa: BLE001 - the connection closed.
+        log.debug("The agent icons did not go to the client", exc_info=True)
+    finally:
+        _ICON_DOWNLOADS.discard("run")
+
+
+async def _check_agents(conn: Connection, ids: list[str], force: bool = False) -> None:
+    """Read the sign-in state and the usage of the agents, then send the list again."""
+    try:
+        for harness_id in ids:
+            await agent_auth.STATES.check(harness_id, force=force)
+        await _send_harnesses(conn)
+    except Exception:  # noqa: BLE001 - the connection closed.
+        log.debug("The agent states did not go to the client", exc_info=True)
 
 
 async def _refresh_harness_registry(conn: Connection) -> None:
@@ -4025,6 +4247,11 @@ async def on_harnesses_model(conn: Connection, msg: dict[str, Any]) -> None:
         models.pop(harness_id, None)
     else:
         models[harness_id] = value
+        native = data.get(acp_harnesses.NATIVE_SETTING)
+        if isinstance(native, dict):  # One model for the harness: the model of the harness itself goes.
+            native.pop(harness_id, None)
+            if not native:
+                data.pop(acp_harnesses.NATIVE_SETTING, None)
     if models:
         data[acp_models.SETTING] = models
     else:
@@ -4032,6 +4259,218 @@ async def on_harnesses_model(conn: Connection, msg: dict[str, Any]) -> None:
     write_json(path, data)
     await _send_harnesses(conn)
     await _send_user_settings(conn)  # The chip of the start screen shows the model.
+
+
+@handler("harnesses.native_model")
+async def on_harnesses_native_model(conn: Connection, msg: dict[str, Any]) -> None:
+    """A model of the harness itself for new sessions: {"id", "model": <model id> or null}. It replaces a model
+    of a Harness provider for that harness. null: the default of the harness. The reply is the list."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None or spec.custom:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    model = msg.get("model")
+    if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 200):
+        raise ProtocolError("'model' must be a model id or null.")
+    path = _user_settings_path()
+    data = read_json(path, {})
+    native = data.get(acp_harnesses.NATIVE_SETTING) if isinstance(data.get(acp_harnesses.NATIVE_SETTING), dict) else {}
+    if model is None:
+        native.pop(harness_id, None)
+    else:
+        native[harness_id] = model.strip()
+        provider = data.get(acp_models.SETTING)
+        if isinstance(provider, dict):  # One model for the harness: the provider model goes.
+            provider.pop(harness_id, None)
+            if not provider:
+                data.pop(acp_models.SETTING, None)
+    if native:
+        data[acp_harnesses.NATIVE_SETTING] = native
+    else:
+        data.pop(acp_harnesses.NATIVE_SETTING, None)
+    write_json(path, data)
+    await _send_harnesses(conn)
+    await _send_user_settings(conn)
+
+
+@handler("agents.enable")
+async def on_agents_enable(conn: Connection, msg: dict[str, Any]) -> None:
+    """Show an agent in the picker rail and on the Agents page, or hide it: {"id", "enabled": bool}. A hidden
+    operating harness gives its place to the built-in loop."""
+    harness_id = _text_arg(msg, "id")
+    enabled = msg.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ProtocolError("'enabled' must be true or false.")
+    if acp_harnesses.find(harness_id) is None:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    path = _user_settings_path()
+    data = read_json(path, {})
+    ids = acp_harnesses.enabled_ids(data)
+    if enabled and harness_id not in ids:
+        ids.append(harness_id)
+    elif not enabled:
+        ids = [i for i in ids if i != harness_id]
+        if data.get("operating_harness") == harness_id:
+            data.pop("operating_harness", None)
+    data[acp_harnesses.ENABLED_SETTING] = ids
+    write_json(path, data)
+    await _send_harnesses(conn)
+    await _send_user_settings(conn)
+
+
+@handler("agents.models")
+async def on_agents_models(conn: Connection, msg: dict[str, Any]) -> None:
+    """Read the models of an agent before its first session: {"id"}. The daemon starts the agent, opens an
+    ACP session with no prompt, keeps the models (``models`` of the list), and stops the agent. The client
+    gets the list with ``probing`` true at once, then the list with the models (or an error with the ref
+    agents.models)."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    if harness_id in _PROBES:
+        return
+    _PROBES.add(harness_id)
+    await _send_harnesses(conn)
+
+    async def run() -> None:
+        try:
+            await acp_probe_models(spec, harness_home() / "harnesses" / "probe")
+        except AcpError as e:
+            await conn.error(f"Could not read the models of {spec.name}: {e}", ref="agents.models")
+        except Exception as e:  # noqa: BLE001
+            log.exception("The model check of %s failed", harness_id)
+            await conn.error(f"Could not read the models of {spec.name}: {type(e).__name__}: {e}", ref="agents.models")
+        finally:
+            _PROBES.discard(harness_id)
+        await _send_harnesses(conn)
+
+    asyncio.create_task(run())
+
+
+@handler("agents.auto_model")
+async def on_agents_auto_model(conn: Connection, msg: dict[str, Any]) -> None:
+    """The model of Auto mode: {"model": "<provider>/<model>" or null}. It checks the actions of the agents of
+    other harnesses (their own model is not in Harness), and of a Harness session when it is set. It is
+    "auto_mode.model" in ~/.harness/settings.json. The reply is the list."""
+    model = msg.get("model")
+    if model is not None:
+        if not isinstance(model, str) or "/" not in model or len(model) > 300:
+            raise ProtocolError("'model' must be \"<provider>/<model>\" or null.")
+        try:
+            resolve_model(model.strip())
+        except ConfigError as e:
+            raise ProtocolError(str(e)) from None
+    path = _user_settings_path()
+    data = read_json(path, {})
+    config = data.get("auto_mode") if isinstance(data.get("auto_mode"), dict) else {}
+    if model is None:
+        config.pop("model", None)
+    else:
+        config["model"] = model.strip()
+    if config:
+        data["auto_mode"] = config
+    else:
+        data.pop("auto_mode", None)
+    write_json(path, data)
+    await _send_harnesses(conn)
+
+
+_USAGE_LOCK = asyncio.Lock()  # One scan at a time: the first scan reads all the histories.
+
+
+@handler("usage.summary")
+async def on_usage_summary(conn: Connection, msg: dict[str, Any]) -> None:
+    """The Usage page (usage.py): {"range": "24h"|"7d"|"30d"|"90d", "offset": <minutes east of UTC>, "refresh"?}.
+    The reply is usage.summary. It needs no session. The first call reads all the histories, so it can take a while."""
+    range_id = msg.get("range")
+    offset = msg.get("offset", 0)
+    if range_id not in usage.RANGES:
+        raise ProtocolError(f"'range' must be one of: {', '.join(usage.RANGES)}.")
+    if not isinstance(offset, int) or not -14 * 60 <= offset <= 14 * 60:
+        raise ProtocolError("'offset' must be the minutes of the time zone east of UTC.")
+
+    async def run() -> None:
+        try:
+            async with _USAGE_LOCK:
+                data = await usage.summary(range_id, offset, refresh=msg.get("refresh") is True)
+            await conn.send({"type": "usage.summary", **data})
+        except Exception as e:  # noqa: BLE001
+            log.exception("The usage summary failed")
+            try:
+                await conn.error(f"Could not read the usage: {type(e).__name__}: {e}", ref="usage.summary")
+            except Exception:  # noqa: BLE001 - the connection closed.
+                pass
+
+    asyncio.create_task(run())
+
+
+@handler("agents.check")
+async def on_agents_check(conn: Connection, msg: dict[str, Any]) -> None:
+    """Read the sign-in state and the usage of an agent again now: {"id"}. The reply is the list."""
+    harness_id = _text_arg(msg, "id")
+    if not agent_auth.supports(harness_id):
+        raise ProtocolError(f"Harness cannot check the sign-in of {harness_id}.")
+    await _check_agents(conn, [harness_id], force=True)
+
+
+_SIGNIN: agent_auth.SignIn | None = None  # The sign-in that runs now (one for the daemon).
+
+
+@handler("agents.signin")
+async def on_agents_signin(conn: Connection, msg: dict[str, Any]) -> None:
+    """Start the sign-in of an agent in a pseudo terminal: {"id", "cols", "rows"}. The client gets
+    agents.signin.started, agents.signin.output, then agents.signin.exit, then the list with the new state."""
+    global _SIGNIN
+    harness_id = _text_arg(msg, "id")
+    if not agent_auth.supports(harness_id):
+        raise ProtocolError(f"Harness cannot sign in to {harness_id}.")
+    if _SIGNIN is not None and _SIGNIN.alive:
+        _SIGNIN.cancel()
+    cols, rows = _term_size(msg)
+
+    def finished(signin: agent_auth.SignIn, code: int | None) -> None:
+        agent_auth.STATES.invalidate(signin.harness_id)
+        asyncio.ensure_future(_check_agents(conn, [signin.harness_id], force=True))
+
+    signin = agent_auth.SignIn(harness_id, conn.send, finished)
+    try:
+        signin.start(cols, rows)
+    except Exception as e:  # noqa: BLE001 - report any start error to the client.
+        raise ProtocolError(f"The sign-in did not start: {e}") from None
+    _SIGNIN = signin
+    await conn.send({"type": "agents.signin.started", "id": harness_id})
+
+
+def _signin(msg: dict[str, Any]) -> agent_auth.SignIn:
+    if _SIGNIN is None or _SIGNIN.harness_id != msg.get("id"):
+        raise ProtocolError("No sign-in runs for this agent.")
+    return _SIGNIN
+
+
+@handler("agents.signin.input")
+async def on_agents_signin_input(conn: Connection, msg: dict[str, Any]) -> None:
+    data = msg.get("data")
+    if not isinstance(data, str):
+        raise ProtocolError("'data' must be text.")
+    _signin(msg).write(data)
+
+
+@handler("agents.signin.resize")
+async def on_agents_signin_resize(conn: Connection, msg: dict[str, Any]) -> None:
+    cols, rows = _term_size(msg)
+    _signin(msg).resize(cols, rows)
+
+
+@handler("agents.signin.cancel")
+async def on_agents_signin_cancel(conn: Connection, msg: dict[str, Any]) -> None:
+    """Stop the sign-in. The client gets agents.signin.exit, then the list."""
+    signin = _signin(msg)
+    was_alive = signin.alive
+    signin.cancel()
+    if was_alive:
+        await conn.send({"type": "agents.signin.exit", "id": signin.harness_id, "code": None})
+        await _check_agents(conn, [signin.harness_id], force=True)
 
 
 @handler("harnesses.uninstall")
@@ -4415,6 +4854,65 @@ async def on_acp_model(conn: Connection, msg: dict[str, Any]) -> None:
     conn.require_idle()
     try:
         await session.agent.set_model(_text_arg(msg, "model"))
+    except AcpError as e:
+        raise ProtocolError(str(e)) from None
+
+
+@handler("acp.effort")
+async def on_acp_effort(conn: Connection, msg: dict[str, Any]) -> None:
+    """The reasoning level of an ACP session (the picker): {"effort": <a level id of the harness>}. The reply is
+    acp.state."""
+    session = conn.require_session()
+    if not isinstance(session.agent, AcpAgent):
+        raise ProtocolError("This session runs in the built-in loop. Use the effort of the model menu.")
+    conn.require_idle()
+    try:
+        await session.agent.set_effort(_text_arg(msg, "effort"))
+    except AcpError as e:
+        raise ProtocolError(str(e)) from None
+
+
+@handler("harnesses.native_effort")
+async def on_harnesses_native_effort(conn: Connection, msg: dict[str, Any]) -> None:
+    """The reasoning level of a harness for new sessions: {"id", "effort": <level id> or null}. The reply is the
+    list, then user_settings."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None or spec.custom:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    effort = msg.get("effort")
+    if effort is not None and (not isinstance(effort, str) or not effort.strip() or len(effort) > 100):
+        raise ProtocolError("'effort' must be a reasoning level id or null.")
+    path = _user_settings_path()
+    data = read_json(path, {})
+    store = data.get(acp_harnesses.EFFORT_SETTING) if isinstance(data.get(acp_harnesses.EFFORT_SETTING), dict) else {}
+    if effort is None:
+        store.pop(harness_id, None)
+    else:
+        store[harness_id] = effort.strip()
+    if store:
+        data[acp_harnesses.EFFORT_SETTING] = store
+    else:
+        data.pop(acp_harnesses.EFFORT_SETTING, None)
+    write_json(path, data)
+    await _send_harnesses(conn)
+    await _send_user_settings(conn)
+
+
+@handler("acp.mode")
+async def on_acp_mode(conn: Connection, msg: dict[str, Any]) -> None:
+    """The mode menu of an ACP session: {"mode": <a mode id of the harness>, or "harness:auto"}. The Harness permission
+    gate follows the mode (acp.MODE_MAP). A mode that is bypass needs "Allow bypass permissions mode". The reply is
+    acp.state."""
+    session = conn.require_session()
+    if not isinstance(session.agent, AcpAgent):
+        raise ProtocolError("This session runs in the built-in loop. Use the mode menu of Harness.")
+    conn.require_idle()
+    mode = _text_arg(msg, "mode")
+    if session.agent.gate_mode_of(mode) == BYPASS:
+        _check_bypass(BYPASS)
+    try:
+        await session.agent.set_mode(mode)
     except AcpError as e:
         raise ProtocolError(str(e)) from None
 

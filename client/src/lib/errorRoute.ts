@@ -64,7 +64,8 @@ const VIEW = new Set([
 /** The same, by the start of the type. */
 const VIEW_PREFIXES = [
   "fs.", // The editor, the file tree, the folder picker, and the Preview pane.
-  "harnesses.", // Settings > Operating Harness.
+  "harnesses.", // Settings > Agents.
+  "agents.", // Settings > Agents: the switches, the sign-in, and "Check again".
   "memory.", // Settings > Your Harness.
   "project_instructions.", // Settings > Your Harness.
   "project_settings.", // Settings > Your Harness > Verify command.
@@ -103,6 +104,7 @@ export interface ErrorToastItem {
   count: number; // The times that this text came while the popup shows.
   undo?: () => void; // An info popup with "Undo" after an action that has no question first (rule R7a).
   open?: () => void; // A click on the popup opens the place of the problem, for example a failed MCP server.
+  ms?: number; // How long the popup shows. Default: 8 seconds. The undo popups of the Threads sidebar: 5 seconds.
 }
 
 /** Adds an error popup that opens the place of the problem on a click. The same text replaces the old popup. */
@@ -127,8 +129,9 @@ export function mcpFailureText(name: string, error: string | null): string {
 }
 
 /** Adds the popup of an action that can be undone. A new one replaces an old undo popup: only the last action can be undone. */
-export function addUndoToast(list: ErrorToastItem[], text: string, undo: () => void, id: number): ErrorToastItem[] {
-  return [...list.filter((t) => !t.undo), { id, text, count: 1, undo }].slice(-MAX_ERROR_TOASTS);
+export function addUndoToast(list: ErrorToastItem[], text: string, undo: () => void, id: number, ms?: number): ErrorToastItem[] {
+  const item: ErrorToastItem = ms ? { id, text, count: 1, undo, ms } : { id, text, count: 1, undo };
+  return [...list.filter((t) => !t.undo), item].slice(-MAX_ERROR_TOASTS);
 }
 
 /** The popups show the 3 newest texts. A text that shows already gets a count, not a second popup. */
