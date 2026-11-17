@@ -17,6 +17,9 @@ export function agentInitials(name: string): string {
   return word[0].toUpperCase();
 }
 
+/** The agents whose logo has light parts for a dark background (Oh My Pi): their tile is dark. */
+const DARK_TILES = new Set(["omp"]);
+
 /**
  * The icon of an agent: the app icon for the built-in loop, the logo of the agent (a data URL from the daemon, in an
  * <img>, so the SVG runs no code) in its own colors on a light tile, else the initials in a small square.
@@ -26,9 +29,10 @@ export function AgentIcon({ id, name, icon, size = 16 }: { id: string; name: str
     return <img className="agent-icon builtin" src="/app-icon.svg" alt="" width={size} height={size} aria-hidden />;
   }
   if (icon && icon.startsWith("data:image/svg+xml")) {
-    // Full color, as the brand shows it (the user asked for this): the logo on a light tile, as an app icon.
+    // Full color, as the brand shows it (the user asked for this): the logo on a light tile, as an app icon. A logo
+    // that the brand shows on a dark background (light parts) gets a dark tile.
     return (
-      <span className="agent-icon logo" style={{ width: size, height: size }} aria-hidden>
+      <span className={`agent-icon logo${DARK_TILES.has(id) ? " dark" : ""}`} style={{ width: size, height: size }} aria-hidden>
         <img src={icon} alt="" draggable={false} />
       </span>
     );

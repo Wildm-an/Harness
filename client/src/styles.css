@@ -13406,123 +13406,6 @@ input::-ms-clear {
   color: var(--text-muted);
 }
 
-/* -- Agent picker (AgentPicker.tsx) -- */
-/* As the ProviderModelPicker of T3 Code (the user asked for this): a 44px rail with one tab for each agent,
-   then a column with a search field and the models of the selected tab. */
-.menu.agent-picker-dropdown {
-  flex-direction: row;
-  width: min(400px, calc(100vw - 32px));
-  padding: 0;
-}
-.pane-content .menu.agent-picker-dropdown {
-  width: min(400px, calc(100cqw - 56px));
-}
-.agent-picker-rail {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  width: 44px;
-  padding: 6px 0;
-  border-right: 1px solid var(--border);
-}
-.agent-picker-tabs {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.menu.agent-picker-dropdown .agent-picker-tab {
-  position: relative;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
-  padding: 0;
-  color: var(--text-muted);
-}
-.menu.agent-picker-dropdown .agent-picker-tab.selected {
-  background: var(--surface-2);
-  color: var(--text);
-}
-/* A 3px accent bar at the left edge of the rail marks the selected tab. */
-.agent-picker-tab.selected::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: -6px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--accent);
-}
-.agent-picker-tab.not-ready > .agent-icon {
-  opacity: 0.5;
-}
-.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"] {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"]:hover {
-  background: transparent;
-}
-.menu.agent-picker-dropdown .agent-picker-manage {
-  margin-top: auto;
-}
-.agent-picker-main {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  padding: 4px;
-}
-.agent-picker-search {
-  position: relative;
-  margin: 0 2px 4px;
-  color: var(--text-muted);
-}
-.agent-picker-search > svg {
-  position: absolute;
-  top: 50%;
-  left: 9px;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-.agent-picker-search input {
-  min-height: 30px;
-  padding-left: 29px;
-}
-.agent-picker-usage {
-  padding: 6px 10px 8px;
-}
-.agent-picker-notice {
-  margin: 4px 10px 6px;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-.agent-picker-notice > svg {
-  color: var(--warning);
-  vertical-align: -2px;
-}
-.menu.model-dropdown button.agent-picker-link {
-  display: inline;
-  width: auto;
-  min-height: 0;
-  padding: 0;
-  background: none;
-  color: var(--accent);
-  font-size: inherit;
-}
-.menu.model-dropdown button.agent-picker-link:hover {
-  background: none;
-  text-decoration: underline;
-}
-.model-button > .agent-icon {
-  flex: none;
-}
-
 /* -- Settings > Agents (AgentsSettings.tsx) -- */
 /* The page has two panes, as the Providers settings of T3 Code: the agents at the left, the detail at the right. */
 .settings-page.agents-page {
@@ -13792,6 +13675,9 @@ input::-ms-clear {
   overflow: hidden;
 }
 /* The logo fills the tile with a margin of 14% of the tile (a padding in percent would use the width of the row). */
+.agent-icon.logo.dark {
+  background: #0d0d0d; /* The background of the Oh My Pi logo. */
+}
 .agent-icon.logo img {
   position: absolute;
   inset: 14%;
@@ -14300,5 +14186,399 @@ input::-ms-clear {
   }
   .usage-totals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* -- Agent picker v2 (AgentPicker.tsx) -- */
+/* As the model picker of T3 Code (the user asked for this, rules C14 to C15): a rail with the Favorites tab and
+   one tab for each agent, a middle column with the search field and the models, and a Reasoning column at the
+   right. A picker below 560px wide hides the Reasoning column and shows the levels as chips under the list. */
+.menu.agent-picker-dropdown {
+  container: agent-picker / inline-size;
+  display: flex;
+  flex-direction: row;
+  width: min(690px, calc(100vw - 32px));
+  height: min(430px, calc(100vh - 120px));
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--prompt-radius);
+}
+.pane-content .menu.agent-picker-dropdown {
+  width: min(690px, calc(100cqw - 56px));
+}
+.model-button > .agent-icon {
+  flex: none;
+}
+
+/* The rail: the star (Favorites), a divider, the agent tabs, and the gear at the bottom. */
+.agent-picker-dropdown .agent-picker-rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  width: 56px;
+  padding: 8px 0;
+  border-right: 1px solid var(--border);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.agent-picker-dropdown .agent-picker-tabs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.agent-picker-dropdown .ap-rail-sep {
+  flex: none;
+  width: 24px;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border);
+}
+.menu.agent-picker-dropdown .agent-picker-tab {
+  position: relative;
+  flex: none;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  color: var(--text-muted);
+}
+.menu.agent-picker-dropdown .agent-picker-tab.selected {
+  background: var(--surface-2);
+  color: var(--text);
+}
+/* A 3px bar in the focus color at the right edge of the rail marks the selected tab. */
+.agent-picker-dropdown .agent-picker-tab.selected::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -9px;
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--focus);
+  transform: translateY(-50%);
+}
+.agent-picker-dropdown .agent-picker-tab.not-ready > .agent-icon {
+  opacity: 0.5;
+}
+.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.menu.agent-picker-dropdown .agent-picker-tab[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.menu.agent-picker-dropdown .agent-picker-manage {
+  margin-top: auto;
+}
+
+/* The middle column: the search row, then the list in a panel with a border. */
+.agent-picker-dropdown .ap-mid {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 0 10px;
+}
+.agent-picker-dropdown .ap-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.agent-picker-dropdown .ap-search > svg {
+  flex: none;
+}
+.agent-picker-dropdown .ap-search input,
+.agent-picker-dropdown .ap-search input:focus-visible {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font: 14px var(--font-sans);
+}
+.agent-picker-dropdown .ap-list {
+  flex: 1;
+  min-height: 0;
+  margin: 10px 10px 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--prompt-radius);
+}
+/* The list has the keyboard focus: its border has the focus color. */
+.agent-picker-dropdown .ap-list:focus-within {
+  border-color: var(--focus);
+}
+.agent-picker-dropdown .ap-heading {
+  padding: 10px 10px 4px;
+}
+
+/* A model row: the logo, the name, the check mark, then the star and the key at the right. */
+.agent-picker-dropdown .ap-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding-right: 8px;
+  border-radius: var(--radius-sm);
+}
+.agent-picker-dropdown .ap-row:hover,
+.agent-picker-dropdown .ap-row:focus-within {
+  background: var(--surface-2);
+}
+.menu.agent-picker-dropdown .ap-row-main {
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 6px 0 10px;
+  background: transparent;
+  font-size: 14px;
+}
+.menu.agent-picker-dropdown .ap-row-main:hover:not(:disabled),
+.menu.agent-picker-dropdown .ap-row-main:focus-visible {
+  outline: none;
+  background: transparent;
+}
+.agent-picker-dropdown .ap-row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-picker-dropdown .ap-row-check {
+  flex: none;
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-row-detail {
+  flex: 0 3 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 8px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu.agent-picker-dropdown .ap-star {
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  color: var(--text-muted);
+}
+.menu.agent-picker-dropdown .ap-star:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.menu.agent-picker-dropdown .ap-star.on {
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-star-space {
+  flex: none;
+  width: 28px;
+}
+.agent-picker-dropdown .ap-key {
+  flex: none;
+  min-width: 46px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font: 11.5px/16px var(--font-sans);
+  text-align: center;
+}
+.agent-picker-dropdown .ap-key.none {
+  visibility: hidden;
+}
+.menu.agent-picker-dropdown .ap-more {
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.menu.agent-picker-dropdown .ap-more:hover:not(:disabled),
+.menu.agent-picker-dropdown .ap-more:focus-visible {
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-foot {
+  flex: none;
+  padding: 10px 14px 0;
+}
+
+/* The notes and the links of an agent tab. */
+.agent-picker-dropdown .agent-picker-usage {
+  padding: 6px 10px 8px;
+}
+.agent-picker-dropdown .agent-picker-notice {
+  margin: 4px 10px 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.agent-picker-dropdown .agent-picker-notice > svg {
+  color: var(--warning);
+  vertical-align: -2px;
+}
+.menu.agent-picker-dropdown button.agent-picker-link {
+  display: inline;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+}
+.menu.agent-picker-dropdown .agent-picker-notice button.agent-picker-link {
+  font-size: inherit;
+}
+.menu.agent-picker-dropdown button.agent-picker-link:hover,
+.menu.agent-picker-dropdown button.agent-picker-link:focus-visible {
+  background: none;
+  text-decoration: underline;
+}
+
+/* The Reasoning column: "Reasoning" and the model name, then the levels. */
+.agent-picker-dropdown .ap-reason {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 225px;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+}
+.agent-picker-dropdown .ap-reason-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.agent-picker-dropdown .ap-reason-title {
+  flex: none;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.agent-picker-dropdown .ap-reason-model {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-picker-dropdown .ap-reason-list {
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+.menu.agent-picker-dropdown .ap-level {
+  min-height: 42px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+.agent-picker-dropdown .ap-level-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-picker-dropdown .ap-level-end {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.agent-picker-dropdown .ap-level-default {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.agent-picker-dropdown .ap-reason-note {
+  margin: 10px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.agent-picker-dropdown .ap-reason-help {
+  flex: none;
+  margin: 0;
+  padding: 10px 14px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* A narrow picker: the levels show as chips under the list. */
+.agent-picker-dropdown .ap-reason-chips {
+  display: none;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 0;
+}
+.agent-picker-dropdown .ap-reason-chips-label {
+  margin-right: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.menu.agent-picker-dropdown .ap-chip {
+  width: auto;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--prompt-radius);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.menu.agent-picker-dropdown .ap-chip.on {
+  border-color: var(--focus);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.agent-picker-dropdown .ap-chip-default,
+.agent-picker-dropdown .ap-reason-chips-note {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+@container agent-picker (max-width: 559px) {
+  .agent-picker-dropdown .ap-reason {
+    display: none;
+  }
+  .agent-picker-dropdown .ap-reason-chips {
+    display: flex;
+  }
+}
+@container agent-picker (max-width: 380px) {
+  .agent-picker-dropdown .ap-key {
+    display: none;
   }
 }

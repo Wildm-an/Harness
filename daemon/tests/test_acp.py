@@ -198,7 +198,8 @@ def test_harness_list_custom_harnesses_and_the_setting(daemon, harness_home):
     hermes = next(i for i in listing["items"] if i["id"] == "hermes")  # Not in the ACP registry.
     assert hermes["name"] == "Hermes Agent" and hermes["command"] == "hermes acp" and hermes["license"] == "MIT"
     omp = next(i for i in listing["items"] if i["id"] == "omp")
-    assert omp["command"] == "omp --mode acp" and omp["status"] in ("installed", "missing")
+    assert omp["command"] == "omp acp" and omp["status"] in ("installed", "downloaded", "missing")
+    assert any(i["id"] == "antigravity-acp" and i["name"] == "Google Antigravity" for i in listing["items"])
 
     c.send({"type": "harnesses.save", "name": "My agent", "command": "my-agent --acp"})
     listing = c.until("harnesses")[0]
@@ -209,7 +210,7 @@ def test_harness_list_custom_harnesses_and_the_setting(daemon, harness_home):
     settings = c.until("user_settings")[0]
     assert settings["values"]["operating_harness"] == "custom-my-agent"
     assert settings["harness"] == {"id": "custom-my-agent", "name": "My agent", "model": None,  # For the start screen.
-                                   "native_model": None, "models": []}
+                                   "native_model": None, "models": [], "native_effort": None, "efforts": []}
     c.send({"type": "user_settings.set", "values": {"operating_harness": "no-such-harness"}})
     assert "Unknown harness" in c.until("error")[0]["message"]
 
@@ -459,3 +460,33 @@ def test_the_harness_modes_map_to_harness_permission_modes():
     assert [agent.gate_mode_of(m) for m in ("accept_edits", "dont_ask", "plan", "yolo", "strange")] == \
         ["acceptEdits", "acceptEdits", "plan", "bypassPermissions", "default"]
     assert MODE_MAP["bypassPermissions"] == "bypassPermissions"
+
+
+def test_the_reasoning_levels_of_a_harness():
+    """A config option of the category "thought_level" is the reasoning column of the picker."""
+    from harness_daemon.acp import parse_efforts
+    result = {"configOptions": [
+        {"id": "model", "category": "model", "type": "select", "options": [{"value": "opus", "name": "Opus"}]},
+        {"id": "effort", "category": "thought_level", "type": "select", "currentValue": "default", "options": [
+            {"value": "default", "name": "Default", "description": "Medium"}, {"value": "low", "name": "Low"},
+            {"value": "max", "name": "Max"}]},
+    ]}
+    assert [e["id"] for e in parse_efforts(result)] == ["default", "low", "max"]
+    assert parse_efforts({"configOptions": []}) == [] and parse_efforts(None) == []
+
+
+def test_the_reasoning_level_for_new_sessions(daemon, harness_home):  # noqa: F811
+    from harness_daemon import acp_harnesses
+    acp_harnesses.save_efforts("claude-acp", [{"id": "low", "name": "Low", "description": ""}])
+    assert acp_harnesses.cached_models("__efforts__") == []  # The levels are not a model list.
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "harnesses.native_effort", "id": "claude-acp", "effort": "low"})
+    claude = next(i for i in c.until("harnesses")[0]["items"] if i["id"] == "claude-acp")
+    assert claude["native_effort"] == "low" and claude["efforts"][0]["id"] == "low"
+    c.send({"type": "harnesses.native_effort", "id": "claude-acp", "effort": None})
+    claude = next(i for i in c.until("harnesses")[0]["items"] if i["id"] == "claude-acp")
+    assert claude["native_effort"] is None
+    c.send({"type": "harnesses.native_effort", "id": "nope", "effort": "low"})
+    assert "Unknown harness" in c.until("error")[0]["message"]
+    c.close()

@@ -112,10 +112,11 @@ async def refresh_registry(force: bool = False) -> bool:
         _registry_time = time.time() - REGISTRY_TTL + 300  # Try again after 5 minutes.
         return False
     _registry_time = time.time()
+    released = await refresh_releases()
     agents = _agents(data)
     if not agents:
-        return False
-    changed = agents != registry()
+        return released
+    changed = agents != registry() or released
     _registry = agents
     try:
         write_json(_cache_path(), data)
@@ -125,6 +126,83 @@ async def refresh_registry(force: bool = False) -> bool:
 
 
 # -- the platform and the distribution ----------------------------------------------------------------------
+
+# Agents that are not in the ACP registry, with a program for each platform in their GitHub releases. Harness reads
+# the latest release (at most each REGISTRY_TTL seconds, with the registry), and checks the download against the
+# SHA-256 file of the release.
+GITHUB_RELEASES: dict[str, dict[str, Any]] = {
+    "omp": {
+        "repo": "can1357/oh-my-pi",
+        "sums": "SHA256SUMS.txt",
+        "args": ["acp"],
+        "assets": {
+            "windows-x86_64": "omp-windows-x64.exe", "windows-aarch64": "omp-windows-arm64.exe",
+            "darwin-aarch64": "omp-darwin-arm64", "darwin-x86_64": "omp-darwin-x64",
+            "linux-x86_64": "omp-linux-x64", "linux-aarch64": "omp-linux-arm64",
+            "linux-x86_64-musl": "omp-linux-musl-x64", "linux-aarch64-musl": "omp-linux-musl-arm64",
+        },
+    },
+}
+_releases: dict[str, dict[str, Any]] = {}  # id -> {"version", "assets": {name: url}}
+
+
+def _releases_path() -> Path:
+    return harness_home() / "harnesses" / "releases.json"
+
+
+def releases() -> dict[str, dict[str, Any]]:
+    """The latest GitHub release of each agent of GITHUB_RELEASES: the last copy that the daemon read."""
+    global _releases
+    if not _releases:
+        data = read_json(_releases_path(), {})
+        _releases = data if isinstance(data, dict) else {}
+    return _releases
+
+
+async def refresh_releases() -> bool:
+    """Read the latest release of each agent of GITHUB_RELEASES. True: a version changed. A failure keeps the copy."""
+    global _releases
+    from .nethttp import async_client
+
+    found = dict(releases())
+    try:
+        async with async_client(timeout=20, follow_redirects=True,
+                                headers={"Accept": "application/vnd.github+json"}) as client:
+            for harness_id, info in GITHUB_RELEASES.items():
+                response = await client.get(f"https://api.github.com/repos/{info['repo']}/releases/latest")
+                response.raise_for_status()
+                data = response.json()
+                assets = {a["name"]: a["browser_download_url"] for a in data.get("assets") or []
+                          if isinstance(a, dict) and a.get("name") and a.get("browser_download_url")}
+                version = str(data.get("tag_name") or "").lstrip("v")
+                if version and assets:
+                    found[harness_id] = {"version": version, "assets": assets}
+    except Exception as e:  # noqa: BLE001 - no network or a rate limit: the old copy stays.
+        log.info("Could not read the GitHub releases: %s", e)
+        return False
+    changed = found != _releases
+    _releases = found
+    try:
+        write_json(_releases_path(), found)
+    except OSError:
+        pass
+    return changed
+
+
+def _release_plan(harness_id: str) -> tuple[str, dict[str, Any], str] | None:
+    info = GITHUB_RELEASES.get(harness_id)
+    release = releases().get(harness_id)
+    if not info or not release:
+        return None
+    key = platform_key()
+    name = info["assets"].get(key) or info["assets"].get(key.removesuffix("-musl"))
+    url = release["assets"].get(name) if name else None
+    if not url:
+        return None
+    sums = release["assets"].get(info.get("sums") or "")
+    return "binary", {"archive": url, "cmd": name, "args": list(info.get("args") or []), "sums": sums,
+                      "sums_name": name}, release["version"]
+
 
 def platform_key() -> str:
     """The platform name of the registry, for example "windows-x86_64" or "linux-aarch64-musl"."""
@@ -157,6 +235,8 @@ def plan(spec: "HarnessSpec") -> tuple[str, dict[str, Any], str] | None:
     The registry comes first. Without a registry entry, the npx or uvx package of the catalog."""
     if spec.custom:
         return None
+    if spec.id in GITHUB_RELEASES:
+        return _release_plan(spec.id)
     agent = registry().get(spec.id)
     dist = agent.get("distribution") if isinstance(agent, dict) and isinstance(agent.get("distribution"), dict) else {}
     version = str(agent.get("version") or "") if isinstance(agent, dict) else ""
@@ -180,6 +260,9 @@ def plan(spec: "HarnessSpec") -> tuple[str, dict[str, Any], str] | None:
 
 
 def latest_version(spec: "HarnessSpec") -> str | None:
+    if spec.id in GITHUB_RELEASES:
+        release = releases().get(spec.id)
+        return str(release["version"]) if release else None
     agent = registry().get(spec.id)
     version = agent.get("version") if isinstance(agent, dict) else None
     return version if isinstance(version, str) and version else None
@@ -343,6 +426,30 @@ async def _fetch(url: str, path: Path, sha256: str | None, report: Callable[...,
         raise InstallError("The download does not have the sha256 of the registry. Harness deleted it.")
 
 
+async def _release_sha256(url: str, name: str) -> str:
+    """The SHA-256 of a release file, from the SHA256SUMS file of the release ("<hex>  <name>" lines)."""
+    from .nethttp import async_client
+
+    _check_url(url)
+    async with async_client(timeout=30, follow_redirects=True) as client:
+        response = await client.get(url)
+        if response.status_code >= 400:
+            raise InstallError(f"Could not read the checksums of the release: HTTP {response.status_code}")
+    found = sha_from_sums(response.text, name)
+    if found is None:
+        raise InstallError(f"The checksums of the release have no line for {name}.")
+    return found
+
+
+def sha_from_sums(text: str, name: str) -> str | None:
+    """The SHA-256 of ``name`` in the text of a SHA256SUMS file ("<hex>  <name>" or "<hex> *<name>"), or None."""
+    for line in text.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2 and parts[-1].lstrip("*") == name and re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+            return parts[0].lower()
+    return None
+
+
 def _inside(root: Path, name: str) -> Path:
     """The path of an archive member. Stop for an absolute path or "..": the member cannot go out of root."""
     parts = PurePosixPath(name.replace("\\", "/")).parts
@@ -396,6 +503,8 @@ async def _install_binary(dist: dict[str, Any], target: Path, report: Callable[.
     try:
         archive = download / _archive_name(url)
         sha = dist.get("sha256") if isinstance(dist.get("sha256"), str) else None
+        if sha is None and isinstance(dist.get("sums"), str):
+            sha = await _release_sha256(dist["sums"], str(dist.get("sums_name") or _archive_name(url)))
         await _fetch(url, archive, sha, report)
         await report("Unpacking")
         try:

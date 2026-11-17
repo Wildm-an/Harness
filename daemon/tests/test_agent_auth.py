@@ -152,3 +152,11 @@ def test_the_auto_mode_model(daemon, harness_home):  # noqa: F811
     assert c.until("harnesses")[0]["auto_model"] is None
     assert "auto_mode" not in json.loads((harness_home / "settings.json").read_text())
     c.close()
+
+
+def test_the_oh_my_pi_logo_ships_with_harness():
+    import base64
+    from harness_daemon import acp_icons
+    acp_icons._cache.pop("omp", None)
+    svg = base64.b64decode(acp_icons.icon("omp").split(",", 1)[1])
+    assert svg.startswith(b"<svg") and b"#f97316" in svg and acp_icons.safe_svg(svg)

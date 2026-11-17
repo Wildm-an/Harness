@@ -197,3 +197,27 @@ def test_install_through_the_daemon(daemon, files, harness_home):  # noqa: F811
     error = c.until("error")[0]
     assert error["ref"] == "harnesses.install"
     c.close()
+
+
+def test_a_github_release_download(monkeypatch):
+    """Oh My Pi is not in the ACP registry: Harness downloads the program of the platform from its GitHub release."""
+    from harness_daemon import acp_harnesses, acp_install
+    monkeypatch.setattr(acp_install, "_releases", {"omp": {"version": "18.22.0", "assets": {
+        "omp-windows-x64.exe": "https://github.com/can1357/oh-my-pi/releases/download/v18.22.0/omp-windows-x64.exe",
+        "omp-linux-x64": "https://github.com/can1357/oh-my-pi/releases/download/v18.22.0/omp-linux-x64",
+        "SHA256SUMS.txt": "https://github.com/can1357/oh-my-pi/releases/download/v18.22.0/SHA256SUMS.txt"}}})
+    monkeypatch.setattr(acp_install, "platform_key", lambda: "linux-x86_64")
+    kind, dist, version = acp_install.plan(acp_harnesses.find("omp"))
+    assert (kind, version, dist["cmd"], dist["args"]) == ("binary", "18.22.0", "omp-linux-x64", ["acp"])
+    assert dist["sums"].endswith("SHA256SUMS.txt")
+    assert acp_install.latest_version(acp_harnesses.find("omp")) == "18.22.0"
+    monkeypatch.setattr(acp_install, "platform_key", lambda: "darwin-x86_64")
+    assert acp_install.plan(acp_harnesses.find("omp")) is None  # No asset of this platform in the release.
+
+
+def test_the_checksum_file_of_a_release():
+    from harness_daemon.acp_install import sha_from_sums
+    text = ("A" * 64 + "  omp-linux-x64\n" + "b" * 64 + " *omp-windows-x64.exe\nnot a line\n")
+    assert sha_from_sums(text, "omp-linux-x64") == "a" * 64
+    assert sha_from_sums(text, "omp-windows-x64.exe") == "b" * 64
+    assert sha_from_sums(text, "omp-darwin-x64") is None

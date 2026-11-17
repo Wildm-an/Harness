@@ -2943,6 +2943,7 @@ export default function App() {
                   onRequestAgents={requestAgents}
                   onSelect={chooseModel}
                   onSessionModel={(model) => sendSafely({ type: "acp.model", model })}
+                  onSessionEffort={(effort) => sendSafely({ type: "acp.effort", effort })}
                   onManageProviders={showProviders}
                   onManageAgents={() => openSettings("operating")}
                 />

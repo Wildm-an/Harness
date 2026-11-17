@@ -305,6 +305,8 @@ export interface HarnessItem {
   can_sign_in: boolean; // Harness can sign in to it and read its usage (daemon agent_auth.py).
   auth: AgentAuth | null; // null: no check yet.
   icon: string | null; // The icon of the ACP registry, as a data URL (daemon acp_icons.py). null: the initials.
+  efforts: AgentModel[]; // The reasoning levels that the harness gave in its last session (or a model check).
+  native_effort: string | null; // The chosen reasoning level for new sessions. null: the default of the harness.
   probing: boolean; // The daemon reads the models of the agent now (agents.models).
 }
 
@@ -413,6 +415,11 @@ export interface SessionHarness {
   modes?: { id: string; name: string; description: string }[];
   mode?: string | null;
   harness_auto?: boolean;
+  // The reasoning levels of the harness (an ACP config option of the category "thought_level", for example the
+  // "effort" of Claude Agent: default, low, medium, high, xhigh, max), and the current one. Empty: none.
+  efforts?: AgentModel[];
+  effort?: string | null;
+  native_effort?: string | null; // On the start screen: the chosen reasoning level of the harness for new sessions.
   commands?: { name: string; description: string; hint: string }[]; // The / commands of the harness.
 }
 
@@ -1033,6 +1040,8 @@ export type ClientMessage =
   // days and the hours. refresh: read the histories and the prices again now.
   | { type: "usage.summary"; range: UsageRange; offset: number; providers?: string[]; refresh?: boolean }
   | { type: "acp.mode"; mode: string } // The mode menu of an ACP session: a mode id of the harness, or "harness:auto".
+  | { type: "acp.effort"; effort: string } // The reasoning level of an ACP session (a value of its "efforts").
+  | { type: "harnesses.native_effort"; id: string; effort: string | null } // The reasoning level of the harness for new sessions.
   | { type: "agents.auto_model"; model: string | null } // The model of Auto mode ("auto_mode.model"). null: none.
   | { type: "agents.models"; id: string } // Read the models of the agent before its first session.
   | { type: "agents.signin"; id: string; cols: number; rows: number } // Start the sign-in terminal.

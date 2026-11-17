@@ -76,6 +76,7 @@ def _h(id: str, name: str, description: str, website: str, license: str, *,
 
 CATALOG: tuple[HarnessSpec, ...] = (
     _h("amp-acp", "Amp", "ACP wrapper for Amp, the coding agent of Sourcegraph.", "https://github.com/tao12345666333/amp-acp", "Apache-2.0", bin=("amp-acp", [])),
+    _h("antigravity-acp", "Google Antigravity", "The AI coding agent of Google.", "https://antigravity.google/docs/ide/extensions", "Proprietary", bin=("agy_acp_server", [])),
     _h("auggie", "Auggie CLI", "The software agent of Augment Code.", "https://www.augmentcode.com/", "Proprietary", npx=("@augmentcode/auggie@0.37.0", ["--acp"]), env={"AUGMENT_DISABLE_AUTO_UPDATE": "1"}),
     _h("autohand", "Autohand Code", "Autohand Code CLI with ACP support.", "https://github.com/autohandai/code-cli", "Apache-2.0", bin=("autohand", ["--acp"])),
     _h("bob", "Bob", "The AI development partner of IBM.", "https://bob.ibm.com", "Proprietary", npx=("@ibm/bob@2.0.9", ["acp"])),
@@ -109,7 +110,7 @@ CATALOG: tuple[HarnessSpec, ...] = (
     _h("minion-code", "Minion Code", "A code assistant on the Minion framework.", "https://github.com/femto/minion-code", "AGPL-3.0", uvx=("minion-code@0.1.44", ["acp"])),
     _h("mistral-vibe", "Mistral Vibe", "The open source coding assistant of Mistral.", "https://mistral.ai/products/vibe", "Apache-2.0", bin=("vibe-acp", [])),
     _h("nova", "Nova", "The software engineer agent of Compass AI.", "https://www.compassap.ai/portfolio/nova.html", "Proprietary", npx=("@compass-ai/nova@1.1.64", ["acp"])),
-    _h("omp", "Oh My Pi", "A terminal coding agent, a fork of Pi with more tools. Not in the ACP registry.", "https://github.com/can1357/oh-my-pi", "MIT", bin=("omp", ["--mode", "acp"])),
+    _h("omp", "Oh My Pi", "A coding agent with the IDE wired in, a fork of Pi with more tools. Not in the ACP registry: Harness downloads it from its GitHub releases.", "https://omp.sh", "MIT", bin=("omp", ["acp"])),
     _h("opencode", "OpenCode", "An open source coding agent. It can use local models.", "https://opencode.ai", "MIT", bin=("opencode", ["acp"])),
     _h("pi-acp", "Pi", "ACP adapter for the Pi coding agent.", "https://github.com/svkozak/pi-acp", "MIT", npx=("pi-acp@0.0.34", [])),
     _h("qoder", "Qoder CLI", "A coding assistant with agent features.", "https://qoder.com", "Proprietary", npx=("@qoder-ai/qodercli@0.2.14", ["--acp"])),
@@ -315,6 +316,7 @@ def listing() -> list[dict[str, Any]]:
 
 ENABLED_SETTING = "agents_enabled"  # The user setting: the ids of the agents in the picker rail and on the page.
 NATIVE_SETTING = "harness_native_models"  # The user setting: {"<harness id>": "<model id of the harness>"}.
+EFFORT_SETTING = "harness_native_efforts"  # The user setting: {"<harness id>": "<reasoning level of the harness>"}.
 
 
 def enabled_ids(settings: dict[str, Any]) -> list[str]:
@@ -335,6 +337,39 @@ def native_choice(settings: dict[str, Any], harness_id: str) -> str | None:
     return choice if isinstance(choice, str) and choice else None
 
 
+def native_effort(settings: dict[str, Any], harness_id: str) -> str | None:
+    """The reasoning level of the harness that new sessions use, or None for the default of the harness."""
+    value = settings.get(EFFORT_SETTING)
+    choice = value.get(harness_id) if isinstance(value, dict) else None
+    return choice if isinstance(choice, str) and choice else None
+
+
+def cached_efforts(harness_id: str) -> list[dict[str, str]]:
+    """The reasoning levels that the harness gave in its last session."""
+    data = read_json(_models_path(), {})
+    efforts = data.get("__efforts__") if isinstance(data, dict) else None
+    items = efforts.get(harness_id) if isinstance(efforts, dict) else None
+    return [m for m in items if isinstance(m, dict) and m.get("id")] if isinstance(items, list) else []
+
+
+def save_efforts(harness_id: str, efforts: list[dict[str, str]]) -> None:
+    """Keep the reasoning levels of a harness for the picker of the start screen."""
+    if not efforts:
+        return
+    try:
+        data = read_json(_models_path(), {})
+        data = data if isinstance(data, dict) else {}
+        store = data.get("__efforts__") if isinstance(data.get("__efforts__"), dict) else {}
+        if store.get(harness_id) == efforts:
+            return
+        store[harness_id] = efforts
+        data["__efforts__"] = store
+        _models_path().parent.mkdir(parents=True, exist_ok=True)
+        write_json(_models_path(), data)
+    except OSError:
+        pass
+
+
 def _models_path():
     return harness_home() / "harnesses" / "models.json"
 
@@ -342,7 +377,7 @@ def _models_path():
 def cached_models(harness_id: str) -> list[dict[str, str]]:
     """The models that the harness gave in its last session. The picker shows them before a session starts."""
     data = read_json(_models_path(), {})
-    items = data.get(harness_id) if isinstance(data, dict) else None
+    items = data.get(harness_id) if isinstance(data, dict) and harness_id != "__efforts__" else None
     return [m for m in items if isinstance(m, dict) and m.get("id")] if isinstance(items, list) else []
 
 

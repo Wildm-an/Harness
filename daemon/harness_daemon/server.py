@@ -3860,6 +3860,8 @@ async def _send_user_settings(conn: Connection) -> None:
                      "sandbox": await asyncio.to_thread(sandbox_status),
                      "harness": {"id": spec.id, "name": spec.name, "model": acp_models.choice(values, spec.id),
                                  "native_model": acp_harnesses.native_choice(values, spec.id),
+                                 "native_effort": acp_harnesses.native_effort(values, spec.id),
+                                 "efforts": [] if spec.custom else acp_harnesses.cached_efforts(spec.id),
                                  "models": [] if spec.custom else acp_harnesses.cached_models(spec.id)}
                      if spec is not None else None})
 
@@ -3960,6 +3962,8 @@ async def _send_harnesses(conn: Connection) -> None:
         item["enabled"] = item["id"] in enabled
         item["models"] = [] if item["custom"] else acp_harnesses.cached_models(item["id"])
         item["native_model"] = acp_harnesses.native_choice(settings, item["id"])
+        item["efforts"] = [] if item["custom"] else acp_harnesses.cached_efforts(item["id"])
+        item["native_effort"] = acp_harnesses.native_effort(settings, item["id"])
         item["can_sign_in"] = agent_auth.supports(item["id"])
         item["auth"] = agent_auth.STATES.cached(item["id"])
         item["icon"] = None if item["custom"] else acp_icons.icon(item["id"])  # A data URL from the ACP registry.
@@ -4683,6 +4687,47 @@ async def on_acp_model(conn: Connection, msg: dict[str, Any]) -> None:
         await session.agent.set_model(_text_arg(msg, "model"))
     except AcpError as e:
         raise ProtocolError(str(e)) from None
+
+
+@handler("acp.effort")
+async def on_acp_effort(conn: Connection, msg: dict[str, Any]) -> None:
+    """The reasoning level of an ACP session (the picker): {"effort": <a level id of the harness>}. The reply is
+    acp.state."""
+    session = conn.require_session()
+    if not isinstance(session.agent, AcpAgent):
+        raise ProtocolError("This session runs in the built-in loop. Use the effort of the model menu.")
+    conn.require_idle()
+    try:
+        await session.agent.set_effort(_text_arg(msg, "effort"))
+    except AcpError as e:
+        raise ProtocolError(str(e)) from None
+
+
+@handler("harnesses.native_effort")
+async def on_harnesses_native_effort(conn: Connection, msg: dict[str, Any]) -> None:
+    """The reasoning level of a harness for new sessions: {"id", "effort": <level id> or null}. The reply is the
+    list, then user_settings."""
+    harness_id = _text_arg(msg, "id")
+    spec = acp_harnesses.find(harness_id)
+    if spec is None or spec.custom:
+        raise ProtocolError(f"Unknown harness: {harness_id}.")
+    effort = msg.get("effort")
+    if effort is not None and (not isinstance(effort, str) or not effort.strip() or len(effort) > 100):
+        raise ProtocolError("'effort' must be a reasoning level id or null.")
+    path = _user_settings_path()
+    data = read_json(path, {})
+    store = data.get(acp_harnesses.EFFORT_SETTING) if isinstance(data.get(acp_harnesses.EFFORT_SETTING), dict) else {}
+    if effort is None:
+        store.pop(harness_id, None)
+    else:
+        store[harness_id] = effort.strip()
+    if store:
+        data[acp_harnesses.EFFORT_SETTING] = store
+    else:
+        data.pop(acp_harnesses.EFFORT_SETTING, None)
+    write_json(path, data)
+    await _send_harnesses(conn)
+    await _send_user_settings(conn)
 
 
 @handler("acp.mode")

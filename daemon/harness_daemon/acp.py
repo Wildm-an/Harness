@@ -499,6 +499,10 @@ class AcpAgent(Agent):
         self.acp_models: list[dict[str, str]] = []  # id, name, description.
         self.acp_model: str | None = None
         self._model_option: str | None = None  # The configOptions id of the model, when the harness uses one.
+        # The reasoning levels of the harness (a configOptions entry of the category "thought_level").
+        self.acp_efforts: list[dict[str, str]] = []
+        self.acp_effort: str | None = None
+        self._effort_option: str | None = None
         self._usage_known: tuple[int, int] | None = None  # usage_update: (used tokens, context size).
         self._provider_model: str | None = None  # The model id of a Harness provider in the harness (acp_models.py).
 
@@ -583,6 +587,7 @@ class AcpAgent(Agent):
         prior = self.history[:-1] if self.in_turn else self.history
         self._needs_recap = any(m.get("role") in ("user", "assistant") for m in prior)
         await self._select_provider_model(conn)
+        await self._select_effort(conn)
         await self._sync_mode(conn)  # The mode menu shows the mode of the harness from the start.
         await self._send_state()
         return conn, self._needs_recap
@@ -660,28 +665,57 @@ class AcpAgent(Agent):
             self._read_config(result["configOptions"])
 
     def _read_config(self, options: list[Any]) -> None:
-        """A configOptions entry of the category "model" is the model menu (it replaces "models")."""
+        """The configOptions of the category "model" (the model menu, it replaces "models") and "thought_level"
+        (the reasoning levels of the picker)."""
         for option in options:
-            if not isinstance(option, dict) or option.get("category") != "model" or option.get("type") != "select":
+            if not isinstance(option, dict) or option.get("type") != "select":
                 continue
-            values: list[dict[str, str]] = []
-            for item in option.get("options") or []:
-                group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
-                for value in group:
-                    if isinstance(value, dict) and value.get("value") is not None:
-                        values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
-                                       "description": str(value.get("description") or "")})
-            if values:
-                self.acp_models = values
-                self.acp_model = str(option.get("currentValue")) if option.get("currentValue") is not None else None
-                self._model_option = str(option.get("id"))
-            return
+            category = option.get("category")
+            if category not in ("model", "thought_level"):
+                continue
+            values = _option_values(option)
+            if not values:
+                continue
+            current = str(option.get("currentValue")) if option.get("currentValue") is not None else None
+            if category == "model":
+                self.acp_models, self.acp_model, self._model_option = values, current, str(option.get("id"))
+            else:
+                self.acp_efforts, self.acp_effort, self._effort_option = values, current, str(option.get("id"))
 
     async def _send_state(self) -> None:
         if self.acp_models and not self.harness.custom:
             # The picker of the start screen shows these models before the next session starts.
             await asyncio.to_thread(acp_harnesses.save_models, self.harness.id, self.acp_models)
+        if self.acp_efforts and not self.harness.custom:
+            await asyncio.to_thread(acp_harnesses.save_efforts, self.harness.id, self.acp_efforts)
         await self.emit({"type": "acp.state", "harness": self.public_harness()})
+
+    async def set_effort(self, effort: str) -> None:
+        """Change the reasoning level of the ACP session (the picker)."""
+        if effort not in {e["id"] for e in self.acp_efforts} or self._effort_option is None:
+            raise AcpError(f"{self.harness.name} has no reasoning level {effort}.")
+        conn, _ = await self._ensure_session()
+        await self._change_effort(conn, effort)
+        await self._send_state()
+
+    async def _change_effort(self, conn: AcpConnection, effort: str) -> None:
+        result = await conn.request("session/set_config_option", {
+            "sessionId": self.acp_session, "configId": self._effort_option, "value": effort})
+        if isinstance(result, dict) and isinstance(result.get("configOptions"), list):
+            self._read_config(result["configOptions"])
+        else:
+            self.acp_effort = effort
+
+    async def _select_effort(self, conn: AcpConnection) -> None:
+        """A new ACP session starts on the reasoning level that the user chose on the start screen."""
+        wanted = None if self.harness.custom else acp_harnesses.native_effort(load_settings(None), self.harness.id)
+        if not wanted or wanted == self.acp_effort or self._effort_option is None \
+                or wanted not in {e["id"] for e in self.acp_efforts}:
+            return
+        try:
+            await self._change_effort(conn, wanted)
+        except AcpError as e:
+            log.info("%s did not change the reasoning level to %s: %s", self.harness.name, wanted, e)
 
     async def set_model(self, model_id: str) -> None:
         """Change the model of the ACP session (the model menu)."""
@@ -1435,12 +1469,35 @@ class AcpAgent(Agent):
                 "model": self.acp_model, "commands": self.acp_commands,
                 # The mode menu: the modes of the harness, the current one, and "Auto (Harness)" for a harness
                 # with no Auto mode of its own (the gate of Harness checks its requests with the auto model).
-                "modes": self.acp_modes, "mode": self._chosen_mode, "harness_auto": auto_extra}
+                "modes": self.acp_modes, "mode": self._chosen_mode, "harness_auto": auto_extra,
+                "efforts": self.acp_efforts, "effort": self.acp_effort}
 
 
 # -- the models of a harness before its first session (Settings > Agents, the picker of the start screen) --
 
 PROBE_TIMEOUT = 90.0  # Seconds: an npx harness can download its package at the first start.
+
+
+def _option_values(option: dict[str, Any]) -> list[dict[str, str]]:
+    """The values of a select config option: id, name, description (also in groups)."""
+    values: list[dict[str, str]] = []
+    for item in option.get("options") or []:
+        group = item.get("options") if isinstance(item, dict) and isinstance(item.get("options"), list) else [item]
+        for value in group:
+            if isinstance(value, dict) and value.get("value") is not None:
+                values.append({"id": str(value["value"]), "name": str(value.get("name") or value["value"]),
+                               "description": str(value.get("description") or "")})
+    return values
+
+
+def parse_efforts(result: Any) -> list[dict[str, str]]:
+    """The reasoning levels of session/new: a configOptions entry of the category "thought_level"."""
+    if not isinstance(result, dict):
+        return []
+    for option in result.get("configOptions") or []:
+        if isinstance(option, dict) and option.get("category") == "thought_level" and option.get("type") == "select":
+            return _option_values(option)
+    return []
 
 
 def parse_models(result: Any) -> list[dict[str, str]]:
@@ -1501,4 +1558,7 @@ async def probe_models(spec: HarnessSpec, cwd: Path) -> list[dict[str, str]]:
     models = parse_models(result)
     if models and not spec.custom:
         await asyncio.to_thread(acp_harnesses.save_models, spec.id, models)
+    efforts = parse_efforts(result)
+    if efforts and not spec.custom:
+        await asyncio.to_thread(acp_harnesses.save_efforts, spec.id, efforts)
     return models

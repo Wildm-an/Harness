@@ -5,12 +5,24 @@ import {
   agentChoiceMessages,
   agentGroups,
   builtinGroups,
+  ctrlDigit,
+  effortChipName,
+  effortValue,
+  favoriteKey,
+  favoriteRows,
+  firstRows,
   matchesQuery,
+  parseFavorites,
   railTabs,
+  resolveEfforts,
   rowChecked,
+  rowKeyLabel,
   searchGroups,
+  splitFavorite,
   tabTip,
+  toggleFavorite,
   type AgentTab,
+  type PickGroup,
 } from "./AgentPicker";
 import { BUILTIN_AGENT } from "./AgentBits";
 
@@ -40,6 +52,8 @@ function agent(over: Partial<HarnessItem> & { id: string; name: string }): Harne
     can_sign_in: false,
     auth: null,
     icon: null,
+    efforts: [],
+    native_effort: null,
     probing: false,
     ...over,
   };
@@ -81,12 +95,13 @@ describe("the rail of the agent picker", () => {
 describe("the model lists of the agent picker", () => {
   const models = { items: ["cloud/big", "ollama/qwen3", "other/small"], errors: [], default: "cloud/big" };
 
-  it("lists the online models of the built-in loop, with a heading for two or more providers", () => {
+  it("lists the online models of the built-in loop, with a heading for two or more providers, then the local models", () => {
     const groups = builtinGroups(models, true, new Set(["ollama"]));
     expect(groups.map((g) => [g.heading, g.rows.map((r) => r.label)])).toEqual([
       [null, ["Default model (big)"]],
       ["cloud", ["big"]],
       ["other", ["small"]],
+      ["Local models", ["qwen3"]],
     ]);
     expect(builtinGroups({ ...models, items: ["cloud/big"] }, false, new Set())[0].heading).toBeNull();
   });
@@ -157,5 +172,154 @@ describe("a choice in an ACP tab on the start screen", () => {
       { type: "harnesses.native_model", id: "opencode", model: null },
       { type: "harnesses.model", id: "opencode", model: null },
     ]);
+  });
+});
+
+describe("the favorites of the agent picker", () => {
+  it("encodes and decodes a favorite as agent|value", () => {
+    expect(favoriteKey("harness", "cloud/big")).toBe("harness|cloud/big");
+    expect(splitFavorite("opencode|BugsAI/qwen3")).toEqual({ agent: "opencode", value: "BugsAI/qwen3" });
+    expect(splitFavorite("codex|a|b")).toEqual({ agent: "codex", value: "a|b" });
+    expect(splitFavorite("nobar")).toBeNull();
+    expect(splitFavorite("|x")).toBeNull();
+    expect(splitFavorite("x|")).toBeNull();
+  });
+
+  it("reads the preference, and drops a bad value", () => {
+    expect(parseFavorites('["harness|cloud/big","harness|cloud/big",3,"bad","codex|gpt"]')).toEqual(["harness|cloud/big", "codex|gpt"]);
+    expect(parseFavorites("not json")).toEqual([]);
+    expect(parseFavorites('{"a":1}')).toEqual([]);
+  });
+
+  it("adds and removes a favorite", () => {
+    expect(toggleFavorite(["a|1"], "b|2")).toEqual(["a|1", "b|2"]);
+    expect(toggleFavorite(["a|1", "b|2"], "a|1")).toEqual(["b|2"]);
+  });
+
+  it("lists the favorites that a group gives, in their order, with the group as the detail", () => {
+    const models = { items: ["cloud/big", "ollama/qwen3"], errors: [], default: null };
+    const tab: AgentTab = { id: "opencode", name: "OpenCode", item: null, models: [fast, smart], nativeModel: null, providerModel: null, providerModels: false };
+    const groups = [...builtinGroups(models, true, new Set(["ollama"]), true), ...agentGroups(tab, [], true)];
+    const rows = favoriteRows(["opencode|smart", "harness|gone/model", "harness|ollama/qwen3", "opencode|"], groups);
+    expect(rows.map((r) => [r.agent, r.value, r.label, r.detail])).toEqual([
+      ["opencode", "smart", "Smart", "OpenCode"],
+      ["harness", "ollama/qwen3", "qwen3", "ollama"],
+    ]);
+  });
+});
+
+describe("Show more in the agent picker", () => {
+  const row = (value: string, kind: "default" | "builtin" = "builtin") => ({ key: value, agent: "harness", kind, value, label: value });
+  const groups: PickGroup[] = [
+    { key: "d", heading: null, searchHeading: "d", rows: [row("", "default")] },
+    { key: "a", heading: "a", searchHeading: "a", rows: [row("a/1"), row("a/2"), row("a/3")] },
+    { key: "b", heading: "b", searchHeading: "b", rows: [row("b/1"), row("b/2"), row("b/3")] },
+  ];
+
+  it("shows the default row and the first 4 models, and counts the others", () => {
+    const first = firstRows(groups, 4);
+    expect(first.groups.map((g) => [g.key, g.rows.map((r) => r.value)])).toEqual([
+      ["d", [""]],
+      ["a", ["a/1", "a/2", "a/3"]],
+      ["b", ["b/1"]],
+    ]);
+    expect(first.hidden).toBe(2);
+  });
+
+  it("always shows the current model, and drops an empty group", () => {
+    const first = firstRows(groups, 2, (r) => r.value === "b/3");
+    expect(first.groups.map((g) => [g.key, g.rows.map((r) => r.value)])).toEqual([
+      ["d", [""]],
+      ["a", ["a/1", "a/2"]],
+      ["b", ["b/3"]],
+    ]);
+    expect(first.hidden).toBe(3);
+    expect(firstRows(groups, 10).hidden).toBe(0);
+  });
+});
+
+describe("the keys of the agent picker", () => {
+  const key = (over: Partial<KeyboardEvent>) => ({ key: "", code: "", ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...over });
+
+  it("maps Ctrl+1 to Ctrl+9 to a row", () => {
+    expect(ctrlDigit(key({ key: "3", code: "Digit3", ctrlKey: true }))).toBe(3);
+    expect(ctrlDigit(key({ key: "End", code: "Numpad1", ctrlKey: true }))).toBe(1);
+    expect(ctrlDigit(key({ key: "9", ctrlKey: true }))).toBe(9); // No code.
+    expect(ctrlDigit(key({ key: "&", code: "Digit1", ctrlKey: true }))).toBe(1); // Another keyboard layout.
+    expect(ctrlDigit(key({ key: "3", code: "Digit3" }))).toBeNull(); // A plain digit goes to the search field.
+    expect(ctrlDigit(key({ key: "0", code: "Digit0", ctrlKey: true }))).toBeNull();
+    expect(ctrlDigit(key({ key: "3", code: "Digit3", ctrlKey: true, shiftKey: true }))).toBeNull();
+  });
+
+  it("labels the first 9 rows", () => {
+    expect([0, 8, 9, -1].map(rowKeyLabel)).toEqual(["Ctrl+1", "Ctrl+9", null, null]);
+  });
+});
+
+describe("the reasoning levels of an ACP agent", () => {
+  const level = (id: string, name: string, description = "") => ({ id, name, description });
+  const levels = [level("low", "Low"), level("medium", "Medium"), level("high", "High"), level("xhigh", "Extra high")];
+
+  it("gives the Default label to the level that the default entry names", () => {
+    const efforts = [level("default", "Default", "Uses medium effort"), ...levels];
+    const r = resolveEfforts(efforts, null);
+    expect(r.levels.map((l) => l.id)).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(r.defaultId).toBe("medium");
+    expect(r.currentId).toBe("medium");
+    expect(resolveEfforts(efforts, "default").currentId).toBe("medium");
+    expect(resolveEfforts(efforts, "high").currentId).toBe("high");
+  });
+
+  it("matches the longest level name, and a whole word only", () => {
+    expect(resolveEfforts([level("default", "Default (Extra high)"), ...levels], null).defaultId).toBe("xhigh");
+    expect(resolveEfforts([level("default", "Default", "xhigh"), ...levels], null).defaultId).toBe("xhigh");
+    expect(resolveEfforts([level("default", "Default (HIGH)"), ...levels], null).defaultId).toBe("high");
+  });
+
+  it("shows a Default row when the default entry names no level", () => {
+    const r = resolveEfforts([level("default", "Default", "The agent chooses"), ...levels], null);
+    expect(r.levels.map((l) => [l.id, l.name])).toEqual([
+      ["default", "Default"],
+      ["low", "Low"],
+      ["medium", "Medium"],
+      ["high", "High"],
+      ["xhigh", "Extra high"],
+    ]);
+    expect(r.defaultId).toBe("default");
+    expect(r.currentId).toBe("default");
+  });
+
+  it("has no default level with no default entry", () => {
+    expect(resolveEfforts(levels, null)).toEqual({ levels, defaultId: null, currentId: null });
+    expect(resolveEfforts(levels, "low").currentId).toBe("low");
+  });
+
+  it("sends null for the default level on the start screen, and the id in a session", () => {
+    const named = resolveEfforts([level("default", "Default (medium)"), ...levels], null);
+    expect(effortValue("medium", named, false)).toBeNull();
+    expect(effortValue("high", named, false)).toBe("high");
+    expect(effortValue("medium", named, true)).toBe("medium");
+    const plain = resolveEfforts([level("default", "Default"), ...levels], null);
+    expect(effortValue("default", plain, false)).toBeNull();
+    expect(effortValue("default", plain, true)).toBe("default");
+  });
+
+  it("shows the level in the chip, but not the default of the agent", () => {
+    const efforts = [level("default", "Default"), ...levels];
+    expect(effortChipName(efforts, "xhigh")).toBe("Extra high");
+    expect(effortChipName(efforts, "default")).toBeNull();
+    expect(effortChipName([level("default", "Default (high)"), ...levels], null)).toBe("High");
+    expect(effortChipName([], "high")).toBeNull();
+    expect(effortChipName(undefined, "high")).toBeNull();
+  });
+
+  it("takes the levels of the session, else of the agent list, else of user_settings", () => {
+    const efforts = [level("low", "Low")];
+    const inSession = railTabs([agent({ id: "claude", name: "Claude Agent" })], { id: "claude", name: "Claude Agent", efforts, effort: "low" }, true)[1];
+    expect([inSession.efforts, inSession.effort]).toEqual([efforts, "low"]);
+    const listed = railTabs([agent({ id: "claude", name: "Claude Agent", efforts, native_effort: "low" })], null, false)[1];
+    expect([listed.efforts, listed.effort]).toEqual([efforts, "low"]);
+    const early = railTabs(null, { id: "claude", name: "Claude Agent", efforts, native_effort: "low" }, false)[1];
+    expect([early.efforts, early.effort]).toEqual([efforts, "low"]);
   });
 });

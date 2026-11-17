@@ -42,6 +42,8 @@ const harness = (id: string, name: string, extra: Partial<HarnessItem> = {}): Ha
   can_sign_in: false,
   auth: null,
   icon: null,
+  efforts: [],
+  native_effort: null,
   probing: false,
   ...extra,
 });
