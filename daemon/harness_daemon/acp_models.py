@@ -24,18 +24,25 @@ The adapters (checked in the source code of each harness, November 2026):
   ``/v1/responses`` (Ollama has it).
 - ``opencode``: ``OPENCODE_CONFIG_CONTENT`` (JSON) with a provider "harness" (``@ai-sdk/openai-compatible``)
   and the model. The key is in ``HARNESS_PROVIDER_API_KEY``: the JSON reads it with ``{env:...}``.
+- ``omp``: Oh My Pi reads custom providers only from ~/.omp/agent/models.yml, or from an extension. The
+  daemon gives ``-e agent_extensions/omp-harness-provider.js``. The extension registers the provider
+  "harness" from ``HARNESS_OMP_PROVIDER`` (JSON), and reads the key from ``HARNESS_PROVIDER_API_KEY``.
+  The daemon does not give ``--model``: OMP reads ":<word>" in a model name (for example "qwen3:30b")
+  as a thinking level and stops. The new session changes to "harness/<model>" (session_model_id).
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 KEY_ENV = "HARNESS_PROVIDER_API_KEY"
 NO_KEY = "none"  # The placeholder key for a server that needs no key.
 SETTING = "harness_models"
+OMP_EXTENSION = Path(__file__).resolve().parent / "agent_extensions" / "omp-harness-provider.js"
 
 
 class ModelChoiceError(Exception):
@@ -102,11 +109,19 @@ def _opencode(t: Target) -> Launch:
     return [], {"OPENCODE_CONFIG_CONTENT": json.dumps(config), **({KEY_ENV: t.api_key} if t.api_key else {})}
 
 
+def _omp(t: Target) -> Launch:
+    config: dict[str, Any] = {"baseUrl": t.base_url, "model": t.model}
+    if t.context:
+        config["context"] = t.context
+    return ["-e", str(OMP_EXTENSION)], {"HARNESS_OMP_PROVIDER": json.dumps(config), KEY_ENV: _key(t)}
+
+
 ADAPTERS: dict[str, Callable[[Target], Launch]] = {
     "qwen-code": _qwen,
     "goose": _goose,
     "codex-acp": _codex,
     "opencode": _opencode,
+    "omp": _omp,
 }
 
 # A note for the Model row of a harness: what the server must have.
@@ -118,6 +133,7 @@ NOTES: dict[str, str] = {
 # The model id in the model menu of the harness, when it is not the model name of the provider.
 SESSION_MODEL_IDS: dict[str, Callable[[Target], str]] = {
     "opencode": lambda t: f"harness/{t.model}",
+    "omp": lambda t: f"harness/{t.model}",
 }
 
 
