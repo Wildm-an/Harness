@@ -9,7 +9,8 @@ import type { GitChanges, PullRequest } from "../daemon/protocol";
 import { RailChanges, RailPrList, type AutoFix } from "./RailChanges";
 import { listedPrs, usePrInfos, type GitAction } from "../lib/pr";
 import { captureAgentTab } from "../browser/BrowserPane";
-import type { ConnectorItem, McpServerItem, PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
+import type { ConnectorItem, HarnessItem, McpServerItem, PrStatus, ServerItem, SessionWorktree, TaskItem } from "../daemon/protocol";
+import { DelegateList } from "./Delegates";
 import { ConnectorLogo } from "./ConnectorLogo";
 import type { ConnectionKind } from "../lib/connections";
 import {
@@ -28,6 +29,7 @@ import {
   taskSummary,
   toggleFolded,
   type RailConnectorState,
+  type RailDelegate,
   type RailSection,
 } from "../lib/sessionRail";
 import { formatTokens, type ContextUsage } from "../lib/context";
@@ -108,6 +110,10 @@ export function SessionRail({
   onShowConnectors,
   tasks,
   onShowTasks,
+  delegates = [],
+  agents = null,
+  onOpenDelegate,
+  onStopDelegate,
   keepAwake,
   onKeepAwake,
   keepAwakeDisabled,
@@ -144,6 +150,10 @@ export function SessionRail({
   onShowConnectors: () => void; // Open the Connectors tab of the Capabilities page.
   tasks: TaskItem[];
   onShowTasks: () => void;
+  delegates?: RailDelegate[]; // The child agents that delegate_task started in this session, the newest first.
+  agents?: HarnessItem[] | null; // The agents of the daemon, for the logo and the name of each delegate.
+  onOpenDelegate?: (id: string) => void; // A click on a delegate: its chat opens in the split pane.
+  onStopDelegate?: (id: string) => void; // The stop button of a delegate that works.
   keepAwake: boolean; // "Keep computer awake" for this session (the same switch as in the ⋮ menu).
   onKeepAwake: (on: boolean) => void;
   keepAwakeDisabled: boolean; // Not connected.
@@ -353,6 +363,12 @@ export function SessionRail({
           ))}
         </ul>
       ) : null,
+    // The child agents of delegate_task (the user asked for this section): the logo of the agent, the title, and the
+    // time of the work. The tip has the agent, the model, and the reasoning. A click opens the chat in the split pane.
+    delegates:
+      delegates.length > 0 ? (
+        <DelegateList delegates={delegates} agents={agents} onOpen={onOpenDelegate} onStop={onStopDelegate} />
+      ) : null,
     backgroundTasks:
       shownTasks.length > 0 ? (
         <>
@@ -423,6 +439,11 @@ export function SessionRail({
                     <span className={`rail-head-meter ${level}`} aria-hidden>
                       <span style={{ width: `${Math.max(share * 100, share > 0 ? 8 : 0)}%` }} />
                     </span>
+                  </span>
+                )}
+                {s.id === "delegates" && (
+                  <span className="rail-head-value" aria-label={`Delegates of this session: ${delegateCount(delegates)}`}>
+                    {delegateCount(delegates)}
                   </span>
                 )}
                 {s.id === "connectors" && connectorsValue && (
@@ -576,6 +597,12 @@ function RailBrowserView({
       {browser.agent && <span className="sr-only">The agent uses this page now.</span>}
     </div>
   );
+}
+
+/** The heading value of the Delegates section: "{working}/{all}" while some work, else the count. */
+function delegateCount(delegates: RailDelegate[]): string {
+  const working = delegates.filter((d) => d.state === "working" || d.state === "waiting").length;
+  return working > 0 ? `${working}/${delegates.length}` : String(delegates.length);
 }
 
 function RailRow({ label, title, children }: { label: string; title?: string; children: ReactNode }) {

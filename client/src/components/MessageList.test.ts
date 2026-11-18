@@ -17,6 +17,16 @@ describe("groupTools", () => {
   });
 });
 
+describe("the Delegates card", () => {
+  const call = (id: string, name: string): ChatItem => ({ kind: "tool", id, name, input: {}, status: "done" });
+
+  it("takes the delegate_task calls in a row out of the tool groups", () => {
+    const shown = groupTools([call("a", "bash"), call("b", "delegate_task"), call("c", "delegate_task"), call("d", "bash")]);
+    expect(shown.map((s) => s.kind)).toEqual(["tools", "delegates", "tools"]);
+    expect(shown[1].kind === "delegates" && shown[1].items.map((i) => i.id)).toEqual(["b", "c"]);
+  });
+});
+
 describe("the list follows the agent", () => {
   it("only when the user is fully at the bottom", () => {
     expect(nextFollow(false, 0, 500, 400)).toBe(true);

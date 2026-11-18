@@ -15,6 +15,7 @@ import { isProgressTool, latestPlan, latestWrapUp } from "../lib/progress";
 import { WorkingLine } from "./WorkingLine";
 import { VisualBlock } from "./VisualBlock";
 import { FileCard } from "./FileCard";
+import { DelegatesCard } from "./Delegates";
 import { isVisualItem, visualOf } from "../lib/visual";
 import { useEnterMotion } from "../lib/motion";
 import type { TurnInfo } from "../chat/state";
@@ -23,7 +24,10 @@ import { formatDateTime } from "../lib/timeFormat";
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 
-type Shown = ChatItem | { kind: "tools"; id: string; items: ToolItem[] };
+// "delegates": the delegate_task calls in a row, as one Delegates card (Delegates.tsx).
+type Shown = ChatItem | { kind: "tools"; id: string; items: ToolItem[] } | { kind: "delegates"; id: string; items: ToolItem[] };
+
+const DELEGATE_TOOL = "delegate_task";
 
 /**
  * The items to show: the tool calls in a row become one group, as in Claude. A visual is its own item.
@@ -124,7 +128,10 @@ export function groupTools(items: ChatItem[], previous?: Map<string, ToolItem[]>
   const out: Shown[] = [];
   for (const item of items) {
     const last = out[out.length - 1];
-    if (item.kind !== "tool" || isVisualItem(item)) out.push(item);
+    if (item.kind === "tool" && item.name === DELEGATE_TOOL) {
+      if (last?.kind === "delegates") last.items.push(item);
+      else out.push({ kind: "delegates", id: `delegates-${item.id}`, items: [item] });
+    } else if (item.kind !== "tool" || isVisualItem(item)) out.push(item);
     else if (last?.kind === "tools") last.items.push(item);
     else out.push({ kind: "tools", id: `tools-${item.id}`, items: [item] });
   }
@@ -704,6 +711,8 @@ export function MessageList({
               );
             case "tools":
               return <ToolGroup key={item.id} items={item.items} reviewId={reviewId} onReview={onReview} />;
+            case "delegates":
+              return <DelegatesCard key={item.id} items={item.items} />;
             case "tool": {
               // A visual of the agent (show_visual). Other tool calls are in a group.
               const visual = visualOf(item);

@@ -585,6 +585,18 @@ export interface SessionSummary {
   snoozed_until?: number | null; // Epoch seconds. null: not snoozed.
   auto_archive?: boolean; // false: "Auto-settle" > "Never".
   archived_at?: number | null; // The time of the archive (the settle time).
+  // A child agent of delegate_task: the Delegates section of the session rail of the parent lists it. null: not a
+  // delegate. An older daemon does not send it.
+  delegate?: DelegateInfo | null;
+}
+
+/** The agent, the model, and the run of a delegated task (daemon start_delegate). */
+export interface DelegateInfo {
+  agent: string | null; // The ACP agent id. null: the built-in loop of Harness.
+  model: string | null; // "provider/model" for Harness. null: the default model of the agent.
+  effort: string | null; // The reasoning level. null: the default.
+  ended_at: number | null; // Epoch seconds. null: the delegated turn runs.
+  status: "running" | "completed" | "failed" | "stopped";
 }
 
 /** The branches of the repository of a folder, for the "Branch to start from" menu. */
@@ -1095,6 +1107,7 @@ export type ClientMessage =
   | { type: "tasks.list" }
   | { type: "task.get"; id: string }
   | { type: "task.stop"; id: string }
+  | { type: "session.stop"; session_id: string } // Stop the turn of another session: a delegate (Delegates.tsx).
   | { type: "session.keep_awake"; on: boolean } // Only for this session. The daemon does not save it.
   // The client can host the agent browser in a tab of its Browser pane (the desktop app, a local daemon).
   | { type: "browser.pane"; enabled: boolean }

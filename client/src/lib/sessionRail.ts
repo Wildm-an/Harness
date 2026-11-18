@@ -2,7 +2,9 @@
 // details of the session in sections. The title bar button shows or hides it. Claude keeps the
 // shown state and the folded sections, so the app saves them as per-device preferences.
 
-import type { ConnectorItem, McpServerItem, PrStatus, TaskItem } from "../daemon/protocol";
+import type { ConnectorItem, McpServerItem, PrStatus, RunningSession, SessionSummary, TaskItem } from "../daemon/protocol";
+import { modelName } from "./modelName";
+import { workingDuration } from "./threads";
 import { loadPref, savePref } from "./prefs";
 
 /**
@@ -11,11 +13,12 @@ import { loadPref, savePref } from "./prefs";
  * the prompt box. "Browser" (the small live view of the page where the agent works) is under
  * "Servers" (the user asked for it). The user can drag the sections into another order.
  */
-export type RailSection = "browser" | "environment" | "context" | "connectors" | "changes" | "pullRequests" | "servers" | "backgroundTasks";
+export type RailSection = "browser" | "environment" | "context" | "delegates" | "connectors" | "changes" | "pullRequests" | "servers" | "backgroundTasks";
 
 export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
   { id: "environment", title: "Environment" },
   { id: "context", title: "Context" },
+  { id: "delegates", title: "Delegates" },
   { id: "connectors", title: "Connectors" },
   { id: "changes", title: "Changes" },
   { id: "pullRequests", title: "Pull requests" },
@@ -263,4 +266,101 @@ export function taskSummary(tasks: TaskItem[]): string {
   const running = tasks.filter((t) => t.status === "running").length;
   const ended = tasks.length - running;
   return [running ? `${running} running` : "", ended ? `${ended} ended` : ""].filter(Boolean).join(" · ");
+}
+
+/** The state of a delegate row: it works, it waits for an approval, or its delegated task ended. */
+export type DelegateState = "working" | "waiting" | "completed" | "failed" | "stopped";
+
+/** A child agent of delegate_task, for the Delegates section of the rail. */
+export interface RailDelegate {
+  id: string; // The session of the child.
+  title: string;
+  provider: string;
+  model: string; // The model of the session in storage (the harness id for an ACP session).
+  agent: string | null;
+  delegateModel: string | null; // The model that delegate_task asked for.
+  effort: string | null;
+  state: DelegateState;
+  startedAt: number; // Epoch seconds.
+  endedAt: number | null;
+}
+
+/** The delegate row of a child session of delegate_task, or null for another session. A child that a window or the
+ * background runs now is "working" (or "waiting" for an approval), also after its delegated task ended. */
+export function delegateOf(s: SessionSummary, running: RunningSession[]): RailDelegate | null {
+  const d = s.delegate;
+  if (!d) return null;
+  const live = running.find((r) => r.session_id === s.id);
+  const ended = d.ended_at !== null && d.status !== "running";
+  const state: DelegateState = live ? (live.waiting ? "waiting" : "working") : ended ? (d.status as DelegateState) : "working";
+  return {
+    id: s.id,
+    title: s.title?.trim() || "Untitled session",
+    provider: s.provider,
+    model: s.model,
+    agent: d.agent,
+    delegateModel: d.model,
+    effort: d.effort,
+    state,
+    startedAt: s.created_at,
+    endedAt: live || !ended ? null : d.ended_at,
+  };
+}
+
+/** The delegates of a session: the child sessions that delegate_task started, the newest first. */
+export function railDelegates(sessions: SessionSummary[], parentId: string, running: RunningSession[]): RailDelegate[] {
+  return sessions
+    .filter((s) => s.parent_id === parentId)
+    .map((s) => delegateOf(s, running))
+    .filter((d): d is RailDelegate => d !== null)
+    .sort((a, b) => b.startedAt - a.startedAt);
+}
+
+/** The session of the child that a delegate_task call started (childThreadId of its result), or null. */
+export function delegateSessionId(item: { output?: string; status: string }): string | null {
+  if (item.status === "error" || !item.output) return null;
+  try {
+    const value: unknown = JSON.parse(item.output);
+    const id = value && typeof value === "object" ? (value as { childThreadId?: unknown }).childThreadId : null;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    // Another agent can wrap the result of the Harness MCP tool in its own text.
+    return /"childThreadId"\s*:\s*"([^"]+)"/.exec(item.output)?.[1] ?? null;
+  }
+}
+
+/** The title of a delegate_task call from its input, as the daemon makes it: the title, else the start of the task. */
+export function delegateCallTitle(item: { input: unknown }): string {
+  const input = (item.input && typeof item.input === "object" ? item.input : {}) as { title?: unknown; task?: unknown };
+  const title = typeof input.title === "string" ? input.title.split(/\s+/).join(" ").trim() : "";
+  if (title) return title;
+  const task = typeof input.task === "string" ? input.task.split(/\s+/).join(" ").trim() : "";
+  return task.slice(0, 60) || "Delegated task";
+}
+
+/** The delegates that work or wait (the rows of the section), and the ended ones (the "Previous agents" group). */
+export function splitDelegates(delegates: RailDelegate[]): { active: RailDelegate[]; previous: RailDelegate[] } {
+  const live = (d: RailDelegate) => d.state === "working" || d.state === "waiting";
+  return { active: delegates.filter(live), previous: delegates.filter((d) => !live(d)) };
+}
+
+/** The time of a delegate: from its start to its end, or to now while it works. */
+export function delegateElapsed(d: Pick<RailDelegate, "startedAt" | "endedAt">, now: number): string {
+  return workingDuration((d.endedAt ?? now) - d.startedAt);
+}
+
+const DELEGATE_STATES: Record<DelegateState, string> = {
+  working: "Working",
+  waiting: "Awaiting approval",
+  completed: "Completed",
+  failed: "Failed",
+  stopped: "Stopped",
+};
+
+/** The hover tip of a delegate row: the title, the agent, the model, the reasoning, and the state with the time. */
+export function delegateTip(d: RailDelegate, agentName: string, now: number): string {
+  const model = d.delegateModel ? modelName(d.delegateModel) : d.agent ? "Default model" : modelName(d.model);
+  const time = delegateElapsed(d, now);
+  const state = d.state === "working" || d.state === "waiting" ? `${DELEGATE_STATES[d.state]} · ${time}` : `${DELEGATE_STATES[d.state]} after ${time}`;
+  return [d.title, `Agent: ${agentName}`, `Model: ${model}`, ...(d.effort ? [`Reasoning: ${d.effort}`] : []), state].join("\n");
 }

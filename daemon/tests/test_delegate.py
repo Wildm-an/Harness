@@ -120,6 +120,11 @@ def test_delegate_a_task_to_another_agent_and_wait(daemon, project, fake_model, 
     child = next(r for r in rows if r["id"] == done["childThreadId"])
     assert child["parent_id"] == ready["session_id"] and child["title"] == "Echo"
     assert child["model"] == fake_agent.id
+    # The Delegates section of the rail of the parent: the agent, the model, and the end of the run.
+    assert child["delegate"]["agent"] == fake_agent.id and child["delegate"]["status"] == "completed"
+    assert child["delegate"]["ended_at"] >= child["created_at"]
+    # A session that the user starts is not a delegate.
+    assert next(r for r in rows if r["id"] == ready["session_id"])["delegate"] is None
     c.close()
 
 
@@ -144,3 +149,54 @@ def test_an_async_child_wakes_the_parent(daemon, project, fake_model, fake_agent
     # The role line of T3 Code comes before the task.
     assert f"Delegated task {started['taskId']} (Later) [completed]:\necho: Act as the review sub-agent" in note
     c.close()
+
+
+def test_a_running_delegate_blocks_the_archive_and_the_rail_stops_it(daemon, project, fake_model, fake_agent):  # noqa: F811
+    """As T3 Code: a session with a running delegate is not archived. The stop button of the delegate row
+    (session.stop) stops the child, and the session can then be archived."""
+    import time
+
+    c = Client(daemon)
+    ready = c.new_session(project)
+    fake_model.script(
+        {"tool_calls": [{"name": "delegate_task", "arguments": {
+            "task": "wait", "title": "Hold", "target": {"providerInstanceId": fake_agent.id}}}]},
+        {"text": "It runs."},
+        {"text": "The child stopped."},  # The turn that the end of the child starts.
+    )
+    c.send({"type": "prompt", "text": "Delegate it"})
+    c.until("turn.end", timeout=60)
+    started = json.loads(next(m for m in fake_model.requests[-1]["messages"] if m["role"] == "tool")["content"])
+    child = started["childThreadId"]
+    c.send({"type": "session.update", "session_id": ready["session_id"], "archived": True})
+    assert "running delegates" in c.until("error")[0]["message"]
+
+    c.send({"type": "session.stop", "session_id": child})
+    deadline = time.time() + 30
+    while True:
+        c.send({"type": "session.list"})
+        row = next(r for r in c.until("sessions")[0]["items"] if r["id"] == child)
+        if row["delegate"]["status"] != "running" or time.time() > deadline:
+            break
+        time.sleep(0.2)
+    assert row["delegate"]["status"] == "stopped" and row["delegate"]["ended_at"] is not None
+    c.until("turn.end", timeout=60)  # The end of the child wakes the parent.
+    c.send({"type": "session.update", "session_id": ready["session_id"], "archived": True})
+    c.send({"type": "session.list"})
+    parent = next(r for r in c.until("sessions")[0]["items"] if r["id"] == ready["session_id"])
+    assert parent["archived"] is True
+    c.close()
+
+
+def test_a_delegate_of_a_stopped_daemon_is_stopped(tmp_path):
+    from harness_daemon.storage import Storage
+
+    storage = Storage(tmp_path / "h.db")
+    parent = storage.create_session(str(tmp_path), "fake", "m")
+    child = storage.create_session(str(tmp_path), "fake", "m", parent_id=parent)
+    storage.update_session(child, delegate=json.dumps({"agent": None, "model": "fake/m", "effort": None,
+                                                        "ended_at": None, "status": "running"}))
+    assert storage.end_stale_delegates() == 1
+    row = next(r for r in storage.list_sessions() if r["id"] == child)
+    assert row["delegate"]["status"] == "stopped" and row["delegate"]["ended_at"] == row["updated_at"]
+    assert storage.delegate_ids(parent) == [child] and storage.end_stale_delegates() == 0

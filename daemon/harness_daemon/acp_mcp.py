@@ -81,6 +81,10 @@ _INSTRUCTION_LINES: tuple[tuple[tuple[str, ...], str], ...] = (
      "- Memory: save facts about the user and the project that help later sessions with memory."),
     (("conversation_search", "session_read"),
      "- Other sessions: find earlier work with conversation_search, and read a session with session_read."),
+    (("delegate_task", "task_status"),
+     "- Delegation: to give a task to a child agent that the user can watch and open in Harness, call delegate_task "
+     "(orchestrator_capabilities lists the agents and models). The chat shows a Delegates card, and the session rail "
+     "lists it under Delegates. Its end wakes you. Read the result with task_status."),
     (("monitor", "task_output"),
      "- Background work: watch a long command with monitor, and read its output with task_output."),
 )

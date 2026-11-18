@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ConnectorItem, McpServerItem, TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, connectorsHeadValue, contextLevel, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, percentText1, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import type { ConnectorItem, McpServerItem, SessionSummary, TaskItem } from "../daemon/protocol";
+import { RAIL_SECTIONS, splitDelegates, delegateCallTitle, delegateElapsed, delegateSessionId, delegateTip, railDelegates, connectorsHeadValue, contextLevel, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, percentText1, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -14,7 +14,7 @@ const task = (id: string, status: TaskItem["status"], started_at: number): TaskI
 
 describe("the session rail sections", () => {
   it("use the order of Claude", () => {
-    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(["environment", "context", "delegates", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
   });
 
   it("read the folded sections and drop unknown ids", () => {
@@ -144,12 +144,12 @@ describe("the background tasks of the rail", () => {
 
 describe("section order", () => {
   it("keeps the saved order and puts a new section after its default neighbor", () => {
-    expect(parseOrder("not json")).toEqual(["environment", "context", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(parseOrder("not json")).toEqual(["environment", "context", "delegates", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
     // A saved order from before the Browser and Changes sections: each goes after its default neighbor.
     expect(parseOrder(JSON.stringify(["servers", "environment", "context", "pullRequests", "backgroundTasks"]))).toEqual([
-      "servers", "browser", "environment", "context", "connectors", "changes", "pullRequests", "backgroundTasks",
+      "servers", "browser", "environment", "context", "delegates", "connectors", "changes", "pullRequests", "backgroundTasks",
     ]);
-    expect(parseOrder(JSON.stringify(["context", "nope", "context"]))).toEqual(["environment", "context", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
+    expect(parseOrder(JSON.stringify(["context", "nope", "context"]))).toEqual(["environment", "context", "delegates", "connectors", "changes", "pullRequests", "servers", "browser", "backgroundTasks"]);
   });
 
   it("moves a section before or after another, and one step in the shown list", () => {
@@ -219,5 +219,56 @@ describe("the context color level", () => {
     expect(contextLevel(0.6)).toBe("mid");
     expect(contextLevel(0.8)).toBe("high");
     expect(contextLevel(0.75, 0.7)).toBe("high");
+  });
+});
+
+describe("the Delegates section", () => {
+  const session = (id: string, extra: Partial<SessionSummary>): SessionSummary => ({
+    id, cwd: "C:/p", provider: "fake", model: "fake/m", title: id, created_at: 100, updated_at: 100, ...extra,
+  });
+  const run = { agent: null, model: "fake/m", effort: "high", ended_at: null, status: "running" as const };
+
+  it("lists only the delegates of the session, the newest first", () => {
+    const list = [
+      session("a", { parent_id: "p", delegate: run, created_at: 100 }),
+      session("b", { parent_id: "p", delegate: run, created_at: 200 }),
+      session("fork", { parent_id: "p" }),
+      session("other", { parent_id: "q", delegate: run }),
+    ];
+    expect(railDelegates(list, "p", []).map((d) => d.id)).toEqual(["b", "a"]);
+  });
+
+  it("shows a child that runs now as working, or waiting for an approval", () => {
+    const ended = session("a", { parent_id: "p", delegate: { ...run, ended_at: 160, status: "completed" } });
+    expect(railDelegates([ended], "p", [])[0]).toMatchObject({ state: "completed", endedAt: 160 });
+    expect(railDelegates([ended], "p", [{ session_id: "a", waiting: true }])[0]).toMatchObject({ state: "waiting", endedAt: null });
+  });
+
+  it("gives the time and the hover tip with the model", () => {
+    const d = railDelegates([session("a", { parent_id: "p", delegate: { ...run, ended_at: 190, status: "failed" } })], "p", [])[0];
+    expect(delegateElapsed(d, 1000)).toBe("1m");
+    expect(delegateTip(d, "Harness", 1000)).toBe(["a", "Agent: Harness", "Model: m", "Reasoning: high", "Failed after 1m"].join("\n"));
+  });
+
+  it("puts the ended delegates in the Previous agents group", () => {
+    const list = railDelegates(
+      [
+        session("a", { parent_id: "p", delegate: { ...run, ended_at: 150, status: "failed" } }),
+        session("b", { parent_id: "p", delegate: run }),
+        session("c", { parent_id: "p", delegate: { ...run, ended_at: 150, status: "completed" } }),
+      ],
+      "p",
+      [{ session_id: "b", waiting: false }],
+    );
+    const { active, previous } = splitDelegates(list);
+    expect(active.map((d) => d.id)).toEqual(["b"]);
+    expect(previous.map((d) => d.state)).toEqual(["failed", "completed"]);
+  });
+
+  it("reads the child session of a delegate_task call", () => {
+    expect(delegateSessionId({ status: "done", output: JSON.stringify({ childThreadId: "abc" }) })).toBe("abc");
+    expect(delegateSessionId({ status: "done", output: 'Result: {"childThreadId": "xyz"}' })).toBe("xyz");
+    expect(delegateSessionId({ status: "error", output: '{"childThreadId": "abc"}' })).toBeNull();
+    expect(delegateCallTitle({ input: { task: "Fix   the tests" } })).toBe("Fix the tests");
   });
 });

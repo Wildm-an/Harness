@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     position REAL,
     snoozed_until REAL,
     auto_archive INTEGER NOT NULL DEFAULT 1,
-    archived_at REAL
+    archived_at REAL,
+    -- JSON: a child agent of delegate_task (tools/delegate.py) and its run: agent, model, effort, ended_at,
+    -- status. The Delegates section of the session rail of the parent lists it. NULL: not a delegate.
+    delegate TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -182,6 +185,8 @@ class Storage:
             self.db.execute("ALTER TABLE sessions ADD COLUMN routine_id TEXT")
         if "parent_id" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT")
+        if "delegate" not in columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN delegate TEXT")
         if "position" not in columns:
             self.db.execute("ALTER TABLE sessions ADD COLUMN position REAL")
         if "snoozed_until" not in columns:
@@ -327,7 +332,7 @@ class Storage:
 
     def list_sessions(self, cwd: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         sql = ("SELECT id, cwd, provider, model, title, created_at, updated_at, pinned, archived, worktree, routine_id, "
-               "parent_id, position, snoozed_until, auto_archive, archived_at FROM sessions")
+               "parent_id, position, snoozed_until, auto_archive, archived_at, delegate FROM sessions")
         params: tuple = ()
         sql += " ORDER BY updated_at DESC, rowid DESC"
         rows = [dict(r) for r in self.db.execute(sql, params)]
@@ -339,16 +344,43 @@ class Storage:
                 r["branch"] = json.loads(r.pop("worktree") or "null")["branch"]
             except (ValueError, TypeError, KeyError):
                 r["branch"] = None
+            try:  # A child agent of delegate_task: its agent, model, and run. None: not a delegate.
+                delegate = json.loads(r["delegate"] or "null")
+                r["delegate"] = delegate if isinstance(delegate, dict) else None
+            except (ValueError, TypeError):
+                r["delegate"] = None
         if cwd:  # Compare as paths: case-insensitive on Windows.
             key = path_key(cwd)
             rows = [r for r in rows if path_key(r["cwd"]) == key]
         return rows[:limit]
 
+    def end_stale_delegates(self) -> int:
+        """At the start of the daemon, no delegate runs: a delegate that was "running" when the daemon stopped is
+        "stopped", with its last activity as its end. Return the count."""
+        rows = self.db.execute("SELECT id, updated_at, delegate FROM sessions WHERE delegate IS NOT NULL").fetchall()
+        count = 0
+        for session_id, updated_at, text in rows:
+            try:
+                record = json.loads(text)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and record.get("status") == "running":
+                record.update(status="stopped", ended_at=updated_at)
+                self.db.execute("UPDATE sessions SET delegate = ? WHERE id = ?", (json.dumps(record), session_id))
+                count += 1
+        self.db.commit()
+        return count
+
+    def delegate_ids(self, parent_id: str) -> list[str]:
+        """The child sessions that delegate_task started in ``parent_id``, also the ended ones."""
+        rows = self.db.execute("SELECT id FROM sessions WHERE parent_id = ? AND delegate IS NOT NULL", (parent_id,))
+        return [r[0] for r in rows]
+
     def update_session(self, session_id: str, touch: bool = True, **fields: Any) -> None:
         """Change fields of a session. ``touch``: the session is newer (for example after a prompt).
         A rename or a pin does not change the age of the session."""
         allowed = {"provider", "model", "title", "context_start", "summary", "pinned", "archived", "cwd", "routine_id",
-                   "position", "snoozed_until", "auto_archive", "archived_at"}
+                   "position", "snoozed_until", "auto_archive", "archived_at", "delegate"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if touch:
             fields["updated_at"] = time.time()

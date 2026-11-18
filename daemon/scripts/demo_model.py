@@ -10,6 +10,7 @@ Behavior:
 - The notes of background tasks ("<task-notification>") -> a short text reply.
 - A user message that contains "background" -> a bash tool call with run_in_background (needs approval).
 - A user message that contains "helper" -> an agent tool call with run_in_background.
+- A user message that contains "delegate" -> two delegate_task calls (two child agents).
 - A user message that contains "ask" -> an ask_user_question call with two questions.
 - In plan mode, a user message that contains "plan" -> an exit_plan_mode call with a plan.
 - A user message that contains "web" -> web_search, then web_fetch of the first result.
@@ -149,6 +150,12 @@ def plan(messages: list[dict], tools: set[str]) -> dict:
     text = last.get("content") or ""
     if "<task-notification>" in text:
         return {"text": "A background task sent a notification. I read it: the work is **done**."}
+    if "delegate" in text.lower() and "Delegated task" not in text and "delegate_task" in tools:
+        # Two child agents in a row: the Delegates card of the chat and the Delegates section of the rail.
+        return {"text": "I will give two tasks to child agents.", "tool_calls": [
+            {"name": "delegate_task", "arguments": {"task": "Do a slow review of README.md.", "title": "Review the README"}},
+            {"name": "delegate_task", "arguments": {"task": "Search the code for the uses of add.", "title": "Find the uses of add",
+                                                    "target": {"options": {"effort": "high"}}}}]}
     if "ask" in text.lower() and "ask_user_question" in tools:
         return {"text": "I need two choices from you.", "tool_calls": [{"name": "ask_user_question", "arguments": {"questions": [
             {"question": "Which database should the app use?", "header": "Database", "options": [
