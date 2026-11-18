@@ -10,13 +10,17 @@ import {
   filterSummary,
   groupByDay,
   menuProviders,
+  modelRates,
   parseRange,
   parseTab,
   providerLabel,
+  reportedText,
   sortModels,
+  speedParts,
   sumTotals,
   typeParts,
 } from "./UsagePage";
+import { priceRows, rowsToModels, emptyRow } from "./UsagePricesDialog";
 
 const totals = (extra: Partial<UsageTotals> = {}): UsageTotals => ({
   tokens: 0,
@@ -26,6 +30,9 @@ const totals = (extra: Partial<UsageTotals> = {}): UsageTotals => ({
   output: 0,
   reasoning: 0,
   cost: 0,
+  premium: 0,
+  fast_cost: 0,
+  ultrafast_cost: 0,
   cache_savings: 0,
   sessions: 0,
   records: 0,
@@ -52,6 +59,11 @@ const model = (name: string, prov: string, cost: number, tokens: number): UsageM
   cache_read: 0,
   cache_write: 0,
   output: tokens,
+  premium: 0,
+  reported: 0,
+  custom_price: false,
+  mapped_from: [],
+  rate: null,
   unpriced: false,
 });
 
@@ -75,6 +87,7 @@ const summary = (): UsageSummary => {
     models: [model("opus", "claude", 10, 1000), model("gpt", "codex", 5, 4000)],
     limits: [{ provider: "gemini", name: "Gemini", agent: "gemini", icon: null, windows: [] }],
     errors: [],
+    prices: {},
   };
 };
 
@@ -223,6 +236,38 @@ describe("the page helpers", () => {
     expect(parseRange("1y")).toBe("30d");
     expect(parseTab("limits")).toBe("limits");
     expect(parseTab("x")).toBe("cost");
+  });
+  it("splits the cost by speed only with fast requests", () => {
+    expect(speedParts(totals({ cost: 10 }))).toBeNull();
+    const parts = speedParts(totals({ cost: 10, fast_cost: 6, ultrafast_cost: 1, premium: 5 }))!;
+    expect(parts.map((p) => [p.label, p.value])).toEqual([["Standard", 3], ["Fast", 6], ["Ultrafast", 1]]);
+    expect(sumTotals([totals({ premium: 1, fast_cost: 2 }), totals({ premium: 2, fast_cost: 3 })])).toMatchObject({ premium: 3, fast_cost: 5 });
+  });
+  it("gives the current price of each model to the price dialog", () => {
+    const rate = { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 };
+    expect(modelRates([{ ...model("opus", "claude", 1, 1), rate }, model("gpt", "codex", 1, 1)])).toEqual({ opus: rate });
+  });
+  it("tells when the limits are from the last session", () => {
+    expect(reportedText("2026-11-16T11:00:00Z")).toMatch(/^From the last session, Nov 16, /);
+    expect(reportedText("x")).toBe("From the last session.");
+  });
+  it("makes the rows of the model prices and reads them back", () => {
+    const rows = priceRows({ "z-model": { input: 1, output: 2 }, "a-preview": { map_to: "a" } }, "new-model");
+    expect(rows.map((r) => [r.model, r.map_to, r.input, r.output])).toEqual([
+      ["a-preview", "a", "", ""],
+      ["z-model", "", "1", "2"],
+      ["new-model", "", "", ""],
+    ]);
+    expect(priceRows({ m: { input: 1, output: 1 } }, "m")).toHaveLength(1);
+    const filled = rows.map((r) => (r.model === "new-model" ? { ...r, input: "3", output: "15", cache_read: "0.3" } : r));
+    expect(rowsToModels([...filled, emptyRow()])).toEqual({
+      models: { "a-preview": { map_to: "a" }, "z-model": { input: 1, output: 2 }, "new-model": { input: 3, output: 15, cache_read: 0.3 } },
+    });
+    expect(rowsToModels([{ ...emptyRow("m"), input: "1" }])).toEqual({ error: "m needs an input price and an output price." });
+    expect(rowsToModels([{ ...emptyRow("m"), input: "-1", output: "1" }])).toEqual({ error: "The input price of m must be a number from 0." });
+    expect(rowsToModels([emptyRow("m")])).toEqual({ error: 'Enter prices or a "Map to" model for m.' });
+    expect(rowsToModels([{ ...emptyRow(""), input: "1" }])).toEqual({ error: "Enter a model ID." });
+    expect(rowsToModels([{ ...emptyRow("m"), map_to: "x" }, { ...emptyRow(" m "), map_to: "y" }])).toEqual({ error: "m has two rows. Keep one." });
   });
   it("puts the page in the back and forward history", () => {
     expect(placeOf("usage", null)).toEqual({ screen: "usage" });

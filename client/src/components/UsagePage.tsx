@@ -3,14 +3,15 @@
 // The provider menu filters on this side: the totals are the sums of the shown providers.
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { Check, ChevronDown, Info, RefreshCw, X } from "lucide-react";
+import { Check, ChevronDown, CircleDollarSign, Info, RefreshCw, X } from "lucide-react";
 import type { DaemonConnection } from "../daemon/connection";
-import type { UsageModel, UsagePoint, UsageProvider, UsageRange, UsageSummary, UsageTotals } from "../daemon/protocol";
+import type { UsageModel, UsagePoint, UsageProvider, UsageRange, UsageRate, UsageSummary, UsageTotals } from "../daemon/protocol";
 import { loadPref, savePref } from "../lib/prefs";
 import { formatCount, formatPercent, formatTokens, formatUsd, share } from "../lib/usageFormat";
 import { AgentIcon, LimitRows } from "./AgentBits";
 import { SkeletonRows } from "./Skeleton";
 import { UsageChart, type UsageMetric } from "./UsageChart";
+import { UsagePricesDialog } from "./UsagePricesDialog";
 
 export type UsageTab = "cost" | "tokens" | "limits";
 type Breakdown = "model" | "day";
@@ -43,7 +44,7 @@ const cacheKey = (computer: string, range: UsageRange) => `${computer}\n${range}
 
 const plural = (n: number, one: string, many: string) => `${formatCount(n)} ${n === 1 ? one : many}`;
 
-const TOTAL_KEYS = ["tokens", "input", "cache_read", "cache_write", "output", "reasoning", "cost", "cache_savings", "sessions", "records", "unpriced_records"] as const;
+const TOTAL_KEYS = ["tokens", "input", "cache_read", "cache_write", "output", "reasoning", "cost", "premium", "fast_cost", "ultrafast_cost", "cache_savings", "sessions", "records", "unpriced_records"] as const;
 
 /** The sum of the totals of some providers. */
 export function sumTotals(list: UsageTotals[]): UsageTotals {
@@ -99,6 +100,32 @@ export function typeParts(s: UsageSummary, totals: UsageTotals, metric: UsageMet
     return PARTS.filter((p) => p.key !== "other" || s.category_cost.other >= 0.005).map((p) => ({ ...p, value: s.category_cost[p.key] ?? 0 }));
   }
   return PARTS.filter((p) => p.key !== "other").map((p) => ({ ...p, value: totals[p.key as Exclude<TypePart["key"], "other">] ?? 0 }));
+}
+
+export interface SpeedPart {
+  key: "standard" | "fast" | "ultrafast";
+  label: string;
+  value: number;
+  mix: number;
+}
+
+/** The parts of "Cost by speed", as T3 Code. null: no fast or ultrafast request, so the section does not show. */
+export function speedParts(totals: UsageTotals): SpeedPart[] | null {
+  const fast = totals.fast_cost ?? 0;
+  const ultrafast = totals.ultrafast_cost ?? 0;
+  if (fast + ultrafast <= 0) return null;
+  return [
+    { key: "standard", label: "Standard", value: Math.max(0, totals.cost - fast - ultrafast), mix: 34 },
+    { key: "fast", label: "Fast", value: fast, mix: 66 },
+    { key: "ultrafast", label: "Ultrafast", value: ultrafast, mix: 100 },
+  ];
+}
+
+/** The current price of each model with use (custom or LiteLLM), for the placeholders of the "Model prices" dialog. */
+export function modelRates(models: UsageModel[]): Record<string, UsageRate> {
+  const out: Record<string, UsageRate> = {};
+  for (const m of models) if (m.rate && !(m.model in out)) out[m.model] = m.rate;
+  return out;
 }
 
 const DAY_LABEL = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
@@ -322,13 +349,42 @@ function ProviderErrors({ summary }: { summary: UsageSummary }) {
   );
 }
 
-function Overview({ summary, view, metric }: { summary: UsageSummary; view: UsageView; metric: UsageMetric }) {
+function ShareBar({ parts, fmt }: { parts: { key: string; label: string; value: number; mix: number }[]; fmt: (n: number) => string }) {
+  const total = parts.reduce((n, p) => n + p.value, 0);
+  return (
+    <>
+      <div className="usage-types-bar" role="img" aria-label={parts.map((p) => `${p.label} ${fmt(p.value)}`).join(", ")}>
+        {total > 0 &&
+          parts
+            .filter((p) => p.value > 0)
+            .map((p) => (
+              <span key={p.key} style={{ flexGrow: p.value, background: `color-mix(in srgb, var(--text) ${p.mix}%, var(--bg))` }} />
+            ))}
+      </div>
+      <ul className="usage-legend">
+        {parts.map((p) => (
+          <li key={p.key}>
+            <span className="usage-swatch" style={{ background: `color-mix(in srgb, var(--text) ${p.mix}%, var(--bg))` }} aria-hidden />
+            {p.label} <span className="usage-legend-value">{fmt(p.value)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function Overview({ summary, view, metric, onSetPrice }: {
+  summary: UsageSummary;
+  view: UsageView;
+  metric: UsageMetric;
+  onSetPrice: (model: string) => void;
+}) {
   const [breakdown, setBreakdown] = useState<Breakdown>(() => (loadPref("usage.breakdown", "model") === "day" ? "day" : "model"));
   const { totals, providers } = view;
   const fmt = metric === "cost" ? formatUsd : formatTokens;
   const total = totals[metric];
   const parts = typeParts(summary, totals, metric);
-  const partsTotal = parts.reduce((n, p) => n + p.value, 0);
+  const speeds = metric === "cost" ? speedParts(totals) : null;
   const models = sortModels(view.models, metric);
   const peak = models.reduce((n, m) => Math.max(n, m[metric]), 0);
   const byId = new Map(providers.map((p) => [p.id, p]));
@@ -406,26 +462,21 @@ function Overview({ summary, view, metric }: { summary: UsageSummary; view: Usag
         {metric === "cost" && view.filtered ? (
           <p className="usage-note">Cost by type shows all providers. Show all providers to see it.</p>
         ) : (
-          <>
-            <div className="usage-types-bar" role="img" aria-label={parts.map((p) => `${p.label} ${fmt(p.value)}`).join(", ")}>
-              {partsTotal > 0 &&
-                parts
-                  .filter((p) => p.value > 0)
-                  .map((p) => (
-                    <span key={p.key} style={{ flexGrow: p.value, background: `color-mix(in srgb, var(--text) ${p.mix}%, var(--bg))` }} />
-                  ))}
-            </div>
-            <ul className="usage-legend">
-              {parts.map((p) => (
-                <li key={p.key}>
-                  <span className="usage-swatch" style={{ background: `color-mix(in srgb, var(--text) ${p.mix}%, var(--bg))` }} aria-hidden />
-                  {p.label} <span className="usage-legend-value">{fmt(p.value)}</span>
-                </li>
-              ))}
-            </ul>
-          </>
+          <ShareBar parts={parts} fmt={fmt} />
         )}
       </section>
+
+      {speeds && (
+        <section className="usage-section" aria-labelledby="usage-speeds">
+          <div className="usage-section-head">
+            <h2 id="usage-speeds" className="usage-h2">Cost by speed</h2>
+            <span className="usage-muted usage-premium">
+              Premium <span className="usage-legend-value">{formatUsd(totals.premium ?? 0)}</span>
+            </span>
+          </div>
+          <ShareBar parts={speeds} fmt={formatUsd} />
+        </section>
+      )}
 
       <section className="usage-section" aria-labelledby="usage-breakdown">
         <div className="usage-section-head">
@@ -462,13 +513,23 @@ function Overview({ summary, view, metric }: { summary: UsageSummary; view: Usag
                       <td>
                         <div className="usage-model">
                           <AgentIcon id={p?.agent ?? m.provider} name={p?.name ?? m.provider} icon={p?.icon} size={14} />
-                          <span className="usage-model-name" title={m.model}>{m.model}</span>
+                          <span className="usage-model-name" title={m.mapped_from?.length ? `${m.model}. Includes ${m.mapped_from.join(", ")}.` : m.model}>{m.model}</span>
+                          {m.custom_price && <span className="usage-muted usage-model-tag" title="A custom price of Model prices prices this model.">Custom price</span>}
                         </div>
                         <span className="usage-model-track" aria-hidden>
                           <span className="usage-model-bar" style={{ width: `max(0.5rem, ${pct}%)`, background: p?.color ?? "var(--text-muted)" }} />
                         </span>
                       </td>
-                      <td className="num">{m.unpriced ? <span className="usage-muted" title="This model has no price.">Unpriced</span> : formatUsd(m.cost)}</td>
+                      <td className="num">
+                        {m.unpriced ? (
+                          <span className="usage-unpriced">
+                            <span className="usage-muted" title="This model has no price.">Unpriced</span>
+                            <button type="button" className="link-btn" onClick={() => onSetPrice(m.model)}>Set price</button>
+                          </span>
+                        ) : (
+                          formatUsd(m.cost)
+                        )}
+                      </td>
                       <td className="num">{formatPercent(share(m[metric], total))}</td>
                       <td className="num">{formatTokens(m.tokens)}</td>
                     </tr>
@@ -508,6 +569,14 @@ function Overview({ summary, view, metric }: { summary: UsageSummary; view: Usag
   );
 }
 
+const REPORTED = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** The note of limits from the last session of an agent (Codex with no codex program). */
+export function reportedText(iso: string): string {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? "From the last session." : `From the last session, ${REPORTED.format(at)}.`;
+}
+
 function Limits({ summary, hidden }: { summary: UsageSummary; hidden: ReadonlySet<string> }) {
   const limits = summary.limits.filter((l) => !hidden.has(l.provider));
   if (limits.length === 0) return <p className="usage-empty">No agent on this computer reports subscription limits.</p>;
@@ -520,6 +589,7 @@ function Limits({ summary, hidden }: { summary: UsageSummary; hidden: ReadonlySe
             <h2 className="usage-h2">{l.name}</h2>
           </div>
           {l.windows.length > 0 ? <LimitRows usage={l.windows} used /> : <p className="usage-note">This agent reports no limits now.</p>}
+          {l.reported_at && <p className="usage-note">{reportedText(l.reported_at)}</p>}
         </section>
       ))}
     </div>
@@ -537,6 +607,7 @@ export function UsagePage({ conn, computerKey, computer, onClose }: {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [pending, setPending] = useState<Partial<Record<UsageRange, boolean>>>({});
   const [error, setError] = useState<string | null>(null);
+  const [pricesFor, setPricesFor] = useState<string | null | undefined>(undefined); // undefined: closed. A model: "Set price".
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const keyRef = useRef(computerKey);
   keyRef.current = computerKey;
@@ -582,6 +653,12 @@ export function UsagePage({ conn, computerKey, computer, onClose }: {
     savePref("usage.tab", t);
   };
 
+  const onPricesSaved = useCallback(() => {
+    setPricesFor(undefined);
+    for (const key of [...cache.keys()]) if (key.startsWith(`${computerKey}\n`)) cache.delete(key); // Old prices.
+    request(range);
+  }, [computerKey, range, request]);
+
   const summary = cache.get(cacheKey(computerKey, range)) ?? null;
   const loading = !!pending[range];
   const view = summary ? filterSummary(summary, hidden) : null;
@@ -600,7 +677,7 @@ export function UsagePage({ conn, computerKey, computer, onClose }: {
       </>
     );
   } else {
-    body = <Overview summary={summary} view={view} metric={tab} />;
+    body = <Overview summary={summary} view={view} metric={tab} onSetPrice={(model) => setPricesFor(model)} />;
   }
 
   return (
@@ -631,6 +708,16 @@ export function UsagePage({ conn, computerKey, computer, onClose }: {
           <button
             type="button"
             className="icon-btn ghost"
+            aria-label="Model prices"
+            title="Model prices"
+            disabled={!summary}
+            onClick={() => setPricesFor(null)}
+          >
+            <CircleDollarSign size={15} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="icon-btn ghost"
             aria-label="Read the histories again"
             aria-busy={loading}
             title="Read the histories again"
@@ -651,6 +738,17 @@ export function UsagePage({ conn, computerKey, computer, onClose }: {
         )}
         {body}
       </div>
+      {pricesFor !== undefined && summary && (
+        <UsagePricesDialog
+          conn={conn}
+          computer={computer}
+          prices={summary.prices ?? {}}
+          rates={modelRates(summary.models)}
+          add={pricesFor}
+          onSaved={onPricesSaved}
+          onClose={() => setPricesFor(undefined)}
+        />
+      )}
     </div>
   );
 }

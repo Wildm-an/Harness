@@ -4499,6 +4499,18 @@ async def on_usage_summary(conn: Connection, msg: dict[str, Any]) -> None:
     asyncio.create_task(run())
 
 
+@handler("usage.prices.set")
+async def on_usage_prices_set(conn: Connection, msg: dict[str, Any]) -> None:
+    """The "Model prices" dialog of the Usage page: {"models": {<model id>: {"input", "output", "cache_read"?,
+    "cache_write"?, "map_to"?}}}, USD for one million tokens. It replaces all the custom prices. The reply is
+    usage.prices. The next usage.summary uses the new prices."""
+    try:
+        saved = await asyncio.to_thread(usage.write_prices, msg.get("models"))
+    except ValueError as e:
+        raise ProtocolError(str(e)) from e
+    await conn.send({"type": "usage.prices", "models": saved})
+
+
 @handler("agents.check")
 async def on_agents_check(conn: Connection, msg: dict[str, Any]) -> None:
     """Read the sign-in state, the usage, and the program version of an agent again now: {"id"}. The reply is

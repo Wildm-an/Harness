@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from . import acp_icons, agent_auth
+from . import acp_icons, agent_auth, codex_limits
 from .config import harness_home, read_json, write_json
 
 log = logging.getLogger("harness.usage")
@@ -75,6 +75,7 @@ class Record:
     output: int = 0  # With the reasoning.
     reasoning: int = 0
     cost: float | None = None  # The cost that the agent reported. None: estimate it.
+    speed: str = "standard"  # "standard", "fast", or "ultrafast": fast requests cost more.
 
 
 # -- the histories of the agents ----------------------------------------------------------------------------------------
@@ -91,6 +92,12 @@ def _iso(value: Any) -> float | None:
         return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _speed(value: Any) -> str:
+    """The speed of a request: "fast" and "ultrafast" cost more. "priority" is the fast tier of OpenAI."""
+    text = str(value or "").strip().lower()
+    return {"fast": "fast", "priority": "fast", "ultrafast": "ultrafast"}.get(text, "standard")
 
 
 def claude_roots() -> list[Path]:
@@ -130,7 +137,8 @@ def parse_claude(path: Path) -> Iterator[Record]:
                 cache_write=_int(usage.get("cache_creation_input_tokens")),
                 cache_write_1h=_int(creation.get("ephemeral_1h_input_tokens")),
                 output=_int(usage.get("output_tokens")), reasoning=_int(details.get("thinking_tokens")),
-                cost=float(cost) if isinstance(cost, (int, float)) and cost > 0 else None)
+                cost=float(cost) if isinstance(cost, (int, float)) and cost > 0 else None,
+                speed=_speed(usage.get("speed")))
 
 
 def codex_roots() -> list[Path]:
@@ -139,8 +147,9 @@ def codex_roots() -> list[Path]:
 
 
 def parse_codex(path: Path) -> Iterator[Record]:
-    """The requests of a Codex rollout: each token_count event, with the model of the last turn_context."""
-    model, session = "", path.stem
+    """The requests of a Codex rollout: each token_count event, with the model of the last turn_context and the
+    speed of the last thread_settings_applied (``thread_settings.service_tier``, as T3 Code)."""
+    model, session, speed = "", path.stem, "standard"
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for number, line in enumerate(f):
             try:
@@ -153,6 +162,9 @@ def parse_codex(path: Path) -> Iterator[Record]:
                 session = str(payload["id"])
             elif kind == "turn_context" and payload.get("model"):
                 model = str(payload["model"])
+            elif payload.get("type") == "thread_settings_applied":
+                settings = payload.get("thread_settings") if isinstance(payload.get("thread_settings"), dict) else {}
+                speed = _speed(settings.get("service_tier"))
             elif kind == "event_msg" and payload.get("type") == "token_count":
                 info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
                 last = info.get("last_token_usage") if isinstance(info.get("last_token_usage"), dict) else None
@@ -162,7 +174,8 @@ def parse_codex(path: Path) -> Iterator[Record]:
                 cached = _int(last.get("cached_input_tokens"))
                 yield Record(provider="codex", key=f"codex:{session}:{number}", ts=ts, model=model, session=session,
                              input=max(0, _int(last.get("input_tokens")) - cached), cache_read=cached,
-                             output=_int(last.get("output_tokens")), reasoning=_int(last.get("reasoning_output_tokens")))
+                             output=_int(last.get("output_tokens")), reasoning=_int(last.get("reasoning_output_tokens")),
+                             speed=speed)
 
 
 def opencode_roots() -> list[Path]:
@@ -326,7 +339,8 @@ CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, provider TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS records (
     file TEXT NOT NULL, provider TEXT NOT NULL, key TEXT NOT NULL, ts REAL NOT NULL, model TEXT NOT NULL,
     session TEXT NOT NULL, input INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL,
-    cache_write_1h INTEGER NOT NULL, output INTEGER NOT NULL, reasoning INTEGER NOT NULL, cost REAL);
+    cache_write_1h INTEGER NOT NULL, output INTEGER NOT NULL, reasoning INTEGER NOT NULL, cost REAL,
+    speed TEXT NOT NULL DEFAULT 'standard');
 CREATE INDEX IF NOT EXISTS records_ts ON records (ts);
 CREATE INDEX IF NOT EXISTS records_file ON records (file);
 """
@@ -334,8 +348,14 @@ CREATE INDEX IF NOT EXISTS records_file ON records (file);
 _scan_lock = threading.Lock()
 
 
+_SCHEMA_VERSION = 2  # 2: the speed of each request. An older cache is read again from the start.
+
+
 def _cache() -> sqlite3.Connection:
     db = sqlite3.connect(harness_home() / "usage-cache.db", timeout=30)
+    if db.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+        db.executescript("DROP TABLE IF EXISTS records; DROP TABLE IF EXISTS files;")
+        db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     db.executescript(_SCHEMA)
     return db
 
@@ -356,13 +376,13 @@ def scan(errors: list[dict[str, str]] | None = None) -> None:
                     continue
                 try:
                     rows = [(name, r.provider, r.key, r.ts, r.model, r.session, r.input, r.cache_read, r.cache_write,
-                             r.cache_write_1h, r.output, r.reasoning, r.cost) for r in parser(path) if r.ts >= since]
+                             r.cache_write_1h, r.output, r.reasoning, r.cost, r.speed) for r in parser(path) if r.ts >= since]
                 except (OSError, sqlite3.Error) as e:
                     if errors is not None:
                         errors.append({"provider": provider, "message": f"Could not read {path.name}: {e}"})
                     continue
                 db.execute("DELETE FROM records WHERE file = ?", (name,))
-                db.executemany("INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                db.executemany("INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
                 db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?)", (name, provider, mtime, size))
             for name in set(known) - seen:  # A file that is gone, or older than the longest range.
                 db.execute("DELETE FROM records WHERE file = ?", (name,))
@@ -379,12 +399,12 @@ def records(start: float, end: float) -> list[Record]:
     try:
         rows = db.execute(
             "SELECT provider, key, MIN(ts), MAX(model), MAX(session), MAX(input), MAX(cache_read), MAX(cache_write), "
-            "MAX(cache_write_1h), MAX(output), MAX(reasoning), MAX(cost) FROM records "
+            "MAX(cache_write_1h), MAX(output), MAX(reasoning), MAX(cost), MAX(speed) FROM records "
             "WHERE ts >= ? AND ts < ? GROUP BY key", (start, end)).fetchall()
     finally:
         db.close()
     return [Record(provider=r[0], key=r[1], ts=r[2], model=r[3], session=r[4], input=r[5], cache_read=r[6],
-                   cache_write=r[7], cache_write_1h=r[8], output=r[9], reasoning=r[10], cost=r[11]) for r in rows]
+                   cache_write=r[7], cache_write_1h=r[8], output=r[9], reasoning=r[10], cost=r[11], speed=r[12]) for r in rows]
 
 
 # -- the prices (LiteLLM) -----------------------------------------------------------------------------------------------
@@ -399,29 +419,99 @@ class Rate:
     cache_write_1h: float
 
 
+@dataclass(frozen=True)
+class SpeedRates:
+    """The rates of one context tier: the standard speed, and the fast and ultrafast speeds when LiteLLM has them."""
+    standard: Rate
+    fast: Rate | None = None
+    ultrafast: Rate | None = None
+
+
+@dataclass(frozen=True)
+class ModelRate(SpeedRates):
+    """The rates of a model. ``tiers``: (threshold, rates), the largest threshold first. A request with a prompt
+    larger than the threshold bills all its tokens at the rates of that tier (as T3 Code)."""
+    tiers: tuple[tuple[int, SpeedRates], ...] = ()
+
+
 def _rates_path() -> Path:
     return harness_home() / "usage-model-rates.json"
 
 
-def parse_rates(data: Any) -> dict[str, Rate]:
+def _num(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+        return None
+    return float(value)
+
+
+def _token_rates(entry: dict[str, Any], suffix: str, standard: Rate | None = None,
+                 output_fallback: float | None = None) -> Rate | None:
+    """The rates of a LiteLLM entry with a key suffix ("", "_priority", "_above_200k_tokens", ...). A missing cache
+    rate has the ratio of the standard rates (else the input rate), and a missing 1-hour write rate is the 5-minute
+    rate."""
+    inp = _num(entry.get(f"input_cost_per_token{suffix}"))
+    out = _num(entry.get(f"output_cost_per_token{suffix}"))
+    out = out if out is not None else output_fallback
+    if inp is None or out is None:
+        return None
+
+    def cache(name: str, field: str, fallback: float) -> float:
+        value = _num(entry.get(f"{name}{suffix}"))
+        if value is not None:
+            return value
+        if standard is not None and standard.input > 0:
+            return getattr(standard, field) / standard.input * inp
+        return fallback
+
+    write = cache("cache_creation_input_token_cost", "cache_write", inp)
+    return Rate(inp, out, cache("cache_read_input_token_cost", "cache_read", inp), write,
+                cache("cache_creation_input_token_cost_above_1hr", "cache_write_1h", write))
+
+
+def _scale(rate: Rate, multiple: float) -> Rate:
+    return Rate(rate.input * multiple, rate.output * multiple, rate.cache_read * multiple, rate.cache_write * multiple,
+                rate.cache_write_1h * multiple)
+
+
+def _speed_rates(entry: dict[str, Any], standard: Rate, suffix: str = "") -> SpeedRates:
+    """The fast rates: the ``provider_specific_entry.fast`` multiple of the standard rates (Anthropic), else the
+    ``_priority`` rates (OpenAI). The ultrafast rates: the ``_ultrafast`` rates."""
+    specific = entry.get("provider_specific_entry")
+    multiple = _num(specific.get("fast")) if isinstance(specific, dict) else None
+    fast = _scale(standard, multiple) if multiple and multiple > 0 else _token_rates(entry, f"{suffix}_priority", standard)
+    return SpeedRates(standard, fast, _token_rates(entry, f"{suffix}_ultrafast", standard))
+
+
+_TIER_KEY = re.compile(r"^input_cost_per_token_above_(\d{1,7})k_tokens(?:_priority|_ultrafast)?$")
+
+
+def _context_tiers(entry: dict[str, Any], base: Rate) -> tuple[tuple[int, SpeedRates], ...]:
+    """The long-context tiers (``input_cost_per_token_above_200k_tokens`` ...). A missing field has the base rate."""
+    thresholds = {int(m.group(1)) for key in entry if (m := _TIER_KEY.match(key))}
+    tiers = []
+    for threshold in thresholds:
+        suffix = f"_above_{threshold}k_tokens"
+        standard = _token_rates(entry, suffix, base, base.output) or base
+        tiers.append((threshold * 1000, _speed_rates(entry, standard, suffix)))
+    return tuple(sorted(tiers, key=lambda t: -t[0]))
+
+
+def parse_rates(data: Any) -> dict[str, ModelRate]:
     """The rates of the LiteLLM price file, by model id (lower case), with the aliases of T3 Code: "provider/model"
-    also gives "model" (a first-party provider wins), and "anthropic.X" (Bedrock) gives "X"."""
-    rates: dict[str, Rate] = {}
-    aliases: dict[str, tuple[int, Rate]] = {}
+    also gives "model" (a first-party provider wins), and "anthropic.X" (Bedrock) gives "X". The flex and batch
+    rates have no use: the histories do not record them."""
+    rates: dict[str, ModelRate] = {}
+    aliases: dict[str, tuple[int, ModelRate]] = {}
     if not isinstance(data, dict):
         return rates
     for name, entry in data.items():
         if not isinstance(entry, dict) or name == "sample_spec":
             continue
-        inp, out = entry.get("input_cost_per_token"), entry.get("output_cost_per_token")
-        if not isinstance(inp, (int, float)) or not isinstance(out, (int, float)):
+        standard = _token_rates(entry, "")
+        if standard is None:
             continue
-        read = entry.get("cache_read_input_token_cost")
-        write = entry.get("cache_creation_input_token_cost")
-        write_1h = entry.get("cache_creation_input_token_cost_above_1hr")
-        read = float(read) if isinstance(read, (int, float)) else float(inp)
-        write = float(write) if isinstance(write, (int, float)) else float(inp)
-        rate = Rate(float(inp), float(out), read, write, float(write_1h) if isinstance(write_1h, (int, float)) else write)
+        speeds = _speed_rates(entry, standard)
+        rate = ModelRate(standard, speeds.fast, speeds.ultrafast, _context_tiers(entry, standard))
         key = name.strip().lower()
         rates[key] = rate
         bare = None
@@ -438,7 +528,7 @@ def parse_rates(data: Any) -> dict[str, Rate]:
     return rates
 
 
-def rate_for(rates: dict[str, Rate], model: str) -> Rate | None:
+def rate_for(rates: dict[str, ModelRate], model: str) -> ModelRate | None:
     key = re.sub(r"\[.*?\]$", "", model.strip().lower())
     if not key or key in NEVER_PRICED:
         return None
@@ -448,11 +538,104 @@ def rate_for(rates: dict[str, Rate], model: str) -> Rate | None:
     return None
 
 
-_rates: dict[str, Rate] | None = None
+def rates_at(rate: ModelRate, speed: str, record: Record) -> Rate:
+    """The rates of a request: the tier of its prompt size, then its speed. A tier with no rates for the speed keeps
+    the base rates of that speed."""
+    prompt = record.input + record.cache_read + record.cache_write
+    tier = next((t for threshold, t in rate.tiers if prompt > threshold), None)
+    if speed not in ("fast", "ultrafast"):
+        return (tier or rate).standard
+    return (getattr(tier, speed) if tier else None) or getattr(rate, speed) or (tier or rate).standard
+
+
+# -- the custom prices (the "Model prices" dialog) ---------------------------------------------------------------------
+
+PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")  # USD for one million tokens.
+
+
+def _prices_path() -> Path:
+    return harness_home() / "usage-model-prices.json"
+
+
+def clean_prices(data: Any) -> dict[str, dict[str, Any]]:
+    """The custom prices by exact model id: {"input", "output", "cache_read"?, "cache_write"?} in USD for one million
+    tokens, and "map_to"?: the model id that counts the tokens of this model. Raises ValueError for a bad value."""
+    if not isinstance(data, dict):
+        raise ValueError("'models' must be an object.")
+    out: dict[str, dict[str, Any]] = {}
+    for model, entry in data.items():
+        name = str(model).strip()
+        if not name or len(name) > 200:
+            raise ValueError("A model id must have 1 to 200 characters.")
+        if not isinstance(entry, dict):
+            raise ValueError(f"The price of {name} must be an object.")
+        clean: dict[str, Any] = {}
+        for field in PRICE_FIELDS:
+            value = entry.get(field)
+            if value is None or value == "":
+                continue
+            number = _num(value)
+            if number is None or number < 0 or number > 1_000_000:
+                raise ValueError(f"The {field.replace('_', ' ')} price of {name} must be a number from 0 to 1000000.")
+            clean[field] = number
+        target = str(entry.get("map_to") or "").strip()
+        if len(target) > 200:
+            raise ValueError("A model id must have 1 to 200 characters.")
+        if target and target != name:
+            clean["map_to"] = target
+        has_price = "input" in clean and "output" in clean
+        if not has_price and any(field in clean for field in PRICE_FIELDS):
+            raise ValueError(f"The price of {name} needs an input price and an output price.")
+        if has_price or "map_to" in clean:
+            out[name] = clean
+    return out
+
+
+def read_prices() -> dict[str, dict[str, Any]]:
+    saved = read_json(_prices_path(), {})
+    try:
+        return clean_prices(saved.get("models", {}) if isinstance(saved, dict) else {})
+    except ValueError as e:
+        log.info("The custom model prices are not valid: %s", e)
+        return {}
+
+
+def write_prices(models: Any) -> dict[str, dict[str, Any]]:
+    """Replace the custom prices. Raises ValueError for a bad value."""
+    clean = clean_prices(models)
+    write_json(_prices_path(), {"models": clean})
+    return clean
+
+
+def override_rates(prices: dict[str, dict[str, Any]]) -> dict[str, ModelRate]:
+    """The rates of the custom prices, by exact model id. A missing cache price is the input price."""
+    out: dict[str, ModelRate] = {}
+    for model, entry in prices.items():
+        if "input" not in entry or "output" not in entry:
+            continue
+        write = entry.get("cache_write", entry["input"]) / 1e6
+        out[model] = ModelRate(Rate(entry["input"] / 1e6, entry["output"] / 1e6,
+                                    entry.get("cache_read", entry["input"]) / 1e6, write, write))
+    return out
+
+
+def resolve_model(prices: dict[str, dict[str, Any]], model: str) -> str:
+    """The model id after "Map to", to the end of a chain (as T3 Code). A chain that loops has no effect."""
+    seen = {model.strip()}
+    current = model.strip()
+    while (entry := prices.get(current)) and entry.get("map_to"):
+        current = entry["map_to"]
+        if current in seen:
+            return model
+        seen.add(current)
+    return current if current != model.strip() else model
+
+
+_rates: dict[str, ModelRate] | None = None
 _rates_status: dict[str, Any] = {"status": "unavailable", "updated_at": None}
 
 
-async def load_rates(force: bool = False) -> tuple[dict[str, Rate], dict[str, Any]]:
+async def load_rates(force: bool = False) -> tuple[dict[str, ModelRate], dict[str, Any]]:
     """The rates: the copy of today, else a new download, else an old copy."""
     global _rates, _rates_status
     saved = await asyncio.to_thread(read_json, _rates_path(), {})
@@ -514,33 +697,63 @@ def window(range_id: str, offset_min: int, now: float | None = None) -> tuple[fl
 
 def _empty_totals() -> dict[str, Any]:
     return {"tokens": 0, "input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "reasoning": 0, "cost": 0.0,
-            "cache_savings": 0.0, "sessions": 0, "records": 0, "unpriced_records": 0}
+            "premium": 0.0, "fast_cost": 0.0, "ultrafast_cost": 0.0, "cache_savings": 0.0, "sessions": 0, "records": 0,
+            "unpriced_records": 0}
 
 
-def price(record: Record, rate: Rate | None) -> tuple[float, dict[str, float], float, bool]:
-    """The cost of one request, its parts, the cache savings, and True when it has a price."""
-    parts = {"input": 0.0, "cache_read": 0.0, "cache_write": 0.0, "output": 0.0, "other": 0.0}
-    savings = 0.0
-    if rate is not None:
-        parts["input"] = record.input * rate.input
-        parts["cache_read"] = record.cache_read * rate.cache_read
-        five = max(0, record.cache_write - record.cache_write_1h)
-        parts["cache_write"] = five * rate.cache_write + record.cache_write_1h * rate.cache_write_1h
-        parts["output"] = record.output * rate.output
-        savings = record.cache_read * max(0.0, rate.input - rate.cache_read)
-    estimate = sum(parts.values())
-    if record.cost is not None:  # The agent reported the cost: it wins, and the parts get its scale.
-        if estimate > 0:
-            parts = {k: v * record.cost / estimate for k, v in parts.items()}
-        else:
-            parts["other"] = record.cost
-        return record.cost, parts, savings, True
-    return estimate, parts, savings, rate is not None
+@dataclass
+class Priced:
+    cost: float  # USD.
+    parts: dict[str, float]  # input, cache_read, cache_write, output, other: the sum is the cost.
+    premium: float  # The part of the cost above the standard speed (fast and ultrafast requests).
+    savings: float  # The cache savings.
+    source: str  # "model": the price of the model. "reported": the cost that the agent reported. "unpriced".
 
 
-def summarize(range_id: str, offset_min: int, rates: dict[str, Rate], pricing: dict[str, Any],
+def _parts(record: Record, rate: Rate) -> dict[str, float]:
+    one_hour = min(record.cache_write_1h, record.cache_write)
+    return {"input": record.input * rate.input, "cache_read": record.cache_read * rate.cache_read,
+            "cache_write": (record.cache_write - one_hour) * rate.cache_write + one_hour * rate.cache_write_1h,
+            "output": record.output * rate.output, "other": 0.0}
+
+
+def price(record: Record, rate: ModelRate | None, custom: bool = False) -> Priced:
+    """The cost of one request, as T3 Code. A cost that the agent reported wins over the price of the model, and the
+    parts get its scale. A custom price (``custom``) wins over a reported cost. With no price, a reported cost is
+    "Other"."""
+    reported = record.cost if record.cost is not None and not custom else None
+    if rate is None:
+        if reported is None:
+            return Priced(0.0, dict.fromkeys(("input", "cache_read", "cache_write", "output", "other"), 0.0), 0.0, 0.0,
+                          "unpriced")
+        return Priced(reported, {"input": 0.0, "cache_read": 0.0, "cache_write": 0.0, "output": 0.0, "other": reported},
+                      0.0, 0.0, "reported")
+    rates = rates_at(rate, record.speed, record)
+    parts = _parts(record, rates)
+    listed = sum(parts.values())
+    savings = record.cache_read * max(0.0, rates.input - rates.cache_read)
+    if reported is not None and listed <= 0:
+        return Priced(reported, {"input": 0.0, "cache_read": 0.0, "cache_write": 0.0, "output": 0.0, "other": reported},
+                      0.0, savings, "reported")
+    premium = 0.0
+    if record.speed in ("fast", "ultrafast"):
+        premium = max(0.0, listed - sum(_parts(record, rates_at(rate, "standard", record)).values()))
+    scale = 1.0 if reported is None else reported / listed
+    return Priced(reported if reported is not None else listed, {k: v * scale for k, v in parts.items()},
+                  premium * scale, savings, "model" if reported is None else "reported")
+
+
+def _per_million(rate: Rate) -> dict[str, float]:
+    return {"input": rate.input * 1e6, "output": rate.output * 1e6, "cache_read": rate.cache_read * 1e6,
+            "cache_write": rate.cache_write * 1e6}
+
+
+def summarize(range_id: str, offset_min: int, rates: dict[str, ModelRate], pricing: dict[str, Any],
               found: list[Record], scan_ms: int, errors: list[dict[str, str]], limits: list[dict[str, Any]],
-              now: float | None = None) -> dict[str, Any]:
+              now: float | None = None, prices: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The Usage page data. ``prices``: the custom prices and "Map to" of the "Model prices" dialog."""
+    prices = prices or {}
+    custom = override_rates(prices)
     start, end, resolution, buckets = window(range_id, offset_min, now)
     tz = dt.timezone(dt.timedelta(minutes=offset_min))
     keys = {key for key, _, _ in buckets}
@@ -553,17 +766,25 @@ def summarize(range_id: str, offset_min: int, rates: dict[str, Rate], pricing: d
     for record in found:
         if not (start <= record.ts < end):
             continue
-        rate = rate_for(rates, record.model)
-        cost, parts, savings, priced = price(record, rate)
-        tokens = record.input + record.cache_read + record.cache_write + record.output
         local = dt.datetime.fromtimestamp(record.ts, tz)
         bucket = local.strftime("%Y-%m-%dT%H" if resolution == "hour" else "%Y-%m-%d")
         if bucket not in keys:
             continue
+        model = resolve_model(prices, record.model)
+        override = custom.get(model.strip())
+        rate = override or rate_for(rates, model)
+        priced = price(record, rate, custom=override is not None)
+        tokens = record.input + record.cache_read + record.cache_write + record.output
         p = providers.setdefault(record.provider, _empty_totals())
-        m = models.setdefault((record.provider, record.model), {
-            "model": record.model, "provider": record.provider, "cost": 0.0, "tokens": 0, "input": 0, "cache_read": 0,
-            "cache_write": 0, "output": 0, "priced": False})
+        m = models.get((record.provider, model))
+        if m is None:
+            m = models[(record.provider, model)] = {
+                "model": model, "provider": record.provider, "cost": 0.0, "premium": 0.0, "reported": 0.0, "tokens": 0,
+                "input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "priced": False,
+                "custom_price": override is not None, "mapped_from": [],
+                "rate": _per_million(rate.standard) if rate else None}
+        if model != record.model and record.model not in m["mapped_from"]:
+            m["mapped_from"].append(record.model)
         for target in (totals, p):
             target["tokens"] += tokens
             target["input"] += record.input
@@ -571,20 +792,25 @@ def summarize(range_id: str, offset_min: int, rates: dict[str, Rate], pricing: d
             target["cache_write"] += record.cache_write
             target["output"] += record.output
             target["reasoning"] += record.reasoning
-            target["cost"] += cost
-            target["cache_savings"] += savings
+            target["cost"] += priced.cost
+            target["premium"] += priced.premium
+            if record.speed in ("fast", "ultrafast"):
+                target[f"{record.speed}_cost"] += priced.cost
+            target["cache_savings"] += priced.savings
             target["records"] += 1
-            target["unpriced_records"] += 0 if priced else 1
-        m["cost"] += cost
+            target["unpriced_records"] += 1 if priced.source == "unpriced" else 0
+        m["cost"] += priced.cost
+        m["premium"] += priced.premium
+        m["reported"] += priced.cost if priced.source == "reported" else 0.0
         m["tokens"] += tokens
         for name in ("input", "cache_read", "cache_write", "output"):
             m[name] += getattr(record, name)
-        m["priced"] = m["priced"] or priced
-        for name, value in parts.items():
+        m["priced"] = m["priced"] or priced.source != "unpriced"
+        for name, value in priced.parts.items():
             categories[name] += value
         sessions.setdefault(record.provider, set()).add(record.session)
         point = series[bucket]["by_provider"].setdefault(record.provider, {"cost": 0.0, "tokens": 0})
-        point["cost"] += cost
+        point["cost"] += priced.cost
         point["tokens"] += tokens
     out_providers = []
     for pid, values in providers.items():
@@ -600,17 +826,27 @@ def summarize(range_id: str, offset_min: int, rates: dict[str, Rate], pricing: d
         "range": range_id, "resolution": resolution, "generated_at": time.time() if now is None else now,
         "scan_ms": scan_ms, "pricing": pricing, "totals": totals, "category_cost": categories,
         "providers": out_providers, "series": [series[key] for key, _, _ in buckets], "models": out_models,
-        "limits": limits, "errors": errors,
+        "limits": limits, "errors": errors, "prices": prices,
     }
 
 
-async def limits() -> list[dict[str, Any]]:
-    """The subscription limits of the agents (the Limits tab): now Claude Code, with its sign-in (agent_auth.py)."""
+async def limits(force: bool = False) -> list[dict[str, Any]]:
+    """The subscription limits of the agents (the Limits tab): Claude Code with its sign-in (agent_auth.py), and Codex
+    (codex_limits.py)."""
     out = []
-    state = await agent_auth.STATES.check(agent_auth.CLAUDE_ID)
+    try:
+        state = await agent_auth.STATES.check(agent_auth.CLAUDE_ID, force=force)
+    except Exception as e:  # noqa: BLE001 - the limits are extra information.
+        log.info("The Claude Code limits are not available: %s", e)
+        state = None
     if state and state.get("usage"):
         out.append({"provider": "claude", "name": f"Claude Code · {state.get('label') or 'subscription'}",
-                    "agent": agent_auth.CLAUDE_ID, "icon": acp_icons.icon(agent_auth.CLAUDE_ID), "windows": state["usage"]})
+                    "agent": agent_auth.CLAUDE_ID, "icon": acp_icons.icon(agent_auth.CLAUDE_ID), "windows": state["usage"],
+                    "reported_at": None})
+    codex = await codex_limits.limits(force=force)
+    if codex:
+        info = PROVIDERS["codex"]
+        out.append({"provider": "codex", "agent": info.agent, "icon": acp_icons.icon(info.agent), **codex})
     return out
 
 
@@ -626,8 +862,10 @@ async def summary(range_id: str, offset_min: int, refresh: bool = False) -> dict
     start, end, _, _ = window(range_id, offset_min)
     found = await asyncio.to_thread(records, start, end)
     try:
-        windows = await limits()
+        windows = await limits(force=refresh)
     except Exception as e:  # noqa: BLE001 - the limits are extra information.
         log.info("The subscription limits are not available: %s", e)
         windows = []
-    return await asyncio.to_thread(summarize, range_id, offset_min, rates, pricing, found, scan_ms, errors, windows)
+    prices = await asyncio.to_thread(read_prices)
+    return await asyncio.to_thread(summarize, range_id, offset_min, rates, pricing, found, scan_ms, errors, windows,
+                                   None, prices)
