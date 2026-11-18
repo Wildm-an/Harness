@@ -5,12 +5,12 @@ import { memo, useEffect, useRef, useState } from "react";
 import {
   CalendarClock,
   Check,
-  ChevronRight,
   CircleCheck,
   CircleSlash,
   CircleX,
   Clock,
   Copy,
+  EllipsisVertical,
   CopyPlus,
   FolderOpen,
   KeyRound,
@@ -27,6 +27,7 @@ import type { ClientMessage, HarnessItem, PermissionMode, SessionHarness, Projec
 import { BUILTIN_AGENT } from "./AgentBits";
 import { AgentPicker } from "./AgentPicker";
 import { ConfirmDialog, useConfirm } from "./ConfirmDialog";
+import { PointMenu } from "./PointMenu";
 import type { ModelList } from "./ModelMenu";
 import { Switch } from "./ProvidersScreen";
 import { formatClock, formatTime, timeFormat } from "../lib/timeFormat";
@@ -781,27 +782,42 @@ function RoutineRow({
   onOpen,
   onRun,
   onToggle,
+  onDelete,
 }: {
   item: RoutineItem;
   onOpen: () => void;
   onRun: () => void;
   onToggle: (enabled: boolean) => void;
+  onDelete: () => void;
 }) {
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const confirm = useConfirm();
   const next = item.next_fire_at ? ` · Next: ${formatWhen(item.next_fire_at)}` : "";
+  // The second line has the schedule only. The folder is in the hover tip (RT3).
+  const tip = item.cwd ? `${item.name} · ${item.cwd}` : item.name;
+  const openMenuAt = (el: Element) => {
+    const r = el.getBoundingClientRect();
+    setMenuAt({ x: r.right - 200, y: r.bottom + 4 });
+  };
   return (
-    <li className="cap-item routine-item">
-      <button type="button" className="cap-row" onClick={onOpen}>
+    <li
+      className={`cap-item routine-item${menuAt ? " menu-open" : ""}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        // The keyboard (Shift+F10, the Menu key) gives no mouse place: open the menu under the row.
+        if (e.clientX === 0 && e.clientY === 0) openMenuAt(e.currentTarget);
+        else setMenuAt({ x: e.clientX, y: e.clientY });
+      }}
+    >
+      <button type="button" className="cap-row" onClick={onOpen} title={tip}>
         <span className="cap-icon" aria-hidden>
           <CalendarClock size={15} />
         </span>
         <span className="cap-text">
           <span className="cap-name">{item.name}</span>
-          <span className="cap-desc">
-            {item.error ? `${item.id}.md: ${item.error}` : `${describeSchedule(item.schedule)}${next} · ${folderName(item.cwd)}`}
-          </span>
+          <span className="cap-desc">{item.error ? `${item.id}.md: ${item.error}` : `${describeSchedule(item.schedule)}${next}`}</span>
         </span>
         <StatePills item={item} />
-        <ChevronRight size={14} aria-hidden className="cap-go" />
       </button>
       {/* "Run now" on the row: the user does not have to open the routine (RT3). */}
       <button
@@ -814,7 +830,46 @@ function RoutineRow({
       >
         <Play size={14} aria-hidden />
       </button>
-      <Switch checked={item.enabled} label={`Run ${item.name} on the schedule`} onChange={onToggle} />
+      {/* The same menu as a right click (P3, as the ⋮ button of a session row). */}
+      <button
+        type="button"
+        className="icon-btn ghost routine-more"
+        aria-label={`More options for ${item.name}`}
+        aria-haspopup="menu"
+        aria-expanded={!!menuAt}
+        title="More options"
+        onClick={(e) => (menuAt ? setMenuAt(null) : openMenuAt(e.currentTarget))}
+        // The menu closes on a mouse down outside it: this button must not open it again at once.
+        onMouseDown={(e) => menuAt && e.stopPropagation()}
+      >
+        <EllipsisVertical size={15} aria-hidden />
+      </button>
+      {menuAt && (
+        <PointMenu
+          x={menuAt.x}
+          y={menuAt.y}
+          label={`The routine ${item.name}`}
+          onClose={() => setMenuAt(null)}
+          items={[
+            { label: "Open", onClick: onOpen },
+            { label: "Run now", onClick: onRun, disabled: !canRunNow(item) },
+            { label: item.enabled ? "Deactivate" : "Activate", onClick: () => onToggle(!item.enabled), separatorBefore: true },
+            {
+              label: "Delete",
+              separatorBefore: true,
+              danger: true,
+              onClick: () =>
+                confirm.ask({
+                  title: "Delete this routine?",
+                  text: `The routine ${item.name} and its run history go away. The sessions of its runs stay.`,
+                  confirmLabel: "Delete",
+                  onConfirm: onDelete,
+                }),
+            },
+          ]}
+        />
+      )}
+      {confirm.dialog}
     </li>
   );
 }
@@ -906,7 +961,8 @@ export const RoutinesPage = memo(function RoutinesPage({
   }, [openId, routines, item]);
 
   let body: React.ReactNode;
-  if (openId !== null && (openId === "new" || item)) {
+  const detail = openId !== null && (openId === "new" || !!item);
+  if (detail) {
     body = (
       <RoutineForm
         key={openId}
@@ -959,18 +1015,9 @@ export const RoutinesPage = memo(function RoutinesPage({
       />
     );
   } else {
+    // The page title names the list, so the list has no heading of its own (RT3).
     body = (
-      <section className="cap-section" aria-labelledby="rt-list">
-        <div className="cap-section-head">
-          <h2 id="rt-list">Routines</h2>
-          {routines && routines.length > 0 && <span className="cap-count">{routines.length}</span>}
-          <span className="cap-section-actions">
-            <button type="button" className="btn btn-small btn-primary" onClick={() => setOpenId("new")}>
-              <Plus size={14} aria-hidden />
-              New routine
-            </button>
-          </span>
-        </div>
+      <section className="cap-section">
         {routines === null ? (
           <p className="cap-empty">
             <LoaderCircle size={14} className="spin" aria-hidden /> Loading the routines.
@@ -986,6 +1033,7 @@ export const RoutinesPage = memo(function RoutinesPage({
                 onOpen={() => setOpenId(r.id)}
                 onRun={() => onRun(r.id)}
                 onToggle={(enabled) => onToggle(r, enabled)}
+                onDelete={() => onDelete(r.id)}
               />
             ))}
           </ul>
@@ -998,7 +1046,20 @@ export const RoutinesPage = memo(function RoutinesPage({
     <div className="cap-page">
       <div className="cap-page-inner">
         <header className="cap-page-head">
-          <h1 id="routines-title">Routines</h1>
+          <div className="routine-title-row">
+            <h1 id="routines-title">Routines</h1>
+            {!detail && routines && routines.length > 0 && (
+              <span className="cap-count" aria-label={`${routines.length} routines`}>
+                {routines.length}
+              </span>
+            )}
+            {!detail && (
+              <button type="button" className="btn btn-small btn-primary routine-new" onClick={() => setOpenId("new")}>
+                <Plus size={14} aria-hidden />
+                New routine
+              </button>
+            )}
+          </div>
           <p className="help">
             Prompts that Harness runs on a schedule, each in a new session. Routines run while Harness runs, also with no open window.
             {folder && (
