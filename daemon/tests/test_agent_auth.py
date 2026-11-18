@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
-from harness_daemon import acp_harnesses, agent_auth
+from harness_daemon import acp_harnesses, agent_auth, codex_limits
 from test_server import Client, daemon  # noqa: F401 - the daemon fixture
 
 
@@ -25,6 +26,44 @@ def test_the_status_of_other_sign_ins():
 def test_no_claude_program():
     state = agent_auth.read_status(None)
     assert state["status"] == "unknown" and state["install_url"] == agent_auth.INSTALL_URL
+
+
+def test_the_codex_status():
+    chatgpt = agent_auth.parse_codex_status(0, "\nLogged in using ChatGPT\n")
+    assert chatgpt == {"status": "authenticated", "label": "ChatGPT", "detail": "", "subscription": True}
+    key = agent_auth.parse_codex_status(0, "Logged in using an API key - sk-proj-***ABCD")
+    assert key["label"] == "API key" and key["subscription"] is False and "sk-" not in json.dumps(key)
+    assert agent_auth.parse_codex_status(1, "Not logged in")["status"] == "unauthenticated"
+    assert agent_auth.parse_codex_status(1, "")["status"] == "unauthenticated"
+    assert agent_auth.parse_codex_status(2, "error: unexpected")["status"] == "unknown"
+
+
+def test_the_codex_program(monkeypatch):
+    paths = {"codex": None, "npx": "/usr/bin/npx"}
+    monkeypatch.setattr(agent_auth.shutil, "which", lambda name: paths.get(name))
+    assert codex_limits.codex_argv() == ["/usr/bin/npx", "-y", f"@openai/codex@{codex_limits.CODEX_VERSION}"]
+    assert agent_auth.signin_argv(agent_auth.CODEX_ID)[-1] == "login"
+    paths["codex"] = "/usr/local/bin/codex"
+    assert agent_auth.signin_argv(agent_auth.CODEX_ID) == ["/usr/local/bin/codex", "login"]
+    paths.update(codex=None, npx=None)
+    state = agent_auth.read_codex_status(codex_limits.codex_argv())
+    assert state["status"] == "unknown" and state["install_url"]
+
+
+def test_the_codex_usage_comes_from_the_plan_limits(monkeypatch):
+    async def status() -> dict:
+        return agent_auth.parse_codex_status(0, "Logged in using ChatGPT")
+
+    async def limits(force: bool = False) -> dict:
+        return {"name": "Codex · ChatGPT Plus", "reported_at": None,
+                "windows": [{"label": "5-hour limit", "percent": 7.0, "resets_at": None, "severity": "normal"}]}
+
+    monkeypatch.setitem(agent_auth._READERS, agent_auth.CODEX_ID, (status, agent_auth._codex_usage))
+    monkeypatch.setattr(agent_auth.codex_limits, "limits", limits)
+    state = asyncio.run(agent_auth.AgentStates().check(agent_auth.CODEX_ID))
+    assert state is not None and state["label"] == "ChatGPT" and state["usage"][0]["percent"] == 7.0
+    assert "browser" in state["signin_help"]
+    assert agent_auth.limits_view(agent_auth.CODEX_ID, state)["windows"] == state["usage"]
 
 
 def test_the_usage_limits():

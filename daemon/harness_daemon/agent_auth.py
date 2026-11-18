@@ -1,7 +1,9 @@
 """The sign-in state, the sign-in, and the subscription usage of the agents (Settings > Agents).
 
-Now only Claude Agent (``claude-acp``) has them. The ACP adapter of Claude Code uses the login of Claude
-Code on the daemon computer, so Harness reads that login with the ``claude`` program:
+Claude Agent (``claude-acp``) and Codex (``codex-acp``) have them, as in T3 Code. Each ACP adapter uses the
+login of its CLI on the daemon computer, so Harness reads that login with the CLI.
+
+Claude Agent, with the ``claude`` program:
 
 - The state: ``claude auth status --json`` (about 0.5 s). It needs no network.
 - The usage of a subscription: ``claude -p --input-format stream-json --output-format stream-json`` with
@@ -11,7 +13,16 @@ Code on the daemon computer, so Harness reads that login with the ``claude`` pro
 - The sign-in: ``claude auth login`` in a pseudo terminal. The client shows it in a small terminal on the
   Agents page, because the login can ask for a code from the browser.
 
-Harness never reads the credentials of Claude Code itself. ``CLAUDE_CONFIG_DIR`` of the daemon applies.
+Codex, with the Codex CLI of ``codex_limits.codex_argv`` (the ``codex`` program, else npx):
+
+- The state: ``codex login status``. It writes "Logged in using ChatGPT", "Logged in using an API key", or
+  "Not logged in" (exit code 1) to stderr.
+- The usage of a ChatGPT plan: the limits of ``codex_limits.py`` (the Limits tab of the Usage page).
+- The sign-in: ``codex login`` in a pseudo terminal. Codex opens a sign-in page in the browser and waits for
+  it on a local port. The login goes to ``<CODEX_HOME or ~/.codex>/auth.json``, and codex-acp reads it there.
+
+Harness never reads the credentials of the agents itself. ``CLAUDE_CONFIG_DIR`` and ``CODEX_HOME`` of the
+daemon apply.
 """
 
 from __future__ import annotations
@@ -26,17 +37,25 @@ import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from . import codex_limits
 from .terminal import Terminal, _Pty
 
 log = logging.getLogger("harness.agent_auth")
 
 CLAUDE_ID = "claude-acp"
-SUPPORTED = (CLAUDE_ID,)
+CODEX_ID = "codex-acp"
+SUPPORTED = (CLAUDE_ID, CODEX_ID)
 STATUS_TTL = 60.0  # Seconds.
 USAGE_TTL = 120.0
 STATUS_TIMEOUT = 20.0
 USAGE_TIMEOUT = 40.0
 INSTALL_URL = "https://code.claude.com/docs/en/setup"
+CODEX_STATUS_TIMEOUT = 120.0  # The first npx start downloads the CLI.
+CODEX_INSTALL_URL = "https://nodejs.org/"
+SIGNIN_HELP = {
+    CLAUDE_ID: "Claude Code opens a sign-in page in your browser. If it asks for a code, paste it here.",
+    CODEX_ID: "Codex opens a sign-in page in your browser. Sign in with your ChatGPT account there.",
+}
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -107,6 +126,81 @@ def read_status(binary: str | None) -> dict[str, Any]:
         text = (done.stderr or done.stdout).strip().splitlines()
         return {"status": "unknown", "label": "", "subscription": False,
                 "detail": f"Could not read the sign-in state of Claude Code: {text[-1] if text else 'no output'}"}
+
+
+def parse_codex_status(code: int, text: str) -> dict[str, Any]:
+    """The state for the client from the output and the exit code of ``codex login status``."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    found = next((line for line in lines if line.lower().startswith(("logged in", "not logged in"))), "")
+    lower = found.lower()
+    if lower.startswith("logged in"):
+        if "chatgpt" in lower:
+            return {"status": "authenticated", "label": "ChatGPT", "detail": "", "subscription": True}
+        label = "API key" if "api key" in lower else "Access token" if "access token" in lower else "Signed in"
+        return {"status": "authenticated", "label": label, "detail": "", "subscription": False}
+    if lower.startswith("not logged in") or (code == 1 and not found):
+        return {"status": "unauthenticated", "label": "", "subscription": False,
+                "detail": "Codex is not signed in. Sign in to use Codex."}
+    return {"status": "unknown", "label": "", "subscription": False,
+            "detail": f"Could not read the sign-in state of Codex: {lines[-1] if lines else 'no output'}"}
+
+
+def read_codex_status(argv: list[str] | None) -> dict[str, Any]:
+    """Run ``codex login status``. It blocks: call it in a thread."""
+    if argv is None:
+        return {"status": "unknown", "label": "", "subscription": False, "install_url": CODEX_INSTALL_URL,
+                "detail": "Install Node.js (it has npx) or the Codex CLI to see the sign-in state and to sign in. "
+                          "Codex uses its login."}
+    try:
+        done = subprocess.run([*argv, "login", "status"], cwd=str(Path.home()), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=CODEX_STATUS_TIMEOUT,
+                              stdin=subprocess.DEVNULL, **_no_window())
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"status": "unknown", "label": "", "subscription": False,
+                "detail": f"Could not read the sign-in state of Codex: {e}"}
+    return parse_codex_status(done.returncode, f"{done.stderr}\n{done.stdout}")
+
+
+async def _claude_status() -> dict[str, Any]:
+    return await asyncio.to_thread(read_status, claude_binary())
+
+
+async def _claude_usage(force: bool) -> list[dict[str, Any]]:
+    binary = claude_binary()
+    if binary is None:
+        raise RuntimeError("Claude Code is not installed.")
+    return await asyncio.to_thread(read_usage, binary)
+
+
+async def _codex_status() -> dict[str, Any]:
+    return await asyncio.to_thread(read_codex_status, codex_limits.codex_argv())
+
+
+async def _codex_usage(force: bool) -> list[dict[str, Any]]:
+    result = await codex_limits.limits(force=force)
+    return list(result["windows"]) if result else []
+
+
+# The readers of each agent: the sign-in state, and the usage of a subscription.
+_READERS: dict[str, tuple[Callable[[], Awaitable[dict[str, Any]]],
+                          Callable[[bool], Awaitable[list[dict[str, Any]]]]]] = {
+    CLAUDE_ID: (_claude_status, _claude_usage),
+    CODEX_ID: (_codex_status, _codex_usage),
+}
+
+
+def signin_argv(harness_id: str) -> list[str]:
+    """The sign-in command of an agent, with the full path of the program. Raises RuntimeError when the program
+    is not on this computer."""
+    if harness_id == CODEX_ID:
+        argv = codex_limits.codex_argv()
+        if argv is None:
+            raise RuntimeError("Install Node.js (it has npx) or the Codex CLI first.")
+        return [*argv, "login"]
+    binary = claude_binary()
+    if binary is None:
+        raise RuntimeError(f"Install Claude Code first: {INSTALL_URL}")
+    return [binary, "auth", "login"]
 
 
 _GROUP_LABEL = {"session": "5-hour limit", "weekly": "Weekly"}  # The names of Claude Code /usage.
@@ -194,7 +288,7 @@ class AgentStates:
             return None
         usage = self._usage.get(harness_id)
         return {**status[1], "usage": usage[1] if usage else None, "usage_error": usage[2] if usage else "",
-                "checked_at": status[0]}
+                "checked_at": status[0], "signin_help": SIGNIN_HELP.get(harness_id, "")}
 
     def fresh(self, harness_id: str) -> bool:
         status = self._status.get(harness_id)
@@ -216,19 +310,19 @@ class AgentStates:
         """Read the state (and the usage of a subscription) again when the cache is old or ``force``."""
         if not supports(harness_id):
             return None
+        read_state, read_plan_usage = _READERS[harness_id]
         async with self._lock:
-            binary = claude_binary()
             if force or not self.fresh(harness_id):
-                status = await asyncio.to_thread(read_status, binary)
+                status = await read_state()
                 self._status[harness_id] = (time.time(), status)
             status = self._status[harness_id][1]
             usage = self._usage.get(harness_id)
-            wants_usage = binary is not None and status.get("status") == "authenticated" and status.get("subscription")
+            wants_usage = status.get("status") == "authenticated" and status.get("subscription")
             if not wants_usage:
                 self._usage.pop(harness_id, None)
             elif force or usage is None or time.time() - usage[0] >= USAGE_TTL:
                 try:
-                    values = await asyncio.to_thread(read_usage, binary)  # type: ignore[arg-type]
+                    values = await read_plan_usage(force)
                     self._usage[harness_id] = (time.time(), values, "")
                 except Exception as e:  # noqa: BLE001 - the usage is extra information.
                     log.info("The usage of %s is not available: %s", harness_id, e)
@@ -251,7 +345,7 @@ def limits_view(harness_id: str, state: dict[str, Any] | None, checking: bool = 
 
 
 class SignIn:
-    """``claude auth login`` in a pseudo terminal. The client gets ``agents.signin.output`` and
+    """The sign-in command of an agent (``signin_argv``) in a pseudo terminal. The client gets ``agents.signin.output`` and
     ``agents.signin.exit`` with the id of the agent. One sign-in runs at a time. With ``argv``, the terminal runs
     that command: the update of an agent program (agent_updates.py, ``kind`` "update")."""
 
@@ -266,12 +360,7 @@ class SignIn:
         self.code: int | None = None
 
     def start(self, cols: int, rows: int) -> None:
-        argv = self.argv
-        if argv is None:
-            binary = claude_binary()
-            if binary is None:
-                raise RuntimeError(f"Install Claude Code first: {INSTALL_URL}")
-            argv = [binary, "auth", "login"]
+        argv = self.argv if self.argv is not None else signin_argv(self.harness_id)
         pty = _Pty(argv, Path.home(), cols, rows)
         self.terminal = Terminal(pty, self._forward, asyncio.get_running_loop(), self._stopped)
 

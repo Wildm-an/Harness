@@ -920,7 +920,7 @@ function AgentDetail({
             <span className="skeleton agents-auth-skeleton" role="status" aria-label="Checking the sign-in" />
           ) : signingIn ? (
             <div className="agents-signin">
-              <p className="setting-help">Claude Code opens a sign-in page in your browser. If it asks for a code, paste it here.</p>
+              <p className="setting-help">{auth.signin_help || "The agent opens a sign-in page in your browser. If it asks for a code, paste it here."}</p>
               <AgentSignInTerminal conn={conn} id={item.id} name={item.name} onExit={onSignInExit} />
               <div className="harness-form-actions">
                 <button type="button" className="btn btn-small" onClick={onCancelSignIn}>

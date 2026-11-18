@@ -429,13 +429,14 @@ export interface AgentModel {
 /** The sign-in state and the subscription usage of an agent (daemon agent_auth.py). */
 export interface AgentAuth {
   status: "authenticated" | "unauthenticated" | "unknown";
-  label: string; // For example "Claude Max" or "API key".
+  label: string; // For example "Claude Max", "ChatGPT", or "API key".
   detail: string; // Why it is not signed in, or why the state is not known.
   subscription: boolean;
   install_url?: string; // The program of the agent is not installed.
   usage: AgentUsage[] | null; // null: no usage (not a subscription, or not available).
   usage_error: string;
   checked_at: number; // Seconds since 1970.
+  signin_help?: string; // The text above the sign-in terminal, for example "Codex opens a sign-in page in your browser."
 }
 
 export interface AgentUsage {
