@@ -42,17 +42,23 @@ def test_the_state_of_a_program(monkeypatch):
 
 def test_the_newest_version_from_npm(monkeypatch):
     states = agent_updates.ProgramStates()
-    monkeypatch.setattr(agent_updates, "program_path", lambda i: "/bin/claude")
-    monkeypatch.setattr(agent_updates, "_run", lambda argv, timeout: "2.1.325 (Claude Code)")
+    monkeypatch.setattr(agent_updates, "program_path", lambda i: "/bin/opencode")
+    monkeypatch.setattr(agent_updates, "_run", lambda argv, timeout: "1.4.2")
 
     async def latest(package):
-        assert package == "@anthropic-ai/claude-code"
-        return "2.1.330"
+        assert package == "opencode-ai"
+        return "1.4.7"
 
     monkeypatch.setattr(agent_updates, "_npm_latest", latest)
-    state = asyncio.run(states.check("claude-acp"))
-    assert state["update"] is True and state["command"] == "claude update"
-    assert agent_updates.update_argv("claude-acp") == ["/bin/claude", "update"]
+    state = asyncio.run(states.check("opencode"))
+    assert state["update"] is True and state["command"] == "opencode upgrade"
+    assert agent_updates.update_argv("opencode") == ["/bin/opencode", "upgrade"]
+
+
+def test_claude_agent_shows_no_claude_code_update():
+    # Settings > Agents shows only the ACP adapter of Claude Agent: its download, update, and uninstall.
+    assert "claude-acp" not in agent_updates.UPDATERS
+    assert agent_updates.STATES.cached("claude-acp") is None
 
 
 def test_a_failed_check_keeps_the_program(monkeypatch):

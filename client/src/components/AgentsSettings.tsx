@@ -748,8 +748,8 @@ export function AgentsSettings({ conn, connected, values, error, onSet, onShowPr
       )}
       {confirmRemove && (
         <ConfirmDialog
-          title={`Delete the download of ${confirmRemove.name}?`}
-          confirmLabel="Delete"
+          title={`Uninstall ${confirmRemove.name}?`}
+          confirmLabel="Uninstall"
           onCancel={() => setConfirmRemove(null)}
           onConfirm={() => {
             send({ type: "harnesses.uninstall", id: confirmRemove.id });
@@ -933,12 +933,9 @@ function AgentDetail({
               <LoaderCircle size={13} className="spin" aria-hidden /> Checking the sign-in…
             </p>
           ) : auth.install_url ? (
-            <div className="agents-inline">
-              <span className="setting-help">Install Claude Code to sign in.</span>
-              <button type="button" className="btn btn-small btn-primary" onClick={() => openLink(auth.install_url!)}>
-                <ExternalLink size={14} aria-hidden /> Install Claude Code
-              </button>
-            </div>
+            // The sign-in needs a program that is not on this computer. The page shows no download of it: only the
+            // ACP adapter downloads and uninstalls here (the user asked for this).
+            <p className="setting-help">{auth.detail}</p>
           ) : auth.status === "authenticated" ? (
             <div className="agents-inline">
               <span className="agents-signed-in">Signed in · {auth.label}</span>
@@ -1095,7 +1092,7 @@ function ProgramUpdates({ item, program, conn, connected, updating, busy, onUpda
   );
 }
 
-/** "Download", "Update", or the progress of a running download, and "Delete the download". */
+/** "Download", "Update", or the progress of a running download, and "Uninstall" (only a Harness download). */
 function DownloadControl({ item, progress, disabled, onDownload, onRemove }: {
   item: HarnessItem;
   progress: HarnessProgress | null;
@@ -1123,8 +1120,8 @@ function DownloadControl({ item, progress, disabled, onDownload, onRemove }: {
         </button>
       )}
       {item.download && action !== "busy" && (
-        <button type="button" className="icon-btn ghost" disabled={disabled} aria-label={`Delete the download of ${item.name}`} title="Delete the download" onClick={onRemove}>
-          <Trash2 size={14} aria-hidden />
+        <button type="button" className="btn btn-small harness-uninstall" disabled={disabled} title={`Uninstall ${item.name}: delete the files that Harness downloaded`} onClick={onRemove}>
+          <Trash2 size={14} aria-hidden /> Uninstall
         </button>
       )}
     </>

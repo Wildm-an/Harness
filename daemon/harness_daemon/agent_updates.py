@@ -28,18 +28,17 @@ CHECK_TIMEOUT = 90
 
 @dataclass(frozen=True)
 class Updater:
-    program: str  # The program on the PATH. "claude": agent_auth.claude_binary also finds ~/.local/bin.
-    label: str  # The name of the program: "Claude Code".
+    program: str  # The program on the PATH.
+    label: str  # The name of the program: "Hermes Agent".
     update: tuple[str, ...]  # The arguments of the update command.
     version: tuple[str, ...] = ("--version",)
     npm: str | None = None  # The npm package: its "latest" version is the newest version.
     check: tuple[str, ...] | None = None  # A command that prints "... available ... v1.2.3" and installs nothing.
 
 
-# The agents whose program has its own update command. Claude Agent runs the ACP adapter, and signs in with
-# Claude Code: the update is the update of Claude Code.
+# The agents whose program has its own update command. Claude Agent is not here: Harness downloads, updates, and
+# uninstalls its ACP adapter (acp_install.py). Settings > Agents does not show Claude Code (the user asked for this).
 UPDATERS: dict[str, Updater] = {
-    "claude-acp": Updater("claude", "Claude Code", ("update",), npm="@anthropic-ai/claude-code"),
     "hermes": Updater("hermes", "Hermes Agent", ("update",), check=("update", "--check")),
     "opencode": Updater("opencode", "OpenCode", ("upgrade",), npm="opencode-ai"),
     "cursor": Updater("cursor-agent", "Cursor CLI", ("update",)),
@@ -67,10 +66,6 @@ def program_path(harness_id: str) -> str | None:
     spec = UPDATERS.get(harness_id)
     if spec is None:
         return None
-    if spec.program == "claude":
-        from .agent_auth import claude_binary
-
-        return claude_binary()
     return shutil.which(spec.program)
 
 
