@@ -12896,7 +12896,8 @@ body.sorting * {
   padding-top: 10px;
 }
 
-.harness-actions .harness-download {
+.harness-actions .harness-download,
+.harness-actions .harness-uninstall {
   margin-right: 4px;
 }
 
