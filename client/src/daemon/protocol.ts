@@ -54,6 +54,8 @@ export interface PermissionRequest {
   reason?: string | null; // Why a plugin asks for approval.
   agent?: string; // A background subagent asks. Its card stays open after the turn ends.
   background?: boolean;
+  // An ACP session: the harness that asks (its id, name, and logo as a data URL). The card names it.
+  harness?: { id: string; name: string; icon: string | null } | null;
   // A request that is not a permission (daemon tools/interact.py): a question card or a plan card.
   kind?: "question" | "plan";
   questions?: AskQuestion[];
@@ -234,6 +236,7 @@ export interface UserSettings {
   bash_timeout: number; // Seconds.
   terminal_shell: string | null;
   subagents?: boolean; // false: the agent cannot start subagents (the agent tool).
+  agents_auto_update?: boolean; // Settings > Agents > "Update agents automatically" (the downloads of Harness).
   auto_memory?: boolean; // false: no memory tool and no memory in the prompt (daemon memory.py).
   memory_sensitive?: boolean; // true: the memory can have sensitive topics, for example health conditions.
   chat_search?: boolean; // false: no conversation_search tool (the search of the past sessions of the project).
@@ -296,6 +299,149 @@ export interface HarnessItem {
   provider_models: boolean; // It can use a model of a Harness provider (daemon acp_models.py).
   provider_model: string | null; // The chosen "<provider>/<model>". null: the model settings of the harness.
   provider_note: string; // What the server of the provider must have, for example the Responses API.
+  // Settings > Agents and the agent picker.
+  enabled: boolean; // In the picker rail and in the list of the Agents page (user setting agents_enabled).
+  models: AgentModel[]; // The models that the harness gave in its last session. Empty: not known yet.
+  native_model: string | null; // The chosen model id of the harness itself for new sessions. null: its default.
+  can_sign_in: boolean; // Harness can sign in to it and read its usage (daemon agent_auth.py).
+  auth: AgentAuth | null; // null: no check yet.
+  icon: string | null; // The icon of the ACP registry, as a data URL (daemon acp_icons.py). null: the initials.
+  efforts: AgentModel[]; // The reasoning levels that the harness gave in its last session (or a model check).
+  native_effort: string | null; // The chosen reasoning level for new sessions. null: the default of the harness.
+  probing: boolean; // The daemon reads the models of the agent now (agents.models).
+  models_checked?: number | null; // Epoch seconds of the last model list. The picker reads it again after 5 minutes.
+  // The program that the user installed, with its own update command (daemon agent_updates.py). null: no update
+  // command, or the program is not on the daemon computer. An older daemon does not send it.
+  program?: AgentProgram | null;
+}
+
+/** The version state of an agent program that the user installed. */
+export interface AgentProgram {
+  label: string; // The name of the program: "Claude Code", "Hermes Agent".
+  path: string;
+  version: string | null; // null: not checked yet, or the check failed.
+  latest: string | null; // The newest version. null: not known.
+  update: boolean; // A newer version is available.
+  command: string; // The update command: "hermes update".
+  checked: number | null; // Epoch seconds of the last check.
+  error: string | null;
+}
+
+/** The Usage page (daemon usage.py, as the Usage page of T3 Code): the token use and the API cost estimate of the
+ * agents on the daemon computer, from their local history (Claude Code, Codex, OpenCode, Hermes Agent) and from the
+ * run records of Harness. */
+export type UsageRange = "24h" | "7d" | "30d" | "90d";
+
+export interface UsageTotals {
+  tokens: number; // input + cache_read + cache_write + output (reasoning is a part of output).
+  input: number; // Input tokens with no cache.
+  cache_read: number;
+  cache_write: number;
+  output: number;
+  reasoning: number;
+  cost: number; // USD: the API estimate (LiteLLM prices), or the cost that the agent reported.
+  premium: number; // USD: the part of the cost above the standard speed (fast and ultrafast requests).
+  fast_cost: number; // USD: the cost of the fast requests.
+  ultrafast_cost: number; // USD: the cost of the ultrafast requests.
+  cache_savings: number; // USD: cache_read x (input price - cache read price).
+  sessions: number;
+  records: number; // The model requests.
+  unpriced_records: number; // The requests of a model with no price.
+}
+
+export interface UsageProvider extends UsageTotals {
+  id: string; // "claude", "codex", "opencode", "hermes", "harness".
+  name: string; // "Claude Code", "Codex", "OpenCode", "Hermes Agent", "Harness".
+  agent: string; // The agent id for AgentIcon: "claude-acp", "codex-acp", "opencode", "hermes", "harness".
+  icon: string | null; // The logo as a data URL (daemon acp_icons.py). null: the initials or the app icon.
+  color: string; // The color of the provider in the chart and the bars.
+}
+
+export interface UsagePoint {
+  key: string; // "2026-11-16" (a day), or "2026-11-16T14" (an hour, for "24h").
+  label: string; // "Nov 16", or "2 PM".
+  by_provider: Record<string, { cost: number; tokens: number }>;
+}
+
+export interface UsageModel {
+  model: string;
+  provider: string; // A UsageProvider id.
+  cost: number;
+  tokens: number;
+  input: number;
+  cache_read: number;
+  cache_write: number;
+  output: number;
+  premium: number; // USD above the standard speed.
+  reported: number; // USD that the agent reported (a part of cost).
+  custom_price: boolean; // A custom price of the "Model prices" dialog prices this model.
+  mapped_from: string[]; // The model ids that "Map to" counts as this model.
+  rate: UsageRate | null; // The standard price of the model (custom or LiteLLM). null: no price.
+  unpriced: boolean; // No price for this model: its cost is 0, or the cost that the agent reported.
+}
+
+/** USD for one million tokens. */
+export interface UsageRate {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+/** A custom price of the "Model prices" dialog (daemon ~/.harness/usage-model-prices.json), by exact model id. The
+ * prices are USD for one million tokens. A missing cache price is the input price. map_to: count the tokens of this
+ * model as the target model, with the price of the target. An entry can have only map_to. */
+export interface UsageModelPrice {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+  map_to?: string;
+}
+
+export interface UsageSummary {
+  range: UsageRange;
+  resolution: "hour" | "day";
+  generated_at: number; // Seconds since 1970.
+  scan_ms: number;
+  pricing: { status: "fresh" | "cached" | "unavailable"; updated_at: number | null };
+  totals: UsageTotals;
+  category_cost: { input: number; cache_read: number; cache_write: number; output: number; other: number };
+  providers: UsageProvider[]; // Sorted by cost, then tokens. Only the providers with use in the range.
+  series: UsagePoint[]; // Each hour (24h) or each day of the range, also with no use.
+  models: UsageModel[]; // Sorted by cost, then tokens.
+  // The Limits tab. reported_at: the ISO time of the last session that reported the limits (Codex with no codex
+  // program), else null (a check now).
+  limits: { provider: string; name: string; agent: string; icon: string | null; windows: AgentUsage[]; reported_at?: string | null }[];
+  errors: { provider: string; message: string }[]; // A history that Harness could not read.
+  prices: Record<string, UsageModelPrice>; // The custom prices.
+}
+
+/** A model that an ACP harness gives. */
+export interface AgentModel {
+  id: string;
+  name: string;
+  description: string;
+  current?: boolean; // The model that the agent used in its last session or model check.
+}
+
+/** The sign-in state and the subscription usage of an agent (daemon agent_auth.py). */
+export interface AgentAuth {
+  status: "authenticated" | "unauthenticated" | "unknown";
+  label: string; // For example "Claude Max" or "API key".
+  detail: string; // Why it is not signed in, or why the state is not known.
+  subscription: boolean;
+  install_url?: string; // The program of the agent is not installed.
+  usage: AgentUsage[] | null; // null: no usage (not a subscription, or not available).
+  usage_error: string;
+  checked_at: number; // Seconds since 1970.
+}
+
+export interface AgentUsage {
+  label: string; // "Session", "Weekly", "Weekly · Fable".
+  percent: number; // 0 to 100.
+  resets_at: string | null; // ISO time.
+  severity: string; // "normal", or a warning level.
 }
 
 /** The state of a harness download (harnesses.progress). total 0: the size is not known. */
@@ -309,8 +455,19 @@ export interface HarnessProgress {
 export interface SessionHarness {
   id: string;
   name: string;
-  models?: { id: string; name: string; description: string }[]; // The model menu. Empty: the harness gives none.
+  models?: AgentModel[]; // The model menu. Empty: the harness gives none.
   model?: string | null; // The current model id. On the start screen (user_settings): the model of a Harness provider, "<provider>/<model>".
+  native_model?: string | null; // On the start screen: the chosen model id of the harness itself.
+  // An ACP session: the permission modes of the harness for the mode menu, the current one (a mode id, or
+  // "harness:auto"), and harness_auto: the menu also has "Auto" of Harness (the harness has no Auto mode).
+  modes?: { id: string; name: string; description: string }[];
+  mode?: string | null;
+  harness_auto?: boolean;
+  // The reasoning levels of the harness (an ACP config option of the category "thought_level", for example the
+  // "effort" of Claude Agent: default, low, medium, high, xhigh, max), and the current one. Empty: none.
+  efforts?: AgentModel[];
+  effort?: string | null;
+  native_effort?: string | null; // On the start screen: the chosen reasoning level of the harness for new sessions.
   commands?: { name: string; description: string; hint: string }[]; // The / commands of the harness.
 }
 
@@ -422,6 +579,11 @@ export interface SessionSummary {
   branch?: string | null; // The branch of a worktree session. null: the session works in its project folder.
   routine_id?: string | null; // The routine that started the session. null: the user started it.
   parent_id?: string | null; // The session that started it (a fork, or start_session). The sidebar shows it nested.
+  // The Threads sidebar (docs/UI_RULES.md 3.7). An older daemon does not send these fields.
+  position?: number | null; // The manual order of Pinned and Active, low first. null: after the others, newest first.
+  snoozed_until?: number | null; // Epoch seconds. null: not snoozed.
+  auto_archive?: boolean; // false: "Auto-settle" > "Never".
+  archived_at?: number | null; // The time of the archive (the settle time).
 }
 
 /** The branches of the repository of a folder, for the "Branch to start from" menu. */
@@ -895,7 +1057,20 @@ export type ClientMessage =
   | { type: "session.adopt"; session_id: string }
   | { type: "session.leave" } // The start screen. A running turn of the session continues.
   // Rename, pin, or archive. force: archive a worktree session with uncommitted changes.
-  | { type: "session.update"; session_id: string; title?: string; pinned?: boolean; archived?: boolean; force?: boolean }
+  // The Threads sidebar also sends position, snoozed_until (null: wake), and auto_archive (false: "Never").
+  | {
+      type: "session.update";
+      session_id: string;
+      title?: string;
+      pinned?: boolean;
+      archived?: boolean;
+      force?: boolean;
+      position?: number | null;
+      snoozed_until?: number | null;
+      auto_archive?: boolean;
+    }
+  // "Regenerate title": the model makes a new title from the conversation. The reply is session.title.
+  | { type: "session.retitle"; session_id: string }
   // The branch and the pull request of project folders, for the sidebar. The reply is "pr_status".
   | { type: "git.pr_status"; paths: string[] }
   | { type: "git.changes"; cwd: string } // The changes of the folder against its base branch (the rail).
@@ -946,6 +1121,28 @@ export type ClientMessage =
   | { type: "harnesses.install"; id: string } // Download the harness, or its update.
   | { type: "harnesses.uninstall"; id: string } // Delete the download.
   | { type: "harnesses.model"; id: string; model: string | null } // A model of a Harness provider. null: the harness settings.
+  | { type: "harnesses.native_model"; id: string; model: string | null } // A model of the harness itself. null: its default.
+  | { type: "agents.enable"; id: string; enabled: boolean } // Show the agent in the picker and on the Agents page.
+  | { type: "agents.check"; id: string } // Read the sign-in state and the usage again.
+  // The Usage page. offset: the minutes of the local time zone east of UTC (-new Date().getTimezoneOffset()), for the
+  // days and the hours. refresh: read the histories and the prices again now.
+  | { type: "usage.summary"; range: UsageRange; offset: number; providers?: string[]; refresh?: boolean }
+  // Replace all the custom model prices. The reply is usage.prices. Errors have the ref usage.prices.set.
+  | { type: "usage.prices.set"; models: Record<string, UsageModelPrice> }
+  | { type: "acp.mode"; mode: string } // The mode menu of an ACP session: a mode id of the harness, or "harness:auto".
+  | { type: "acp.effort"; effort: string } // The reasoning level of an ACP session (a value of its "efforts").
+  // Switch the agent of the current session (a portable handoff): "harness" or a harness id, and a model. Reply: session.ready.
+  | { type: "session.agent"; agent: string; model: string | null }
+  | { type: "harnesses.native_effort"; id: string; effort: string | null } // The reasoning level of the harness for new sessions.
+  | { type: "agents.auto_model"; model: string | null } // The model of Auto mode ("auto_mode.model"). null: none.
+  | { type: "agents.models"; id: string } // Read the models of the agent before its first session.
+  | { type: "agents.signin"; id: string; cols: number; rows: number } // Start the sign-in terminal.
+  | { type: "agents.signin.input"; id: string; data: string }
+  | { type: "agents.signin.resize"; id: string; cols: number; rows: number }
+  | { type: "agents.signin.cancel"; id: string }
+  // Update the program of an agent with its own command, in the sign-in terminal (kind "update").
+  | { type: "agents.update_program"; id: string; cols: number; rows: number }
+  | { type: "harnesses.update_all" } // Download the update of each agent that Harness downloaded.
   | { type: "harnesses.save"; name: string; command: string; id?: string }
   | { type: "harnesses.delete"; id: string }
   // Settings > Your Harness > Output style. create: a model drafts a style from the description.
@@ -1004,8 +1201,8 @@ export type ClientMessage =
   | { type: "server.stop_agent" } // Stop the servers that an agent started, in all sessions of the window.
   | { type: "server.restart"; name: string }
   | { type: "server.logs"; name: string }
-  | { type: "permissions.get" }
-  | { type: "permissions.set"; allow: string[]; deny: string[] }
+  | { type: "permissions.get"; cwd?: string } // cwd: a project (Settings > Permission rules). No cwd: the open session.
+  | { type: "permissions.set"; allow: string[]; deny: string[]; cwd?: string }
   | { type: "providers.list" }
   | ({ type: "providers.save"; key: KeyMode; api_key_env?: string } & ProviderFields)
   | { type: "providers.delete"; name: string }
@@ -1224,8 +1421,15 @@ export type DaemonMessage =
   | { type: "project_settings"; cwd: string; path: string; settings: ProjectSettings; saved?: boolean }
   // The memories of a project. saved: the name after memory.save. imported: the count after memory.import.
   | { type: "memory"; cwd: string; path: string; items: MemoryItem[]; import_prompt: string; saved?: string; imported?: number }
-  | { type: "harnesses"; items: HarnessItem[]; current: string; path: string } // Settings > Operating Harness.
+  // Settings > Agents. auto_model: the model of Auto mode for the agents of other harnesses ("provider/model"), or null.
+  | { type: "harnesses"; items: HarnessItem[]; current: string; path: string; auto_model?: string | null }
   | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
+  | ({ type: "usage.summary" } & UsageSummary) // The reply to usage.summary. Errors have the ref usage.summary.
+  | { type: "usage.prices"; models: Record<string, UsageModelPrice> } // The reply to usage.prices.set.
+  // The sign-in terminal of the agent runs. kind "update": the update command of the program (agents.update_program).
+  | { type: "agents.signin.started"; id: string; kind?: "signin" | "update"; command?: string }
+  | { type: "agents.signin.output"; id: string; kind?: "signin" | "update"; data: string }
+  | { type: "agents.signin.exit"; id: string; kind?: "signin" | "update"; code: number | null } // Then "harnesses".
   | { type: "acp.state"; session_id?: string; harness: SessionHarness } // The models and the commands of an ACP harness.
   | { type: "memory.parsed"; items: MemoryFact[] }
   | ({ type: "disk.usage" } & DiskUsage)
@@ -1256,7 +1460,7 @@ export type DaemonMessage =
   | { type: "tool.start"; id: string; name: string; input: unknown; agent?: string }
   | { type: "tool.result"; id: string; output: string; is_error: boolean; diff?: string; image?: string; agent?: string; created?: string[]; card?: ToolCardData; verify?: VerifyInfo }
   | ({ type: "permission.request" } & PermissionRequest)
-  | { type: "permissions"; path: string; allow: string[]; deny: string[] }
+  | { type: "permissions"; path: string; allow: string[]; deny: string[]; cwd?: string } // cwd: the reply to a request with cwd.
   | { type: "turn.end"; usage: Usage; stop_reason: StopReason; verify?: VerifyInfo }
   // A steer message went into the history. text: the text that the user sees.
   | { type: "steer.taken"; id: string; text: string; origin?: "task" }

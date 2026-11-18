@@ -131,5 +131,5 @@ def test_the_daemon_gives_the_provider_model_to_the_harness(daemon, project, fak
     c.new_session(project)
     c.send({"type": "prompt", "text": "env"})
     error, _ = c.until("error", timeout=30)
-    assert "Settings > Operating Harness" in error["message"]
+    assert "Settings > Agents" in error["message"]
     c.close()

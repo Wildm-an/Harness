@@ -607,6 +607,22 @@ def test_permission_rules_get_and_set(daemon, project, fake_model):
     c.close()
 
 
+def test_permission_rules_of_a_project_with_no_session(daemon, tmp_path):
+    """Settings > Permission rules: the rules of any project, with no open session. The reply repeats "cwd"."""
+    other = tmp_path / "other"
+    other.mkdir()
+    c = Client(daemon)
+    c.send({"type": "permissions.get", "cwd": str(other)})
+    rules = c.until("permissions")[0]
+    assert rules == {"type": "permissions", "path": ".harness/settings.json", "allow": [], "deny": [], "cwd": str(other)}
+    c.send({"type": "permissions.set", "cwd": str(other), "allow": ["bash(npm test)"], "deny": []})
+    assert c.until("permissions")[0]["allow"] == ["bash(npm test)"]
+    assert json.loads((other / ".harness" / "settings.json").read_text())["allow"] == ["bash(npm test)"]
+    c.send({"type": "permissions.get", "cwd": "relative/path"})
+    assert "absolute path" in c.until("error")[0]["message"]
+    c.close()
+
+
 def test_rename_pin_and_delete_a_session(daemon, project, fake_model):
     c = Client(daemon)
     first = c.new_session(project)

@@ -1,5 +1,6 @@
 // The Settings dialog (Ctrl+,), as in the DeepSeek Harness and Claude apps: a list of pages on the
-// left, and the page on the right. General and Appearance are here. Your Harness (the agent
+// left, and the page on the right. A search field at the top of the list finds a setting on any page
+// (lib/settingsIndex.ts, the user asked for it). General and Appearance are here. Your Harness (the agent
 // instructions and the memory) is in YourHarnessSettings.tsx. Local Models, Providers, and
 // Computers are the screens that the sidebar opened before. Plugins are on the Capabilities page.
 
@@ -7,7 +8,8 @@ import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } fr
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RowsPending, useRowsPending } from "./Skeleton";
 import { Switch } from "./Switch";
-import { Boxes, Cable, FileCog, Monitor, Moon, Palette, RefreshCw, RotateCcw, Rows2, Rows4, Settings, Sun, TriangleAlert, UserRound, Workflow, X, type LucideIcon } from "lucide-react";
+import { Boxes, Cable, ChevronRight, FileCog, Monitor, Moon, Palette, RefreshCw, RotateCcw, Rows2, Rows4, Search, Settings, ShieldCheck, Sun, TriangleAlert, UserRound, Workflow, X, type LucideIcon } from "lucide-react";
+import { PAGE_LABELS, findSetting, searchSettings, type SettingEntry } from "../lib/settingsIndex";
 import { SecretInput } from "./SecretInput";
 import type { NewTaskPrompt, PermissionMode, SandboxStatus, UserSettings, WebSearchProvider } from "../daemon/protocol";
 import { SandboxSetting } from "./SandboxSetting";
@@ -59,15 +61,17 @@ import { MODES } from "./ModeMenu";
 import { shownModes } from "../lib/bypass";
 import { isTauri } from "../lib/tauri";
 import { useLinksInPane } from "../lib/openLink";
+import { setSidebarOrganization, toOrganization, useSidebarOrganization } from "../lib/threads";
 import { compareVersions } from "../lib/version";
 import { availableVersion, useUpdateState } from "../lib/updater";
 
-export type SettingsPage = "general" | "harness" | "operating" | "appearance" | "models" | "connections" | "computers" | "updates";
+export type SettingsPage = "general" | "harness" | "operating" | "rules" | "appearance" | "models" | "connections" | "computers" | "updates";
 
 const PAGES: { id: SettingsPage; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Settings },
   { id: "harness", label: "Your Harness", icon: UserRound },
-  { id: "operating", label: "Operating Harness", icon: Workflow },
+  { id: "operating", label: "Agents", icon: Workflow }, // Settings > Agents (AgentsSettings.tsx). The id stays for the links to the page.
+  { id: "rules", label: "Permission rules", icon: ShieldCheck }, // PermissionRulesSettings.tsx. It was a pane under "More" in the sidebar.
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "models", label: "Local models", icon: Boxes },
   { id: "connections", label: "Providers", icon: Cable },
@@ -114,6 +118,7 @@ export function SettingsDialog({
   onClose,
   closeRef,
   configPath,
+  agentUpdates = 0,
   onOpenConfig,
   children,
 }: {
@@ -124,9 +129,39 @@ export function SettingsDialog({
   configPath: string | null; // ~/.harness/settings.json of the daemon. null: not connected.
   onOpenConfig: (() => void) | null; // null: the file is on another computer.
   children: ReactNode; // The current page.
+  agentUpdates?: number; // The enabled agents with an update: a dot on "Agents".
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(document.activeElement);
+  // The search: the results take the place of the page until the user picks one or clears the field.
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const results = searchSettings(query);
+  const searching = query.trim() !== "";
+  // The setting to show after the page of a result is drawn.
+  const [target, setTarget] = useState<SettingEntry | null>(null);
+  useEffect(() => {
+    if (!target || searching || target.page !== page) return;
+    let tries = 0;
+    let timer = 0;
+    // A page can draw its rows after its data comes: look again for a short time.
+    const look = () => {
+      const body = dialog.current?.querySelector(".settings-body");
+      const el = body ? findSetting(body, target.label) : null;
+      if (el) {
+        el.scrollIntoView({ block: "center" });
+        el.classList.remove("setting-found");
+        void el.offsetWidth; // The flash runs again for the same row.
+        el.classList.add("setting-found");
+        el.querySelector<HTMLElement>("input, select, textarea, button, [role='switch']")?.focus({ preventScroll: true });
+        setTarget(null);
+      } else if (++tries < 20) timer = window.setTimeout(look, 100);
+      else setTarget(null);
+    };
+    look();
+    return () => window.clearTimeout(timer);
+  }, [target, searching, page]);
+
   const update = availableVersion(useUpdateState());
   useOverlay(true);
 
@@ -184,6 +219,15 @@ export function SettingsDialog({
     else after();
   };
   const requestClose = () => guard("Close the settings?", onClose);
+  const pick = (entry: SettingEntry) => {
+    const go = () => {
+      setQuery("");
+      setTarget(entry);
+      if (entry.page !== page) onPage(entry.page);
+    };
+    if (entry.page !== page) guard("Leave this page?", go);
+    else go();
+  };
   useEffect(() => {
     if (!closeRef) return;
     closeRef.current = requestClose;
@@ -224,6 +268,10 @@ export function SettingsDialog({
           if (e.key === "Escape" && !e.defaultPrevented) {
             e.stopPropagation();
             escape();
+          } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+            e.preventDefault();
+            searchRef.current?.focus();
+            searchRef.current?.select();
           }
         }}
       >
@@ -259,18 +307,49 @@ export function SettingsDialog({
         </header>
         <div className="settings-main">
           <nav className="settings-nav" aria-label="Settings pages">
+            <div className="settings-search">
+              <Search size={14} className="settings-search-icon" aria-hidden />
+              <input
+                ref={searchRef}
+                type="search"
+                className="settings-search-input"
+                placeholder="Search settings"
+                aria-label="Search settings"
+                aria-controls="settings-results"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && query) {
+                    e.preventDefault(); // Esc clears the field first, then closes Settings.
+                    setQuery("");
+                  } else if (e.key === "Enter" && results[0]) {
+                    e.preventDefault();
+                    pick(results[0]);
+                  } else if (e.key === "ArrowDown" && results.length > 0) {
+                    e.preventDefault();
+                    dialog.current?.querySelector<HTMLButtonElement>(".settings-result")?.focus();
+                  }
+                }}
+              />
+            </div>
             {PAGES.map((p) => {
               const Icon = p.icon;
               return (
                 <button
                   key={p.id}
                   type="button"
-                  className={`settings-nav-item${p.id === page ? " active" : ""}`}
+                  className={`settings-nav-item${p.id === page && !searching ? " active" : ""}`}
                   aria-current={p.id === page ? "page" : undefined}
-                  onClick={() => p.id !== page && guard("Leave this page?", () => onPage(p.id))}
+                  onClick={() => {
+                    setQuery("");
+                    if (p.id !== page) guard("Leave this page?", () => onPage(p.id));
+                  }}
                 >
                   <Icon size={16} aria-hidden />
                   {p.label}
+                  {p.id === "operating" && agentUpdates > 0 && (
+                    <span className="settings-nav-dot" role="img" aria-label={`${agentUpdates} ${agentUpdates === 1 ? "agent has an update" : "agents have updates"}`} />
+                  )}
                   {p.id === "updates" && update && (
                     <span className="settings-nav-dot" role="img" aria-label={`Version ${update} is available`} />
                   )}
@@ -278,7 +357,48 @@ export function SettingsDialog({
               );
             })}
           </nav>
-          <div className="settings-body">{children}</div>
+          {/* The page stays (hidden) during a search, so a form keeps its typed text. */}
+          <div className="settings-body" hidden={searching}>
+            {children}
+          </div>
+          {searching && (
+            <div className="settings-body settings-results" id="settings-results" role="region" aria-label="Search results">
+              <h2 className="settings-page-title">Search results</h2>
+              {results.length === 0 ? (
+                <p className="settings-results-empty" role="status">
+                  No settings match “{query.trim()}”.
+                </p>
+              ) : (
+                <ul
+                  className="settings-result-list"
+                  onKeyDown={(e) => {
+                    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+                    e.preventDefault();
+                    const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>(".settings-result")];
+                    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+                    if (e.key === "ArrowUp" && at <= 0) searchRef.current?.focus();
+                    else items[Math.min(items.length - 1, at + (e.key === "ArrowDown" ? 1 : -1))]?.focus();
+                  }}
+                >
+                  {results.map((r) => (
+                    <li key={`${r.page}:${r.section ?? ""}:${r.label}`}>
+                      <button type="button" className="settings-result" onClick={() => pick(r)}>
+                        <span className="settings-result-text">
+                          <span className="settings-result-label">{r.label}</span>
+                          {r.help && <span className="settings-result-help">{r.help}</span>}
+                        </span>
+                        <span className="settings-result-where">
+                          {PAGE_LABELS[r.page]}
+                          {r.section && r.section !== r.label ? ` › ${r.section}` : ""}
+                        </span>
+                        <ChevronRight size={14} aria-hidden />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -735,6 +855,7 @@ export function GeneralSettings({
 }) {
   const [busy, setBusy] = useState<BusySend>(busySend);
   const [linksInPane, setLinksInPane] = useLinksInPane();
+  const organization = useSidebarOrganization();
   const off = !connected || values === null;
   // "Saving" until the daemon sends the new values, then "Saved" for a moment.
   const [status, setStatus] = useState<"" | "saving" | "saved">("");
@@ -784,6 +905,18 @@ export function GeneralSettings({
           <option value="queue">Queue</option>
           <option value="interrupt">Interrupt</option>
           <option value="steer">Steer</option>
+        </select>
+      </Row>
+
+      {/* Per device, as the other view choices. The user asked for the thread list of T3 Code (UI_RULES 3.7). */}
+      <Row
+        label="Sidebar organization"
+        help="How the sidebar lists the sessions. Threads: pinned, active, working, snoozed, and settled sections, as T3 Code."
+        htmlFor="setting-sidebar-organization"
+      >
+        <select id="setting-sidebar-organization" value={organization} onChange={(e) => setSidebarOrganization(toOrganization(e.target.value))}>
+          <option value="sessions">Sessions</option>
+          <option value="threads">Threads</option>
         </select>
       </Row>
 

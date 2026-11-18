@@ -11,9 +11,10 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { CommandItem, Effort, GitBranches, PermissionMode, ProjectItem, SessionHarness } from "../daemon/protocol";
+import type { ClientMessage, CommandItem, Effort, GitBranches, HarnessItem, PermissionMode, ProjectItem, SessionHarness } from "../daemon/protocol";
 import { useOverlay } from "../lib/overlay";
-import { ModelMenu, type ModelList } from "./ModelMenu";
+import type { ModelList } from "./ModelMenu";
+import { AgentPicker } from "./AgentPicker";
 import { ModeMenu, lastMode, nextMode, saveLastMode } from "./ModeMenu";
 import { loadPref, savePref } from "../lib/prefs";
 import { rememberModel, startModel } from "../lib/modelAvailability";
@@ -285,10 +286,16 @@ export function SessionStart({
   view = "code",
   harness = null,
   onManageHarness,
+  agents = null,
+  onRequestAgents,
+  onAgentMessages,
 }: {
-  // The operating harness of new sessions (Settings > Operating Harness). null: the built-in loop, with the model menu.
+  // The agent of new sessions (user_settings.harness, Settings > Agents). null: the built-in loop.
   harness?: SessionHarness | null;
-  onManageHarness?: () => void;
+  onManageHarness?: () => void; // Opens Settings > Agents.
+  agents?: HarnessItem[] | null; // The rail of the agent picker (harnesses.list). null: not loaded.
+  onRequestAgents?: () => void;
+  onAgentMessages?: (messages: ClientMessage[]) => void; // A choice of the agent picker: the agent and its model.
   // false: the user did not select a folder yet, so the folder block keeps the focus. The block stays
   // in the center until the session starts.
   folderChosen?: boolean;
@@ -530,34 +537,23 @@ export function SessionStart({
                   )}
                   {worktree.on && <WorktreeMenu choice={worktree} info={branchInfo} onChange={changeWorktree} />}
                 </div>
-                {harness ? (
-                  <button
-                    type="button"
-                    className="prompt-chip harness-label"
-                    onClick={onManageHarness}
-                    title={`New sessions run in ${harness.name} through ACP. ${
-                      harness.model ? `It uses the model ${harness.model} of your providers.` : "It chooses its own model."
-                    } Click to change the operating harness.`}
-                  >
-                    {/* "model" here is the model of a Harness provider: "<provider>/<model>" (daemon acp_models.py). */}
-                    <span className="prompt-chip-text">
-                      {harness.model ? `${harness.name} · ${harness.model.slice(harness.model.indexOf("/") + 1)}` : harness.name}
-                    </span>
-                  </button>
-                ) : (
-                <ModelMenu
+                {/* The agent and model picker (rule C14). An ACP agent here becomes the agent of new sessions. */}
+                <AgentPicker
                   value={shownModel}
                   models={models}
                   allowDefault
-                  alignRight
-                  up
                   localProviders={localProviders}
                   effort={effort}
-                  onOpen={onRequestModels}
+                  agents={agents}
+                  current={harness}
+                  shortcut
+                  onRequestModels={onRequestModels}
+                  onRequestAgents={() => onRequestAgents?.()}
                   onSelect={setModel}
-                  onManage={onManageProviders}
+                  onAgentMessages={(messages) => onAgentMessages?.(messages)}
+                  onManageProviders={onManageProviders}
+                  onManageAgents={() => onManageHarness?.()}
                 />
-                )}
               </>
             }
           />

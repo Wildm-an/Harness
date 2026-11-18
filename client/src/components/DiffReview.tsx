@@ -1,10 +1,10 @@
 import { Fragment, memo, useMemo, useState } from "react";
-import { Check, Clock, Columns2, FileDiff, Rows3, ShieldAlert, X } from "lucide-react";
+import { Check, Clock, Columns2, FileDiff, Rows3, X } from "lucide-react";
 import type { PermissionItem } from "../chat/state";
 import type { Decision } from "../daemon/protocol";
 import { parseUnifiedDiff, toSplitRows, wordSegments, type DiffLine, type Hunk, type Segment } from "../lib/diff";
 import { loadPref, savePref } from "../lib/prefs";
-import { DECIDED, PermissionButtons, PermissionTitle, ScopeNote, choiceForKey, permissionChoices, usePermissionShortcuts } from "./PermissionCard";
+import { DECIDED, PermissionButtons, PermissionIcon, PermissionTitle, ScopeNote, choiceForKey, permissionChoices, usePermissionShortcuts } from "./PermissionCard";
 import { useCardKeys } from "../lib/cardKeys";
 
 type Mode = "split" | "unified";
@@ -200,7 +200,7 @@ export const DiffReview = memo(function DiffReview({
           {pending ? (
             <>
               <div className="pane-foot-title">
-                <ShieldAlert size={16} aria-hidden />
+                <PermissionIcon item={permission} />
                 <PermissionTitle item={permission} />
               </div>
               <div className="permission-foot">

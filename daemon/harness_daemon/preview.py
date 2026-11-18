@@ -89,6 +89,14 @@ class SessionBrowser:
         self.host.touch()
         await pane.use_tab(tab)
 
+    async def close_tab(self, tab: str) -> None:
+        """Close a tab of the session in the Browser pane."""
+        pane = self._pane_ready()
+        if pane is None:
+            raise BrowserError("The Browser pane is not available: the headless browser has only one page.")
+        self.host.touch()
+        await pane.close_tab(tab)
+
     async def navigate(self, url: str, tab: str | None = None) -> dict[str, Any]:
         pane = self._pane_ready()
         self.current = pane if pane is not None else self.headless

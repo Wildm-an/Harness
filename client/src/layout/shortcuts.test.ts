@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNewSessionShortcut, isSideChatShortcut, isSidebarShortcut, isViewShortcut, navShortcut, shortcutPane } from "./shortcuts";
+import { isNewSessionShortcut, isSideChatShortcut, isSidebarShortcut, isViewShortcut, navMouseButton, navShortcut, shortcutPane } from "./shortcuts";
 import { chatHasFullHeight, defaultLayout, findGroupOf, group, movePane, normalize, togglePane, type LayoutNode } from "./model";
 
 const key = (code: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean; key?: string } = {}) => ({
@@ -133,5 +133,15 @@ describe("the view shortcut", () => {
     expect(isViewShortcut(key("KeyE", { meta: true, key: "e" }))).toBe(true);
     expect(isViewShortcut(key("KeyE", { ctrl: true, shift: true, key: "E" }))).toBe(false);
     expect(isViewShortcut(key("KeyE", { key: "e" }))).toBe(false);
+  });
+});
+
+describe("the side buttons of a mouse", () => {
+  it("go back and forward", () => {
+    expect(navMouseButton({ button: 3 })).toBe(-1);
+    expect(navMouseButton({ button: 4 })).toBe(1);
+    expect(navMouseButton({ button: 0 })).toBeNull();
+    expect(navMouseButton({ button: 1 })).toBeNull();
+    expect(navMouseButton({ button: 2 })).toBeNull();
   });
 });

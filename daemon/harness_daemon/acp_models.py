@@ -1,4 +1,4 @@
-"""The model of an ACP harness from a Harness provider: Settings > Operating Harness > "Model".
+"""The model of an ACP harness from a Harness provider: Settings > Agents > "Model".
 
 Each Harness provider (providers.json) is an OpenAI-compatible server. The user can choose a model of a
 provider for some harnesses of the list. When the daemon starts the harness, it gives the harness the

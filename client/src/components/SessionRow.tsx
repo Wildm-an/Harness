@@ -6,15 +6,19 @@
 // the right half of the main view does the same (lib/split.ts).
 // A session with nested sessions shows their count and an arrow at the far right. The arrow shows or
 // hides the nested sessions under the row.
+// In the Threads layout of the sidebar (ThreadsList.tsx, ThreadRow.tsx), the menu is the thread menu of T3 Code:
+// "Pin thread", "Settle thread", "Snooze", "Rename thread", "Regenerate title", "Mark unread", "Auto-settle
+// behavior", "Copy", and "Delete" (docs/UI_RULES.md 3.7). The keys work, but the menu does not show them.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, CalendarClock, ChevronRight, Columns2, EllipsisVertical, GitBranch, GitPullRequest, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Mail, MailOpen } from "lucide-react";
+import { Archive, ArchiveRestore, CalendarClock, CircleCheck, Clock, Copy, Folder, Hash, Check, ChevronRight, Columns2, EllipsisVertical, GitBranch, GitPullRequest, Pencil, Pin, PinOff, RefreshCw, SquareArrowOutUpRight, Timer, Trash2, Mail, MailOpen } from "lucide-react";
 import type { PullRequest, RunningSession, SessionSummary } from "../daemon/protocol";
 import { PR_STATE_TEXT, prRefText } from "../lib/pr";
 import { PrIcon, PrMiniCard, useHoverCard } from "./PrCard";
 import { useOverlay } from "../lib/overlay";
 import { modelName } from "../lib/modelName";
 import { setDraggedSession, startSessionDrag } from "../lib/split";
+import { snoozeChoices, whenText } from "../lib/threads";
 
 export interface SessionActions {
   onResume: (id: string) => void;
@@ -85,30 +89,49 @@ export function splitItem(actions: Pick<SessionActions, "onOpenSplit">, active: 
   return active ? "off" : "on";
 }
 
+/** The items of the row menu in the Threads layout (docs/UI_RULES.md 3.7). */
+export interface ThreadMenuInfo {
+  snoozed: boolean; // "Wake" in place of the "Snooze" submenu.
+  autoArchive: boolean; // "Auto-settle": true is "Follow settings", false is "Never".
+  retitling: boolean; // A title is being made: "Regenerate title" is off.
+  branch: string | null; // "Copy" > "Branch".
+  path: string; // "Copy" > "Path".
+  onSnooze: (until: number) => void;
+  onWake: () => void;
+  onAutoArchive: (on: boolean) => void;
+  onRetitle: () => void;
+}
+
 const MENU_WIDTH = 210;
 const SUB_WIDTH = 160;
+const SNOOZE_WIDTH = 200;
+
+type SubKey = "open" | "snooze" | "auto" | "copy";
 
 export type MenuAction = "pin" | "unread" | "rename" | "archive" | "delete" | "split" | "pr";
 const KEYS: Record<string, MenuAction> = { p: "pin", u: "unread", r: "rename", a: "archive", d: "delete", g: "pr" };
 
 /** The session menu: of a sidebar row, and of the caret button at the right of the title in the top bar. */
-export function SessionMenu({ session, unread, prItem, split, anchor, at, align = "right", onAction, onClose }: {
-  session: Pick<SessionSummary, "title" | "pinned" | "archived">;
+export function SessionMenu({ session, unread, prItem, split, anchor, at, align = "right", thread, onAction, onClose }: {
+  session: Pick<SessionSummary, "title" | "pinned" | "archived"> & Partial<Pick<SessionSummary, "id">>;
   unread: boolean;
   prItem: boolean; // "Open PR": the branch of the session has a pull request.
   split: "on" | "off" | null; // "Open in" > "Split view": "off" when the main view shows the session. null: no item.
   anchor: HTMLElement;
   at: { x: number; y: number } | null; // A right click: the menu opens at the mouse, not under the ⋮ button.
   align?: "left" | "right"; // The menu edge that lines up with the same edge of the anchor.
+  thread?: ThreadMenuInfo; // The Threads layout of the sidebar: more items, and "Settle" for "Archive".
   onAction: (action: MenuAction) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  // The "Open in" submenu: its place in the window, at the right of the menu (at the left when there is no room).
-  const [sub, setSub] = useState<{ top: number; left: number } | null>(null);
-  const openInRef = useRef<HTMLButtonElement>(null);
+  // A submenu ("Open in", "Snooze", "Auto-settle"): its place in the window, at the right of the menu (at the
+  // left when there is no room).
+  const [sub, setSub] = useState<{ key: SubKey; top: number; left: number; width: number } | null>(null);
+  const subTriggers = useRef(new Map<SubKey, HTMLButtonElement>());
   const subRef = useRef<HTMLDivElement>(null);
+  const [snoozeAt] = useState(() => new Date()); // The snooze choices count from the time the menu opened.
   useOverlay(true);
 
   // The sidebar list scrolls: the menu has a fixed position under the ⋮ button, in the window.
@@ -134,12 +157,13 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
     if (placed) ref.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   }, [placed]);
 
-  const showSub = (focus: boolean) => {
-    const item = openInRef.current?.getBoundingClientRect();
+  const showSub = (key: SubKey, focus: boolean) => {
+    const item = subTriggers.current.get(key)?.getBoundingClientRect();
     const box = ref.current?.getBoundingClientRect();
     if (!item || !box) return;
-    const left = box.right + SUB_WIDTH + 4 > window.innerWidth ? box.left - SUB_WIDTH - 4 : box.right + 4;
-    setSub({ top: item.top - 4, left: Math.max(8, left) });
+    const width = key === "snooze" ? SNOOZE_WIDTH + 40 : SUB_WIDTH;
+    const left = box.right + width + 4 > window.innerWidth ? box.left - width - 4 : box.right + 4;
+    setSub({ key, top: item.top - 4, left: Math.max(8, left), width });
     if (focus) window.setTimeout(() => subRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true }), 0);
   };
 
@@ -157,13 +181,15 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
     if (inSub && (e.key === "ArrowLeft" || e.key === "Escape")) {
       e.preventDefault();
       e.stopPropagation();
+      const trigger = subTriggers.current.get(sub.key);
       setSub(null);
-      openInRef.current?.focus({ preventScroll: true });
+      trigger?.focus({ preventScroll: true });
       return;
     }
-    if (e.key === "ArrowRight" && document.activeElement === openInRef.current) {
+    const trigger = [...subTriggers.current.entries()].find(([, el]) => el === document.activeElement)?.[0];
+    if (e.key === "ArrowRight" && trigger) {
       e.preventDefault();
-      showSub(true);
+      showSub(trigger, true);
       return;
     }
     if (e.key === "Escape") {
@@ -182,6 +208,7 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
       items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus({ preventScroll: true });
       return;
     }
+    if (inSub) return; // The letters of the menu are not for the submenu.
     const action = !e.ctrlKey && !e.metaKey && !e.altKey ? KEYS[e.key.toLowerCase()] : undefined;
     if (action && (action !== "pr" || prItem)) {
       e.preventDefault();
@@ -199,9 +226,76 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
     >
       <Icon size={14} aria-hidden />
       <span className="session-menu-label">{label}</span>
-      <kbd className="session-menu-key">{key}</kbd>
+      {/* The thread menu of T3 Code shows no keys. The keys work. */}
+      {!thread && <kbd className="session-menu-key">{key}</kbd>}
     </button>
   );
+
+  // An item with no key, for the Threads layout. It closes the menu.
+  const plain = (label: string, Icon: typeof Pin, run: () => void, disabled = false, tip?: string) => (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      title={tip}
+      onClick={() => {
+        onClose();
+        run();
+      }}
+    >
+      <Icon size={14} aria-hidden />
+      <span className="session-menu-label">{label}</span>
+    </button>
+  );
+
+  // The button that opens a submenu: a click, ArrowRight, or the pointer on it.
+  const subTrigger = (key: SubKey, label: string, Icon: typeof Pin) => (
+    <button
+      ref={(el) => {
+        if (el) subTriggers.current.set(key, el);
+        else subTriggers.current.delete(key);
+      }}
+      type="button"
+      role="menuitem"
+      aria-haspopup="menu"
+      aria-expanded={sub?.key === key}
+      className={sub?.key === key ? "sub-open" : undefined}
+      onClick={() => (sub?.key === key ? setSub(null) : showSub(key, true))}
+      onMouseEnter={() => showSub(key, false)}
+    >
+      <Icon size={14} aria-hidden />
+      <span className="session-menu-label">{label}</span>
+      <ChevronRight size={14} className="session-menu-sub" aria-hidden />
+    </button>
+  );
+
+  const subItem = (label: string, run: () => void, checked?: boolean, detail?: string, Icon?: typeof Pin) => (
+    <button
+      key={label}
+      type="button"
+      role={checked === undefined ? "menuitem" : "menuitemradio"}
+      aria-checked={checked}
+      onClick={() => {
+        onClose();
+        run();
+      }}
+    >
+      {Icon && <Icon size={14} aria-hidden />}
+      <span className="session-menu-label">{label}</span>
+      {detail && <span className="session-menu-detail">{detail}</span>}
+      {checked !== undefined && <span className="menu-check">{checked && <Check size={14} aria-hidden />}</span>}
+    </button>
+  );
+
+  const copy = (text: string) => void navigator.clipboard?.writeText(text).catch(() => {});
+
+  // The pointer on an item with no submenu closes the open submenu.
+  const onMouseOver = (e: React.MouseEvent) => {
+    if (!sub) return;
+    const button = (e.target as Element).closest("button");
+    if (!button || subRef.current?.contains(button)) return;
+    if (![...subTriggers.current.values()].includes(button as HTMLButtonElement)) setSub(null);
+  };
 
   return (
     <div
@@ -211,6 +305,7 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
       aria-label={`Actions for ${session.title ?? "the session"}`}
       style={pos ? { top: pos.top, left: pos.left, width: MENU_WIDTH } : { visibility: "hidden", width: MENU_WIDTH }}
       onKeyDown={onKeyDown}
+      onMouseOver={onMouseOver}
     >
       {prItem && (
         <>
@@ -220,56 +315,90 @@ export function SessionMenu({ session, unread, prItem, split, anchor, at, align 
       )}
       {split && (
         <>
-          <button
-            ref={openInRef}
-            type="button"
-            role="menuitem"
-            aria-haspopup="menu"
-            aria-expanded={sub !== null}
-            className={sub ? "sub-open" : undefined}
-            onClick={() => (sub ? setSub(null) : showSub(true))}
-            onMouseEnter={() => showSub(false)}
-          >
-            <SquareArrowOutUpRight size={14} aria-hidden />
-            <span className="session-menu-label">Open in</span>
-            <ChevronRight size={14} className="session-menu-sub" aria-hidden />
-          </button>
-          {sub && (
-            <div
-              ref={subRef}
-              className="menu session-menu session-submenu"
-              role="menu"
-              aria-label="Open in"
-              style={{ top: sub.top, left: sub.left, width: SUB_WIDTH }}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                disabled={split === "off"}
-                title={split === "off" ? "The main view shows this session" : undefined}
-                onClick={() => onAction("split")}
-              >
-                <Columns2 size={14} aria-hidden />
-                <span className="session-menu-label">Split view</span>
-              </button>
-            </div>
-          )}
+          {subTrigger("open", "Open in", SquareArrowOutUpRight)}
           <div className="menu-sep" role="separator" />
         </>
       )}
-      {item("pin", session.pinned ? "Unpin" : "Pin", "P", session.pinned ? PinOff : Pin)}
-      {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
-      <div className="menu-sep" role="separator" />
-      {item("rename", "Rename", "R", Pencil)}
-      {item("archive", session.archived ? "Unarchive" : "Archive", "A", session.archived ? ArchiveRestore : Archive)}
-      <div className="menu-sep" role="separator" />
-      {item("delete", "Delete", "D", Trash2, true)}
+      {thread ? (
+        <>
+          {item("pin", session.pinned ? "Unpin thread" : "Pin thread", "P", session.pinned ? PinOff : Pin)}
+          {item("archive", session.archived ? "Un-settle thread" : "Settle thread", "A", CircleCheck)}
+          {!session.archived && (thread.snoozed ? plain("Wake thread", Clock, thread.onWake) : subTrigger("snooze", "Snooze", Clock))}
+          <div className="menu-sep" role="separator" />
+          {item("rename", "Rename thread", "R", Pencil)}
+          {plain(thread.retitling ? "Regenerating…" : "Regenerate title", RefreshCw, thread.onRetitle, thread.retitling)}
+          {item("unread", unread ? "Mark read" : "Mark unread", "U", MailOpen)}
+          {subTrigger("auto", "Auto-settle behavior", Timer)}
+          <div className="menu-sep" role="separator" />
+          {subTrigger("copy", "Copy", Copy)}
+          <div className="menu-sep" role="separator" />
+          {item("delete", "Delete", "D", Trash2, true)}
+        </>
+      ) : (
+        <>
+          {item("pin", session.pinned ? "Unpin" : "Pin", "P", session.pinned ? PinOff : Pin)}
+          {item("unread", unread ? "Mark as read" : "Mark as unread", "U", unread ? MailOpen : Mail)}
+          <div className="menu-sep" role="separator" />
+          {item("rename", "Rename", "R", Pencil)}
+          {item("archive", session.archived ? "Unarchive" : "Archive", "A", session.archived ? ArchiveRestore : Archive)}
+          <div className="menu-sep" role="separator" />
+          {item("delete", "Delete", "D", Trash2, true)}
+        </>
+      )}
+      {sub && (
+        <div
+          ref={subRef}
+          className="menu session-menu session-submenu"
+          role="menu"
+          aria-label={{ open: "Open in", snooze: "Snooze", auto: "Auto-settle behavior", copy: "Copy" }[sub.key]}
+          style={{ top: sub.top, left: sub.left, width: sub.width }}
+        >
+          {sub.key === "open" && (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={split === "off"}
+              title={split === "off" ? "The main view shows this session" : undefined}
+              onClick={() => onAction("split")}
+            >
+              <Columns2 size={14} aria-hidden />
+              <span className="session-menu-label">Split view</span>
+            </button>
+          )}
+          {sub.key === "snooze" && thread && snoozeChoices(snoozeAt).map((c) => subItem(c.label, () => thread.onSnooze(c.until), undefined, whenText(c.until, snoozeAt.getTime() / 1000)))}
+          {sub.key === "copy" && thread && (
+            <>
+              {subItem("Path", () => copy(thread.path), undefined, undefined, Folder)}
+              {thread.branch && subItem("Branch", () => copy(thread.branch!), undefined, undefined, GitBranch)}
+              {session.title && subItem("Thread", () => copy(session.title!), undefined, undefined, Mail)}
+              {session.id && subItem("Thread ID", () => copy(session.id!), undefined, undefined, Hash)}
+            </>
+          )}
+          {sub.key === "auto" && thread && (
+            <>
+              {subItem("Follow settings", () => thread.onAutoArchive(true), thread.autoArchive)}
+              {subItem("Never", () => thread.onAutoArchive(false), !thread.autoArchive)}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-export function SessionRow({ session, active, state, unread, disabled, actions, nested, pr, children }: {
+export function SessionRow({ session, active, state, unread, disabled, actions, nested, pr, suffix, thread, drag, children }: {
   session: SessionSummary;
+  suffix?: string; // A muted note after the title: the project, or "Wakes 9:00 AM" (the Threads layout).
+  thread?: ThreadMenuInfo; // The Threads layout: the menu items of section 3.7.
+  // The Threads layout: a pointer drag of the row moves it (ThreadsList.tsx). The row then has no HTML drag
+  // to the split view: the two drags cannot share the pointer.
+  drag?: {
+    ref: (el: HTMLLIElement | null) => void;
+    style?: React.CSSProperties;
+    className?: string;
+    onPointerDown: (e: React.PointerEvent) => void;
+    onClickCapture: (e: React.MouseEvent) => void;
+  };
   pr?: PullRequest | null; // The pull request of the branch of the session (a worktree session).
   active: boolean;
   state: SessionState;
@@ -309,8 +438,18 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
   };
 
   return (
-    <li className="side-session-item">
+    <li
+      ref={drag?.ref}
+      style={drag?.style}
+      className={`side-session-item${drag?.className ? ` ${drag.className}` : ""}`}
+      onClickCapture={drag?.onClickCapture}
+    >
       <div
+        onPointerDown={(e) => {
+          // The ⋮ button and the arrow of the nested sessions do not start a drag.
+          if (!drag || renaming || (e.target as Element).closest(".side-session-more, .side-nest-toggle")) return;
+          drag.onPointerDown(e);
+        }}
         className={`side-session-row${menu ? " menu-open" : ""}${nested ? " has-nested" : ""}`}
         onContextMenu={(e) => {
           if (renaming || disabled) return;
@@ -340,13 +479,14 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
             className={`side-session${active ? " active" : ""}${shown ? " has-status" : ""}${working ? " side-session-running" : ""}`}
             onClick={() => !active && actions.onResume(session.id)}
             disabled={disabled}
-            draggable={!disabled && actions.onOpenSplit !== undefined}
+            draggable={!disabled && !drag && actions.onOpenSplit !== undefined}
             onDragStart={(e) => startSessionDrag(e, session.id)}
             onDragEnd={() => setDraggedSession(null)}
             aria-current={active ? "true" : undefined}
             title={`${title}\n${modelName(session.model)}${session.branch ? `\nWorktree: ${session.branch}` : ""}${session.routine_id ? "\nStarted by a routine" : ""}`}
           >
             <span className="side-session-title">{title}</span>
+            {suffix && <span className="side-session-suffix">{suffix}</span>}
             {working && <span className="sr-only">Running</span>}
             {session.branch && <GitBranch size={12} className="side-session-branch" aria-label="Worktree" />}
             {session.routine_id && <CalendarClock size={12} className="side-session-branch" aria-label="Routine" />}
@@ -391,6 +531,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
             split={splitItem(actions, active)}
             anchor={moreRef.current}
             at={typeof menu === "object" ? menu : null}
+            thread={thread}
             onAction={act}
             onClose={() => setMenu(false)}
           />
@@ -410,7 +551,7 @@ export function SessionRow({ session, active, state, unread, disabled, actions, 
 
 /** The pull request mark of a session row, as in the Claude app: the PR icon in the color of its
  * state, with a small card on hover (the title, "Merged · owner/name #5", the line counts). */
-function PrMark({ pr }: { pr: PullRequest }) {
+export function PrMark({ pr }: { pr: PullRequest }) {
   const hover = useHoverCard(() => <PrMiniCard pr={pr} />);
   return (
     <>

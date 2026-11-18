@@ -3,6 +3,68 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.87 (2026-11-17)
+
+### Agents
+
+- Settings > Agents shows the version of the agent programs that you installed (Claude Code, Hermes
+  Agent, OpenCode, Cursor, goose), and if a newer version is out. "Update" runs the update command
+  of the program (for example `hermes update`) in a terminal on the page.
+- "Update all" downloads the new version of each agent that Harness downloaded. "Update agents
+  automatically" (off by default) does it when a new version comes out.
+- An agent with an update has an arrow in the list, and "Agents" in the Settings nav has a dot.
+
+### Model picker
+
+- An agent lists the models that it gives, as in T3 Code, with no "Default" row. With no choice,
+  the current model of the agent is checked, and new sessions start on it.
+- The picker reads the models of an agent again when the list is older than 5 minutes.
+- For an agent that can use your providers (OpenCode, Codex), the providers come first.
+- The logos of the agents have no white tile. The Harness logo is not stretched.
+
+### Window
+
+- The Back and Forward side buttons of a mouse go back and forward.
+
+## 0.1.86 (2026-11-17)
+
+### Agents
+
+- Settings > Agents replaces "Operating Harness", as the Providers page of T3 Code. It lists the
+  agents with their status, downloads agents from the ACP registry, and has "+ Add agent" with
+  the Recommended agents: Claude, Codex, Grok, Gemini, Cursor, OpenCode, and Hermes.
+- Sign in to Claude Code from Harness, and use your Claude subscription. The page shows the
+  usage of the subscription: "5-hour limit" and "Weekly". A hover shows the reset time.
+- New agents: Hermes Agent, Oh My Pi (downloaded from its GitHub releases, with a SHA-256 check),
+  and Google Antigravity. The logos show in full color.
+- The model picker under the prompt box is the picker of T3 Code: a rail of agents, favorites
+  with stars, Ctrl+1 to Ctrl+9, and a Reasoning column. Drag a favorite (or press Alt+Up and
+  Alt+Down) to change the order.
+- Switch the agent of a chat between turns. The new agent gets a recap of the earlier
+  conversation.
+
+### The Harness interface for other agents
+
+- Other agents use the Harness tools through the `harness` MCP server: visual cards, questions,
+  the Browser pane, and its tabs.
+- The permission requests of other agents follow the Harness rules and modes. "Auto mode model"
+  (Settings > Agents) chooses the model that checks their actions in Auto mode.
+- A permission card names the agent and shows its logo. The mode menu under the prompt box shows
+  the modes of the agent, and can change them.
+
+### Usage
+
+- The Usage page shows the tokens and the cost of each agent and model, by day.
+
+### Sidebar and Settings
+
+- Settings > General > "Sidebar organization" > "Threads": the thread list of T3 Code. Cards show
+  the project, the status or the last activity, the title, the branch, and the agent. Snooze and
+  Settle show on hover. The Working, Snoozed, and Settled shelves are at the bottom.
+- Settings has a search field at the top (Ctrl+F). A result opens its page and shows the
+  setting.
+- Permission rules are a Settings page, with a project select. The sidebar has no "More" list.
+
 ## 0.1.85 (2026-11-14)
 
 ### Agent

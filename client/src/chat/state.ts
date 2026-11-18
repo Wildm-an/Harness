@@ -36,6 +36,7 @@ export type ChatItem =
       expired?: boolean; // The turn ended before a decision.
       background?: boolean; // A background subagent asks: the end of the turn does not expire the card.
       agent?: string;
+      harness?: { id: string; name: string; icon: string | null } | null; // An ACP session: the harness that asks.
     }
   // ask_user_question (daemon tools/interact.py). answers: null when the user skipped.
   // tool: the tool call that asks (its row folds into the card).
@@ -152,6 +153,7 @@ export function requestCard(r: PermissionRequest): ChatItem {
     reason: r.reason ?? (r.background && r.agent ? `The background agent "${r.agent}" asks.` : r.reason),
     background: r.background,
     agent: r.agent,
+    harness: r.harness ?? null,
   };
 }
 

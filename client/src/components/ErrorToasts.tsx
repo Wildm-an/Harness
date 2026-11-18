@@ -30,9 +30,9 @@ function ErrorToast({ item, onClose }: { item: ErrorToastItem; onClose: () => vo
   // The same text again (the count changes) starts the time again.
   useEffect(() => {
     if (held) return;
-    const timer = window.setTimeout(() => close.current(), SHOW_MS);
+    const timer = window.setTimeout(() => close.current(), item.ms ?? SHOW_MS);
     return () => window.clearTimeout(timer);
-  }, [held, item.count]);
+  }, [held, item.count, item.ms]);
   const undo = item.undo;
   return (
     <div

@@ -439,7 +439,8 @@ class AutoReviewer:
         self.failures = 0
 
     def client(self) -> ModelClient:
-        """The model of the "auto_mode.model" setting, or the model of the session."""
+        """The model of the "auto_mode.model" setting, else the auto model of the agent (an agent of another
+        harness: a model of the Harness providers), else the model of the session."""
         spec = global_auto_config().get("model")
         if isinstance(spec, str) and spec.strip():
             try:
@@ -447,7 +448,17 @@ class AutoReviewer:
                 return ModelClient(provider, model)
             except Exception as e:  # noqa: BLE001 - a bad setting uses the session model.
                 log.warning("The auto mode model %r is not valid: %s", spec, e)
-        return self.agent.client
+        auto_client = getattr(self.agent, "auto_client", None)
+        return auto_client if auto_client is not None else self.agent.client
+
+    def available(self) -> bool:
+        """False when no model can check the calls: an agent of another harness with no Harness provider model."""
+        spec = global_auto_config().get("model")
+        if isinstance(spec, str) and spec.strip():
+            return True
+        if hasattr(self.agent, "auto_client"):
+            return getattr(self.agent, "auto_client") is not None
+        return True
 
     async def review(self, tool: str, args: dict[str, Any], key: str) -> Verdict:
         """Ask the model. Raise AutoModeError if it gives no valid verdict."""

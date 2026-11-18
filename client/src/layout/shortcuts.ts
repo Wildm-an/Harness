@@ -83,3 +83,10 @@ export function navShortcut(e: KeyInfo): -1 | 1 | null {
   if (e.key === "ArrowRight") return 1;
   return null;
 }
+
+/** The side buttons of a mouse: button 3 is Back (-1), button 4 is Forward (1), as in a browser. Else null. */
+export function navMouseButton(e: Pick<MouseEvent, "button">): -1 | 1 | null {
+  if (e.button === 3) return -1;
+  if (e.button === 4) return 1;
+  return null;
+}

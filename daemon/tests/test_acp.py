@@ -70,7 +70,8 @@ def test_acp_permission_plan_and_diff(daemon, project, fake_acp):
     plan = next(m for m in seen if m["type"] == "tool.start" and m["name"] == "update_plan")
     assert plan["input"]["items"][0] == {"content": "Edit hello.py", "status": "in_progress"}
     assert request["tool"] == "edit" and request["input"] == {"path": "hello.py"}
-    assert "+    return 'hey'" in request["diff"] and request["remember"] == "Fake ACP"
+    # The Harness permission gate asks: "Always allow" saves a Harness rule in the project settings.
+    assert "+    return 'hey'" in request["diff"] and request["rule"] == "edit(hello.py)"
     c.send({"type": "permission.reply", "request_id": request["request_id"], "decision": "allow_once"})
     end, seen = c.until("turn.end", timeout=30)
     result = next(m for m in seen if m["type"] == "tool.result" and m["id"] == "call_1")
@@ -92,6 +93,51 @@ def test_acp_denied_permission(daemon, project, fake_acp):
     assert result["is_error"] and result["output"] == "Rejected."
     assert "'hello'" in (project / "hello.py").read_text()
     c.close()
+
+
+def test_acp_permission_requests_use_the_harness_rules(daemon, project, fake_acp):
+    """The permission rules of Harness apply to the requests of another harness: an allow rule answers with no
+    question, and a deny rule rejects the call."""
+    from harness_daemon.permissions import PermissionRules
+    rules = PermissionRules(project)
+    rules.write(["edit(hello.py)"], [])
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "edit"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert not any(m["type"] == "permission.request" for m in seen)
+    assert "'hey'" in (project / "hello.py").read_text()
+    c.close()
+
+    (project / "hello.py").write_bytes(b"def greet():\n    return 'hello'\n\nprint(greet())\n")
+    rules.write([], ["edit(hello.py)"])
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "edit"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert not any(m["type"] == "permission.request" for m in seen)
+    result = next(m for m in seen if m["type"] == "tool.result" and m["id"] == "call_1")
+    assert result["is_error"] and "'hello'" in (project / "hello.py").read_text()
+    c.close()
+
+
+def test_auto_mode_of_another_harness_with_no_model_asks():
+    """Auto mode needs a model to check the calls. The model of another harness is not in Harness: with no Harness
+    provider model, the gate asks the user, as Manual mode does."""
+    from harness_daemon.acp import AcpAgent
+    agent = AcpAgent.__new__(AcpAgent)
+    agent.settings = {"permission_mode": "auto"}
+    agent.auto_client = None
+    agent._chosen_mode = None
+
+    class Gate:
+        auto = type("A", (), {"available": lambda self: False})()
+    agent.gate = Gate()
+    assert agent._gate_mode() == "default"
+    Gate.auto = type("A", (), {"available": lambda self: True})()
+    assert agent._gate_mode() == "auto"
+    agent.settings = {"permission_mode": "acceptEdits"}
+    assert agent._gate_mode() == "acceptEdits"
 
 
 def test_acp_interrupt(daemon, project, fake_acp):
@@ -146,10 +192,14 @@ def test_harness_list_custom_harnesses_and_the_setting(daemon, harness_home):
     assert {"opencode", "omp", "codex-acp", "claude-acp", "gemini"} <= ids and listing["current"] == "harness"
     recommended = sorted((i for i in listing["items"] if i["recommended"] is not None), key=lambda i: i["recommended"])
     assert [i["id"] for i in recommended] == list(acp_harnesses.RECOMMENDED)
-    assert recommended[0]["id"] == "opencode" and recommended[0]["local_models"] and recommended[0]["reason"]
+    assert [i["id"] for i in recommended] == ["claude-acp", "codex-acp", "grok-build", "gemini", "cursor", "opencode", "hermes"]
+    assert recommended[0]["reason"] and not recommended[0]["local_models"] and recommended[5]["local_models"]
     assert all(acp_harnesses.find(i) is not None for i in acp_harnesses.RECOMMENDED)
+    hermes = next(i for i in listing["items"] if i["id"] == "hermes")  # Not in the ACP registry.
+    assert hermes["name"] == "Hermes Agent" and hermes["command"] == "hermes acp" and hermes["license"] == "MIT"
     omp = next(i for i in listing["items"] if i["id"] == "omp")
-    assert omp["command"] == "omp --mode acp" and omp["status"] in ("installed", "missing")
+    assert omp["command"] == "omp acp" and omp["status"] in ("installed", "downloaded", "missing")
+    assert any(i["id"] == "antigravity-acp" and i["name"] == "Google Antigravity" for i in listing["items"])
 
     c.send({"type": "harnesses.save", "name": "My agent", "command": "my-agent --acp"})
     listing = c.until("harnesses")[0]
@@ -159,7 +209,8 @@ def test_harness_list_custom_harnesses_and_the_setting(daemon, harness_home):
     c.send({"type": "user_settings.set", "values": {"operating_harness": "custom-my-agent"}})
     settings = c.until("user_settings")[0]
     assert settings["values"]["operating_harness"] == "custom-my-agent"
-    assert settings["harness"] == {"id": "custom-my-agent", "name": "My agent", "model": None}  # For the start screen.
+    assert settings["harness"] == {"id": "custom-my-agent", "name": "My agent", "model": None,  # For the start screen.
+                                   "native_model": None, "models": [], "native_effort": None, "efforts": []}
     c.send({"type": "user_settings.set", "values": {"operating_harness": "no-such-harness"}})
     assert "Unknown harness" in c.until("error")[0]["message"]
 
@@ -339,3 +390,160 @@ def test_acp_bypass_mode_asks_for_a_hard_rule_match(daemon, project, fake_acp):
     end, seen = c.until("turn.end", timeout=30)
     assert "".join(m["text"] for m in seen if m["type"] == "token") == "outcome=no"
     c.close()
+
+
+def test_acp_first_prompt_has_the_harness_instructions(daemon, project, fake_acp):
+    """As T3 Code does for its ACP agents, the first prompt of a new ACP session tells the model about the tools
+    of the Harness interface. The next prompts do not repeat it, and the chat does not show it."""
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "blocks"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=2"
+    c.send({"type": "prompt", "text": "blocks"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=1"
+    prompts = [m for m in (json.loads(line) for line in fake_acp.read_text().splitlines()) if m.get("method") == "session/prompt"]
+    first = prompts[0]["params"]["prompt"][0]["text"]
+    assert first.startswith("<harness_instructions>") and "show_visual" in first and "preview_navigate" in first
+    assert "<harness_instructions>" not in json.dumps(prompts[1]["params"]["prompt"])
+    c.close()
+
+
+def test_harness_tool_names_in_titles_and_the_instructions():
+    from harness_daemon import acp_mcp
+    tools = {"show_visual", "ask_user_question", "send_file", "preview_start", "preview_navigate", "preview_snapshot"}
+    assert "show_visual" not in acp_mcp.HIDDEN_TOOLS and "ask_user_question" not in acp_mcp.HIDDEN_TOOLS
+    assert acp_mcp.tool_of_title("mcp__harness__show_visual", tools) == "show_visual"
+    assert acp_mcp.tool_of_title("harness.preview_start", tools) == "preview_start"
+    assert acp_mcp.tool_of_title("mcp__editor_harness_aa5f56ca__preview_navigate", tools) == "preview_navigate"  # Hermes
+    assert acp_mcp.tool_of_title("send_file (harness MCP Server)", tools) == "send_file"
+    assert acp_mcp.tool_of_title("mcp__github__show_visual", tools) is None
+    assert acp_mcp.tool_of_title("Run show_visual", tools) is None
+    assert acp_mcp.tool_of_title("mcp__harness__bash", tools) is None  # Not a tool of the server.
+    block = acp_mcp.instructions(tools)
+    assert block.startswith("<harness_instructions>") and block.endswith("</harness_instructions>")
+    assert "ask_user_question" in block and "artifact" not in block  # Only the lines of the tools it has.
+    assert acp_mcp.instructions({"cron_list"}) == ""
+
+
+def test_acp_mode_menu_shows_and_changes_the_mode_of_the_harness(daemon, project, fake_acp):
+    """The mode menu of an ACP session has the modes of the harness. A choice changes the mode of the harness, and
+    the permission gate of Harness follows it."""
+    c = Client(daemon)
+    c.new_session(project)
+    state = c.until("acp.state", timeout=30)[0]["harness"]
+    while not state.get("modes") or not state.get("mode"):
+        state = c.until("acp.state", timeout=30)[0]["harness"]
+    ids = [m["id"] for m in state["modes"]]
+    assert "default" in ids and state["mode"] == "default"
+    other = next(i for i in ids if i != "default")
+    c.send({"type": "acp.mode", "mode": other})
+    for _ in range(5):  # An older state can come first.
+        state = c.until("acp.state", timeout=30)[0]["harness"]
+        if state["mode"] == other:
+            break
+    assert state["mode"] == other
+    sent = [json.loads(line) for line in fake_acp.read_text().splitlines()]
+    assert any(m.get("method") == "session/set_mode" and m["params"]["modeId"] == other for m in sent)
+    c.send({"type": "acp.mode", "mode": "nope"})
+    assert "has no mode" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_the_harness_modes_map_to_harness_permission_modes():
+    from harness_daemon.acp import HARNESS_AUTO, MODE_MAP, AcpAgent
+    agent = AcpAgent.__new__(AcpAgent)
+    agent.settings = {"permission_mode": "acceptEdits"}
+    assert agent.gate_mode_of(None) == "acceptEdits"
+    assert agent.gate_mode_of(HARNESS_AUTO) == "auto"
+    assert [agent.gate_mode_of(m) for m in ("accept_edits", "dont_ask", "plan", "yolo", "strange")] == \
+        ["acceptEdits", "acceptEdits", "plan", "bypassPermissions", "default"]
+    assert MODE_MAP["bypassPermissions"] == "bypassPermissions"
+
+
+def test_the_reasoning_levels_of_a_harness():
+    """A config option of the category "thought_level" is the reasoning column of the picker."""
+    from harness_daemon.acp import parse_efforts
+    result = {"configOptions": [
+        {"id": "model", "category": "model", "type": "select", "options": [{"value": "opus", "name": "Opus"}]},
+        {"id": "effort", "category": "thought_level", "type": "select", "currentValue": "default", "options": [
+            {"value": "default", "name": "Default", "description": "Medium"}, {"value": "low", "name": "Low"},
+            {"value": "max", "name": "Max"}]},
+    ]}
+    assert [e["id"] for e in parse_efforts(result)] == ["default", "low", "max"]
+    assert parse_efforts({"configOptions": []}) == [] and parse_efforts(None) == []
+
+
+def test_the_reasoning_level_for_new_sessions(daemon, harness_home):  # noqa: F811
+    from harness_daemon import acp_harnesses
+    acp_harnesses.save_efforts("claude-acp", [{"id": "low", "name": "Low", "description": ""}])
+    assert acp_harnesses.cached_models("__efforts__") == []  # The levels are not a model list.
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "harnesses.native_effort", "id": "claude-acp", "effort": "low"})
+    claude = next(i for i in c.until("harnesses")[0]["items"] if i["id"] == "claude-acp")
+    assert claude["native_effort"] == "low" and claude["efforts"][0]["id"] == "low"
+    c.send({"type": "harnesses.native_effort", "id": "claude-acp", "effort": None})
+    claude = next(i for i in c.until("harnesses")[0]["items"] if i["id"] == "claude-acp")
+    assert claude["native_effort"] is None
+    c.send({"type": "harnesses.native_effort", "id": "nope", "effort": "low"})
+    assert "Unknown harness" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_switch_the_agent_of_a_session(daemon, project, fake_acp):
+    """As the portable handoff of T3 Code: the agent of a session changes, the history stays, and the new agent
+    gets the earlier conversation (another harness: a handoff recap in its first prompt)."""
+    c = Client(daemon)
+    ready = c.new_session(project)
+    c.send({"type": "prompt", "text": "hello"})
+    c.until("turn.end", timeout=30)
+    # To the built-in loop: the history stays.
+    c.send({"type": "session.agent", "agent": "harness", "model": "fake/test-model"})
+    switched = c.until("session.ready", timeout=30)[0]
+    assert switched["session_id"] == ready["session_id"] and switched["harness"] is None
+    assert switched["model"] == "fake/test-model"
+    assert [m["role"] for m in switched["history"]][:2] == ["user", "assistant"]
+    # Back to the harness: a new ACP session, with the instructions, the recap, and the prompt.
+    c.send({"type": "session.agent", "agent": "custom-fake-acp"})
+    back = c.until("session.ready", timeout=30)[0]
+    assert back["harness"]["id"] == "custom-fake-acp"
+    c.send({"type": "prompt", "text": "blocks"})
+    _, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=3"
+    prompts = [m for m in (json.loads(line) for line in fake_acp.read_text().splitlines()) if m.get("method") == "session/prompt"]
+    recap = prompts[-1]["params"]["prompt"][1]["text"]
+    assert recap.startswith("[Harness: You continue a conversation that Harness had") and "User: hello" in recap
+    c.send({"type": "session.agent", "agent": "nope"})
+    assert "Unknown agent" in c.until("error")[0]["message"]
+    c.close()
+
+
+def test_the_handoff_recap_is_a_budgeted_selection():
+    from harness_daemon.acp import handoff_recap
+    history = [{"role": "user", "content": "First request"}]
+    for i in range(40):
+        history += [{"role": "assistant", "content": f"Answer {i} " + "x" * 200,
+                     "tool_calls": [{"id": f"c{i}", "function": {"name": "bash", "arguments": '{"command": "ls"}'}}]},
+                    {"role": "tool", "tool_call_id": f"c{i}", "content": "a.txt\nb.txt"},
+                    {"role": "user", "content": f"Request {i}"}]
+    short = handoff_recap(history[:4], None, "Claude Agent")
+    assert "Claude Agent had" in short and "left out" not in short and "Activity: bash" in short
+    long = handoff_recap(history, "Old part", "Hermes Agent", budget=3_000)
+    assert "User: First request" in long and "User: Request 39" in long and "left out" in long
+    assert len(long) < 3_600
+    assert handoff_recap([], None, None) is None
+
+
+def test_a_harness_continues_its_session_only_after_its_own_turn():
+    from harness_daemon.acp import AcpAgent
+    agent = AcpAgent.__new__(AcpAgent)
+    agent.harness = acp_harnesses.find("claude-acp")
+    agent.history = [{"role": "user", "content": "a", "acp_session": "s1", "acp_harness": "claude-acp"},
+                     {"role": "assistant", "content": "b"}]
+    assert agent._stored_session() == "s1"
+    agent.history.append({"role": "user", "content": "c"})  # The built-in loop ran this turn.
+    assert agent._stored_session() is None
+    agent.history.append({"role": "user", "content": "d", "acp_session": "s9", "acp_harness": "hermes"})
+    assert agent._stored_session() is None  # Another harness ran the last turn.

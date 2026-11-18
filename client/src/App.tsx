@@ -23,6 +23,7 @@ import {
   SquareTerminal,
   Blocks,
   CalendarClock,
+  ChartNoAxesColumn,
 } from "lucide-react";
 import { chatReducer, emptyChat, type PermissionItem } from "./chat/state";
 import { DaemonConnection, type ConnectionStatus } from "./daemon/connection";
@@ -68,6 +69,7 @@ import { FolderPicker } from "./components/FolderPicker";
 import { DiffReview } from "./components/DiffReview";
 import { ChangesView } from "./components/ChangesView";
 import { RulesPanel, type Rules } from "./components/RulesPanel";
+import { PermissionRulesSettings } from "./components/PermissionRulesSettings";
 import { Workspace, type PaneSpec } from "./layout/Workspace";
 import {
   closePane,
@@ -97,7 +99,7 @@ import {
   isSearchShortcut,
   NEW_SESSION_SHORTCUT,
   SEARCH_SHORTCUT,
-  navShortcut,
+  navMouseButton, navShortcut,
   shortcutLabel,
   shortcutPane,
 } from "./layout/shortcuts";
@@ -110,8 +112,9 @@ import { ToastStack } from "./components/ToastStack";
 import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
 import { YourHarnessSettings } from "./components/YourHarnessSettings";
-import { OperatingHarnessSettings } from "./components/OperatingHarnessSettings";
-import { HarnessMenu } from "./components/HarnessMenu";
+import { AgentsSettings, agentUpdateCount } from "./components/AgentsSettings";
+import { AgentModeMenu, agentModes, nextAgentMode } from "./components/AgentModeMenu";
+import { AgentPicker } from "./components/AgentPicker";
 import { StorageDialog } from "./components/StorageDialog";
 import { TasksPane } from "./components/TasksPane";
 import { PreviewPane } from "./preview/PreviewPane";
@@ -153,8 +156,9 @@ import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
 import { SESSION_RAIL_ID, SessionRail } from "./components/SessionRail";
 import { loadWorktreeChoice, worktreeKey } from "./components/WorktreeMenu";
 import { useServers } from "./servers/useServers";
-import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, PullRequest, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
+import type { AgentFrame, AgentServer, ClientMessage, ConnectorItem, Effort, GitBranches, GitChanges, GitDiff, GitDiffScope, HarnessItem, PullRequest, RoutineItem, RoutineRun, SandboxStatus, ServerItem, SessionHarness, SessionWorktree, TaskDetail, TaskItem, UserSettings } from "./daemon/protocol";
 import { RoutinesPage } from "./components/RoutinesPage";
+import { UsagePage } from "./components/UsagePage";
 import { notifyCiDone, notifyFilesSent, notifyRoutineRun, notifyTurnDone, onNotificationOpen, onOpenNewSession } from "./lib/notify";
 import { UpdateGuard } from "./components/UpdateGuard";
 import { parseUnifiedDiff } from "./lib/diff";
@@ -181,13 +185,15 @@ import { FolderChooser, samePath } from "./components/RecentFolders";
 import { ArchiveConfirm } from "./components/ArchiveConfirm";
 import { DeleteSessionConfirm } from "./components/DeleteSessionConfirm";
 import { Sidebar, pathKey, type SessionTool } from "./components/Sidebar";
-import { ModelMenu, type ModelList } from "./components/ModelMenu";
+import type { ThreadsActions } from "./components/ThreadsList";
+import { THREAD_UNDO_MS, applyUpdates, nowSeconds, undoKeyAllowed, undoUpdates, type ThreadUpdate } from "./lib/threads";
+import type { ModelList } from "./components/ModelMenu";
 import { ModelUnavailable } from "./components/ModelUnavailable";
 import { isModelUnavailable, networkModel, proposedModel, rememberModel } from "./lib/modelAvailability";
 import { ModelChoice, isLocalProvider } from "./components/ModelChoice";
 import { QuitGuard } from "./components/QuitGuard";
 import { MODES, ModeMenu, nextMode } from "./components/ModeMenu";
-import { setAllowBypass } from "./lib/bypass";
+import { bypassAllowed, setAllowBypass } from "./lib/bypass";
 import {
   LOCAL,
   closeTunnel,
@@ -214,7 +220,7 @@ import { SessionTitle } from "./components/SessionTitle";
 import type { SessionActions } from "./components/SessionRow";
 import { setTimeFormat, toTimeFormat, useTimeFormat } from "./lib/timeFormat";
 
-type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines";
+type Screen = "starting" | "connections" | "start" | "chat" | "providers" | "cookbook" | "plugins" | "capabilities" | "routines" | "usage";
 
 const PROVIDER_REPLY_TIMEOUT = 15_000;
 
@@ -418,10 +424,17 @@ export default function App() {
   const errorToastId = useRef(0);
   const showError = useCallback((text: string) => setErrorToasts((l) => addErrorToast(l, text, ++errorToastId.current)), []);
   // The "Undo" popup of an action that does not ask first (rule R7a).
-  const showUndo = useCallback(
-    (text: string, undo: () => void) => setErrorToasts((l) => addUndoToast(l, text, undo, ++errorToastId.current)),
-    [],
-  );
+  // ``ms``: the time on screen (the Threads sidebar: 5 seconds). The id of the last one, for Ctrl+Z and to remove it.
+  const lastUndoId = useRef(0);
+  const showUndo = useCallback((text: string, undo: () => void, ms?: number) => {
+    const id = ++errorToastId.current;
+    lastUndoId.current = id;
+    setErrorToasts((l) => addUndoToast(l, text, undo, id, ms));
+  }, []);
+  // The sessions with a "Regenerate title" request (the Threads sidebar), and the settles that wait for a
+  // worktree question ("Archive session with uncommitted changes?").
+  const [retitling, setRetitling] = useState<Set<string>>(() => new Set());
+  const pendingSettle = useRef(new Set<string>());
   // The popup of an MCP server that did not connect. A click opens its row on the MCP servers tab.
   const [mcpFocus, setMcpFocus] = useState<{ name: string; key: number } | null>(null);
   const showMcpFailure = useCallback((name: string, error: string | null) => {
@@ -575,6 +588,8 @@ export default function App() {
   const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null); // Settings > General > "Local sandbox".
   useTimeFormat(); // A change of "Time format" shows the times again in the new format.
   const [startHarness, setStartHarness] = useState<SessionHarness | null>(null); // The operating harness of new sessions.
+  // The agents of the daemon (harnesses.list), for the rail of the agent picker under both prompt boxes.
+  const [agents, setAgents] = useState<HarnessItem[] | null>(null);
   const [storageOpen, setStorageOpen] = useState(false); // Settings > General > Storage > Manage.
   useEffect(() => {
     if (!settingsPage) setStorageOpen(false); // The Storage dialog closes with Settings.
@@ -623,6 +638,8 @@ export default function App() {
           const key = JSON.stringify([auto_model, online_model, offline_model]);
           if (defaultModelKey.current !== null && defaultModelKey.current !== key) conn.send({ type: "models.list" });
           defaultModelKey.current = key;
+        } else if (msg.type === "harnesses") {
+          setAgents(msg.items);
         } else if (msg.type === "error" && (msg.ref === "user_settings.set" || msg.ref === "sandbox.set")) {
           setSettingsError(msg.message);
           try {
@@ -848,6 +865,7 @@ export default function App() {
           return;
         }
         case "session.title":
+          setRetitling((r) => (r.has(msg.id) ? new Set([...r].filter((id) => id !== msg.id)) : r));
           setSession((s) => (s && s.id === msg.id ? { ...s, title: msg.title } : s));
           listRecent();
           return;
@@ -910,6 +928,12 @@ export default function App() {
         }
         case "session.archive_confirm":
           setArchiveAsk({ id: msg.id, branch: msg.branch });
+          if (pendingSettle.current.has(msg.id)) {
+            // The settle did not happen: the list shows the session again, and the "Undo" popup goes.
+            listRecent();
+            const undoId = lastUndoId.current;
+            setErrorToasts((l) => l.filter((t) => t.id !== undoId));
+          }
           return;
         case "session.deleted":
           if (sessionRef.current?.id === msg.id) showStartRef.current();
@@ -1091,6 +1115,7 @@ export default function App() {
           return;
         }
         case "permissions":
+          if (msg.cwd !== undefined) return; // The reply to Settings > Permission rules (PermissionRulesSettings.tsx).
           setRules({ path: msg.path, allow: msg.allow, deny: msg.deny });
           setRulesBusy(false);
           if (rulesSaving.current) setRulesSavedAt(Date.now());
@@ -1227,8 +1252,11 @@ export default function App() {
             }
             return;
           }
+          if (msg.ref === "session.retitle") setRetitling(new Set());
+          if (msg.ref === "session.update") listRecent(); // The Threads sidebar showed the change at once: undo it.
           if (msg.ref?.startsWith("memory.")) return; // Settings > Your Harness shows the error.
           if (msg.ref === "disk.usage") return; // The Storage dialog shows the error.
+          if (msg.ref === "usage.summary") return; // The Usage page shows the error.
           if (msg.ref === "daemon.update") {
             setRemoteUpdate((u) => (u ? { ...u, phase: "error", message: msg.message } : u));
             return;
@@ -1319,6 +1347,8 @@ export default function App() {
     setRoutines(null);
     conn.send({ type: "routines.list" }); // The red dot of the Routines nav item.
     conn.send({ type: "user_settings.get" }); // The effort level of the model menu on the start screen.
+    setAgents(null); // Another computer can have other agents.
+    conn.send({ type: "harnesses.list" }); // The rail of the agent picker.
     // A reconnect to the same computer keeps the list until the new list arrives (audit M16). Another computer
     // starts empty: the sidebar shows skeleton rows.
     if (recentOfRef.current !== currentRef.current?.id) {
@@ -1792,6 +1822,16 @@ export default function App() {
     sendSafely({ type: "models.list" });
   }
 
+  /** The agent picker asks for the agents when it opens: the sign-in state and the usage can change. */
+  function requestAgents() {
+    sendSafely({ type: "harnesses.list" });
+  }
+
+  /** The agent picker on the start screen: an agent and its model for new sessions. */
+  function sendAgentMessages(messages: ClientMessage[]) {
+    for (const m of messages) if (!sendSafely(m)) return;
+  }
+
   /** Switch the model of the session. The model label under the prompt box shows it: the chat shows nothing. */
   const switchModel = (spec: string) => {
     sendSafely({ type: "command", name: "model", args: spec });
@@ -2177,18 +2217,6 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const openRules = () => {
-    setLayout((l) => openPane(l, "rules"));
-    setRules(null);
-    setRulesBusy(true);
-    try {
-      conn.send({ type: "permissions.get" });
-    } catch (e) {
-      setRulesBusy(false);
-      dispatch({ type: "notice", level: "error", text: errorText(e) });
-    }
-  };
-
   const saveRules = useCallback(
     (allow: string[], deny: string[]) => {
       setRulesBusy(true);
@@ -2537,6 +2565,12 @@ export default function App() {
     setScreen("routines");
     sendSafely({ type: "routines.list" });
     if (!projects) sendSafely({ type: "projects.list" }); // The folder menu of the form.
+  };
+
+  /** Opens the Usage page: the token use and the API cost estimate of the agents. The page asks the daemon itself. */
+  const openUsage = () => {
+    setSettingsPage(null);
+    setScreen("usage");
   };
 
   const openSkill = useCallback(
@@ -2932,36 +2966,50 @@ export default function App() {
             sessions={mentionSessions}
             fileMatches={fileMatches}
             onFindFiles={(query) => sendSafely({ type: "fs.find", query })}
-            onCycleMode={() => changeMode(nextMode(permissionMode))}
+            onCycleMode={() => {
+              // Shift+Tab: the next mode of the agent in an ACP session, else the next Harness mode.
+              const harness = session?.harness;
+              if (harness?.modes?.length) {
+                if (chat.running) return;
+                const next = nextAgentMode(agentModes(harness, bypassAllowed()), harness.mode);
+                if (next && next !== harness.mode) sendSafely({ type: "acp.mode", mode: next });
+                return;
+              }
+              changeMode(nextMode(permissionMode));
+            }}
             suggestion={!chat.running && session && suggestion?.sessionId === session.id ? suggestion.text : null}
             onDismissSuggestion={() => setSuggestion(null)}
             imageNote={session && !session.harness && chat.imageInput === false ? noImageNote(modelName(session.model)) : null}
             below={
               session && (
                 <>
-                <ModeMenu mode={permissionMode} onChange={changeMode} />
-                <div className="prompt-below-right">
-                {session.harness ? (
-                  <HarnessMenu
-                    harness={session.harness}
-                    disabled={chat.running}
-                    onSelect={(model) => sendSafely({ type: "acp.model", model })}
-                  />
+                {/* An ACP session shows the modes of its agent (the user asked for this), else the Harness modes. */}
+                {session.harness?.modes?.length ? (
+                  <AgentModeMenu harness={session.harness} disabled={chat.running} onChange={(mode) => sendSafely({ type: "acp.mode", mode })} />
                 ) : (
-                <ModelMenu
-                  value={session.model}
+                  <ModeMenu mode={permissionMode} onChange={changeMode} />
+                )}
+                <div className="prompt-below-right">
+                {/* The agent and model picker (rule C14). The agent of a session is fixed. */}
+                <AgentPicker
+                  value={session.harness ? "" : session.model}
                   models={models}
                   allowDefault={false}
-                  up
-                  alignRight
-                  heading="Model · this session"
                   localProviders={localProviders}
                   effort={effortControl}
-                  onOpen={requestModels}
+                  agents={agents}
+                  current={session.harness ?? null}
+                  session={{ running: chat.running }}
+                  shortcut
+                  onRequestModels={requestModels}
+                  onRequestAgents={requestAgents}
                   onSelect={chooseModel}
-                  onManage={showProviders}
+                  onSessionModel={(model) => sendSafely({ type: "acp.model", model })}
+                  onSessionEffort={(effort) => sendSafely({ type: "acp.effort", effort })}
+                  onSwitchAgent={(agent, model) => sendSafely({ type: "session.agent", agent, model })}
+                  onManageProviders={showProviders}
+                  onManageAgents={() => openSettings("operating")}
                 />
-                )}
                 {/* An ACP session shows the ring only when its harness reports the usage (usage_update).
                     The open session rail has the Context section, so the ring shows only while the rail is hidden. */}
                 {!railVisible && chat.context && (!session.harness || chat.context.tokens > 0) && (
@@ -3209,6 +3257,48 @@ export default function App() {
     onDelete: (id) => setDeleteAsk(id), // Delete always asks first (UI_RULES S8).
   };
 
+  // The Threads sidebar (docs/UI_RULES.md 3.7): session.update for each change, the change in the list at
+  // once, and the "Undo" popup (5 seconds) that puts the earlier values back, also the pinned position.
+  const applyThreadUpdates = (updates: ThreadUpdate[], undo?: string) => {
+    if (updates.length === 0) return;
+    const before = recent;
+    for (const u of updates) {
+      if (!sendSafely({ type: "session.update", session_id: u.id, ...u.fields })) return;
+      if (u.fields.archived) pendingSettle.current.add(u.id);
+      else if (u.fields.archived === false) pendingSettle.current.delete(u.id);
+    }
+    setRecent((list) => applyUpdates(list, updates, nowSeconds()));
+    if (undo) {
+      const back = undoUpdates(before, updates);
+      showUndo(undo, () => applyThreadUpdates(back), THREAD_UNDO_MS);
+    }
+  };
+  const threadsActions: ThreadsActions = {
+    apply: applyThreadUpdates,
+    retitle: (id) => {
+      if (sendSafely({ type: "session.retitle", session_id: id })) setRetitling((r) => new Set(r).add(id));
+    },
+    retitling,
+    agents,
+  };
+
+  // Ctrl+Z runs the last "Undo" popup when the focus is not in a text field, the editor, or the terminal.
+  const toastsRef = useRef(errorToasts);
+  toastsRef.current = errorToasts;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "z" || e.defaultPrevented) return;
+      if (!undoKeyAllowed(e.target)) return;
+      const toast = [...toastsRef.current].reverse().find((t) => t.undo);
+      if (!toast?.undo) return;
+      e.preventDefault();
+      setErrorToasts((l) => l.filter((t) => t.id !== toast.id));
+      toast.undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /** "Open in" > "Split view", or a drop on the main view: the session opens at the right of the shown session. */
   const openSplit = (id: string) => {
     if (screen !== "chat" || !session || view !== "code") {
@@ -3362,6 +3452,8 @@ export default function App() {
         return openCapabilities();
       case "routines":
         return openRoutines();
+      case "usage":
+        return openUsage();
     }
   };
   const canNav = status === "open" && !busy;
@@ -3388,6 +3480,29 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // The Back and Forward side buttons of a mouse go back and forward too (the user asked for this). The press
+  // and the click of these buttons do nothing else: the webview does not change its own page.
+  useEffect(() => {
+    const block = (e: MouseEvent) => {
+      if (navMouseButton(e) !== null) e.preventDefault();
+    };
+    const onUp = (e: MouseEvent) => {
+      const delta = navMouseButton(e);
+      if (delta === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      goNavRef.current(delta);
+    };
+    window.addEventListener("mousedown", block, true);
+    window.addEventListener("auxclick", block, true);
+    window.addEventListener("mouseup", onUp, true);
+    return () => {
+      window.removeEventListener("mousedown", block, true);
+      window.removeEventListener("auxclick", block, true);
+      window.removeEventListener("mouseup", onUp, true);
+    };
   }, []);
 
   // The sidebar button and the back and forward buttons. They are at the far left of the title
@@ -3459,20 +3574,15 @@ export default function App() {
     title: routinesFailed > 0 ? (routinesFailed === 1 ? "1 routine has a problem" : `${routinesFailed} routines have a problem`) : "Prompts that run on a schedule",
     onClick: fromSidebar(openRoutines),
   };
-
-  // The panes of the open session in the sidebar: Permission rules.
-  const sessionTools: SessionTool[] =
-    screen === "chat" && session
-      ? [
-          {
-            key: "rules",
-            icon: ShieldCheck,
-            label: "Permission rules",
-            active: paneVisible("rules"),
-            onClick: fromSidebar(paneVisible("rules") ? () => hidePane("rules") : openRules),
-          },
-        ]
-      : [];
+  // The "Usage" nav item, under "Capabilities".
+  const usageNav: SessionTool = {
+    key: "usage",
+    icon: ChartNoAxesColumn,
+    label: "Usage",
+    active: screen === "usage",
+    title: "Token use and cost of the agents",
+    onClick: fromSidebar(openUsage),
+  };
 
   const statusText = status === "open" ? "Connected" : status === "connecting" ? "Connecting" : "Disconnected";
 
@@ -3492,14 +3602,14 @@ export default function App() {
       actions={sessionActions}
       newSessionKey={NEW_SESSION_SHORTCUT}
       head={titleNav()}
-      nav={[routinesNav, capabilitiesNav]}
-      tools={sessionTools}
+      nav={[routinesNav, capabilitiesNav, usageNav]}
       prStatus={prStatus}
       onRequestPr={(paths) => {
         if (conn.status === "open") conn.send({ type: "git.pr_status", paths });
       }}
       onSearch={() => setSearchOpen(true)}
       searchKey={SEARCH_SHORTCUT}
+      threads={threadsActions}
       connection={
         <button
           type="button"
@@ -3676,7 +3786,7 @@ export default function App() {
 
       <main className="main">
         {/* The chat has its own banner, in the chat column. The Computers screen shows the state of each connection. */}
-        {(screen === "start" || screen === "routines" || screen === "capabilities") && disconnectBanner}
+        {(screen === "start" || screen === "routines" || screen === "capabilities" || screen === "usage") && disconnectBanner}
         {screen === "starting" && (
           <div className="center-status" role="status">
             <LoaderCircle size={20} className="spin" aria-hidden />
@@ -3697,6 +3807,19 @@ export default function App() {
             onDelete={(c) => void deleteConnection(c)}
             onTest={testConnection}
             onReturn={() => setScreen(session ? "chat" : "start")}
+          />
+        )}
+        {screen === "usage" && (
+          <UsagePage
+            conn={conn}
+            computerKey={current?.id ?? ""}
+            computer={current?.name ?? hello?.hostname ?? "This computer"}
+            onClose={() => {
+              // Back to the previous view: the history, else the session or the new session page.
+              if (canNav && nav.index > 0) goNav(-1);
+              else if (session) setScreen("chat");
+              else newSession();
+            }}
           />
         )}
         {screen === "routines" && (
@@ -3807,6 +3930,9 @@ export default function App() {
             onManageProviders={showProviders}
             harness={status === "open" ? startHarness : null}
             onManageHarness={() => openSettings("operating")}
+            agents={status === "open" ? agents : null}
+            onRequestAgents={requestAgents}
+            onAgentMessages={sendAgentMessages}
             onSaveProject={saveProject}
             onDeleteProject={deleteProject}
             selectProject={startProject}
@@ -3873,9 +3999,14 @@ export default function App() {
           <ArchiveConfirm
             title={recent.find((r) => r.id === archiveAsk.id)?.title ?? "this session"}
             branch={archiveAsk.branch}
-            onCancel={() => setArchiveAsk(null)}
+            onCancel={() => {
+              pendingSettle.current.delete(archiveAsk.id);
+              setArchiveAsk(null);
+            }}
             onArchive={() => {
-              sendSafely({ type: "session.update", session_id: archiveAsk.id, archived: true, force: true });
+              // A settle of the Threads sidebar also removes the pin.
+              const settle = pendingSettle.current.has(archiveAsk.id) ? { pinned: false } : {};
+              sendSafely({ type: "session.update", session_id: archiveAsk.id, archived: true, force: true, ...settle });
               setArchiveAsk(null);
             }}
           />
@@ -3899,6 +4030,7 @@ export default function App() {
             onClose={() => setSettingsPage(null)}
             closeRef={settingsClose}
             configPath={userSettingsInfo?.path ?? null}
+            agentUpdates={agentUpdateCount(agents)}
             onOpenConfig={
               userSettingsInfo && isTauri() && current?.kind === "local"
                 ? () => void openLocalPath(userSettingsInfo.path).catch((e) => setSettingsError(errorText(e)))
@@ -3908,8 +4040,9 @@ export default function App() {
             {settingsPage === "updates" && <UpdatesPage appVersion={appVersion} />}
             {settingsPage === "appearance" && <AppearanceSettings />}
             {settingsPage === "operating" && (
-              <OperatingHarnessSettings
+              <AgentsSettings
                 conn={conn}
+                onShowProviders={() => openSettings("connections")}
                 connected={status === "open"}
                 values={status === "open" ? userSettings : null}
                 error={settingsError}
@@ -3952,6 +4085,9 @@ export default function App() {
                   />
                 }
               />
+            )}
+            {settingsPage === "rules" && (
+              <PermissionRulesSettings conn={conn} connected={status === "open"} projects={projects} currentProject={session?.cwd ?? null} />
             )}
             {settingsPage === "harness" && (
               <YourHarnessSettings
