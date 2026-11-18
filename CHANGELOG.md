@@ -3,6 +3,29 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.89 (2026-11-17)
+
+### Delegate tasks to other agents
+
+- The agent can give a task to a child agent on another agent and model, as T3 Code does: for example
+  a Claude Agent session gives a review to Codex. The tools are `orchestrator_capabilities`,
+  `delegate_task`, `task_status`, and `task_cancel`, with the names and fields of T3 Code.
+- The child is a session nested under its parent in the sidebar. It gets only the task text, and its
+  permission mode is not above the mode of the parent. `isolation: "worktree"` gives it its own git
+  worktree, and `options.effort` sets its reasoning level.
+- By default the parent continues, and the end of the child wakes it with the result. With
+  `mode: "wait"`, the parent waits up to 45 seconds for the result.
+- The chat names the calls, for example "Delegated to codex-acp · gpt-5: Review", and the routine
+  tools ("Saved routine", "Changed routine").
+
+### Routines
+
+- A row of the Routines list has one hover tint from edge to edge.
+- A right-click on a row, or its ⋮ button, opens a menu: Open, Run now, Activate or Deactivate, and
+  Delete. The row switch is gone.
+- The second line of a row shows the schedule and the next run. The folder is in the hover tip.
+- The title row has the count and "New routine".
+
 ## 0.1.88 (2026-11-17)
 
 ### Pull requests and CI
