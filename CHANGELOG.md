@@ -3,6 +3,15 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.90 (2026-11-18)
+
+### Oh My Pi
+
+- Oh My Pi can use a model of a Harness provider. Select the model in Settings > Agents > Oh My Pi >
+  Model. New sessions start on that model.
+- Harness gives the provider to Oh My Pi with an extension file. It does not change the settings files
+  of Oh My Pi. The API key goes only into the environment of the process.
+
 ## 0.1.89 (2026-11-17)
 
 ### Delegate tasks to other agents
