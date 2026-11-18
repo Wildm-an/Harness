@@ -118,7 +118,7 @@ SKIPPED_AFTER_DENY = "Not run, because the user denied an earlier tool call."
 # Fields of stored messages that only the client uses. The model does not get them.
 # The model gets the "image" of a tool result in a separate message. See Agent.messages.
 CLIENT_ONLY_FIELDS = ("is_error", "diff", "display", "image", "id", "ts", "origin", "images", "created", "card",
-                      "acp_session", "verify")
+                      "acp_session", "acp_model", "verify", "turn_model")
 # A user message with images, for a model with no image input.
 NO_IMAGE_NOTE = ("[The user attached {count} image(s). This model cannot read images, so you cannot see them. "
                  "Tell the user, if the images are important for the task.]")
@@ -211,6 +211,7 @@ class Agent:
         self.ctx = ToolContext(cwd=self.cwd, settings=self.settings, shell=detect_shell(self.settings.get("shell")),
                                read_roots=read_roots, image_input=image_input is True)
         self.ctx.model = lambda: self.client.label  # The model can change during the session.
+        self.ctx.agent = lambda: (None, self.client.label)
         self._sync_read_check()
         self.command_hooks = CommandHooks(self.cwd, self.ctx.shell)
         tool_list = list(tools if tools is not None else default_tools())
@@ -698,6 +699,18 @@ class Agent:
             return known + estimate_tokens(self.history[length:])
         return estimate_tokens(self.messages()) + estimate_tokens(self.tool_schemas())
 
+    def turn_label(self) -> str:
+        """The agent and the model of a turn, for the chat: "Harness · qwen3"."""
+        return f"Harness · {self.client.model}"
+
+    async def _tag_turn(self, message: dict[str, Any]) -> None:
+        """Record the agent and the model of the turn of a user message, as T3 Code records the model of each run.
+        The chat shows a divider ("A → B") where the model of a session changes."""
+        if not self.user_facing or message.get("origin") == "harness":
+            return
+        message["turn_model"] = self.turn_label()
+        await self.emit({"type": "turn.model", "id": message["id"], "model": message["turn_model"]})
+
     def context_breakdown(self) -> dict[str, Any]:
         """The parts of the next request, in tokens, for the context view of the client.
 
@@ -866,6 +879,7 @@ class Agent:
         if images:
             message["images"] = list(images)
         self.history.append(message)
+        await self._tag_turn(message)
         if images and self.image_input is False and self.user_facing:
             await self.emit({"type": "notice", "level": "warning",
                              "text": NO_IMAGE_NOTICE.format(model=self.client.model, count=len(images))})

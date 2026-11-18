@@ -1,3 +1,5 @@
+import type { AgentUsage } from "../daemon/protocol";
+
 /** The text of the context length values: token counts and where a length came from. */
 
 /** One decimal place, with no ".0": 130.8, 200, 1. */
@@ -39,6 +41,15 @@ export function isUnknownContextWarning(text: string): boolean {
   return /^The context length of .+ is unknown\./.test(text);
 }
 
+/** The usage limits of the subscription of a session agent (daemon agent_auth.limits_view). */
+export interface PlanLimits {
+  agent: string; // The harness id, for example "claude-acp".
+  label: string; // The plan, for example "Claude Max".
+  windows: AgentUsage[];
+  error: string; // Why the usage is not available.
+  checking: boolean; // A check runs: a new context.usage reply comes after it.
+}
+
 /** The reply to context.get: the parts of the next request, in tokens. */
 export interface ContextUsage {
   tokens: number;
@@ -46,6 +57,7 @@ export interface ContextUsage {
   compact_at: number; // The agent summarizes old turns at this share of the length.
   source?: string;
   parts: { kind: string; tokens: number }[];
+  limits?: PlanLimits | null; // A session of a subscription agent: the usage limits of the plan.
 }
 
 export interface ContextRow {

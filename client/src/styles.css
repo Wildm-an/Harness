@@ -11934,13 +11934,6 @@ body.sorting * {
   width: 72px;
 }
 
-.routine-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
 
 .routine-enabled {
   display: flex;
@@ -13380,6 +13373,64 @@ input::-ms-clear {
   color: var(--text-muted);
 }
 
+/* The usage limits of the plan of a session agent: the context panel and the Context section of the rail. */
+.plan-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+.plan-usage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plan-usage-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.plan-usage-plan,
+.plan-usage-reset,
+.plan-usage-note {
+  color: var(--text-muted);
+}
+.plan-usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plan-usage-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plan-usage-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plan-usage-label {
+  color: var(--text);
+}
+.plan-usage-pct {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.plan-usage-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.rail-context .plan-usage,
+.rail-empty + .plan-usage {
+  margin-top: 12px;
+}
+
 /* -- Settings > Agents (AgentsSettings.tsx) -- */
 /* The page has two panes, as the Providers settings of T3 Code: the agents at the left, the detail at the right. */
 .settings-page.agents-page {
@@ -14214,7 +14265,7 @@ input::-ms-clear {
   flex-direction: column;
   align-items: center;
   width: 56px;
-  padding: 8px 0;
+  padding: 4px 0 8px; /* The star fills the first 44 px: the divider under it lines up with the line under the search. */
   border-right: 1px solid var(--border);
   overflow-x: hidden;
   overflow-y: auto;
@@ -14230,7 +14281,7 @@ input::-ms-clear {
   flex: none;
   width: 24px;
   height: 1px;
-  margin: 2px 0;
+  margin: -1px 0 3px; /* Its top is at 43 px, as the bottom border of the 44 px search row. */
   background: var(--border);
 }
 .menu.agent-picker-dropdown .agent-picker-tab {
@@ -15291,4 +15342,70 @@ input::-ms-clear {
 
 .agents-update-note {
   color: var(--accent);
+}
+
+/* The row where the agent or the model of a session changes (MessageList ModelSwitchRow), as in T3 Code. */
+.model-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.model-switch-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.model-switch-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.model-switch-to {
+  color: var(--text);
+}
+
+/* The picker of a routine (AgentPicker with "routine"): a panel in the form, not a popup (the user asked for this).
+   The right column has the permission mode of the routine in place of the reasoning levels. */
+.routine-picker-field {
+  margin-top: 6px;
+}
+.model-menu.agent-picker-inline {
+  display: block;
+  width: 100%;
+}
+.menu.agent-picker-dropdown.routine-inline {
+  position: static;
+  align-items: stretch; /* The rail runs the full height, with its tabs at the top. */
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  box-shadow: none;
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+/* Compact: the list grows with its rows up to a few rows, then scrolls. The modes are one row under it. */
+.menu.agent-picker-dropdown.routine-inline .agent-picker-list {
+  flex: none;
+  max-height: 220px;
+}
+.menu.agent-picker-dropdown.routine-inline .ap-mode-chips {
+  display: flex;
+  margin: 10px 10px 10px;
+}
+.menu.agent-picker-dropdown.routine-inline .ap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.menu.agent-picker-dropdown.routine-inline .ap-foot {
+  display: none;
+}
+.ap-chip-mode-icon {
+  flex: none;
+  color: var(--text-muted);
 }

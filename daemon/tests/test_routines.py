@@ -520,8 +520,10 @@ def test_the_agent_saves_a_routine(daemon, project, fake_model, tmp_path):  # no
     refused = next(m for m in fake_model.requests[1]["messages"] if m["role"] == "tool")["content"]
     assert "less limited permission mode" in refused
     tool_results = [m["content"] for m in fake_model.requests[-1]["messages"] if m["role"] == "tool"]
-    assert "Saved the routine 'Morning summary' (Active)" in tool_results[-2]
-    assert "morning-summary: Morning summary (Active), schedule '0 9 * * 1-5'" in tool_results[-1]
+    assert "Saved the routine 'Morning summary' (id morning-summary, Active)" in tool_results[-2]
+    assert "Agent: Harness, model: fake/test-model." in tool_results[-2]
+    assert ("morning-summary: Morning summary (Active), agent Harness, model fake/test-model, mode default, "
+            "schedule '0 9 * * 1-5'") in tool_results[-1]
 
     text = (tmp_path / "routines" / "morning-summary.md").read_text(encoding="utf-8")
     assert "model: fake/test-model\npermission_mode: default\n" in text and "Summarize the new commits." in text
@@ -530,3 +532,90 @@ def test_the_agent_saves_a_routine(daemon, project, fake_model, tmp_path):  # no
     a.close()
     b.close()
 
+
+
+def test_the_agent_changes_and_deletes_a_routine(daemon, project, fake_model, tmp_path):  # noqa: F811
+    from harness_daemon import acp_harnesses
+    spec = acp_harnesses.save_custom("Fake ACP", "fake-acp-agent")
+    a = Client(daemon)
+    a.new_session(project)
+    fake_model.script(
+        {"tool_calls": [{"name": "routine_create", "arguments": {
+            "name": "Nightly check", "prompt": "Run the tests.", "schedule": "0 2 * * *", "agent": spec.id,
+            "model": "opus"}}]},
+        {"tool_calls": [{"name": "routine_update", "arguments": {"id": "nope", "schedule": "0 3 * * *"}}]},
+        {"tool_calls": [{"name": "routine_update", "arguments": {"id": "nightly-check", "agent": "nope"}}]},
+        {"tool_calls": [{"name": "routine_update", "arguments": {
+            "id": "nightly-check", "schedule": "0 3 * * *", "agent": "harness", "enabled": False}}]},
+        {"tool_calls": [{"name": "routine_delete", "arguments": {"id": "nightly-check"}}]},
+        {"text": "Done."},
+    )
+    a.send({"type": "prompt", "text": "Make a nightly check with the fake agent, then change it, then delete it"})
+    created = a.until("permission.request")[0]
+    assert created["tool"] == "routine_create"
+    assert created["input"]["agent"] == "Fake ACP" and created["input"]["model"] == "opus"
+    a.send({"type": "permission.reply", "request_id": created["request_id"], "decision": "allow_once"})
+    updated = a.until("permission.request")[0]
+    assert updated["tool"] == "routine_update"
+    assert updated["input"]["agent"] == "Harness" and updated["input"]["model"] == "the default model"
+    assert updated["input"]["active"] is False and updated["input"]["schedule"] == "0 3 * * *"
+    path = tmp_path / "routines" / "nightly-check.md"
+    assert f"agent: {spec.id}\nmodel: opus\n" in path.read_text(encoding="utf-8")
+    a.send({"type": "permission.reply", "request_id": updated["request_id"], "decision": "allow_once"})
+    deleted = a.until("permission.request")[0]
+    assert deleted["tool"] == "routine_delete" and deleted["input"]["routine"] == "Nightly check"
+    after = path.read_text(encoding="utf-8")
+    assert "agent:" not in after and "model:" not in after and "enabled: false" in after and "schedule: 0 3 * * *" in after
+    a.send({"type": "permission.reply", "request_id": deleted["request_id"], "decision": "allow_once"})
+    a.until("turn.end")
+    results = [m["content"] for m in fake_model.requests[-1]["messages"] if m["role"] == "tool"]
+    assert "Unknown routine 'nope'" in results[1]
+    assert "Unknown agent 'nope'" in results[2]
+    assert "Changed the routine 'Nightly check' (Inactive)" in results[3]
+    assert "Deleted the routine 'Nightly check'" in results[4]
+    assert not path.exists()
+    a.close()
+
+
+def test_a_routine_file_keeps_its_agent(tmp_path, project):
+    storage = Storage(tmp_path / "h.db")
+    rid = _routine(storage, project, agent="claude-acp", model="opus")
+    text = (tmp_path / "routines" / f"{rid}.md").read_text(encoding="utf-8")
+    assert "agent: claude-acp\nmodel: opus\n" in text
+    assert storage.get_routine(rid)["agent"] == "claude-acp"
+    storage.save_routine({"name": "Renamed"}, rid)  # A change with no agent keeps the agent.
+    assert storage.get_routine(rid)["agent"] == "claude-acp"
+    storage.save_routine({"agent": None}, rid)
+    assert storage.get_routine(rid)["agent"] is None
+    assert routine_files.agent_id("harness") is None and routine_files.agent_id(" codex-acp ") == "codex-acp"
+
+
+def test_a_routine_runs_with_its_agent(daemon, project, fake_model, harness_home):  # noqa: F811
+    """A routine with an ACP agent runs in a session of that agent, with the model of the routine."""
+    import sys
+    from pathlib import Path as _Path
+    from harness_daemon import acp_harnesses
+    fake = _Path(__file__).parent / "fake_acp_agent.py"
+    spec = acp_harnesses.save_custom("Fake ACP", f'"{sys.executable}" "{fake}"')
+    c = Client(daemon)
+    c.until("auth.ok")
+    c.send({"type": "routines.save", "name": "Agent run", "prompt": "hello", "cwd": str(project),
+            "agent": spec.id, "model": "smart", "permission_mode": "default", "schedule": "0 9 * * *",
+            "enabled": False})
+    saved = c.until("routines")[0]
+    item = next(r for r in saved["items"] if r["name"] == "Agent run")
+    assert item["agent"] == spec.id and item["model"] == "smart"
+    c.send({"type": "routines.run", "id": item["id"]})
+    run = None
+    for _ in range(40):
+        run = c.until("routine.run", timeout=30)[0]
+        if run["status"] in ("done", "failed"):
+            break
+    assert run is not None and run["status"] == "done", run
+    c.send({"type": "session.resume", "session_id": run["session_id"]})
+    ready = c.until("session.ready", timeout=30)[0]
+    assert ready["harness"]["id"] == spec.id
+    c.send({"type": "routines.save", "name": "Bad", "prompt": "x", "cwd": str(project), "agent": "nope",
+            "permission_mode": "default", "schedule": "0 9 * * *"})
+    assert "Unknown agent: nope" in c.until("error")[0]["message"]
+    c.close()

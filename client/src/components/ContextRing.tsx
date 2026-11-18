@@ -3,6 +3,7 @@ import { Archive, LoaderCircle } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 import { contextRows, contextSourceText, formatTokens, type ContextUsage } from "../lib/context";
 import { contextLevel, percentText, percentText1 } from "../lib/sessionRail";
+import { PlanUsage } from "./AgentBits";
 
 const RADIUS = 7;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -121,6 +122,12 @@ export function ContextRing({
               <p className="context-note">
                 The agent summarizes the old turns at {Math.round(compactAt * 100)}% of the context. {contextSourceText(source ?? usage.source)}
               </p>
+            </>
+          )}
+          {usage?.limits && (
+            <>
+              <div className="menu-sep" role="separator" />
+              <PlanUsage limits={usage.limits} />
             </>
           )}
           <div className="menu-sep" role="separator" />

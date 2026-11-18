@@ -1083,7 +1083,7 @@
     "type": "function",
     "function": {
       "name": "routine_create",
-      "description": "Save a routine: a prompt that Harness runs on a cron schedule, each time in a new session. Routines continue after this session ends, also when no Harness window is open. The routine shows on the Routines page, where the user can edit it, turn it off, or delete it. Use this tool when the user asks for recurring or later work that must continue after this session, for example \"every morning, summarize the new commits\" or \"each Friday at 17:00, check the dependencies\". Use cron_create only for reminders while this session is open. The runs work in the project folder of this session, with the model of this session. Use routine_list first to find a routine that does the same work. After the save, tell the user the name, the schedule, and the next run.",
+      "description": "Save a routine: a prompt that Harness runs on a cron schedule, each time in a new session. Routines continue after this session ends, also when no Harness window is open. The routine shows on the Routines page, where the user can edit it, turn it off, or delete it. Use this tool when the user asks for recurring or later work that must continue after this session, for example \"every morning, summarize the new commits\" or \"each Friday at 17:00, check the dependencies\". Use cron_create only for reminders while this session is open. The runs work in the project folder of this session. By default they use the agent and the model of this session. Set 'agent' and 'model' for another agent. The agents: harness (Harness, the built-in loop). Use routine_list first to find a routine that does the same work, and routine_update to change it. After the save, tell the user the name, the agent, the schedule, and the next run.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1098,6 +1098,14 @@
           "schedule": {
             "type": "string",
             "description": "A cron expression with 5 fields in the local time of the daemon computer: minute hour day-of-month month day-of-week. For example '0 9 * * 1-5' (09:00 on weekdays)."
+          },
+          "agent": {
+            "type": "string",
+            "description": "The agent that runs the routine: 'harness' (the built-in loop) or the id of an agent of Settings > Agents, for example 'claude-acp'. Default: the agent of this session."
+          },
+          "model": {
+            "type": "string",
+            "description": "The model of the runs. For 'harness': a 'provider/model' spec. For another agent: a model id of that agent, for example 'opus'. Default: the model of this session for the same agent, else the default model of the agent."
           },
           "permission_mode": {
             "type": "string",
@@ -1127,10 +1135,83 @@
     "type": "function",
     "function": {
       "name": "routine_list",
-      "description": "List the saved routines of the Routines page: the id, the name, Active or Inactive, the schedule, the next run, the folder, and the last run. Use it before routine_create, and when the user asks about the routines.",
+      "description": "List the saved routines of the Routines page: the id, the name, Active or Inactive, the agent, the model, the mode, the schedule, the next run, the folder, and the last run. Use it before routine_create, routine_update, and routine_delete, and when the user asks about the routines.",
       "parameters": {
         "type": "object",
         "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "routine_update",
+      "description": "Change a saved routine of the Routines page. Give the id (routine_list) and only the fields to change. The other fields stay. Use it when the user asks to change the prompt, the schedule, the agent, the model, or the mode of a routine, or to turn it on or off. The agents: harness (Harness, the built-in loop). After the change, tell the user what changed and the next run.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id of the routine, from routine_list."
+          },
+          "name": {
+            "type": "string",
+            "description": "A new name."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "A new full prompt. It replaces the old prompt."
+          },
+          "schedule": {
+            "type": "string",
+            "description": "A new cron expression with 5 fields, in local time."
+          },
+          "agent": {
+            "type": "string",
+            "description": "A new agent. The agent that runs the routine: 'harness' (the built-in loop) or the id of an agent of Settings > Agents, for example 'claude-acp'. A new agent with no 'model' gets the default model of that agent."
+          },
+          "model": {
+            "type": "string",
+            "description": "A new model. The model of the runs. For 'harness': a 'provider/model' spec. For another agent: a model id of that agent, for example 'opus'. An empty text: the default model."
+          },
+          "permission_mode": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "default",
+              "acceptEdits",
+              "auto",
+              "bypassPermissions"
+            ],
+            "description": "A new mode. It cannot be less limited than the mode of this session."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "True: Active, the routine runs on its schedule. False: Inactive."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "routine_delete",
+      "description": "Delete a saved routine and its run history. The sessions of earlier runs stay. On Windows the file goes to the Recycle Bin. Use it only when the user asks to delete a routine. To stop a routine for a time, use routine_update with enabled false.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id of the routine, from routine_list."
+          }
+        },
+        "required": [
+          "id"
+        ]
       }
     }
   },

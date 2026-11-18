@@ -446,6 +446,8 @@ class AcpAgent(Agent):
     def __init__(self, *, harness: HarnessSpec, aux_client: ModelClient | None = None, **kwargs: Any):
         super().__init__(**kwargs)
         self.harness = harness
+        # routine_create: a routine of this session runs with this agent and its current model.
+        self.ctx.agent = lambda: (self.harness.id, self.acp_model or self.requested_model)
         # A model of the Harness providers for the titles and the prompt suggestions. None: no such model.
         self.aux_client = aux_client
         # The model of auto mode (auto_mode.AutoReviewer): the model of the other harness is not in Harness.
@@ -471,8 +473,12 @@ class AcpAgent(Agent):
         self._session_lock = asyncio.Lock()
         self._agent_caps: dict[str, Any] = {}
         self._auth_methods: list[dict[str, Any]] = []
+        # The history from this index on is new to the stored ACP session: a load of that session gets a recap of
+        # only this part (the delta of T3 Code). 0: the harness saw no part of the history.
+        self._seen_upto = 0
         self.acp_session: str | None = self._stored_session()
         self._loaded = False  # True: the harness has the context of acp_session.
+        self._recap_from = 0  # The first message of the history for the recap. More than 0: a delta recap.
         self._modes: list[str] = []
         self._mode: str | None = None
         self.acp_modes: list[dict[str, str]] = []  # The modes of the harness for the mode menu: id, name, description.
@@ -511,16 +517,19 @@ class AcpAgent(Agent):
     # -- the harness process -------------------------------------------------------------------------------
 
     def _stored_session(self) -> str | None:
-        """The ACP session id of the last turn, from the history (a stored session that opens again). Only when
-        this harness ran the last turn: after a switch of the agent (the built-in loop or another harness ran
-        it), the old ACP session misses that part, so a new ACP session starts with a handoff recap."""
-        for m in reversed(self.history):
-            if m.get("role") != "user" or m.get("origin") == "harness":
-                continue
+        """The ACP session id of the last turn of this harness, from the history (a stored session that opens
+        again, or a switch back to this harness). As T3 Code does, a switch back resumes the native session of the
+        harness: a harness that can load it gets only the turns of the other agents after its last turn
+        (``_seen_upto``). A harness that cannot load it starts a new ACP session with the full handoff recap."""
+        turns = [i for i, m in enumerate(self.history) if m.get("role") == "user" and m.get("origin") != "harness"]
+        for n in range(len(turns) - 1, -1, -1):
+            m = self.history[turns[n]]
             sid = m.get("acp_session")
-            if not isinstance(sid, str) or not sid:
-                return None  # The built-in loop ran the last turn.
-            return sid if m.get("acp_harness", self.harness.id) == self.harness.id else None
+            if not isinstance(sid, str) or not sid or m.get("acp_harness", self.harness.id) != self.harness.id:
+                continue
+            # The native session saw the history up to the next turn (that turn ran in another agent).
+            self._seen_upto = turns[n + 1] if n + 1 < len(turns) else len(self.history)
+            return sid
         return None
 
     async def _ensure_started(self) -> AcpConnection:
@@ -570,9 +579,18 @@ class AcpAgent(Agent):
                                                              "mcpServers": self._mcp_servers()})
                 self._read_session(result)
                 self._loaded = True
+                # A switch back to this harness: the turns of the other agents after its last turn go in a delta recap.
+                prior = self.history[:-1] if self.in_turn else self.history
+                if any(m.get("role") in ("user", "assistant") for m in prior[self._seen_upto:]):
+                    self._needs_recap = True
+                    self._recap_from = self._seen_upto
+                # The model of the switch of the agent, else the model of the last turn: a harness can load a session
+                # on its default model. Then no default alias: the chip shows the real model.
+                await self._select_provider_model(conn)
+                await self._leave_alias(conn)
                 await self._sync_mode(conn)  # The mode menu shows the mode of the harness at once.
                 await self._send_state()
-                return conn, False
+                return conn, self._needs_recap
             except AcpError as e:
                 log.info("%s could not load the session %s: %s", self.harness.name, self.acp_session, e)
             finally:
@@ -588,12 +606,14 @@ class AcpAgent(Agent):
             raise AcpError(f"{self.harness.name} did not give a session id.")
         self.acp_session = sid
         self._loaded = True
+        self._recap_from = 0  # A new ACP session knows nothing: the full recap.
         self._needs_instructions = True  # A new ACP session: the next prompt tells the model about the Harness tools.
         self._read_session(result)
         # The conversation before this ACP session: in a turn, the last message is the prompt of the turn.
         prior = self.history[:-1] if self.in_turn else self.history
         self._needs_recap = any(m.get("role") in ("user", "assistant") for m in prior)
         await self._select_provider_model(conn)
+        await self._leave_alias(conn)
         await self._select_effort(conn)
         await self._sync_mode(conn)  # The mode menu shows the mode of the harness from the start.
         await self._send_state()
@@ -609,8 +629,7 @@ class AcpAgent(Agent):
             # A model of the harness itself: the choice of the switch of the agent (session.agent), else the
             # choice of the picker of the start screen (Settings > Agents), else the model that the picker shows
             # with no choice (the current model of the harness, else its first model: no default alias).
-            self._provider_model = (self.requested_model or acp_harnesses.native_choice(settings, self.harness.id)
-                                    or (None if self.harness.custom else acp_harnesses.implied_model(self.harness.id)))
+            self._provider_model = self._expected_model(settings)
             return argv, env
         try:
             target = await acp_models.resolve(spec)
@@ -619,6 +638,37 @@ class AcpAgent(Agent):
         extra_args, extra_env = acp_models.launch_options(self.harness.id, target)
         self._provider_model = acp_models.session_model_id(self.harness.id, target)
         return [*argv, *extra_args], {**env, **extra_env}
+
+    def _recorded_model(self) -> str | None:
+        """The model of the last turn of this harness in this session (the user messages record it)."""
+        for m in reversed(self.history):
+            if m.get("role") == "user" and m.get("acp_harness") == self.harness.id and m.get("acp_model"):
+                return str(m["acp_model"])
+        return None
+
+    def _expected_model(self, settings: dict[str, Any] | None = None) -> str | None:
+        """The model of the harness for this session: the choice of the switch of the agent (session.agent), else the
+        model of its last turn in this session, else the choice of the picker of the start screen (Settings >
+        Agents), else the model that the picker shows with no choice (the current model of the harness, else its
+        first model: no default alias)."""
+        settings = load_settings(None) if settings is None else settings
+        return (self.requested_model or self._recorded_model()
+                or acp_harnesses.native_choice(settings, self.harness.id)
+                or (None if self.harness.custom else acp_harnesses.implied_model(self.harness.id)))
+
+    async def _leave_alias(self, conn: AcpConnection) -> None:
+        """As T3 Code, a session never stays on a model that only names the default of the harness ("default",
+        "Default (recommended)"): it changes to the real model, so the chip always shows the model in use."""
+        current = next((m for m in self.acp_models if m["id"] == self.acp_model), None)
+        if current is None or not acp_harnesses.is_default_alias(current):
+            return
+        target = alias_target(self.acp_models, current)
+        if target is None:
+            return
+        try:
+            await self._change_model(conn, target)
+        except AcpError as e:
+            log.info("%s did not change from %s to %s: %s", self.harness.name, current["id"], target, e)
 
     async def _select_provider_model(self, conn: AcpConnection) -> None:
         """A new ACP session starts on the model of the Harness provider, when the harness lists it. (An agent
@@ -730,6 +780,13 @@ class AcpAgent(Agent):
 
     async def set_model(self, model_id: str) -> None:
         """Change the model of the ACP session (the model menu)."""
+        if not self.acp_models and self._conn is None:
+            # The harness did not start yet: the menu shows the saved models. The session starts on this model.
+            if model_id not in {str(m.get("id")) for m in acp_harnesses.cached_models(self.harness.id)}:
+                raise AcpError(f"{self.harness.name} has no model {model_id}.")
+            self.requested_model = model_id
+            await self._send_state()
+            return
         if model_id not in {m["id"] for m in self.acp_models}:
             raise AcpError(f"{self.harness.name} has no model {model_id}.")
         conn, _ = await self._ensure_session()
@@ -1301,7 +1358,10 @@ class AcpAgent(Agent):
         messages and the key activity (tool calls with their result), each with its speaker, within HANDOFF_CHARS.
         The new request is not in it (it is the prompt). The note says how many messages are left out, and the
         agent can find them with conversation_search."""
-        return handoff_recap(self.history[:-1] if self.in_turn else self.history, self.summary, self.previous_agent)
+        history = self.history[:-1] if self.in_turn else self.history
+        if self._recap_from:
+            return handoff_recap(history[self._recap_from:], None, self.previous_agent, delta=True)
+        return handoff_recap(history, self.summary, self.previous_agent)
 
     def _prompt_blocks(self, text: str, images: list[str] | None, recap: str | None) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
@@ -1348,6 +1408,9 @@ class AcpAgent(Agent):
             conn, _ = await self._ensure_session()
             message["acp_session"] = self.acp_session
             message["acp_harness"] = self.harness.id
+            if self.acp_model:
+                message["acp_model"] = self.acp_model  # The model of this turn: a later load uses it again.
+            await self._tag_turn(message)
             await self._sync_mode(conn)
             recap = self._recap() if self._needs_recap else None
             self._needs_recap = False
@@ -1455,6 +1518,12 @@ class AcpAgent(Agent):
         """The tokens of the last usage_update of the harness. 0: unknown (the client shows no ring)."""
         return self._usage_known[0] if self._usage_known else 0
 
+    def turn_label(self) -> str:
+        """The agent and the model of a turn, for the chat: "Claude Agent · Opus"."""
+        model = self.acp_model or self.requested_model
+        name = next((str(m.get("name") or m.get("id")) for m in self.acp_models if m.get("id") == model), model)
+        return f"{self.harness.name} · {name}" if name else self.harness.name
+
     def context_breakdown(self) -> dict[str, Any]:
         tokens = self.context_tokens()
         return {"tokens": tokens, "length": self.context_length, "compact_at": 1.0, "source": "acp",
@@ -1463,8 +1532,18 @@ class AcpAgent(Agent):
     def public_harness(self) -> dict[str, Any]:
         """The harness of the session for the client: its models and its / commands, when it has them."""
         auto_extra = bool(self.acp_modes) and not any(MODE_MAP.get(m["id"]) == "auto" for m in self.acp_modes)
-        return {"id": self.harness.id, "name": self.harness.name, "models": self.acp_models,
-                "model": self.acp_model, "commands": self.acp_commands,
+        started = bool(self.acp_models)
+        models = self.acp_models if started else ([] if self.harness.custom else acp_harnesses.cached_models(self.harness.id))
+        # Before the first prompt the harness does not run: the chip shows the model that the session will use.
+        model = self.acp_model
+        if not started and model is None:
+            settings = load_settings(None)
+            # A model of a Harness provider (Settings > Agents) has its id only after the start: no guess.
+            by_provider = (not self.harness.custom and acp_models.choice(settings, self.harness.id) is not None
+                           and not self.requested_model and not self._recorded_model())
+            model = None if by_provider else self._expected_model(settings)
+        return {"id": self.harness.id, "name": self.harness.name, "models": models,
+                "model": model, "commands": self.acp_commands,
                 # The mode menu: the modes of the harness, the current one, and "Auto (Harness)" for a harness
                 # with no Auto mode of its own (the gate of Harness checks its requests with the auto model).
                 "modes": self.acp_modes, "mode": self._chosen_mode, "harness_auto": auto_extra,
@@ -1582,6 +1661,20 @@ def _clip(text: str, limit: int = HANDOFF_ITEM_CHARS) -> str:
     return text if len(text) <= limit else text[:limit] + f" […{len(text) - limit} more characters]"
 
 
+def alias_target(models: list[dict[str, Any]], alias: dict[str, Any]) -> str | None:
+    """The real model of a default alias: the model whose name the alias names ("Default (recommended)" with the
+    description "Opus 4.7 · ..." gives "opus"), else the first real model, as T3 Code does. None: no real model."""
+    real = [m for m in models if not acp_harnesses.is_default_alias(m)]
+    if not real:
+        return None
+    text = f"{alias.get('name', '')} {alias.get('description', '')}".lower()
+    for m in sorted(real, key=lambda m: -len(str(m.get("name") or ""))):
+        for word in {str(m.get("name") or "").lower(), str(m.get("id") or "").lower()}:
+            if len(word) >= 3 and re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", text):
+                return str(m["id"])
+    return str(real[0]["id"])
+
+
 def handoff_items(history: list[dict[str, Any]]) -> list[str]:
     """The items of a handoff, in order: the messages of the user and of the agent, and the activity (a tool call
     with the first lines of its result), each with its speaker."""
@@ -1613,8 +1706,11 @@ def handoff_items(history: list[dict[str, Any]]) -> list[str]:
 
 
 def handoff_recap(history: list[dict[str, Any]], summary: str | None, previous: str | None,
-                  budget: int = HANDOFF_CHARS) -> str | None:
-    """The handoff text for a new agent of a session. None: no earlier conversation."""
+                  budget: int = HANDOFF_CHARS, delta: bool = False) -> str | None:
+    """The handoff text for a new agent of a session. None: no earlier conversation.
+
+    ``delta``: the agent comes back to its own earlier session (T3 Code "delta since the target last saw it"). The
+    history is only the part after its last turn, which other agents ran."""
     items = handoff_items(history)
     if summary:
         items.insert(0, "Summary of the earliest part: " + _clip(summary, 8_000))
@@ -1636,10 +1732,16 @@ def handoff_recap(history: list[dict[str, Any]], summary: str | None, previous: 
             room -= len(item) + 2
         chosen = [first, *tail]
         left_out = len(items) - len(chosen)
-    head = ("[Harness: You continue a conversation that " + (f"{previous} had" if previous else "another agent had")
-            + ". You do not have its context, so here is the earlier conversation, with the speaker of each part. "
-            "It is a selection, not a summary. Use it as background. The tool calls ran in the earlier agent: check "
-            "the files again before you change them.]")
+    if delta:
+        head = ("[Harness: After your last turn in this conversation, " + (previous or "another agent")
+                + " continued it. You do not have that part, so here it is, with the speaker of each part. It is a "
+                "selection, not a summary. Use it as background. The tool calls ran in the other agent: check the "
+                "files again before you change them.]")
+    else:
+        head = ("[Harness: You continue a conversation that " + (f"{previous} had" if previous else "another agent had")
+                + ". You do not have its context, so here is the earlier conversation, with the speaker of each part. "
+                "It is a selection, not a summary. Use it as background. The tool calls ran in the earlier agent: "
+                "check the files again before you change them.]")
     if left_out:
         head += (f"\n[{left_out} earlier parts are left out. To find one, use the conversation_search tool of the "
                  "Harness MCP server.]")

@@ -1,7 +1,9 @@
 // Shared parts of Settings > Agents and the agent picker (as in T3 Code): the icon of an agent, the status
 // line of an agent, and the usage bars of a subscription (daemon agent_auth.py).
 
+import { LoaderCircle } from "lucide-react";
 import type { AgentAuth, AgentUsage, HarnessItem } from "../daemon/protocol";
+import type { PlanLimits } from "../lib/context";
 import { formatDateTime, formatTime } from "../lib/timeFormat";
 
 /** The id of the built-in agent loop of Harness. It is not an ACP harness. */
@@ -156,5 +158,50 @@ export function LimitRows({ usage, compact = false, used = false }: { usage: Age
         );
       })}
     </div>
+  );
+}
+
+/** The usage limits of the plan of a session agent, as in Claude Code /usage: for each window the name, the share
+ * in use, a bar, and the time to the reset. The context panel under the prompt box and the Context section of the
+ * session rail show it. Nothing for a session with no subscription. */
+export function PlanUsage({ limits }: { limits: PlanLimits | null | undefined }) {
+  if (!limits) return null;
+  const body =
+    limits.windows.length > 0 ? (
+      <ul className="plan-usage-list">
+        {limits.windows.map((u) => {
+          const pct = Math.round(u.percent);
+          const tone = pct >= 90 ? " danger" : pct >= 75 ? " warn" : "";
+          const left = timeLeft(u.resets_at);
+          const tip = usageTip(u);
+          return (
+            <li key={u.label} title={tip}>
+              <div className="plan-usage-line">
+                <span className="plan-usage-label">{u.label}</span>
+                <span className="plan-usage-pct mono">{pct}% used</span>
+              </div>
+              <span className="agent-usage-bar" role="progressbar" aria-label={`${u.label} usage`} aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                <span className={`agent-usage-fill${tone}`} style={{ width: `${Math.min(100, Math.max(0, u.percent))}%` }} />
+              </span>
+              {left && <span className="plan-usage-reset">Resets in {left}</span>}
+            </li>
+          );
+        })}
+      </ul>
+    ) : limits.checking ? (
+      <p className="plan-usage-note">
+        <LoaderCircle size={13} className="spin" aria-hidden /> Reading the usage.
+      </p>
+    ) : (
+      <p className="plan-usage-note">{limits.error || "This agent reports no limits now."}</p>
+    );
+  return (
+    <section className="plan-usage" aria-label="Plan usage">
+      <div className="plan-usage-head">
+        <span className="plan-usage-title">Plan usage</span>
+        {limits.label && <span className="plan-usage-plan">{limits.label}</span>}
+      </div>
+      {body}
+    </section>
   );
 }

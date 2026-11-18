@@ -165,7 +165,11 @@ describe("the chip of the agent picker", () => {
   it("shows the model of an ACP session, else the agent name", () => {
     expect(agentChipLabel({ id: "opencode", name: "OpenCode" }, true)).toBe("OpenCode");
     expect(agentChipLabel({ id: "opencode", name: "OpenCode", models, model: "smart" }, true)).toBe("Smart");
-    expect(agentChipLabel({ id: "opencode", name: "OpenCode", models, model: "gone" }, true)).toBe("OpenCode");
+    expect(agentChipLabel({ id: "opencode", name: "OpenCode", models, model: "gone" }, true)).toBe("gone");
+    // A default alias shows the real model that it names, else the first real model.
+    const alias = { id: "default", name: "Default (recommended)", description: "Smart · the best model" };
+    expect(agentChipLabel({ id: "claude-acp", name: "Claude Agent", models: [alias, fast, smart], model: "default" }, true)).toBe("Smart");
+    expect(agentChipLabel({ id: "claude-acp", name: "Claude Agent", models: [{ ...alias, description: "" }, fast, smart], model: "default" }, true)).toBe("Fast");
   });
 
   it("shows the model of new sessions on the start screen", () => {
@@ -356,5 +360,14 @@ describe("the reasoning levels of an ACP agent", () => {
     expect([listed.efforts, listed.effort]).toEqual([efforts, "low"]);
     const early = railTabs(null, { id: "claude", name: "Claude Agent", efforts, native_effort: "low" }, false)[1];
     expect([early.efforts, early.effort]).toEqual([efforts, "low"]);
+  });
+});
+
+describe("the implied model of an agent", () => {
+  it("follows a current default alias to the model that it names", () => {
+    const alias = { id: "default", name: "Default (recommended)", description: "Opus 5.5", current: true };
+    const models = [alias, { id: "sonnet", name: "Sonnet 5.5", description: "" }, { id: "opus", name: "Opus 5.5", description: "" }];
+    expect(impliedModel(models)).toBe("opus");
+    expect(agentChipLabel({ id: "claude-acp", name: "Claude Agent", models }, false)).toBe("Opus 5.5");
   });
 });

@@ -76,6 +76,9 @@ class ToolContext:
     set_mode: Any = None
     # A function that returns the model of the session ("provider/model"), for example for routine_create.
     model: Any = None
+    # A function that returns the agent of the session and its model: (None, "provider/model") for the built-in
+    # loop, or (harness id, model id of the harness or None) for an ACP agent. routine_create uses it.
+    agent: Any = None
     # The files that the agent read (ReadState). None: edit and write do not check reads, for example in a test.
     reads: ReadState | None = None
     # True: the agent changes files with apply_patch, not with edit and write (setting "edit_tool").

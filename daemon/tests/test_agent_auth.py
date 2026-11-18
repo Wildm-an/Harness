@@ -71,6 +71,8 @@ def test_the_model_of_new_sessions_with_no_choice(harness_home):
     assert acp_harnesses.implied_model("claude-acp") == "opus"
     acp_harnesses.save_models("claude-acp", [default, opus, {**sonnet, "current": True}])
     assert acp_harnesses.implied_model("claude-acp") == "sonnet"
+    acp_harnesses.save_models("claude-acp", [{**default, "description": "Sonnet · the default"}, opus, sonnet])
+    assert acp_harnesses.implied_model("claude-acp") == "sonnet"  # The model that the current alias names.
     assert acp_harnesses.is_default_alias({"id": "auto", "name": "Default model"})
     assert not acp_harnesses.is_default_alias(opus)
 
@@ -177,3 +179,23 @@ def test_the_oh_my_pi_logo_ships_with_harness():
     acp_icons._cache.pop("omp", None)
     svg = base64.b64decode(acp_icons.icon("omp").split(",", 1)[1])
     assert svg.startswith(b"<svg") and b"#f97316" in svg and acp_icons.safe_svg(svg)
+
+
+def test_the_plan_limits_of_a_session():
+    """The context panel and the session rail show the usage limits of a subscription agent."""
+    window = {"label": "5-hour limit", "percent": 41.0, "resets_at": None, "severity": "normal"}
+    state = {"status": "authenticated", "label": "Claude Max", "subscription": True, "usage": [window], "usage_error": ""}
+    view = agent_auth.limits_view("claude-acp", state)
+    assert view == {"agent": "claude-acp", "label": "Claude Max", "windows": [window], "error": "", "checking": False}
+    assert agent_auth.limits_view("claude-acp", {**state, "subscription": False}) is None  # An API key: no limits.
+    assert agent_auth.limits_view("claude-acp", None) is None
+    assert agent_auth.limits_view("claude-acp", None, checking=True)["checking"] is True
+
+
+def test_a_default_alias_changes_to_the_real_model():
+    from harness_daemon.acp import alias_target
+    alias = {"id": "default", "name": "Default (recommended)", "description": "Opus 4.7 · The most capable model"}
+    models = [alias, {"id": "sonnet", "name": "Sonnet", "description": ""}, {"id": "opus", "name": "Opus", "description": ""}]
+    assert alias_target(models, alias) == "opus"
+    assert alias_target(models, {**alias, "description": ""}) == "sonnet"  # No model named: the first real model.
+    assert alias_target([alias], alias) is None

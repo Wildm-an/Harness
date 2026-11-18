@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatReducer, emptyChat, historyToItems, type ChatState } from "./state";
+import { chatReducer, emptyChat, historyToItems, modelSwitches, type ChatState } from "./state";
 import type { DaemonMessage } from "../daemon/protocol";
 import { filterCommands, insertCommand, isSkill, parseSubmission, slashAt } from "../components/PromptBox";
 
@@ -342,5 +342,28 @@ describe("the image input of the session model", () => {
     expect(s.imageInput).toBe(true);
     const other = chatReducer(s, { type: "daemon", msg: { type: "command.result", name: "compact", text: "Done." } });
     expect(other.imageInput).toBe(true);
+  });
+});
+
+describe("modelSwitches", () => {
+  it("marks each user turn whose agent or model differs from the turn before, as T3 Code", () => {
+    const items = historyToItems([
+      { role: "user", content: "a", turn_model: "Claude Agent · Opus" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "b", turn_model: "Claude Agent · Opus" },
+      { role: "user", content: "note", origin: "task" },
+      { role: "user", content: "c", turn_model: "Harness · qwen3" },
+      { role: "user", content: "d" },
+    ]);
+    const switches = modelSwitches(items);
+    const users = items.filter((i) => i.kind === "user");
+    expect([...switches.keys()]).toEqual([users[3].id]);
+    expect(switches.get(users[3].id)).toEqual({ from: "Claude Agent · Opus", to: "Harness · qwen3" });
+  });
+
+  it("sets the model of a live turn from turn.model", () => {
+    const state = chatReducer(emptyChat, { type: "user", text: "hi", messageId: "m1", startsTurn: true });
+    const next = chatReducer(state, { type: "daemon", msg: { type: "turn.model", id: "m1", model: "Harness · qwen3" } });
+    expect(next.items.find((i) => i.kind === "user")).toMatchObject({ model: "Harness · qwen3" });
   });
 });
