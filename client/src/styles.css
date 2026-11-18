@@ -11848,19 +11848,78 @@ body.sorting * {
 }
 
 /* ---------- the Routines page (RoutinesPage.tsx) ---------- */
+/* The title row: the title, the count, and "New routine" at the right. The list has no heading. */
+.routine-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.routine-title-row .cap-count {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.routine-new {
+  margin-left: auto;
+}
+/* The full row is one hover surface: the tint goes from edge to edge, under the row buttons too.
+   The open button inside the row adds no second tint, so no hard edge shows where it ends. The
+   tint stays while the menu of the row is open. */
 .routine-item {
   display: flex;
   align-items: center;
-  padding-right: 12px;
+  gap: 2px;
+  padding-right: 10px;
+  transition: background-color var(--dur-base) var(--ease-out);
 }
 
-.routine-item:hover {
+.routine-item:hover,
+.routine-item.menu-open,
+.routine-item:has(:focus-visible) {
   background: var(--hover);
 }
 
-/* "Run now" on a row, between the pills and the switch. */
-.routine-run-now {
-  margin-right: 8px;
+.routine-item > .cap-row:hover {
+  background: transparent;
+}
+
+/* The keyboard ring goes around the full row, not only the open button. */
+.routine-item > .cap-row:focus-visible {
+  outline: none;
+}
+
+.routine-item:has(> .cap-row:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+/* "Run now" and the ⋮ button: muted, and clear on row hover. */
+.routine-run-now,
+.routine-more {
+  border-radius: var(--radius);
+  transition:
+    background-color var(--duration) var(--ease-out),
+    color var(--duration) var(--ease-out),
+    opacity var(--duration) var(--ease-out);
+}
+
+.routine-item:hover .routine-run-now:not(:disabled),
+.routine-item:hover .routine-more,
+.routine-item.menu-open .routine-more {
+  color: var(--text);
+}
+
+/* The ⋮ button shows on hover, on focus, and while its menu is open, as on a session row (S5).
+   It keeps its place when hidden, so the row does not move. */
+.routine-more {
+  opacity: 0;
+}
+
+.routine-item:hover .routine-more,
+.routine-item.menu-open .routine-more,
+.routine-item:has(:focus-visible) .routine-more {
+  opacity: 1;
 }
 
 .routine-actions {

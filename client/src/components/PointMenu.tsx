@@ -9,6 +9,7 @@ export interface PointMenuItem {
   onClick: () => void;
   disabled?: boolean;
   separatorBefore?: boolean;
+  danger?: boolean; // A destructive action, for example "Delete": the danger color.
 }
 
 const MENU_WIDTH = 200;
@@ -81,6 +82,7 @@ export function PointMenu({ x, y, label, items, onClose }: {
           <button
             type="button"
             role="menuitem"
+            className={item.danger ? "danger" : undefined}
             disabled={item.disabled}
             onClick={() => {
               onClose();
