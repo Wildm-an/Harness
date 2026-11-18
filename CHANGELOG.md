@@ -3,6 +3,38 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.88 (2026-11-17)
+
+### Pull requests and CI
+
+- The session rail shows the CI checks of each pull request: "2 of 4 checks failed", "3 of 4
+  checks running", or "All checks passed". A click shows the checks, and each check opens its run.
+  The ⋯ menu of the row has "View checks".
+- "Fix CI" on a failed CI line asks the agent to read the failed logs, fix the cause, and push.
+  The agent does not weaken a test or force a push.
+- "Auto-fix" (a switch for each session, off by default) sends "Fix CI" with no click when a CI
+  run fails, 3 times at most for each pull request.
+- The hover card of a pull request shows the CI state and the failed checks. When a CI run ends
+  and you do not see the session, a notification says "CI passed" or "CI failed".
+
+### Usage
+
+- The Usage page prices usage as T3 Code: fast and ultrafast requests, and the long-context rates.
+  "Cost by speed" shows when the range has fast requests.
+- "Set price" and "Model prices" give a custom price to a model, or map it to another model.
+- The page shows the limits of a Codex subscription.
+- A Claude Agent session on a subscription shows "Plan usage" in the context ring panel and in the
+  Context section of the rail: the 5-hour, weekly, and per-model windows, with the reset time.
+
+### Agents and models
+
+- A routine can run with any agent and model. The routine form has the agent picker.
+- One session can use several agents and models. The chat shows "A → B" where the model changes,
+  and an agent that comes back gets a recap of only the turns that it did not see.
+- The model chip shows the real model in use, not a "default" alias.
+- Settings > Agents has an "Uninstall" button for an agent that Harness downloaded.
+- Claude Agent no longer shows the Claude Code install and update sections.
+
 ## 0.1.87 (2026-11-17)
 
 ### Agents
