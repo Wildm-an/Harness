@@ -340,6 +340,9 @@ export interface UsageTotals {
   output: number;
   reasoning: number;
   cost: number; // USD: the API estimate (LiteLLM prices), or the cost that the agent reported.
+  premium: number; // USD: the part of the cost above the standard speed (fast and ultrafast requests).
+  fast_cost: number; // USD: the cost of the fast requests.
+  ultrafast_cost: number; // USD: the cost of the ultrafast requests.
   cache_savings: number; // USD: cache_read x (input price - cache read price).
   sessions: number;
   records: number; // The model requests.
@@ -369,7 +372,31 @@ export interface UsageModel {
   cache_read: number;
   cache_write: number;
   output: number;
+  premium: number; // USD above the standard speed.
+  reported: number; // USD that the agent reported (a part of cost).
+  custom_price: boolean; // A custom price of the "Model prices" dialog prices this model.
+  mapped_from: string[]; // The model ids that "Map to" counts as this model.
+  rate: UsageRate | null; // The standard price of the model (custom or LiteLLM). null: no price.
   unpriced: boolean; // No price for this model: its cost is 0, or the cost that the agent reported.
+}
+
+/** USD for one million tokens. */
+export interface UsageRate {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+/** A custom price of the "Model prices" dialog (daemon ~/.harness/usage-model-prices.json), by exact model id. The
+ * prices are USD for one million tokens. A missing cache price is the input price. map_to: count the tokens of this
+ * model as the target model, with the price of the target. An entry can have only map_to. */
+export interface UsageModelPrice {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+  map_to?: string;
 }
 
 export interface UsageSummary {
@@ -383,8 +410,11 @@ export interface UsageSummary {
   providers: UsageProvider[]; // Sorted by cost, then tokens. Only the providers with use in the range.
   series: UsagePoint[]; // Each hour (24h) or each day of the range, also with no use.
   models: UsageModel[]; // Sorted by cost, then tokens.
-  limits: { provider: string; name: string; agent: string; icon: string | null; windows: AgentUsage[] }[]; // The Limits tab.
+  // The Limits tab. reported_at: the ISO time of the last session that reported the limits (Codex with no codex
+  // program), else null (a check now).
+  limits: { provider: string; name: string; agent: string; icon: string | null; windows: AgentUsage[]; reported_at?: string | null }[];
   errors: { provider: string; message: string }[]; // A history that Harness could not read.
+  prices: Record<string, UsageModelPrice>; // The custom prices.
 }
 
 /** A model that an ACP harness gives. */
@@ -1075,6 +1105,8 @@ export type ClientMessage =
   // The Usage page. offset: the minutes of the local time zone east of UTC (-new Date().getTimezoneOffset()), for the
   // days and the hours. refresh: read the histories and the prices again now.
   | { type: "usage.summary"; range: UsageRange; offset: number; providers?: string[]; refresh?: boolean }
+  // Replace all the custom model prices. The reply is usage.prices. Errors have the ref usage.prices.set.
+  | { type: "usage.prices.set"; models: Record<string, UsageModelPrice> }
   | { type: "acp.mode"; mode: string } // The mode menu of an ACP session: a mode id of the harness, or "harness:auto".
   | { type: "acp.effort"; effort: string } // The reasoning level of an ACP session (a value of its "efforts").
   // Switch the agent of the current session (a portable handoff): "harness" or a harness id, and a model. Reply: session.ready.
@@ -1371,6 +1403,7 @@ export type DaemonMessage =
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string; auto_model?: string | null }
   | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
   | ({ type: "usage.summary" } & UsageSummary) // The reply to usage.summary. Errors have the ref usage.summary.
+  | { type: "usage.prices"; models: Record<string, UsageModelPrice> } // The reply to usage.prices.set.
   // The sign-in terminal of the agent runs. kind "update": the update command of the program (agents.update_program).
   | { type: "agents.signin.started"; id: string; kind?: "signin" | "update"; command?: string }
   | { type: "agents.signin.output"; id: string; kind?: "signin" | "update"; data: string }

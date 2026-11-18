@@ -71,17 +71,73 @@ def test_prices_and_aliases():
         "openai/some-model": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6},
         "no-output": {"input_cost_per_token": 1e-6},
     })
-    assert usage.rate_for(rates, "claude-opus-5-5[1m]").output == 25e-6
-    assert usage.rate_for(rates, "some-model").input == 1e-6  # The first-party provider wins.
+    assert usage.rate_for(rates, "claude-opus-5-5[1m]").standard.output == 25e-6
+    assert usage.rate_for(rates, "some-model").standard.input == 1e-6  # The first-party provider wins.
     assert usage.rate_for(rates, "opus") is None and usage.rate_for(rates, "no-output") is None
     record = usage.Record(provider="claude", key="k", ts=NOW, model="claude-opus-5-5", session="s", input=1_000_000,
                           cache_read=1_000_000, cache_write=1_000_000, cache_write_1h=500_000, output=1_000_000)
-    cost, parts, savings, priced = usage.price(record, rates["claude-opus-5-5"])
-    assert priced and round(parts["cache_write"], 4) == round(500_000 * 6.25e-6 + 500_000 * 1e-5, 4)
-    assert round(cost, 4) == round(5 + 0.5 + parts["cache_write"] + 25, 4)
-    assert round(savings, 4) == round(1_000_000 * (5e-6 - 5e-7), 4)
+    p = usage.price(record, rates["claude-opus-5-5"])
+    assert p.source == "model" and round(p.parts["cache_write"], 4) == round(500_000 * 6.25e-6 + 500_000 * 1e-5, 4)
+    assert round(p.cost, 4) == round(5 + 0.5 + p.parts["cache_write"] + 25, 4) and p.premium == 0
+    assert round(p.savings, 4) == round(1_000_000 * (5e-6 - 5e-7), 4)
     reported = usage.Record(provider="opencode", key="k2", ts=NOW, model="x", session="s", input=10, cost=0.25)
-    assert usage.price(reported, None)[0] == 0.25 and usage.price(reported, None)[3]
+    unsplit = usage.price(reported, None)
+    assert (unsplit.cost, unsplit.parts["other"], unsplit.source) == (0.25, 0.25, "reported")
+    scaled = usage.price(usage.Record(provider="claude", key="k3", ts=NOW, model="m", session="s", input=1_000_000,
+                                      output=1_000_000, cost=60.0), rates["claude-opus-5-5"])
+    assert scaled.cost == 60.0 and round(scaled.parts["output"], 6) == 50.0  # The parts get the scale of 60 / 30.
+
+
+def test_speed_and_context_tiers():
+    rates = usage.parse_rates({
+        "claude-x": {"input_cost_per_token": 5e-6, "output_cost_per_token": 25e-6, "cache_read_input_token_cost": 5e-7,
+                     "provider_specific_entry": {"us": 1.1, "fast": 6}},
+        "gpt-x": {"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6, "cache_read_input_token_cost": 5e-7,
+                  "input_cost_per_token_priority": 12.5e-6, "output_cost_per_token_priority": 75e-6,
+                  "input_cost_per_token_above_272k_tokens": 10e-6, "output_cost_per_token_above_272k_tokens": 45e-6,
+                  "input_cost_per_token_flex": 2.5e-6, "output_cost_per_token_flex": 15e-6},
+    })
+    claude, gpt = rates["claude-x"], rates["gpt-x"]
+    assert round(claude.fast.output, 12) == 150e-6 and claude.ultrafast is None and claude.tiers == ()
+    # A missing priority cache rate keeps the ratio of the standard rates: 5e-7 / 5e-6 x 12.5e-6.
+    assert round(gpt.fast.cache_read, 12) == round(1.25e-6, 12)
+    assert [t for t, _ in gpt.tiers] == [272_000]
+    fast = usage.Record(provider="claude", key="f", ts=NOW, model="claude-x", session="s", input=1_000_000,
+                        output=1_000_000, speed="fast")
+    p = usage.price(fast, claude)
+    assert round(p.cost, 6) == 180.0 and round(p.premium, 6) == 150.0
+    small = usage.Record(provider="codex", key="s", ts=NOW, model="gpt-x", session="s", input=100_000, output=1000)
+    large = usage.Record(provider="codex", key="l", ts=NOW, model="gpt-x", session="s", input=300_000, output=1000)
+    assert usage.rates_at(gpt, "standard", small).input == 5e-6
+    assert usage.rates_at(gpt, "standard", large).input == 10e-6  # The whole request bills at the tier.
+    assert usage.rates_at(gpt, "fast", large).input == 12.5e-6  # The tier has no priority rate: the base fast rate.
+    assert usage._speed("priority") == "fast" and usage._speed(None) == "standard"
+
+
+def test_custom_prices_and_map_to(harness_home):
+    import pytest
+    with pytest.raises(ValueError):
+        usage.clean_prices({"m": {"input": 1}})
+    with pytest.raises(ValueError):
+        usage.clean_prices({"m": {"input": -1, "output": 1}})
+    saved = usage.write_prices({" my-model ": {"input": 2, "output": "", "cache_read": None} | {"output": 4},
+                                "preview-x": {"map_to": "claude-x"}, "empty": {}})
+    assert saved == {"my-model": {"input": 2.0, "output": 4.0}, "preview-x": {"map_to": "claude-x"}}
+    assert usage.read_prices() == saved
+    rates = usage.parse_rates({"claude-x": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}})
+    found = [
+        usage.Record(provider="opencode", key="a", ts=NOW - 60, model="my-model", session="o", input=1_000_000, cost=9.0),
+        usage.Record(provider="claude", key="b", ts=NOW - 60, model="preview-x", session="c", input=1_000_000),
+        usage.Record(provider="claude", key="c", ts=NOW - 60, model="claude-x", session="c", output=1_000_000),
+    ]
+    data = usage.summarize("7d", 0, rates, {"status": "fresh", "updated_at": NOW}, found, 1, [], [], now=NOW,
+                           prices=saved)
+    by_model = {m["model"]: m for m in data["models"]}
+    assert set(by_model) == {"my-model", "claude-x"}  # preview-x counts as claude-x.
+    assert by_model["my-model"]["cost"] == 2.0 and by_model["my-model"]["custom_price"]  # The custom price wins.
+    assert by_model["claude-x"]["mapped_from"] == ["preview-x"] and round(by_model["claude-x"]["cost"], 6) == 3.0
+    assert by_model["claude-x"]["rate"] == {"input": 1.0, "output": 2.0, "cache_read": 1.0, "cache_write": 1.0}
+    assert data["prices"] == saved
 
 
 def test_windows_and_the_summary():
@@ -101,8 +157,9 @@ def test_windows_and_the_summary():
     assert [p["id"] for p in data["providers"]] == ["claude", "opencode"]
     claude = data["providers"][0]
     assert claude["sessions"] == 2 and round(claude["cost"], 8) == round(2 * (100e-6 + 20e-6), 8)
-    assert data["models"][-1] == {"model": "big-pickle", "provider": "opencode", "cost": 0.0, "tokens": 10, "input": 5,
-                                  "cache_read": 0, "cache_write": 0, "output": 5, "unpriced": True}
+    assert data["models"][-1] == {"model": "big-pickle", "provider": "opencode", "cost": 0.0, "premium": 0.0,
+                                  "reported": 0.0, "tokens": 10, "input": 5, "cache_read": 0, "cache_write": 0,
+                                  "output": 5, "custom_price": False, "mapped_from": [], "rate": None, "unpriced": True}
     assert sum(p["by_provider"].get("claude", {}).get("tokens", 0) for p in data["series"]) == 220
 
 
@@ -132,4 +189,55 @@ def test_the_usage_message(daemon, monkeypatch):  # noqa: F811
     c.send({"type": "usage.summary", "range": "7d", "offset": 0})
     reply = c.until("usage.summary", timeout=60)[0]
     assert reply["range"] == "7d" and len(reply["series"]) == 7 and "totals" in reply
+    c.send({"type": "usage.prices.set", "models": {"m": {"input": 1}}})
+    error = c.until("error")[0]
+    assert error["ref"] == "usage.prices.set" and "needs an input price" in error["message"]
+    c.send({"type": "usage.prices.set", "models": {"m": {"input": 1, "output": 2}, "n": {"map_to": "m"}}})
+    assert c.until("usage.prices")[0]["models"] == {"m": {"input": 1.0, "output": 2.0}, "n": {"map_to": "m"}}
+    c.send({"type": "usage.summary", "range": "7d", "offset": 0})
+    assert c.until("usage.summary", timeout=60)[0]["prices"]["n"] == {"map_to": "m"}
     c.close()
+
+
+def test_codex_speed_and_map_to_chains(tmp_path):
+    path = tmp_path / "rollout.jsonl"
+    count = {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 100, "cached_input_tokens": 40,
+                                                                  "output_tokens": 10}}}
+    path.write_text("\n".join(json.dumps(line) for line in [
+        {"type": "session_meta", "payload": {"id": "c1"}},
+        {"type": "turn_context", "payload": {"model": "gpt-x"}},
+        {"timestamp": "2026-11-16T10:00:00Z", "type": "event_msg", "payload": count},
+        {"type": "event_msg", "payload": {"type": "thread_settings_applied", "thread_settings": {"service_tier": "priority"}}},
+        {"timestamp": "2026-11-16T10:01:00Z", "type": "event_msg", "payload": count},
+    ]))
+    assert [r.speed for r in usage.parse_codex(path)] == ["standard", "fast"]
+    chain = {"a": {"map_to": "b"}, "b": {"map_to": "c"}, "x": {"map_to": "y"}, "y": {"map_to": "x"}}
+    assert usage.resolve_model(chain, "a") == "c" and usage.resolve_model(chain, "x") == "x"
+    assert usage.resolve_model(chain, "other") == "other"
+
+
+def test_codex_limits(tmp_path):
+    from harness_daemon import codex_limits
+    snapshot = {"limitId": "codex", "planType": "plus",
+                "primary": {"usedPercent": 41, "resetsAt": NOW, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 12.5, "resetsAt": NOW + 86400},
+                "individualLimit": {"remainingPercent": 70, "resetsAt": NOW}}
+    rows = codex_limits.windows(snapshot)
+    assert [(r["label"], r["percent"]) for r in rows] == [("5-hour limit", 41.0), ("Weekly", 12.5),
+                                                          ("Monthly credit limit", 30.0)]
+    assert rows[0]["resets_at"] == "2026-11-16T23:00:00Z" and codex_limits.plan_label(snapshot) == "ChatGPT Plus"
+    assert codex_limits.windows({**snapshot, "limitId": "gpt-x-mini"}) == []  # A limit of one model.
+    assert codex_limits.windows({"planType": "free", "primary": {"usedPercent": 5}})[0]["label"] == "Monthly"
+    day = tmp_path / "sessions" / "2026" / "11" / "16"
+    day.mkdir(parents=True)
+    (day / "rollout.jsonl").write_text("\n".join(json.dumps(line) for line in [
+        {"timestamp": "2026-11-16T10:00:00Z", "type": "event_msg", "payload": {"type": "token_count", "rate_limits": {
+            "primary": {"used_percent": 3, "window_minutes": 300, "resets_in_seconds": 60}}}},
+        {"timestamp": "2026-11-16T11:00:00Z", "type": "event_msg", "payload": {"type": "token_count", "rate_limits": {
+            "primary": {"used_percent": 9, "window_minutes": 300, "resets_in_seconds": 600},
+            "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": NOW + 3600}}}},
+    ]))
+    limits, at = codex_limits.read_rollout(tmp_path / "sessions")
+    rows = codex_limits.windows(limits, now=at)
+    assert [(r["label"], r["percent"]) for r in rows] == [("5-hour limit", 9.0), ("Weekly", 20.0)]
+    assert rows[0]["resets_at"] == "2026-11-16T11:10:00Z"
