@@ -47,7 +47,78 @@ async def _run(args: list[str], cwd: str, timeout: float) -> tuple[int, str]:
 
 
 # The fields of a pull request that the app shows: the hover card, the sidebar, and the rail.
-PR_FIELDS = "number,state,url,isDraft,title,additions,deletions,changedFiles,author,updatedAt,mergedAt,closedAt,headRefName,baseRefName"
+# statusCheckRollup gives the CI checks of the last commit, with no second gh call.
+PR_FIELDS = "number,state,url,isDraft,title,additions,deletions,changedFiles,author,updatedAt,mergedAt,closedAt,headRefName,baseRefName,statusCheckRollup"
+
+# The state of one check: "pass", "fail", "pending", "skip", or "cancel".
+# A CheckRun (GitHub Actions and the other check apps) has a status and a conclusion.
+_RUN_CONCLUSIONS = {
+    "SUCCESS": "pass",
+    "FAILURE": "fail",
+    "TIMED_OUT": "fail",
+    "STARTUP_FAILURE": "fail",
+    "ACTION_REQUIRED": "fail",
+    "CANCELLED": "cancel",
+    "SKIPPED": "skip",
+    "NEUTRAL": "skip",
+    "STALE": "skip",
+}
+# A StatusContext (the older commit status API) has only a state.
+_CONTEXT_STATES = {"SUCCESS": "pass", "FAILURE": "fail", "ERROR": "fail", "PENDING": "pending", "EXPECTED": "pending"}
+
+MAX_CHECKS = 50  # The checks that the app lists, at most. The counts include all of them.
+
+
+def _check_state(item: dict[str, Any]) -> str:
+    if item.get("__typename") == "StatusContext" or "context" in item:
+        return _CONTEXT_STATES.get(str(item.get("state") or "").upper(), "pending")
+    if str(item.get("status") or "").upper() != "COMPLETED":
+        return "pending"
+    return _RUN_CONCLUSIONS.get(str(item.get("conclusion") or "").upper(), "fail")
+
+
+def parse_checks(rollup: Any) -> dict[str, Any] | None:
+    """The CI checks of a pull request, from ``statusCheckRollup`` of ``gh pr view``.
+
+    {"state", "total", "passed", "failed", "pending", "skipped", "items"}. ``state`` is "fail" when a check
+    failed or was cancelled, else "pending" when a check runs or waits, else "pass" when a check passed,
+    else None (only skipped checks). ``items`` are {"name", "workflow", "state", "url"}: the failed
+    checks first, then the pending, the passed, and the skipped checks.
+    None: no checks (or a gh with no statusCheckRollup).
+    """
+    if not isinstance(rollup, list):
+        return None
+    items: list[dict[str, Any]] = []
+    for raw in rollup:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name") or raw.get("context")
+        if not isinstance(name, str) or not name:
+            continue
+        url = raw.get("detailsUrl") or raw.get("targetUrl")
+        workflow = raw.get("workflowName")
+        items.append({
+            "name": name,
+            "workflow": workflow if isinstance(workflow, str) and workflow else None,
+            "state": _check_state(raw),
+            "url": url if isinstance(url, str) and url else None,
+        })
+    if not items:
+        return None
+    count = {s: sum(1 for i in items if i["state"] == s) for s in ("pass", "fail", "pending", "skip", "cancel")}
+    failed = count["fail"] + count["cancel"]
+    state = "fail" if failed else "pending" if count["pending"] else "pass" if count["pass"] else None
+    order = {"fail": 0, "cancel": 1, "pending": 2, "pass": 3, "skip": 4}
+    items.sort(key=lambda i: (order[i["state"]], i["name"].lower()))
+    return {
+        "state": state,
+        "total": len(items),
+        "passed": count["pass"],
+        "failed": failed,
+        "pending": count["pending"],
+        "skipped": count["skip"],
+        "items": items[:MAX_CHECKS],
+    }
 
 _REPO_RE = re.compile(r"github\.com/([^/\s]+/[^/\s]+)/pull/\d+", re.IGNORECASE)
 
@@ -101,6 +172,7 @@ def parse_pr(text: str) -> dict[str, Any] | None:
         "updated_at": data.get("mergedAt") or data.get("closedAt") or data.get("updatedAt"),
         "head": data.get("headRefName"),
         "base": data.get("baseRefName"),
+        "checks": parse_checks(data.get("statusCheckRollup")),
     }
 
 

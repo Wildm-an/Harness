@@ -110,6 +110,32 @@ export async function notifyFilesSent(text: string, sessionId: string | null, ct
   await show("The agent sent a file", text, sessionId ?? undefined);
 }
 
+/** The event of a CI run that finished: the checks of a pull request of a session passed or failed. */
+export interface CiDoneEvent {
+  session_id: string;
+  state: "pass" | "fail";
+  ref: string; // "Harness #18".
+  title: string | null; // The title of the pull request.
+  failed: number;
+  total: number;
+  note?: string; // The last sentence of the body, for example "Auto-fix started.".
+}
+
+/** The notification of a CI run that finished. null when the user sees the session. */
+export function ciNotice(ev: CiDoneEvent, ctx: SeenContext): { title: string; body: string } | null {
+  if (ctx.windowVisible && ctx.windowFocused && ctx.shownSessionId === ev.session_id) return null;
+  const title = ev.state === "pass" ? `CI passed: ${ev.ref}` : `CI failed: ${ev.ref}`;
+  const what = ev.state === "pass" ? "All checks passed." : `${ev.failed} of ${ev.total} ${ev.total === 1 ? "check" : "checks"} failed.`;
+  const text = ev.note ? `${what} ${ev.note}` : what;
+  return { title, body: ev.title ? `${ev.title}. ${text}` : text };
+}
+
+/** Shows the notification of a CI run that finished, when the user does not see the session. */
+export async function notifyCiDone(ev: CiDoneEvent, ctx: SeenContext): Promise<void> {
+  const notice = ciNotice(ev, ctx);
+  if (notice) await show(notice.title, notice.body, ev.session_id);
+}
+
 /** Shows the "task complete" notification of a turn when the user does not see the session. */
 export async function notifyTurnDone(ev: TurnDoneEvent, ctx: SeenContext): Promise<void> {
   const notice = turnNotice(ev, ctx);

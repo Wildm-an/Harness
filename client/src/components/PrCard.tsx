@@ -4,11 +4,46 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft } from "lucide-react";
-import type { PrState, PullRequest } from "../daemon/protocol";
-import { PR_STATE_TEXT, groupNumber, prRefText, timeAgo } from "../lib/pr";
+import { CircleCheck, CircleDot, CircleMinus, CircleSlash, CircleX, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft } from "lucide-react";
+import type { CheckState, PrChecks, PrState, PullRequest } from "../daemon/protocol";
+import { PR_STATE_TEXT, ciSummary, groupNumber, prRefText, timeAgo, type CiSummary } from "../lib/pr";
 
 const ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
+
+const CHECK_ICONS: Record<CheckState, typeof CircleCheck> = { pass: CircleCheck, fail: CircleX, pending: CircleDot, skip: CircleMinus, cancel: CircleSlash };
+
+/** The icon of a CI state in its color (Clear Sight): green passed, vermilion failed, yellow running, gray skipped. */
+export function CiIcon({ state, size = 13, className = "" }: { state: CheckState | CiSummary["state"]; size?: number; className?: string }) {
+  const Icon = CHECK_ICONS[state];
+  return <Icon size={size} aria-hidden className={`ci-icon ci-${state}${className ? ` ${className}` : ""}`} />;
+}
+
+const CARD_CHECKS = 5; // The failed or running checks that the hover card lists, at most.
+
+/** The CI part of the hover card: the summary, then the failed (else the running) checks. */
+function CardChecks({ checks }: { checks: PrChecks | null | undefined }) {
+  const ci = ciSummary(checks);
+  if (!ci || !checks) return null;
+  const shown = checks.items.filter((c) => (ci.state === "fail" ? c.state === "fail" || c.state === "cancel" : c.state === "pending")).slice(0, CARD_CHECKS);
+  return (
+    <div className="pr-card-checks">
+      <div className={`pr-card-ci ci-text-${ci.state}`} title={ci.tip}>
+        <CiIcon state={ci.state} size={12} />
+        {ci.text}
+      </div>
+      {shown.length > 0 && (
+        <ul className="pr-card-check-list">
+          {shown.map((c) => (
+            <li key={`${c.workflow ?? ""}/${c.name}`}>
+              <CiIcon state={c.state} size={11} />
+              <span className="pr-card-check-name">{c.workflow ? `${c.workflow} / ${c.name}` : c.name}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /** The pull request icon in the color of its state (Clear Sight): green open, gray draft, purple merged, vermilion closed. */
 export function PrIcon({ state, size = 14, className = "" }: { state: PrState | null; size?: number; className?: string }) {
@@ -121,6 +156,7 @@ export function PrCard({ pr, url, loading }: { pr: PullRequest | null | undefine
         {when && <span className="pr-card-time">{when}</span>}
       </div>
       {pr.title && <div className="pr-card-title">{pr.title}</div>}
+      <CardChecks checks={pr.checks} />
       {(pr.author || counts || pr.changed_files != null) && (
         <div className="pr-card-foot">
           {pr.author && (
@@ -149,6 +185,7 @@ export function PrCard({ pr, url, loading }: { pr: PullRequest | null | undefine
 /** The small card of a session row: the title, "Merged · owner/name #5", and the line counts. */
 export function PrMiniCard({ pr }: { pr: PullRequest }) {
   const counts = pr.additions != null && pr.deletions != null;
+  const ci = ciSummary(pr.checks);
   return (
     <div className="pr-card pr-card-mini">
       {pr.title && <div className="pr-card-title">{pr.title}</div>}
@@ -163,6 +200,12 @@ export function PrMiniCard({ pr }: { pr: PullRequest }) {
           </span>
         )}
       </div>
+      {ci && (
+        <div className={`pr-card-line pr-card-ci ci-text-${ci.state}`}>
+          <CiIcon state={ci.state} size={12} />
+          {ci.text}
+        </div>
+      )}
     </div>
   );
 }
