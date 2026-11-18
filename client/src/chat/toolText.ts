@@ -137,6 +137,27 @@ export function toolAction(item: ToolItem): ToolAction {
     case "acp":
       // A tool call of an ACP harness with no Harness tool name (daemon acp.py): its title.
       return { verb: text(a.title) || pick("Used a tool", "Using a tool"), object: "", mono: false };
+    case "delegate_task": {
+      // A child agent on another agent or model, as T3 Code (daemon tools/delegate.py): "Delegated to codex-acp · gpt-5: Review".
+      const target = a.target && typeof a.target === "object" ? (a.target as Record<string, unknown>) : {};
+      const agent = text(target.providerInstanceId) || text(target.driverKind);
+      const model = text(target.model);
+      const who = agent ? `${agent}${model ? ` · ${model}` : ""}` : model || "a child agent";
+      const title = text(a.title) || short(text(a.task));
+      return { verb: pick("Delegated to", "Delegating to"), object: title ? `${who}: ${title}` : who, mono: false };
+    }
+    case "orchestrator_capabilities":
+      return { verb: pick("Listed", "Listing"), object: "the agents and models", mono: false };
+    case "task_status":
+      return { verb: pick("Checked", "Checking"), object: "a delegated task", mono: false };
+    case "task_cancel":
+      return { verb: pick("Stopped", "Stopping"), object: "a delegated task", mono: false };
+    case "routine_create":
+      return { verb: pick("Saved routine", "Saving routine"), object: text(a.name) || "a routine", mono: false };
+    case "routine_update":
+      return { verb: pick("Changed routine", "Changing routine"), object: text(a.name) || text(a.id) || "a routine", mono: false };
+    case "routine_delete":
+      return { verb: pick("Deleted routine", "Deleting routine"), object: text(a.id) || "a routine", mono: false };
     case "show_document":
       // The agent opened a PDF or Word file in the Preview pane (daemon tools/document.py).
       return { verb: pick("Opened preview of", "Opening preview of"), object: baseName(text(a.path) || "a document"), mono: false };

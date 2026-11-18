@@ -446,6 +446,15 @@ class Agent:
             self.tools[StartSessionTool.name] = StartSessionTool(start)
             self._known_tokens = None
 
+    def enable_delegate(self, start: Callable[..., Any]) -> None:
+        """The session gives the start of a delegated child agent (tools/delegate.py): orchestrator_capabilities,
+        delegate_task, task_status, and task_cancel. Only the agent that the user talks to gets them."""
+        if self.user_facing:
+            from .tools.delegate import delegate_tools
+
+            self.tools.update({t.name: t for t in delegate_tools(start)})
+            self._known_tokens = None
+
     def enable_session_context(self, note: Callable[[], str | None], read: Callable[[str], str],
                                find: Callable[[str], dict[str, Any] | None], send: Callable[..., Any] | None) -> None:
         """The other sessions of the project: a list note at the start of a turn when the list changed,

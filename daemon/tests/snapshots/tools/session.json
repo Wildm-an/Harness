@@ -683,6 +683,146 @@
   {
     "type": "function",
     "function": {
+      "name": "orchestrator_capabilities",
+      "description": "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "string",
+            "description": "Match model ids and labels. Replaces the short list."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delegate_task",
+      "description": "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "The full task for the child."
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "providerInstanceId": {
+                "type": "string",
+                "description": "Provider instance id from `orchestrator_capabilities`."
+              },
+              "driverKind": {
+                "type": "string",
+                "description": "Prefer `providerInstanceId`."
+              },
+              "model": {
+                "type": "string"
+              },
+              "options": {
+                "type": "object",
+                "description": "Options from `orchestrator_capabilities`, such as {effort:'max'}. Given values override inherited. [] or {} clears."
+              }
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "implementation",
+              "research",
+              "review",
+              "design",
+              "test",
+              "general"
+            ]
+          },
+          "isolation": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "worktree"
+            ],
+            "description": "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "async",
+              "wait"
+            ],
+            "description": "Default 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait."
+          },
+          "timeoutMs": {
+            "type": "number",
+            "description": "Mode 'wait' only. At most 45 s. A timeout does not cancel the child."
+          },
+          "runtimeMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "plan",
+              "default",
+              "acceptEdits",
+              "auto",
+              "bypassPermissions"
+            ],
+            "description": "Omit unless the user asks for a supervised child. Narrow modes pause for human approval, not read-only. Above yours is rejected."
+          }
+        },
+        "required": [
+          "task"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "task_status",
+      "description": "Read one delegated task you started. Do not call it on a running task before its completion wakes you. `workState`: working, waiting_for_children, result_available. A finished turn with live child work is not done. `summary`: final result. Reading it marks it delivered.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "task_cancel",
+      "description": "Stop one delegated task by `taskId`. Stops its running and queued turns, its delegates, and its PR watches, including later runs in its child thread. A finished task keeps its result.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "session_read",
       "description": "Read another session of this project: its title, its first prompt, and its last messages. Use an id of the session list note. Use it when the user refers to the work of another session, and before offer_session when you must know which session fits the task.",
       "parameters": {

@@ -69,6 +69,7 @@ class BackgroundTask:
     fires: list[str] = field(default_factory=list)  # cron: the times that fired, with no note yet.
     output: str = ""
     result: str = ""  # agent: the report.
+    end_note: str | None = None  # agent: the whole end note, in place of the report note (delegate_task).
     dropped: int = 0  # Characters of output that went away (the start of a long output).
     read_to: int = 0  # The agent read the output up to here (a position in all the output).
     notified_to: int = 0  # monitor: the notes gave the output up to here.
@@ -320,6 +321,9 @@ class TaskHost:
                 return None
             return (f"The scheduled wakeup {task.id} ({task.label}) is due. Its prompt:\n{task.command}",
                     f"Scheduled wakeup: {task.label}")
+        if task.kind == "agent" and task.end_note:  # A delegated task (tools/delegate.py): the wake text of T3 Code.
+            task.read_to = task.dropped + len(task.output)
+            return task.end_note, f"Delegated task ended: {task.label}"
         if task.kind == "agent":
             if task.stopped:
                 return (f"The background agent {task.id} ({task.label}) was stopped.",
