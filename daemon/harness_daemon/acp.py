@@ -512,6 +512,7 @@ class AcpAgent(Agent):
         self._usage_known: tuple[int, int] | None = None  # usage_update: (used tokens, context size).
         self._provider_model: str | None = None  # The model id of a Harness provider in the harness (acp_models.py).
         self.requested_model: str | None = None  # A model of the harness that a switch of the agent chose.
+        self.requested_effort: str | None = None  # A reasoning level that delegate_task chose (options.effort).
         self.previous_agent: str | None = None  # The agent before a switch of the agent: the recap names it.
 
     # -- the harness process -------------------------------------------------------------------------------
@@ -769,7 +770,8 @@ class AcpAgent(Agent):
 
     async def _select_effort(self, conn: AcpConnection) -> None:
         """A new ACP session starts on the reasoning level that the user chose on the start screen."""
-        wanted = None if self.harness.custom else acp_harnesses.native_effort(load_settings(None), self.harness.id)
+        wanted = self.requested_effort or (
+            None if self.harness.custom else acp_harnesses.native_effort(load_settings(None), self.harness.id))
         if not wanted or wanted == self.acp_effort or self._effort_option is None \
                 or wanted not in {e["id"] for e in self.acp_efforts}:
             return

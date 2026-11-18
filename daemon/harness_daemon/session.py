@@ -13,6 +13,9 @@ TITLE_CHARS = 80
 # Starts a nested session of a session: (parent, title, prompt, worktree, mode) -> {"id", "folder"}.
 # server.py sets it. None (for example in a test with no server): the agent has no start_session tool.
 CHILD_STARTER: Callable[..., Awaitable[dict[str, Any]]] | None = None
+# Starts a delegated child agent of a session (delegate_task): (parent, title, task, agent, model, effort, worktree,
+# mode) -> tools.delegate.Delegation. server.py sets it. None: the agent has no delegation tools.
+DELEGATE_STARTER: Callable[..., Awaitable[Any]] | None = None
 # Sends a prompt to another stored session and starts its turn: (source, target_id, prompt) -> {"id", "title"}.
 # server.py sets it. None: the agent can only start a new session.
 SESSION_SENDER: Callable[..., Awaitable[dict[str, Any]]] | None = None
@@ -53,6 +56,10 @@ class Session:
         if CHILD_STARTER is not None:
             starter = CHILD_STARTER
             agent.enable_session_start(lambda title, prompt, worktree, mode: starter(self, title, prompt, worktree, mode))
+        # delegate_task: a child agent on another agent or model, nested under this session (as T3 Code).
+        if DELEGATE_STARTER is not None:
+            delegate = DELEGATE_STARTER
+            agent.enable_delegate(lambda *args: delegate(self, *args))
         # The context of the other sessions: a list note, session_read, and offer_session.
         sender = SESSION_SENDER
         agent.enable_session_context(

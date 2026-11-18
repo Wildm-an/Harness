@@ -1755,6 +1755,90 @@ async def start_child_session(parent: Session, title: str, prompt: str, worktree
 session_mod.CHILD_STARTER = start_child_session
 
 
+def _last_answer(history: list[dict[str, Any]], start: int) -> str:
+    """The text of the last agent message after ``start``: the result of a delegated task."""
+    for m in reversed(history[start:]):
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip():
+            return m["content"].strip()
+    return ""
+
+
+async def start_delegate(parent: Session, title: str, task: str, agent_id: str | None, model: str | None,
+                         effort: str | None, worktree: bool, mode: str) -> Any:
+    """Start a child agent of ``parent`` for delegate_task (tools/delegate.py), as the delegate_task of T3 Code: a
+    nested session with no window, on ``agent_id`` (None: Harness) and ``model`` (None: the default of the agent).
+    Its turn runs the task. The returned Delegation waits for the end and gives the last agent message.
+    ``mode``: the permission mode of the child, in memory only. It is not above the mode of the parent."""
+    from .tools.delegate import Delegation
+
+    headless = HEADLESS
+    if headless is None:
+        raise ToolError("The daemon stops.")
+    if headless.storage.session_depth(parent.id) >= MAX_SESSION_DEPTH:
+        raise ToolError("This session is a nested session of a nested session. It cannot start more child agents. "
+                        "Do the work here.")
+    if agent_id is None:
+        spec = model
+        if spec is None:
+            settings = load_settings(parent.cwd)
+            spec = settings.get("default_model") or settings.get("online_model") or settings.get("offline_model")
+        try:
+            provider, model_name = resolve_model(spec or None)
+        except ConfigError as e:
+            raise ToolError(str(e)) from None
+        provider_name, session_model = provider.name, model_name
+        model = f"{provider.name}/{model_name}"
+    else:
+        provider_name, session_model = ACP_PROVIDER, agent_id
+    try:
+        live, _warnings = await create_session(headless, parent.project_dir, provider_name, session_model,
+                                               wt_arg={} if worktree else None, parent_id=parent.id)
+    except ProtocolError as e:
+        raise ToolError(str(e)) from None
+    session = live.session
+    assert session is not None
+    child = session.agent
+    child.settings["permission_mode"] = _allowed_mode(mode)
+    if isinstance(child, AcpAgent):
+        child.requested_model = model
+        child.requested_effort = effort
+    elif effort:
+        child.settings["effort"] = effort  # In memory only: the project settings file does not change.
+    session.title = title
+    headless.storage.update_session(session.id, title=title)
+    session.disable_offer()  # The task stays in the child.
+    headless.live[session.id] = live
+    live.start()
+    start = len(child.history)
+    outcome: dict[str, str] = {}
+
+    async def work(target: LiveSession) -> None:
+        outcome["stop"] = await target.conn.run_turn(target, task)
+
+    await headless.start_turn(work, live=live)
+    turn = live.turn
+
+    async def wait() -> tuple[str, str]:
+        if turn is not None:
+            await asyncio.wait({turn})  # It does not raise when a window or task_cancel stops the turn.
+        target = live.session or session
+        return outcome.get("stop") or "interrupted", _last_answer(target.agent.history, start)
+
+    async def cancel() -> None:
+        if turn is not None and not turn.done():
+            turn.cancel()
+            await asyncio.wait({turn})
+
+    log.info("The session %s delegated a task to %s (%s) in the session %s", parent.id,
+             agent_id or "harness", model or "default", session.id)
+    return Delegation(session_id=session.id, title=title, agent=agent_id, model=model, folder=str(session.cwd),
+                      wait=wait, cancel=cancel,
+                      pending=lambda: {"requestId": next(iter(live.pending)), "kind": "permission"} if live.pending else None)
+
+
+session_mod.DELEGATE_STARTER = start_delegate
+
+
 def _find_live(session_id: str) -> LiveSession | None:
     """The open session in a window or in the sessions with no window."""
     for conn in [*WINDOWS, *([HEADLESS] if HEADLESS is not None else [])]:

@@ -19,6 +19,13 @@ describe("the text of tool calls", () => {
   it("has a verb and an object for each call", () => {
     expect(toolAction(tool("read", { path: "docs/test.png" }))).toEqual({ verb: "Read", object: "test.png", mono: false });
     expect(toolAction(tool("bash", { command: "ls -la" }))).toEqual({ verb: "Ran", object: "ls -la", mono: true });
+    expect(toolAction(tool("delegate_task", { task: "Review the diff", title: "Review", target: { providerInstanceId: "codex-acp", model: "gpt-5" } }))).toEqual({
+      verb: "Delegated to",
+      object: "codex-acp · gpt-5: Review",
+      mono: false,
+    });
+    expect(toolAction(tool("delegate_task", { task: "Check the tests" })).object).toBe("a child agent: Check the tests");
+    expect(toolAction(tool("routine_update", { id: "daily-summary" })).verb).toBe("Changed routine");
     expect(toolAction(tool("tool_search", { query: "select:mcp__github__create_issue,mcp__github__get_issue" }))).toEqual({
       verb: "Loaded tools",
       object: "create_issue,get_issue",
