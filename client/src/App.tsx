@@ -149,7 +149,8 @@ import { pendingServerApprovals } from "./browser/ServerBlock";
 import { annotationAttachment, screenshotAttachment } from "./browser/annotate";
 import { AllowedSites } from "./components/AllowedSites";
 import { openLink, setPaneOpener } from "./lib/openLink";
-import { ROOM_PANES, railAfterPanes, railShown, setRailShown } from "./lib/sessionRail";
+import { ROOM_PANES, delegateOf, railAfterPanes, railDelegates, railShown, setRailShown } from "./lib/sessionRail";
+import { DelegatesContext, type DelegatesValue } from "./components/Delegates";
 import { inlineEditPrompt, layoutKey, setViewMode, viewMode, type ViewMode } from "./lib/viewMode";
 import { IDE_LAYOUT_EVENT, ideOptions } from "./lib/ideLayout";
 import { IdeLayoutMenu } from "./components/IdeLayoutMenu";
@@ -3309,6 +3310,24 @@ export default function App() {
     setSplit(id);
     setSplitFocus((k) => k + 1);
   };
+  // The Delegates cards of the chat (Delegates.tsx): the child agents of delegate_task, from the sidebar list. A click
+  // opens the chat of a delegate in the split pane.
+  const openSplitRef = useRef(openSplit);
+  openSplitRef.current = openSplit;
+  const sendRef = useRef(sendSafely);
+  sendRef.current = sendSafely;
+  const delegatesValue = useMemo<DelegatesValue>(() => {
+    const byId = new Map(recent.map((s) => [s.id, s]));
+    return {
+      find: (id) => {
+        const s = byId.get(id);
+        return s ? delegateOf(s, allRunning) : null;
+      },
+      agents: status === "open" ? agents : null,
+      onOpen: (id) => openSplitRef.current(id),
+      onStop: (id) => sendRef.current({ type: "session.stop", session_id: id }),
+    };
+  }, [recent, allRunning, agents, status]);
   const splitShown = split !== null && screen === "chat" && session !== null && view === "code";
   const splitDrop = useSplitDrop(screen === "chat" && session !== null && view === "code", session?.id ?? null, openSplit);
 
@@ -3650,6 +3669,7 @@ export default function App() {
   );
 
   return (
+    <DelegatesContext.Provider value={delegatesValue}>
     <div className={`app${sidebarOpen ? " sidebar-open" : ""}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       {sidebarOpen && (
         <>
@@ -4245,6 +4265,10 @@ export default function App() {
                   autoFix={{ on: autoFix, onToggle: toggleAutoFix }}
                   tasks={tasks ?? []}
                   onShowTasks={() => showPane("tasks")}
+                  delegates={railDelegates(recent, session.id, allRunning)}
+                  agents={status === "open" ? agents : null}
+                  onOpenDelegate={openSplit}
+                  onStopDelegate={(id) => sendSafely({ type: "session.stop", session_id: id })}
                   keepAwake={keepAwake}
                   onKeepAwake={(on) => {
                     if (sendSafely({ type: "session.keep_awake", on })) setKeepAwake(on);
@@ -4285,5 +4309,6 @@ export default function App() {
       </main>
       </div>
     </div>
+    </DelegatesContext.Provider>
   );
 }

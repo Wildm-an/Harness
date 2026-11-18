@@ -10857,6 +10857,144 @@ body.sorting * {
   color: var(--text-muted);
 }
 
+/* A delegate row of the session rail: the logo of the agent, the title, then the time. One line, as a connector row.
+   A delegate that works has a title that shimmers, as a running session in the sidebar. */
+.rail-delegate {
+  min-height: 26px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.rail-delegate-logo {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  justify-content: center;
+  color: var(--text);
+}
+
+.rail-delegate-time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-delegate.rail-delegate-working .rail-item-title {
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--text-muted) 35%,
+    var(--text) 50%,
+    var(--text-muted) 65%,
+    var(--text-muted) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: title-shimmer 2.2s steps(44) infinite;
+}
+
+:root.app-inactive .rail-delegate.rail-delegate-working .rail-item-title {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-delegate.rail-delegate-working .rail-item-title {
+    animation: none;
+    background: none;
+    color: var(--text-muted);
+  }
+}
+
+.rail-delegate.rail-delegate-stopped .rail-item-title,
+.rail-delegate.rail-delegate-stopped .rail-delegate-logo {
+  color: var(--text-muted);
+}
+
+.rail-dot.waiting {
+  background: var(--warning-mark);
+}
+
+/* A delegate row with its stop button. The stop button shows on hover and on focus, as in T3 Code. */
+.rail-delegate-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rail-delegate-row .rail-delegate {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-delegate-stop {
+  display: none;
+}
+
+.rail-delegate-row.can-stop:hover .rail-delegate-stop,
+.rail-delegate-row.can-stop:focus-within .rail-delegate-stop {
+  display: inline-flex;
+}
+
+/* The folded "Previous agents" group of the Delegates section: the delegates that ended. */
+.rail-delegate-previous {
+  min-height: 26px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  color: var(--text-muted);
+}
+
+.rail-delegate-previous .rail-chevron {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.rail-delegate-previous[aria-expanded="true"] .rail-chevron {
+  transform: rotate(90deg);
+}
+
+.rail-delegate-previous .rail-item-end {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-delegate-failed {
+  color: var(--danger);
+}
+
+.rail-delegate-pending .rail-delegate-logo,
+.rail-delegate-pending .rail-item-title {
+  color: var(--text-muted);
+}
+
+/* The Delegates card of the chat: the delegate_task calls in a row, with the rows of the rail (Delegates.tsx). */
+.delegates-card {
+  max-width: 460px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.delegates-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.delegates-card-title {
+  flex: 1;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.delegates-card-count {
+  font-variant-numeric: tabular-nums;
+}
+
 .rail-dot.running {
   background: var(--success-mark);
 }

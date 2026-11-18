@@ -260,6 +260,7 @@ async def lifespan(app: FastAPI):
     global HEADLESS
     await asyncio.to_thread(remove_old_deepseek_data)
     HEADLESS = HeadlessConnection(app.state.storage)
+    app.state.storage.end_stale_delegates()  # The delegates of the last run of the daemon do not run now.
     ROUTINES.scheduler = RoutineScheduler(app.state.storage, run_routine, ROUTINES.broadcast)
     ROUTINES.scheduler.start()
     archiver = asyncio.create_task(_archive_loop(app.state.storage))
@@ -1805,7 +1806,9 @@ async def start_delegate(parent: Session, title: str, task: str, agent_id: str |
     elif effort:
         child.settings["effort"] = effort  # In memory only: the project settings file does not change.
     session.title = title
-    headless.storage.update_session(session.id, title=title)
+    # The Delegates section of the session rail of the parent lists the child: its agent, model, and run time.
+    record: dict[str, Any] = {"agent": agent_id, "model": model, "effort": effort, "ended_at": None, "status": "running"}
+    headless.storage.update_session(session.id, title=title, delegate=json.dumps(record))
     session.disable_offer()  # The task stays in the child.
     headless.live[session.id] = live
     live.start()
@@ -1817,6 +1820,20 @@ async def start_delegate(parent: Session, title: str, task: str, agent_id: str |
 
     await headless.start_turn(work, live=live)
     turn = live.turn
+
+    def ended(_: Any) -> None:
+        # The end of the delegated turn: the rail of the parent shows the run time and the status.
+        stop = outcome.get("stop") or "interrupted"
+        status = "completed" if stop == "end" else "stopped" if stop == "interrupted" else "failed"
+        try:
+            headless.storage.update_session(session.id, touch=False,
+                                            delegate=json.dumps({**record, "ended_at": time.time(), "status": status}))
+        except Exception:  # noqa: BLE001 - the daemon stops, or the session was deleted.
+            return
+        asyncio.ensure_future(ROUTINES.broadcast(headless.background_message()))  # The windows read the list again.
+
+    if turn is not None:
+        turn.add_done_callback(ended)
 
     async def wait() -> tuple[str, str]:
         if turn is not None:
@@ -1846,6 +1863,17 @@ def _find_live(session_id: str) -> LiveSession | None:
         if live is not None and live.session is not None:
             return live
     return None
+
+
+def running_delegates(storage: Storage, session_id: str) -> list[str]:
+    """The delegates of a session whose turn runs now (it works, or it waits for an approval). As T3 Code, a
+    session with running delegates is not archived: the user waits for them or stops them first."""
+    out = []
+    for child_id in storage.delegate_ids(session_id):
+        live = _find_live(child_id)
+        if live is not None and live.running:
+            out.append(child_id)
+    return out
 
 
 async def send_to_session(source: Session, target_id: str, prompt: str) -> dict[str, Any]:
@@ -1905,6 +1933,8 @@ async def archive_inactive(storage: Storage, now: float | None = None) -> list[s
     archived: list[str] = []
     for row in storage.list_sessions(limit=1_000_000):
         if row["archived"] or row["pinned"] or row["updated_at"] >= cutoff or _find_live(row["id"]) is not None:
+            continue
+        if running_delegates(storage, row["id"]):  # A delegate works for it: the session stays.
             continue
         # "Auto-settle" > "Never" of the Threads sidebar, and a snoozed session: they stay.
         if not row["auto_archive"] or (row["snoozed_until"] is not None and row["snoozed_until"] > current):
@@ -2282,6 +2312,8 @@ async def on_session_update(conn: Connection, msg: dict[str, Any]) -> None:
         fields["auto_archive"] = int(msg["auto_archive"])
     if not fields:
         raise ProtocolError("Give 'title', 'pinned', 'archived', 'position', 'snoozed_until', or 'auto_archive'.")
+    if fields.get("archived") and not row["archived"] and running_delegates(conn.storage, session_id):
+        raise ProtocolError("This session has running delegates. Wait for them or stop them, then archive the session.")
     worktree = worktrees.loads(row.get("worktree"))
     if worktree and fields.get("archived") and not row["archived"]:
         live = conn.live.get(session_id)
@@ -2527,6 +2559,16 @@ async def on_browser_result(conn: Connection, msg: dict[str, Any]) -> None:
     future = conn.browser_calls.get(str(msg.get("call_id") or ""))
     if future is not None and not future.done():
         future.set_result({"result": msg.get("result"), "error": msg.get("error"), "tab": msg.get("tab")})
+
+
+@handler("session.stop")
+async def on_session_stop(conn: Connection, msg: dict[str, Any]) -> None:
+    """Stop the turn of another session: {"session_id"}. The stop button of a delegate row (the Delegates section
+    of the session rail and the Delegates card of the chat). It stops the turn in a window or with no window. A
+    session with no running turn needs no stop: no error."""
+    live = _find_live(_text_arg(msg, "session_id"))
+    if live is not None and live.running:
+        await live.stop_turn()
 
 
 @handler("session.keep_awake")
