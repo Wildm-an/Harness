@@ -3,6 +3,35 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.91 (2026-11-18)
+
+### Codex
+
+- Settings > Agents > Codex has an Account section, as Claude Agent has. It shows the sign-in
+  (ChatGPT or API key), and "Sign in" runs `codex login` in a small terminal. Codex opens the
+  ChatGPT sign-in page in your browser.
+- With a ChatGPT plan, the 5-hour and weekly limits show on the Agents page and in the context
+  panel of a Codex session.
+- Harness uses the `codex` program when it is on the PATH. Else it runs the Codex CLI with npx, so
+  the Limits tab of the Usage page also reads the current limits with no `codex` program.
+- Codex no longer uses a model of a Harness provider. Codex and Claude Agent use only their own
+  login and their own models. Before, a Codex turn on a ChatGPT model could go to the provider,
+  and the provider refused it.
+
+### Delegates
+
+- The child agents of a session show in a Delegates section of the session rail and in a Delegates
+  card in the chat, with the agent logo, the title, and the elapsed time. A click opens the chat of
+  the delegate in split view.
+- A running delegate has a stop button on hover. Ended delegates fold into "Previous agents".
+- A session with running delegates cannot be archived, and the auto-archive skips it.
+
+### Context
+
+- An ACP session shows the full context breakdown, not only "Messages". For Claude Agent, Harness
+  runs `/context` between turns (a local command with no model call) and shows its parts. For
+  other agents, Harness estimates the messages and the Harness MCP tools.
+
 ## 0.1.90 (2026-11-18)
 
 ### Oh My Pi
