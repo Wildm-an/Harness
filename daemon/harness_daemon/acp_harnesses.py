@@ -400,10 +400,16 @@ def is_default_alias(model: dict[str, Any]) -> bool:
 def implied_model(harness_id: str) -> str | None:
     """The model of new sessions when the user chose none, as in T3 Code: the model that the harness uses now, else
     the first model of its list. A default alias does not count. None: no models are known."""
-    models = [m for m in cached_models(harness_id) if not is_default_alias(m)]
+    cached = cached_models(harness_id)
+    models = [m for m in cached if not is_default_alias(m)]
     current = next((m for m in models if m.get("current")), None)
-    chosen = current or (models[0] if models else None)
-    return str(chosen["id"]) if chosen else None
+    if current is not None:
+        return str(current["id"])
+    alias = next((m for m in cached if m.get("current") and is_default_alias(m)), None)
+    if alias is not None:  # The harness uses its default: the real model that the alias names (acp.alias_target).
+        from .acp import alias_target
+        return alias_target(cached, alias)
+    return str(models[0]["id"]) if models else None
 
 
 def save_models(harness_id: str, models: list[dict[str, str]]) -> None:

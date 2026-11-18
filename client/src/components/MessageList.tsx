@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArrowDown, BellRing, Check, CircleAlert, Clock, Copy, Info, RefreshCw, RotateCcw, Split, TriangleAlert, Undo2 } from "lucide-react";
-import type { ChatItem } from "../chat/state";
+import { Archive, ArrowDown, ArrowRight, BellRing, Check, CircleAlert, Clock, Copy, Info, RefreshCw, RotateCcw, Split, TriangleAlert, Undo2 } from "lucide-react";
+import { modelSwitches, type ChatItem } from "../chat/state";
 import type { Decision, PermissionMode, PlanDecision } from "../daemon/protocol";
 import { errorKind } from "../lib/errorRoute";
 import { splitAttachmentLines, type Submission } from "./PromptBox";
@@ -334,6 +334,21 @@ function MessageAttachments({ images, chips }: { images?: string[]; chips: { lab
 }
 
 /** A user message. On hover: "Read" or "Sent" and the time, Copy, Rewind, and Fork. */
+/** The row where the agent or the model of a session changes, as the model switch row of T3 Code. */
+function ModelSwitchRow({ from, to }: { from: string; to: string }) {
+  return (
+    <div className="model-switch-row" role="separator" aria-label={`The model changed from ${from} to ${to}`}>
+      <span className="model-switch-line" aria-hidden />
+      <span className="model-switch-text">
+        <span className="model-switch-from">{from}</span>
+        <ArrowRight size={12} aria-hidden />
+        <span className="model-switch-to">{to}</span>
+      </span>
+      <span className="model-switch-line" aria-hidden />
+    </div>
+  );
+}
+
 const UserMessage = memo(function UserMessage({ item, running, read, onRewind, onFork }: {
   item: UserItem;
   running: boolean;
@@ -620,6 +635,7 @@ export function MessageList({
   // its caret shows them. When the turn ends, they are a group line again.
   // An answered permission card after the tools stays in the chat.
   const shown = groupTools(foldCards(items.filter((i) => !(i.kind === "tool" && isProgressTool(i.name)))), groups.current);
+  const switches = modelSwitches(items);
   groups.current = new Map(shown.flatMap((s) => (s.kind === "tools" ? [[s.id, s.items] as const] : [])));
   let at = shown.length - 1;
   while (at >= 0 && shown[at].kind === "permission") {
@@ -673,9 +689,12 @@ export function MessageList({
         {items.length === 0 && queued.length === 0 && <div className="empty-hint">{emptyHint}</div>}
         {shown.map((item) => {
           switch (item.kind) {
-            case "user":
+            case "user": {
               if (item.origin === "task") return <TaskNote key={item.id} item={item} />;
-              return <UserMessage key={item.id} item={item} running={running} read={!unread.has(item.id)} onRewind={onRewind} onFork={onFork} />;
+              const change = switches.get(item.id);
+              const message = <UserMessage key={item.id} item={item} running={running} read={!unread.has(item.id)} onRewind={onRewind} onFork={onFork} />;
+              return change ? [<ModelSwitchRow key={`switch-${item.id}`} from={change.from} to={change.to} />, message] : message;
+            }
             case "assistant":
               return (
                 <div key={item.id} className={`msg-assistant${item.streaming ? " streaming" : ""}`}>

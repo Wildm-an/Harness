@@ -38,7 +38,8 @@ export type HistoryMessage =
   // ts: epoch seconds. display: the text that the user typed, for example "/review src".
   // origin "task": the notes of background tasks, not a message of the user.
   // origin "harness": a note of the loop guards to the model. The chat does not show it.
-  | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task" | "harness"; images?: string[] } // images: pasted images (data URLs).
+  // turn_model: the agent and the model of the turn, for example "Claude Agent · Opus". The chat shows a divider where it changes.
+  | { role: "user"; content: string; display?: string; id?: string; ts?: number; origin?: "task" | "harness"; images?: string[]; turn_model?: string } // images: pasted images (data URLs).
   | { role: "assistant"; content: string | null; tool_calls?: HistoryToolCall[] }
   // image: a data URL, for example a screenshot of preview_screenshot.
   // created: the new PDF and Word files of the call. The chat shows a card with "Open" for each one.
@@ -646,7 +647,9 @@ export interface RoutineFields {
   name: string;
   prompt: string;
   cwd: string; // The project folder.
-  model: string | null; // "provider/model". null: the default model.
+  // The agent that runs the routine: an ACP harness id of Settings > Agents. null or absent: the built-in loop of Harness.
+  agent?: string | null;
+  model: string | null; // Harness: "provider/model". Another agent: a model id of that agent. null: the default model.
   permission_mode: PermissionMode;
   schedule: string; // A cron expression in the local time of the daemon computer.
   enabled: boolean;
@@ -1444,6 +1447,7 @@ export type DaemonMessage =
   | { type: "steer.taken"; id: string; text: string; origin?: "task" }
   // A turn that the daemon started, with no prompt: the notes of background tasks (origin "task").
   | { type: "turn.started"; id: string; text: string; origin: "task" }
+  | { type: "turn.model"; id: string; model: string } // The agent and the model of the turn of the user message "id".
   // The turn ended before the next step, or no turn ran: the client sends these messages as prompts.
   | { type: "steer.returned"; ids: string[] }
   // After a turn: the next prompt that the model predicts. The prompt box shows it. Tab puts it in the box.

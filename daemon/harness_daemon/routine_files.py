@@ -16,6 +16,10 @@ body is the prompt::
 
 The user can read, edit, copy, and back up the files. A file that the user adds by hand is a new
 routine. The run history and the scheduler state stay in the database (storage.py).
+
+``agent``: the agent that runs the routine, an ACP harness id of Settings > Agents (for example ``claude-acp``).
+No value (or ``harness``): the built-in loop of Harness. ``model``: for the built-in loop, a "provider/model" spec;
+for another agent, a model id of that agent. No value: the default model of the agent.
 """
 
 from __future__ import annotations
@@ -59,7 +63,7 @@ def _split(text: str) -> tuple[str, str]:
 
 def read(path: Path) -> dict[str, Any]:
     """The routine of a file. A file with a problem gets an "error" text, and the scheduler skips it."""
-    item: dict[str, Any] = {"id": path.stem, "name": path.stem, "prompt": "", "cwd": "", "provider": None,
+    item: dict[str, Any] = {"id": path.stem, "name": path.stem, "prompt": "", "cwd": "", "provider": None, "agent": None,
                             "model": None, "permission_mode": "default", "schedule": "", "enabled": False,
                             "time_in_title": True, "error": None}
     try:
@@ -80,6 +84,7 @@ def read(path: Path) -> dict[str, Any]:
         name=str(data.get("name") or path.stem).strip(),
         prompt=body.strip(),
         cwd=str(data.get("cwd") or "").strip(),
+        agent=agent_id(data.get("agent")),
         model=str(data["model"]).strip() if data.get("model") else None,
         permission_mode=str(data.get("permission_mode") or "default"),
         schedule=" ".join(str(data.get("schedule") or "").split()),
@@ -90,6 +95,15 @@ def read(path: Path) -> dict[str, Any]:
     if item["error"]:
         item["enabled"] = False
     return item
+
+
+BUILTIN_AGENT = "harness"  # The built-in loop (acp_harnesses.BUILTIN_ID): a routine file has no agent for it.
+
+
+def agent_id(value: Any) -> str | None:
+    """The agent of a routine: an ACP harness id, or None for the built-in loop."""
+    text = str(value or "").strip()
+    return None if not text or text == BUILTIN_AGENT else text
 
 
 def problem(item: dict[str, Any]) -> str | None:
@@ -110,6 +124,8 @@ def problem(item: dict[str, Any]) -> str | None:
 def render(item: dict[str, Any]) -> str:
     """The text of the file of a routine."""
     front: dict[str, Any] = {"name": item["name"], "schedule": item["schedule"], "cwd": item["cwd"]}
+    if agent_id(item.get("agent")):
+        front["agent"] = agent_id(item.get("agent"))
     if item.get("model"):
         front["model"] = item["model"]
     front["permission_mode"] = item.get("permission_mode") or "default"

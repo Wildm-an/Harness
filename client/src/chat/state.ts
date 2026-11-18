@@ -7,7 +7,7 @@ export type ToolStatus = "running" | "done" | "error";
 
 export type ChatItem =
   // messageId: the daemon id, for rewind and fork. ts: epoch ms. origin "task": the notes of background tasks.
-  | { kind: "user"; id: string; text: string; messageId?: string; ts?: number; origin?: "task"; images?: string[] }
+  | { kind: "user"; id: string; text: string; messageId?: string; ts?: number; origin?: "task"; images?: string[]; model?: string }
   | { kind: "assistant"; id: string; text: string; streaming: boolean }
   | {
       kind: "tool";
@@ -189,13 +189,27 @@ function fileCards(toolId: string, created: string[] | undefined, card?: ToolCar
   return card ? [...files, { kind: "card", id: `card-${toolId}`, toolId, card }] : files;
 }
 
+/** The model switches of a chat, as the "model A → model B" rows of T3 Code: the id of each user item whose turn ran
+ * with another agent or model than the turn before, with the two names. A turn with no recorded model (an older
+ * daemon, or a note of a task) does not count. */
+export function modelSwitches(items: ChatItem[]): Map<string, { from: string; to: string }> {
+  const out = new Map<string, { from: string; to: string }>();
+  let last: string | null = null;
+  for (const item of items) {
+    if (item.kind !== "user" || item.origin === "task" || !item.model) continue;
+    if (last !== null && item.model !== last) out.set(item.id, { from: last, to: item.model });
+    last = item.model;
+  }
+  return out;
+}
+
 /** Converts stored OpenAI-format messages to chat items. */
 export function historyToItems(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   for (const msg of history) {
     if (msg.role === "user") {
       if (msg.origin === "harness") continue; // A note of the loop guards to the model, not a message of the user.
-      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined, origin: msg.origin, images: msg.images });
+      items.push({ kind: "user", id: nextId("user"), text: msg.display ?? msg.content, messageId: msg.id, ts: msg.ts ? msg.ts * 1000 : undefined, origin: msg.origin, images: msg.images, ...(msg.turn_model ? { model: msg.turn_model } : {}) });
     } else if (msg.role === "assistant") {
       if (msg.content) items.push({ kind: "assistant", id: nextId("assistant"), text: msg.content, streaming: false });
       for (const call of msg.tool_calls ?? []) {
@@ -279,6 +293,14 @@ function onDaemon(state: ChatState, msg: DaemonMessage): ChatState {
         turn: state.turn ?? { startedAt: Date.now(), tokens: 0 },
         items: [...endStreaming(state.items), { kind: "user", id: nextId("user"), text: msg.text, messageId: msg.id, ts: Date.now(), origin: msg.origin }],
       };
+    case "turn.model": {
+      // The agent and the model of a turn: the chat shows a divider where it changes (modelSwitches).
+      const index = state.items.findIndex((i) => i.kind === "user" && i.messageId === msg.id);
+      if (index < 0) return state;
+      const items = [...state.items];
+      items[index] = { ...(items[index] as Extract<ChatItem, { kind: "user" }>), model: msg.model };
+      return { ...state, items };
+    }
     case "turn.usage":
       return state.turn ? { ...state, turn: { ...state.turn, tokens: msg.completion_tokens } } : state;
     case "turn.end": {

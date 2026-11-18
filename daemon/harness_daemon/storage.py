@@ -145,7 +145,7 @@ TOOL_COLUMNS = ("session_id", "turn_id", "step", "agent", "call_id", "name", "ca
 TURN_COLUMNS = ("id", "session_id", "message_id", "agent", "origin", "permission_mode", "harness_version",
                 "started_at")
 
-ROUTINE_FIELDS = ("name", "prompt", "cwd", "model", "permission_mode", "schedule", "enabled", "time_in_title")
+ROUTINE_FIELDS = ("name", "prompt", "cwd", "agent", "model", "permission_mode", "schedule", "enabled", "time_in_title")
 
 
 def path_key(path: str) -> str:
@@ -619,7 +619,7 @@ class Storage:
         if routine_id is None:
             taken = {p.stem for p in self.routines_dir.glob(f"*{routine_files.SUFFIX}")} if self.routines_dir.is_dir() else set()
             routine_id = _unique(routine_files.slug(str(values.get("name") or "")), taken)
-            item = {"name": "", "prompt": "", "cwd": "", "model": None, "permission_mode": "default",
+            item = {"name": "", "prompt": "", "cwd": "", "agent": None, "model": None, "permission_mode": "default",
                     "schedule": "", "enabled": True, "time_in_title": True, **values}
             fire_now = True
         else:

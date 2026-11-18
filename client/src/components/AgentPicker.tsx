@@ -7,12 +7,15 @@
 //   On the Favorites tab, a drag of a row (or Alt+Up and Alt+Down) changes the order of the favorites.
 // - The right column: the reasoning levels of the agent ("Reasoning"), with "Default" and a check mark.
 // On the start screen, a model of an ACP tab also makes that agent the agent of new sessions. In a session, the
-// agent is fixed: the other tabs are off.
+// agent is fixed: the other tabs are off. With ``routine`` (the routine form), a choice changes only the routine,
+// and the right column has the permission mode of the routine in place of the reasoning levels.
 
 import { useEffect, useRef, useState } from "react";
 import { useSortable } from "../lib/useSortable";
 import { Check, LoaderCircle, Search, Settings, Star, TriangleAlert } from "lucide-react";
-import type { AgentModel, ClientMessage, Effort, HarnessItem, SessionHarness } from "../daemon/protocol";
+import type { AgentModel, ClientMessage, Effort, HarnessItem, PermissionMode, SessionHarness } from "../daemon/protocol";
+import { shownModes, useAllowBypass } from "../lib/bypass";
+import { MODES } from "./ModeMenu";
 import { useOverlay } from "../lib/overlay";
 import { modelName } from "../lib/modelName";
 import { loadPref, savePref } from "../lib/prefs";
@@ -33,6 +36,26 @@ export const SHOW_FIRST = 4;
 
 /** The id of the reasoning level "the default of the agent" (an ACP config option value). */
 export const DEFAULT_LEVEL = "default";
+
+/** The routine form: the picker chooses the agent, the model, and the permission mode of one routine. A choice
+ * changes nothing else (no user setting, no session). */
+export interface RoutinePick {
+  agent: string; // BUILTIN_AGENT or the id of an ACP agent.
+  model: string; // Harness: "provider/model", "" for the default model. Another agent: its model id, "" for its default.
+  mode: PermissionMode;
+  onPick: (agent: string, model: string) => void;
+  onMode: (mode: PermissionMode) => void;
+}
+
+/** The tabs of the routine form: the model of each ACP tab is the model of the routine (its own tab), else the model
+ * that a run would get. No Harness provider models: a routine stores a model of the agent itself. */
+export function routineTabs(tabs: AgentTab[], routine: RoutinePick): AgentTab[] {
+  return tabs.map((t) =>
+    t.id === BUILTIN_AGENT
+      ? t
+      : { ...t, nativeModel: (t.id === routine.agent && routine.model) || impliedModel(t.models), providerModel: null, providerModels: false },
+  );
+}
 
 /** One tab of the rail: the built-in loop, or an ACP agent. */
 export interface AgentTab {
@@ -64,7 +87,12 @@ export function listedModels(models: AgentModel[]): AgentModel[] {
  * first model. The daemon starts the session on the same model (acp_harnesses.implied_model). */
 export function impliedModel(models: AgentModel[]): string | null {
   const listed = listedModels(models);
-  return (listed.find((m) => m.current) ?? listed[0])?.id ?? null;
+  const current = listed.find((m) => m.current);
+  if (current) return current.id;
+  // A current default alias: the real model that it names (daemon acp_harnesses.implied_model).
+  const alias = models.find((m) => m.current && isDefaultAlias(m));
+  if (alias) return aliasTarget(models, alias)?.id ?? null;
+  return listed[0]?.id ?? null;
 }
 
 /** The picker reads the models of an agent again after this time (T3 Code refreshes its providers each 5 minutes). */
@@ -399,9 +427,28 @@ export function rowChecked(row: PickRow, tab: AgentTab, builtinValue: string): b
   return !tab.nativeModel && !tab.providerModel;
 }
 
-/** The chip text of an ACP agent: the model name, else the agent name. */
+/** The real model of a default alias, as daemon acp.alias_target: the model that the alias names ("Default
+ * (recommended)" with "Opus 4.7 · ..." gives Opus), else the first real model. null: no real model. */
+export function aliasTarget(models: AgentModel[], alias: AgentModel): AgentModel | null {
+  const real = listedModels(models);
+  if (real.length === 0) return null;
+  const text = `${alias.name} ${alias.description}`;
+  const named = [...real]
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((m) => [m.name, m.id].some((w) => w.length >= 3 && namesWord(text, w)));
+  return named ?? real[0];
+}
+
+/** The chip text of an ACP agent: the name of the model in use, as T3 Code always shows the model. The agent name
+ * only when no model is known. A default alias shows the real model that it names. */
 export function agentChipLabel(harness: SessionHarness, inSession: boolean): string {
-  if (inSession) return harness.models?.find((m) => m.id === harness.model)?.name ?? harness.name;
+  if (inSession) {
+    const models = harness.models ?? [];
+    const model = models.find((m) => m.id === harness.model);
+    if (model && isDefaultAlias(model)) return aliasTarget(models, model)?.name ?? model.name;
+    if (model) return model.name;
+    return harness.model ? modelName(harness.model) : harness.name;
+  }
   if (harness.native_model) return harness.models?.find((m) => m.id === harness.native_model)?.name ?? harness.native_model;
   if (harness.model) return modelName(harness.model);
   // No choice: the model that the session will use, as in T3 Code.
@@ -460,6 +507,7 @@ export function AgentPicker({
   onSwitchAgent,
   onManageProviders,
   onManageAgents,
+  routine = null,
 }: {
   value: string; // The model of the built-in loop: "provider/model", or "" for the default model.
   models: ModelList | null; // null: loading.
@@ -481,10 +529,13 @@ export function AgentPicker({
   onSwitchAgent?: (agent: string, model: string | null) => void;
   onManageProviders: () => void; // Opens the Providers page.
   onManageAgents: () => void; // Opens Settings > Agents.
+  routine?: RoutinePick | null; // The routine form: see RoutinePick.
 }) {
   const inSession = !!session;
+  const allowBypass = useAllowBypass(); // UI rule C12: Bypass shows only when Settings allow it.
   const currentId = current?.id ?? BUILTIN_AGENT;
-  const [open, setOpen] = useState(false);
+  // The routine form shows the picker in the page (the user asked for this): it is always open, with no chip.
+  const [open, setOpen] = useState(!!routine);
   const [tabId, setTabId] = useState(currentId);
   const [query, setQuery] = useState("");
   const [more, setMore] = useState(false); // "Show more": all the rows of the tab.
@@ -493,9 +544,11 @@ export function AgentPicker({
   const [picked, setPicked] = useState<Record<string, string | null>>({}); // A level that the daemon did not confirm yet.
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  useOverlay(open);
+  useOverlay(open && !routine); // A panel in the page is not an overlay.
 
-  const close = () => setOpen(false);
+  const close = () => {
+    if (!routine) setOpen(false);
+  };
 
   const selectTab = (id: string) => {
     setTabId(id);
@@ -516,6 +569,7 @@ export function AgentPicker({
     if (!open) return;
     onRequestModels();
     onRequestAgents();
+    if (routine) return; // The panel of the routine form stays open.
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) close();
     };
@@ -543,7 +597,7 @@ export function AgentPicker({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [shortcut]);
 
-  const tabs = railTabs(agents, current, inSession);
+  const tabs = routine ? routineTabs(railTabs(agents, current, false), routine) : railTabs(agents, current, inSession);
   const favTab = tabId === FAVORITES_TAB;
   const tab = tabs.find((t) => t.id === (favTab ? currentId : tabId)) ?? tabs[0];
   const agentTab = favTab ? null : tab;
@@ -561,6 +615,16 @@ export function AgentPicker({
     setWaiting((w) => new Set(w).add(item.id));
     onAgentMessages?.([{ type: "agents.models", id: item.id }]);
   }, [open, inSession, agentTab?.item, onAgentMessages]);
+  // The chip shows the model of the agent of new sessions at once (the user asked for this): an agent with no known
+  // models gets the same model check when the app opens, not only when the picker opens.
+  const currentItem = inSession ? null : (agents?.find((a) => a.id === current?.id) ?? null);
+  useEffect(() => {
+    const item = currentItem;
+    if (!item || item.custom || item.probing || !agentReady(item) || item.models.length > 0) return;
+    if (asked.current.has(item.id)) return;
+    asked.current.add(item.id);
+    onAgentMessages?.([{ type: "agents.models", id: item.id }]);
+  }, [currentItem, onAgentMessages]);
   useEffect(() => {
     // The daemon took the request (probing), or the models came: the list shows the state from now on.
     const done = [...waiting].filter((id) => agents?.some((a) => a.id === id && (a.probing || a.models.length > 0)));
@@ -573,11 +637,11 @@ export function AgentPicker({
   const providerItems = models?.items ?? [];
   const searching = query.trim() !== "";
   const tabOf = (row: PickRow) => tabs.find((t) => t.id === row.agent) ?? tab;
-  const checkedRow = (row: PickRow) => rowChecked(row, tabOf(row), value);
+  const checkedRow = (row: PickRow) => (routine && row.agent !== currentId ? false : rowChecked(row, tabOf(row), value));
 
   const groupsOf = (t: AgentTab, all: boolean): PickGroup[] =>
     t.id === BUILTIN_AGENT ? builtinGroups(models, allowDefault, local, all)
-      : agentGroups(t, inSession ? [] : providerItems);
+      : agentGroups(t, inSession || routine ? [] : providerItems);
   let shown: PickGroup[];
   let hidden = 0;
   if (searching) {
@@ -598,7 +662,7 @@ export function AgentPicker({
 
   // The focus goes to the current row when the picker opens or the tab changes. It stays in the search field.
   useEffect(() => {
-    if (!open || document.activeElement === searchRef.current) return;
+    if (!open || routine || document.activeElement === searchRef.current) return; // The panel takes no focus.
     const list = ref.current?.querySelector(".ap-list");
     (list?.querySelector<HTMLButtonElement>('.ap-row-main[aria-checked="true"]:not(:disabled)') ??
       list?.querySelector<HTMLButtonElement>(".ap-row-main:not(:disabled)") ??
@@ -608,6 +672,10 @@ export function AgentPicker({
   const choose = (row: PickRow) => {
     close();
     const t = tabOf(row);
+    if (routine) {
+      routine.onPick(row.agent, row.agent === BUILTIN_AGENT || row.kind === "native" ? row.value : "");
+      return;
+    }
     if (inSession && row.agent !== currentId) {
       // Another agent: the session switches to it, with a handoff of the conversation.
       const model = row.agent === BUILTIN_AGENT ? row.value || null : row.kind === "native" ? row.value : null;
@@ -732,6 +800,7 @@ export function AgentPicker({
     const inRail = !!target.closest(".agent-picker-rail");
     const inReason = !!target.closest(".ap-reason");
     if (e.key === "Escape") {
+      if (routine) return; // The panel in the page does not close.
       e.preventDefault();
       e.stopPropagation();
       close();
@@ -802,9 +871,21 @@ export function AgentPicker({
       ? effortLabel(effort.value)
       : null
     : effortChipName(currentTab?.efforts, currentTab && currentTab.id in picked ? picked[currentTab.id] : currentTab?.effort);
-  const chipName = current ? agentChipLabel(current, inSession) : builtinName;
+  // The start screen: the agent list is newer than user_settings (a model check can end after the app opens).
+  const chipHarness =
+    current && currentItem
+      ? {
+          ...current,
+          models: currentItem.models.length ? currentItem.models : current.models,
+          native_model: routine ? current.native_model : (currentItem.native_model ?? current.native_model),
+        }
+      : current;
+  const chipName = chipHarness ? agentChipLabel(chipHarness, inSession) : builtinName;
   const keyTip = shortcut ? " (Ctrl+Shift+.)" : "";
-  const chipTip = current
+  const routineMode = routine ? (MODES.find((m) => m.mode === routine.mode) ?? MODES[0]) : null;
+  const chipTip = routine
+    ? `The routine runs with ${current?.name ?? BUILTIN_NAME}, the model ${chipName}, and the permission mode ${routineMode!.label}. Click to change them.`
+    : current
     ? inSession
       ? `${current.name} runs this session through ACP. Click to see its models${keyTip}`
       : `New sessions run in ${current.name} through ACP. Click to choose the agent and the model${keyTip}`
@@ -964,7 +1045,8 @@ export function AgentPicker({
   const levelTip = (l: AgentModel) => l.description || undefined;
 
   return (
-    <div className="model-menu agent-picker" ref={ref} onKeyDown={onKeyDown}>
+    <div className={`model-menu agent-picker${routine ? " agent-picker-inline" : ""}`} ref={ref} onKeyDown={onKeyDown}>
+      {!routine && (
       <button
         type="button"
         className={`prompt-chip model-button${open ? " active" : ""}`}
@@ -975,7 +1057,15 @@ export function AgentPicker({
       >
         <AgentIcon id={currentId} name={current?.name ?? BUILTIN_NAME} icon={agents?.find((a) => a.id === currentId)?.icon} size={14} />
         <span className="prompt-chip-text">{chipName}</span>
-        {shownEffort && (
+        {routineMode ? (
+          <>
+            <span className="model-button-sep" aria-hidden>
+              |
+            </span>
+            <routineMode.icon size={13} className="ap-chip-mode-icon" aria-hidden />
+            <span className="model-button-effort">{routineMode.label}</span>
+          </>
+        ) : shownEffort && (
           <>
             {/* A bar separates the model and the effort level (the user asked for this). */}
             <span className="model-button-sep" aria-hidden>
@@ -985,8 +1075,13 @@ export function AgentPicker({
           </>
         )}
       </button>
+      )}
       {open && (
-        <div className="menu model-dropdown up right agent-picker-dropdown" role="menu" aria-label="Agents and models">
+        <div
+          className={`menu model-dropdown ${routine ? "routine-inline" : "up right"} agent-picker-dropdown`}
+          role={routine ? "group" : "menu"}
+          aria-label={routine ? "Agent, model, and permission mode" : "Agents and models"}
+        >
           <div className="agent-picker-rail">
             <div className="agent-picker-tabs" role="tablist" aria-orientation="vertical" aria-label="Agents">
               <button
@@ -1065,6 +1160,25 @@ export function AgentPicker({
               )}
             </div>
             {/* A narrow picker has no Reasoning column: the levels show as chips under the list. */}
+            {routine ? (
+              <div className="ap-reason-chips ap-mode-chips" role="group" aria-label="Permission mode">
+                <span className="ap-reason-chips-label">Permission mode</span>
+                {shownModes(MODES, allowBypass, routine.mode).map((m) => (
+                  <button
+                    key={m.mode}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={routine.mode === m.mode}
+                    className={`ap-chip ap-nav${routine.mode === m.mode ? " on" : ""}`}
+                    title={m.help}
+                    onClick={() => routine.onMode(m.mode)}
+                  >
+                    <m.icon size={13} aria-hidden />
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
             <div className="ap-reason-chips" role="group" aria-label="Reasoning">
               <span className="ap-reason-chips-label">Reasoning</span>
               {reasoning.kind === "levels" ? (
@@ -1087,6 +1201,7 @@ export function AgentPicker({
                 <span className="ap-reason-chips-note">{reasoning.note}</span>
               )}
             </div>
+            )}
             {tab.id === BUILTIN_AGENT && !searching && !favTab && (
               <div className="ap-foot">
                 <button type="button" className="agent-picker-link ap-nav" onClick={() => { close(); onManageProviders(); }}>
@@ -1095,6 +1210,7 @@ export function AgentPicker({
               </div>
             )}
           </div>
+          {!routine && (
           <div className="ap-reason" role="group" aria-label="Reasoning">
             <div className="ap-reason-head">
               <span className="ap-reason-title">Reasoning</span>
@@ -1128,6 +1244,7 @@ export function AgentPicker({
             </div>
             {reasoning.kind === "levels" && reasoning.help && <p className="ap-reason-help">{reasoning.help}</p>}
           </div>
+          )}
         </div>
       )}
     </div>

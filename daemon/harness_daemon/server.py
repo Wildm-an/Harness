@@ -1678,9 +1678,15 @@ async def run_routine(routine: dict[str, Any], report: Callable[..., None]) -> N
     if headless is None:
         raise RuntimeError("The daemon stops.")
     cwd = _project_dir(routine["cwd"])
-    live, _warnings = await create_session(headless, cwd, routine.get("provider"), routine.get("model"))
+    agent_id = routine_files.agent_id(routine.get("agent"))
+    if agent_id is not None:  # Another agent runs the routine (Settings > Agents). "model" is a model of that agent.
+        live, _warnings = await create_session(headless, cwd, ACP_PROVIDER, agent_id)
+    else:
+        live, _warnings = await create_session(headless, cwd, routine.get("provider"), routine.get("model"))
     session = live.session
     assert session is not None
+    if agent_id is not None and isinstance(session.agent, AcpAgent) and routine.get("model"):
+        session.agent.requested_model = str(routine["model"])
     # The mode of the routine, in memory only: the project settings file does not change.
     session.agent.settings["permission_mode"] = _allowed_mode(routine["permission_mode"])
     title = routine_files.run_title(routine, dt.datetime.now(), load_settings(None).get("time_format"))
@@ -2129,9 +2135,10 @@ async def on_session_agent(conn: Connection, msg: dict[str, Any]) -> None:
     fresh, warnings = await _load_stored(conn, session.id)
     agent = fresh.session.agent if fresh.session is not None else None
     if isinstance(agent, AcpAgent):
+        # As T3 Code: an agent that ran earlier turns of this session resumes its own ACP session (when it can load
+        # it) and gets only the turns of the other agents. Else a new ACP session gets the full handoff recap.
         agent.previous_agent = previous
         agent.requested_model = model
-        agent.acp_session = None  # A new ACP session, with the handoff recap in its first prompt.
     elif agent is not None and agent.history:
         agent._harness_notes.append(HANDOFF_NOTE.format(previous=previous))
     await conn.open_session(fresh)
@@ -3252,10 +3259,21 @@ def _routine_fields(msg: dict[str, Any]) -> dict[str, Any]:
     fields = {"name": name[:200], "prompt": prompt, "cwd": str(_project_dir(msg.get("cwd"))),
               "provider": msg.get("provider") or None, "model": msg.get("model") or None,
               "permission_mode": mode, "schedule": schedule, "enabled": bool(msg.get("enabled", True))}
+    # No value: a saved routine keeps its agent, and a new routine gets the built-in loop.
+    if "agent" in msg:
+        fields["agent"] = _routine_agent(msg.get("agent"))
     # No value: a saved routine keeps its value, and a new routine gets the default (on).
     if "time_in_title" in msg:
         fields["time_in_title"] = bool(msg["time_in_title"])
     return fields
+
+
+def _routine_agent(value: Any) -> str | None:
+    """The agent of a routine: None for the built-in loop, else a harness of Settings > Agents."""
+    agent = routine_files.agent_id(value if isinstance(value, str) else None)
+    if agent is not None and acp_harnesses.find(agent) is None:
+        raise ProtocolError(f"Unknown agent: {agent}. Add it in Settings > Agents.")
+    return agent
 
 
 @handler("routines.list")
@@ -3916,7 +3934,39 @@ async def on_editor_complete(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_context_get(conn: Connection, msg: dict[str, Any]) -> None:
     """The context breakdown of the session: the size of each part of the next request."""
     session = conn.require_session()
-    await conn.send({"type": "context.usage", **session.agent.context_breakdown()})
+    reply = {"type": "context.usage", **session.agent.context_breakdown()}
+    harness_id = _subscription_harness(session.agent)
+    if harness_id is None:
+        await conn.send(reply)
+        return
+    # A session of a subscription agent also shows the usage limits of the plan. The check of the usage takes
+    # some seconds: send the saved limits at once, then a new reply after the check.
+    states = agent_auth.STATES
+    stale = not states.usage_fresh(harness_id)
+    await conn.send({**reply, "limits": agent_auth.limits_view(harness_id, states.cached(harness_id), stale)})
+    if not stale:
+        return
+
+    async def refresh() -> None:
+        try:
+            state = await states.check(harness_id)
+        except Exception:  # noqa: BLE001 - the limits are extra information.
+            log.exception("The usage limits of %s were not read", harness_id)
+            state = states.cached(harness_id)
+        current = conn.current
+        if current is None or current.session is not session:  # The client shows another session now.
+            return
+        await conn.send({"type": "context.usage", **session.agent.context_breakdown(),
+                         "limits": agent_auth.limits_view(harness_id, state)})
+
+    asyncio.create_task(refresh())
+
+
+def _subscription_harness(agent: Any) -> str | None:
+    """The id of the agent of an ACP session when that agent can report the usage limits of a subscription."""
+    if isinstance(agent, AcpAgent) and agent_auth.supports(agent.harness.id):
+        return agent.harness.id
+    return None
 
 
 BYPASS_OFF = ("Bypass permissions mode is off. Turn on \"Allow bypass permissions mode\" in Settings > General "

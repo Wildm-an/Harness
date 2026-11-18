@@ -505,16 +505,26 @@ def test_switch_the_agent_of_a_session(daemon, project, fake_acp):
     assert switched["session_id"] == ready["session_id"] and switched["harness"] is None
     assert switched["model"] == "fake/test-model"
     assert [m["role"] for m in switched["history"]][:2] == ["user", "assistant"]
-    # Back to the harness: a new ACP session, with the instructions, the recap, and the prompt.
+    # A turn of the built-in loop: the chat records the agent and the model of each turn.
+    c.send({"type": "prompt", "text": "in harness"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert next(m for m in seen if m["type"] == "turn.model")["model"] == "Harness · test-model"
+    # Back to the harness, as T3 Code: it loads its own ACP session and gets only the turns after its last turn.
     c.send({"type": "session.agent", "agent": "custom-fake-acp"})
     back = c.until("session.ready", timeout=30)[0]
     assert back["harness"]["id"] == "custom-fake-acp"
     c.send({"type": "prompt", "text": "blocks"})
     _, seen = c.until("turn.end", timeout=30)
-    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=3"
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=2"  # No instructions: a loaded session.
+    assert "session/load" in methods(fake_acp)
     prompts = [m for m in (json.loads(line) for line in fake_acp.read_text().splitlines()) if m.get("method") == "session/prompt"]
-    recap = prompts[-1]["params"]["prompt"][1]["text"]
-    assert recap.startswith("[Harness: You continue a conversation that Harness had") and "User: hello" in recap
+    recap = prompts[-1]["params"]["prompt"][0]["text"]
+    assert recap.startswith("[Harness: After your last turn in this conversation, Harness continued it.")
+    assert "User: in harness" in recap and "User: hello" not in recap
+    c.send({"type": "session.resume", "session_id": ready["session_id"]})
+    history = c.until("session.ready", timeout=30)[0]["history"]
+    turns = [m.get("turn_model") for m in history if m["role"] == "user" and m.get("origin") != "harness"]
+    assert turns == ["Fake ACP · Fast", "Harness · test-model", "Fake ACP"], turns
     c.send({"type": "session.agent", "agent": "nope"})
     assert "Unknown agent" in c.until("error")[0]["message"]
     c.close()
@@ -536,14 +546,26 @@ def test_the_handoff_recap_is_a_budgeted_selection():
     assert handoff_recap([], None, None) is None
 
 
-def test_a_harness_continues_its_session_only_after_its_own_turn():
+def test_a_harness_resumes_its_own_session_with_the_turns_after_it():
+    """As T3 Code: the stored ACP session of the last turn of this harness, and the first message that it did not see."""
     from harness_daemon.acp import AcpAgent
     agent = AcpAgent.__new__(AcpAgent)
     agent.harness = acp_harnesses.find("claude-acp")
+    agent._seen_upto = 0
     agent.history = [{"role": "user", "content": "a", "acp_session": "s1", "acp_harness": "claude-acp"},
                      {"role": "assistant", "content": "b"}]
-    assert agent._stored_session() == "s1"
+    assert agent._stored_session() == "s1" and agent._seen_upto == 2
     agent.history.append({"role": "user", "content": "c"})  # The built-in loop ran this turn.
-    assert agent._stored_session() is None
+    assert agent._stored_session() == "s1" and agent._seen_upto == 2
     agent.history.append({"role": "user", "content": "d", "acp_session": "s9", "acp_harness": "hermes"})
-    assert agent._stored_session() is None  # Another harness ran the last turn.
+    assert agent._stored_session() == "s1" and agent._seen_upto == 2  # Another harness ran the last turn.
+    agent.history = [{"role": "user", "content": "x", "acp_session": "s9", "acp_harness": "hermes"}]
+    assert agent._stored_session() is None  # This harness ran no turn.
+
+
+def test_the_delta_recap_names_the_other_agent():
+    from harness_daemon.acp import handoff_recap
+    recap = handoff_recap([{"role": "user", "content": "Fix it"}, {"role": "assistant", "content": "Done"}],
+                          None, "Codex", delta=True)
+    assert recap.startswith("[Harness: After your last turn in this conversation, Codex continued it.")
+    assert "User: Fix it" in recap and "Agent: Done" in recap

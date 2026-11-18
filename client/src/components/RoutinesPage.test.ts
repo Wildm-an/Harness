@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectItem, RoutineItem } from "../daemon/protocol";
+import type { HarnessItem, ProjectItem, RoutineItem } from "../daemon/protocol";
 import { placeOf } from "../layout/history";
 import { setTimeFormat } from "../lib/timeFormat";
-import { activity, canRunNow, checkDraft, copyName, cronToSchedule, curlExample, describeSchedule, fieldsOf, fireUrl, formatWhen, newDraft, routineFile, runState, scheduleToCron } from "./RoutinesPage";
+import { activity, canRunNow, checkDraft, copyName, cronToSchedule, curlExample, describeSchedule, fieldsOf, fireUrl, formatWhen, newDraft, routineHarness, routineFile, runState, scheduleToCron } from "./RoutinesPage";
 
 const routine = (extra: Partial<RoutineItem> = {}): RoutineItem => ({
   id: "r1",
@@ -162,5 +162,21 @@ describe("the API trigger of a routine", () => {
     expect(curl.split("\n")[0]).toBe(`curl -X POST ${url} \\`);
     expect(curl).toContain('-H "Authorization: Bearer $TOKEN"');
     expect(curl).toContain(`-d '{"text": "optional extra text after the prompt"}'`);
+  });
+});
+
+describe("the agent of a routine", () => {
+  it("gives the picker the agent of the routine with its models and model", () => {
+    const models = [{ id: "opus", name: "Opus 5.5", description: "" }];
+    const claude = { id: "claude-acp", name: "Claude Agent", enabled: true, icon: null, models } as unknown as HarnessItem;
+    expect(routineHarness([claude], "harness", "demo/x")).toBeNull();
+    expect(routineHarness([claude], "claude-acp", "opus")).toMatchObject({ name: "Claude Agent", models, native_model: "opus" });
+    expect(routineHarness(null, "claude-acp", "")).toMatchObject({ name: "claude-acp", native_model: null });
+  });
+
+  it("sends the agent of the form, and null for Harness", () => {
+    const d = { ...newDraft([], "default"), name: "n", prompt: "p", cwd: "C:/x" };
+    expect(fieldsOf(d).agent).toBeNull();
+    expect(fieldsOf({ ...d, agent: "claude-acp", model: "opus" })).toMatchObject({ agent: "claude-acp", model: "opus" });
   });
 });

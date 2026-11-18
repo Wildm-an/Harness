@@ -3776,6 +3776,10 @@ export default function App() {
             projects={projects ?? []}
             defaultMode={userSettings?.permission_mode}
             models={models}
+            agents={status === "open" ? agents : null}
+            onManageAgents={() => openSettings("operating")}
+            onRequestAgents={requestAgents}
+            onAgentMessages={sendAgentMessages}
             error={routineError}
             saved={routineSaved}
             onRequestModels={() => sendSafely({ type: "models.list" })}
@@ -3794,6 +3798,7 @@ export default function App() {
                 name: item.name,
                 prompt: item.prompt,
                 cwd: item.cwd,
+                agent: item.agent ?? null,
                 model: item.model,
                 permission_mode: item.permission_mode,
                 schedule: item.schedule,

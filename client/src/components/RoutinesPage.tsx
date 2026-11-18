@@ -23,10 +23,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BackLink } from "./BackLink";
-import type { PermissionMode, ProjectItem, RoutineFields, RoutineItem, RoutineRun, RoutineRunStatus } from "../daemon/protocol";
+import type { ClientMessage, HarnessItem, PermissionMode, SessionHarness, ProjectItem, RoutineFields, RoutineItem, RoutineRun, RoutineRunStatus } from "../daemon/protocol";
+import { BUILTIN_AGENT } from "./AgentBits";
+import { AgentPicker } from "./AgentPicker";
 import { ConfirmDialog, useConfirm } from "./ConfirmDialog";
-import { ModeMenu } from "./ModeMenu";
-import { ModelMenu, type ModelList } from "./ModelMenu";
+import type { ModelList } from "./ModelMenu";
 import { Switch } from "./ProvidersScreen";
 import { formatClock, formatTime, timeFormat } from "../lib/timeFormat";
 
@@ -190,7 +191,8 @@ export interface RoutineDraft {
   name: string;
   prompt: string;
   cwd: string;
-  model: string; // "" is the default model.
+  agent: string; // BUILTIN_AGENT ("harness") or the id of an ACP agent.
+  model: string; // "" is the default model. Harness: "provider/model". Another agent: a model id of that agent.
   permission_mode: PermissionMode;
   schedule: ScheduleChoice;
   enabled: boolean;
@@ -205,6 +207,7 @@ export function newDraft(projects: ProjectItem[], mode: PermissionMode = "defaul
     name: "",
     prompt: "",
     cwd: projects.find((p) => p.exists)?.path ?? "",
+    agent: BUILTIN_AGENT,
     model: "",
     permission_mode: mode,
     schedule: cronToSchedule("0 9 * * 1-5"),
@@ -218,6 +221,7 @@ export function draftOf(item: RoutineItem): RoutineDraft {
     name: item.name,
     prompt: item.prompt,
     cwd: item.cwd,
+    agent: item.agent || BUILTIN_AGENT,
     model: item.model ?? "",
     permission_mode: item.permission_mode,
     schedule: cronToSchedule(item.schedule),
@@ -243,12 +247,21 @@ export function fieldsOf(d: RoutineDraft): RoutineFields {
     name: d.name.trim(),
     prompt: d.prompt.trim(),
     cwd: d.cwd.trim(),
+    agent: d.agent === BUILTIN_AGENT ? null : d.agent,
     model: d.model || null,
     permission_mode: d.permission_mode,
     schedule: scheduleToCron(d.schedule),
     enabled: d.enabled,
     time_in_title: d.time_in_title,
   };
+}
+
+/** The agent of a routine for the picker: null for Harness, else the agent with its models and the model of the
+ * routine. An agent that the list does not have (not loaded, or removed) keeps its id as the name. */
+export function routineHarness(agents: HarnessItem[] | null, agent: string, model: string): SessionHarness | null {
+  if (agent === BUILTIN_AGENT) return null;
+  const item = agents?.find((a) => a.id === agent);
+  return { id: agent, name: item?.name ?? agent, models: item?.models ?? [], native_model: model || null, efforts: [] };
 }
 
 /** The name of a copy of a routine: "Daily summary (copy)", then "(copy 2)" if a routine has that name. */
@@ -386,10 +399,14 @@ function RoutineForm({
   runs,
   projects,
   models,
+  agents = null,
   saving,
   error,
   onRequestModels,
   onManageProviders,
+  onManageAgents,
+  onRequestAgents,
+  onAgentMessages,
   onBrowse,
   onSave,
   onDelete,
@@ -406,10 +423,14 @@ function RoutineForm({
   runs: RoutineRun[] | null;
   projects: ProjectItem[];
   models: ModelList | null;
+  agents?: HarnessItem[] | null; // The agents of Settings > Agents (harnesses.list). null: not loaded.
   saving: boolean;
   error: string | null;
   onRequestModels: () => void;
   onManageProviders: () => void;
+  onManageAgents?: () => void;
+  onRequestAgents?: () => void;
+  onAgentMessages?: (messages: ClientMessage[]) => void; // Only "agents.models": the model check of an agent.
   onBrowse: (initial: string) => Promise<string | null>;
   onSave: (fields: RoutineFields) => void;
   onDelete: () => void;
@@ -529,17 +550,28 @@ function RoutineForm({
           )}
         </div>
         <div className="field routine-chips">
-          <span className="field-label">Model and permission mode</span>
-          <div className="routine-chip-row">
-            <ModelMenu
-              value={d.model}
+          <span className="field-label">Agent, model, and permission mode</span>
+          <div className="routine-picker-field">
+            <AgentPicker
+              value={d.agent === BUILTIN_AGENT ? d.model : ""}
               models={models}
               allowDefault
-              onOpen={onRequestModels}
-              onSelect={(spec) => update({ model: spec })}
-              onManage={onManageProviders}
+              agents={agents}
+              current={routineHarness(agents, d.agent, d.model)}
+              onRequestModels={onRequestModels}
+              onRequestAgents={() => onRequestAgents?.()}
+              onSelect={() => {}}
+              onAgentMessages={(messages) => onAgentMessages?.(messages.filter((m) => m.type === "agents.models"))}
+              onManageProviders={onManageProviders}
+              onManageAgents={() => onManageAgents?.()}
+              routine={{
+                agent: d.agent,
+                model: d.model,
+                mode: d.permission_mode,
+                onPick: (agent, model) => update({ agent, model }),
+                onMode: (mode) => update({ permission_mode: mode }),
+              }}
             />
-            <ModeMenu mode={d.permission_mode} onChange={(mode) => update({ permission_mode: mode })} up={false} />
           </div>
           <p className="help">
             No one can answer a permission request while no window shows the session. In Manual mode, a run waits: open its session to answer.
@@ -793,10 +825,14 @@ export const RoutinesPage = memo(function RoutinesPage({
   runs,
   projects,
   models,
+  agents = null,
   error,
   saved,
   onRequestModels,
   onManageProviders,
+  onManageAgents,
+  onRequestAgents,
+  onAgentMessages,
   onBrowse,
   onSave,
   onDelete,
@@ -815,6 +851,10 @@ export const RoutinesPage = memo(function RoutinesPage({
   runs: { routine_id: string; items: RoutineRun[] } | null;
   projects: ProjectItem[];
   models: ModelList | null;
+  agents?: HarnessItem[] | null; // The agents of Settings > Agents, for the picker of a routine.
+  onManageAgents?: () => void; // Opens Settings > Agents.
+  onRequestAgents?: () => void;
+  onAgentMessages?: (messages: ClientMessage[]) => void; // The model check of an agent (agents.models).
   error: string | null; // The last error of routines.save.
   saved: { id: string; key: number } | null; // The last routines.save that the daemon did.
   onRequestModels: () => void;
@@ -876,10 +916,14 @@ export const RoutinesPage = memo(function RoutinesPage({
         runs={item && runs?.routine_id === item.id ? runs.items : null}
         projects={projects}
         models={models}
+        agents={agents}
         saving={saving}
         error={error}
         onRequestModels={onRequestModels}
         onManageProviders={onManageProviders}
+        onManageAgents={onManageAgents}
+        onRequestAgents={onRequestAgents}
+        onAgentMessages={onAgentMessages}
         onBrowse={onBrowse}
         onSave={(fields) => {
           setSaving(true);

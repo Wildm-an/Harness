@@ -32,6 +32,7 @@ import {
 } from "../lib/sessionRail";
 import { formatTokens, type ContextUsage } from "../lib/context";
 import { ContextBreakdown } from "./ContextRing";
+import { PlanUsage } from "./AgentBits";
 
 export const SESSION_RAIL_ID = "session-rail";
 const NARROW = "(max-width: 900px)";
@@ -174,7 +175,8 @@ export function SessionRail({
   }, [onClose]);
 
   // The open Context section shows the breakdown. Ask for it again after each change of the context.
-  const contextOpen = context !== null && !folded.includes("context");
+  // Also with no context yet: the section shows the usage limits of a subscription agent.
+  const contextOpen = !folded.includes("context");
   useEffect(() => {
     if (contextOpen) onReadUsage();
   }, [contextOpen, context?.tokens, context?.length]);
@@ -290,12 +292,16 @@ export function SessionRail({
             <span style={{ width: `${share * 100}%` }} />
           </div>
         )}
+        <PlanUsage limits={usage?.limits} />
         <button type="button" className="btn btn-small rail-action" onClick={onCompact} disabled={running} title={running ? "Compaction waits for the end of the turn." : undefined}>
           <Archive size={13} aria-hidden /> Compact
         </button>
       </div>
     ) : (
-      <p className="rail-empty">No context data yet. It shows after the first turn.</p>
+      <>
+        <p className="rail-empty">No context data yet. It shows after the first turn.</p>
+        <PlanUsage limits={usage?.limits} />
+      </>
     ),
     // The Changes section shows the pull request of a git folder. This section shows it only when
     // the Changes section does not show.

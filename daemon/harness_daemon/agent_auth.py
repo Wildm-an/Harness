@@ -200,6 +200,11 @@ class AgentStates:
         status = self._status.get(harness_id)
         return status is not None and time.time() - status[0] < STATUS_TTL
 
+    def usage_fresh(self, harness_id: str) -> bool:
+        """The state and the usage are newer than their TTL: a check would not run again."""
+        usage = self._usage.get(harness_id)
+        return self.fresh(harness_id) and (usage is None or time.time() - usage[0] < USAGE_TTL)
+
     def invalidate(self, harness_id: str | None = None) -> None:
         for store in (self._status, self._usage):
             if harness_id is None:
@@ -232,6 +237,17 @@ class AgentStates:
 
 
 STATES = AgentStates()
+
+
+def limits_view(harness_id: str, state: dict[str, Any] | None, checking: bool = False) -> dict[str, Any] | None:
+    """The subscription limits of a session for the context panel and the session rail, or None when the
+    agent has no subscription. ``checking``: a check runs now, and the client gets a new reply after it."""
+    if state is None:
+        return {"agent": harness_id, "label": "", "windows": [], "error": "", "checking": True} if checking else None
+    if state.get("status") != "authenticated" or not state.get("subscription"):
+        return None
+    return {"agent": harness_id, "label": str(state.get("label") or "Subscription"),
+            "windows": state.get("usage") or [], "error": state.get("usage_error") or "", "checking": checking}
 
 
 class SignIn:
