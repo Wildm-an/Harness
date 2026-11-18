@@ -1,11 +1,12 @@
 """The subscription limits of Codex (the Limits tab of the Usage page), as T3 Code (MIT) reads them.
 
-- The main source: ``codex app-server`` (the JSON-RPC server of the Codex CLI on the PATH) with the requests
-  ``initialize`` and ``account/rateLimits/read``. Codex reads its own ChatGPT sign-in. Harness never reads the
+- The main source: ``codex app-server`` (the JSON-RPC server of the Codex CLI) with the requests ``initialize``
+  and ``account/rateLimits/read``. The CLI is the ``codex`` program on the PATH, else ``npx -y
+  @openai/codex@<CODEX_VERSION>`` (``codex_argv``). Codex reads its own ChatGPT sign-in. Harness never reads the
   credentials of Codex. The check sends no prompt, so it uses no tokens.
-- The fallback, with no ``codex`` program (Codex Agent runs through the ACP adapter): the ``rate_limits`` of the last
-  ``token_count`` event in the newest rollout under ``<CODEX_HOME or ~/.codex>/sessions``. This value is from the
-  last turn, so the label says when Codex reported it.
+- The fallback, with no CLI or when the app server fails: the ``rate_limits`` of the last ``token_count`` event in
+  the newest rollout under ``<CODEX_HOME or ~/.codex>/sessions``. This value is from the last turn, so the label
+  says when Codex reported it.
 
 The windows follow T3 Code: ``primary`` is the 5-hour window (30 days on the Free and Go plans), ``secondary`` is the
 weekly window, and a limit id other than "codex" is a limit of one model, which does not show.
@@ -38,8 +39,17 @@ _PLANS = {"plus": "Plus", "pro": "Pro", "team": "Team", "business": "Business", 
           "edu": "Edu", "free": "Free", "go": "Go"}
 
 
-def codex_binary() -> str | None:
-    return shutil.which("codex")
+# The Codex CLI for npx: the version of the Codex core in codex-acp 2.5.0 (acp_harnesses.py).
+CODEX_VERSION = "0.166.0"
+
+
+def codex_argv() -> list[str] | None:
+    """The Codex CLI: the ``codex`` program on the PATH, else npx with the fixed version, else None."""
+    found = shutil.which("codex")
+    if found:
+        return [found]
+    npx = shutil.which("npx")
+    return [npx, "-y", f"@openai/codex@{CODEX_VERSION}"] if npx else None
 
 
 def _no_window() -> dict[str, Any]:
@@ -110,10 +120,10 @@ def plan_label(snapshot: Any) -> str:
     return f"ChatGPT {_PLANS.get(plan.lower(), plan.capitalize())}" if plan else "subscription"
 
 
-def read_app_server(binary: str) -> dict[str, Any]:
+def read_app_server(argv: list[str]) -> dict[str, Any]:
     """Ask ``codex app-server`` for the rate limits. It blocks: call it in a thread. The result is the
     ``account/rateLimits/read`` result: ``rateLimits`` and ``rateLimitsByLimitId``."""
-    proc = subprocess.Popen([binary, "app-server"], cwd=str(Path.home()), stdin=subprocess.PIPE,
+    proc = subprocess.Popen([*argv, "app-server"], cwd=str(Path.home()), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                             errors="replace", **_no_window())
     assert proc.stdin is not None and proc.stdout is not None
@@ -151,6 +161,10 @@ def read_app_server(binary: str) -> dict[str, Any]:
         return reply(2)
     finally:
         timer.cancel()
+        try:
+            proc.stdin.close()  # The end of the input stops the server, also behind the npx wrapper of Windows.
+        except OSError:
+            pass
         proc.kill()
         try:
             proc.wait(timeout=5)
@@ -213,10 +227,10 @@ async def limits(force: bool = False) -> dict[str, Any] | None:
         if not force and _cache is not None and time.time() - _cache[0] < TTL:
             return _cache[1]
         result: dict[str, Any] | None = None
-        binary = codex_binary()
-        if binary:
+        argv = codex_argv()
+        if argv:
             try:
-                data = await asyncio.to_thread(read_app_server, binary)
+                data = await asyncio.to_thread(read_app_server, argv)
                 by_id = data.get("rateLimitsByLimitId") if isinstance(data.get("rateLimitsByLimitId"), dict) else {}
                 snapshot = by_id.get("codex") or data.get("rateLimits")
                 rows = windows(snapshot)

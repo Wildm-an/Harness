@@ -9,6 +9,10 @@ The API key goes only into the environment, never into the command line (other u
 The choice is in the user settings: ``"harness_models": {"<harness id>": "<provider>/<model>"}``.
 No choice: the harness uses its own model settings.
 
+Only open harnesses can use a Harness provider. A proprietary harness of a model company (for example Codex
+or Claude Agent) uses only its own login and its own models: its model menu lists the models of the company,
+and a turn on such a model must not go to a Harness provider.
+
 The adapters (checked in the source code of each harness, November 2026):
 
 - ``qwen-code``: the flags ``--auth-type openai --model <m> --openai-base-url <url>`` and the variable
@@ -19,9 +23,6 @@ The adapters (checked in the source code of each harness, November 2026):
   ``OPENAI_BASE_PATH=chat/completions``, ``OPENAI_API_KEY``, and ``GOOSE_CONTEXT_LIMIT``. The key is
   always set: else goose sends the OpenAI key of the user's keyring to this server. A session that
   goose loads again keeps the model that it stored.
-- ``codex-acp``: ``CODEX_CONFIG`` (JSON) with a provider "harness" and the model, and the key in
-  ``HARNESS_PROVIDER_API_KEY``. Codex uses only the OpenAI Responses API: the server must have
-  ``/v1/responses`` (Ollama has it).
 - ``opencode``: ``OPENCODE_CONFIG_CONTENT`` (JSON) with a provider "harness" (``@ai-sdk/openai-compatible``)
   and the model. The key is in ``HARNESS_PROVIDER_API_KEY``: the JSON reads it with ``{env:...}``.
 - ``omp``: Oh My Pi reads custom providers only from ~/.omp/agent/models.yml, or from an extension. The
@@ -80,17 +81,6 @@ def _goose(t: Target) -> Launch:
     return [], env
 
 
-def _codex(t: Target) -> Launch:
-    provider: dict[str, Any] = {"name": f"Harness: {t.provider}", "base_url": t.base_url, "wire_api": "responses"}
-    env: dict[str, str] = {}
-    if t.api_key:  # Codex stops when env_key names an empty variable.
-        provider["env_key"] = KEY_ENV
-        env[KEY_ENV] = t.api_key
-    config = {"model": t.model, "model_provider": "harness", "model_providers": {"harness": provider}}
-    env["CODEX_CONFIG"] = json.dumps(config)
-    return [], env
-
-
 def _opencode(t: Target) -> Launch:
     model: dict[str, Any] = {"name": t.model}
     if t.context:
@@ -119,15 +109,12 @@ def _omp(t: Target) -> Launch:
 ADAPTERS: dict[str, Callable[[Target], Launch]] = {
     "qwen-code": _qwen,
     "goose": _goose,
-    "codex-acp": _codex,
     "opencode": _opencode,
     "omp": _omp,
 }
 
 # A note for the Model row of a harness: what the server must have.
-NOTES: dict[str, str] = {
-    "codex-acp": "Codex needs a server with the OpenAI Responses API (/v1/responses), for example Ollama.",
-}
+NOTES: dict[str, str] = {}
 
 
 # The model id in the model menu of the harness, when it is not the model name of the provider.

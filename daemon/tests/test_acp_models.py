@@ -38,16 +38,13 @@ def test_goose_gets_environment_variables():
     assert env["OPENAI_API_KEY"] == "none" and "GOOSE_CONTEXT_LIMIT" not in env
 
 
-def test_codex_gets_a_provider_in_codex_config():
-    args, env = acp_models.launch_options("codex-acp", target())
-    config = json.loads(env["CODEX_CONFIG"])
-    assert args == [] and env[KEY_ENV] == "sk-1" and "sk-1" not in env["CODEX_CONFIG"]
-    assert config["model"] == "qwen3-coder:30b" and config["model_provider"] == "harness"
-    assert config["model_providers"]["harness"]["wire_api"] == "responses"
-    assert config["model_providers"]["harness"]["env_key"] == KEY_ENV
-    # No key: no env_key (Codex stops when the variable is empty).
-    env = acp_models.launch_options("codex-acp", target(key=None))[1]
-    assert "env_key" not in json.loads(env["CODEX_CONFIG"])["model_providers"]["harness"] and KEY_ENV not in env
+def test_proprietary_harnesses_never_use_a_provider():
+    # Codex sent its own models (for example gpt-6-sol) to the provider, and the provider refused them.
+    for harness_id in ("codex-acp", "claude-acp"):
+        assert not acp_models.supports(harness_id)
+        assert acp_models.choice({"harness_models": {harness_id: "local/qwen3-coder:30b"}}, harness_id) is None
+        with pytest.raises(ValueError):
+            acp_models.check_choice(harness_id, "local/qwen3-coder:30b")
 
 
 def test_opencode_gets_an_inline_config():
