@@ -19,6 +19,11 @@ export function formatTokens(n: number): string {
 /** Where the context length came from, in words for the context meter. */
 export function contextSourceText(source: string | undefined): string {
   if (!source) return "";
+  // An ACP agent (daemon acp.py context_breakdown).
+  if (source === "acp-context") return "The agent gives the parts (its /context command).";
+  if (source === "acp") {
+    return "The agent gives the total. Harness estimates the messages and the Harness tools. The rest is the system prompt and the tools of the agent.";
+  }
   if (source === "default") {
     return "The endpoint did not give the context length, so the harness uses a default. Set context_length in providers.json.";
   }
@@ -69,6 +74,9 @@ export interface ContextRow {
 
 const PART_LABELS: Record<string, string> = {
   system: "System prompt",
+  // An ACP agent that tells only its total: its own system prompt, tools, and instructions (an estimate).
+  agent: "System prompt and tools",
+  agents: "Custom agents",
   instructions: "Project instructions",
   skills: "Skills",
   plugins: "Plugins",
@@ -83,7 +91,7 @@ const PART_LABELS: Record<string, string> = {
  * System tools, MCP tools, Memory files, Skills, Messages. Plugins go with the skills. The summary
  * goes with the messages. A part kind that is not in this list goes after them.
  */
-const PART_ORDER = ["system", "tools", "mcp_tools", "instructions", "skills", "plugins", "summary", "messages"];
+const PART_ORDER = ["system", "agent", "tools", "mcp_tools", "agents", "instructions", "skills", "plugins", "summary", "messages"];
 
 function partRank(kind: string): number {
   const i = PART_ORDER.indexOf(kind);

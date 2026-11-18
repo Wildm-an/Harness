@@ -4018,30 +4018,47 @@ async def on_editor_complete(conn: Connection, msg: dict[str, Any]) -> None:
 async def on_context_get(conn: Connection, msg: dict[str, Any]) -> None:
     """The context breakdown of the session: the size of each part of the next request."""
     session = conn.require_session()
-    reply = {"type": "context.usage", **session.agent.context_breakdown()}
-    harness_id = _subscription_harness(session.agent)
-    if harness_id is None:
-        await conn.send(reply)
-        return
     # A session of a subscription agent also shows the usage limits of the plan. The check of the usage takes
     # some seconds: send the saved limits at once, then a new reply after the check.
+    harness_id = _subscription_harness(session.agent)
     states = agent_auth.STATES
-    stale = not states.usage_fresh(harness_id)
-    await conn.send({**reply, "limits": agent_auth.limits_view(harness_id, states.cached(harness_id), stale)})
+    stale = harness_id is not None and not states.usage_fresh(harness_id)
+    limits = agent_auth.limits_view(harness_id, states.cached(harness_id), stale) if harness_id is not None else None
+
+    def reply() -> dict[str, Any]:
+        message = {"type": "context.usage", **session.agent.context_breakdown()}
+        if harness_id is not None:
+            message["limits"] = limits
+        return message
+
+    async def send_again() -> None:
+        current = conn.current
+        if current is None or current.session is not session:  # The client shows another session now.
+            return
+        await conn.send(reply())
+
+    await conn.send(reply())
+
+    # An ACP agent that can tell the parts of its context (Claude Code /context): read them, then send them.
+    refresh_context = getattr(session.agent, "refresh_context", None)
+    if refresh_context is not None:
+        async def read_parts() -> None:
+            if await refresh_context():
+                await send_again()
+
+        asyncio.create_task(read_parts())
     if not stale:
         return
 
     async def refresh() -> None:
+        nonlocal limits
         try:
             state = await states.check(harness_id)
         except Exception:  # noqa: BLE001 - the limits are extra information.
             log.exception("The usage limits of %s were not read", harness_id)
             state = states.cached(harness_id)
-        current = conn.current
-        if current is None or current.session is not session:  # The client shows another session now.
-            return
-        await conn.send({"type": "context.usage", **session.agent.context_breakdown(),
-                         "limits": agent_auth.limits_view(harness_id, state)})
+        limits = agent_auth.limits_view(harness_id, state)
+        await send_again()
 
     asyncio.create_task(refresh())
 

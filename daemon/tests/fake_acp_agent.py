@@ -18,6 +18,9 @@ The prompt text selects the script:
 The agent has two models ("fast" and "smart") and one command ("review"). "hello" sends a usage update.
 
 FAKE_ACP_LOG: a file that gets one JSON line for each message from the client.
+FAKE_ACP_USED: the used tokens of the usage update (default 1234).
+FAKE_ACP_CLAUDE: the agent tells the name of the Claude Code adapter, and "/context" gives the context table of
+Claude Code (CONTEXT_TABLE).
 """
 
 from __future__ import annotations
@@ -31,6 +34,33 @@ from pathlib import Path
 
 LOCK = threading.Lock()
 LOG = os.environ.get("FAKE_ACP_LOG")
+CLAUDE = bool(os.environ.get("FAKE_ACP_CLAUDE"))
+USED = int(os.environ.get("FAKE_ACP_USED") or 1234)  # The used tokens of the usage update of "hello".
+CONTEXT_TABLE = """## Context Usage
+
+**Model:** fast  
+**Tokens:** 1.2k / 200k (1%)
+
+### Estimated usage by category
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 300 | 0.2% |
+| System tools | 500 | 0.3% |
+| MCP tools | 100 | 0.1% |
+| System tools (deferred) | 9k | 4.5% |
+| Memory files | 100 | 0.1% |
+| Skills | ~34 | 0.0% |
+| Messages | 200 | 0.1% |
+| Free space | 162.8k | 81.4% |
+| Autocompact buffer | 33k | 16.5% |
+
+### Memory Files
+
+| Type | Path | Tokens |
+|------|------|--------|
+| User | CLAUDE.md | 100 |
+"""
 waiting: dict[int, threading.Event] = {}
 answers: dict[int, dict] = {}
 cancelled = threading.Event()
@@ -90,11 +120,14 @@ def script(rid: int, params: dict) -> None:
     blocks = params.get("prompt") or []
     text = blocks[-1].get("text", "") if blocks else ""
     stop = "end_turn"
-    if text == "hello":
+    if text == "/context" and CLAUDE:  # A local command of Claude Code: no usage update.
+        chunk(sid, CONTEXT_TABLE[:40])
+        chunk(sid, CONTEXT_TABLE[40:])
+    elif text == "hello":
         update(sid, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "Hmm."}})
         chunk(sid, "Hello ")
         chunk(sid, "from fake.")
-        update(sid, {"sessionUpdate": "usage_update", "used": 1234, "size": 200000})
+        update(sid, {"sessionUpdate": "usage_update", "used": USED, "size": 200000})
     elif text == "fsread":
         path = str(Path(sessions[sid]) / "hello.py")
         answer = ask("fs/read_text_file", {"sessionId": sid, "path": path, "line": 2, "limit": 1})
@@ -213,9 +246,12 @@ def main() -> None:
             continue
         params = message.get("params") or {}
         if method == "initialize":
-            send({"id": rid, "result": {"protocolVersion": 1, "agentCapabilities": {
+            result = {"protocolVersion": 1, "agentCapabilities": {
                 "loadSession": True, "promptCapabilities": {"image": False}, "mcpCapabilities": {"http": True}},
-                "authMethods": []}})
+                "authMethods": []}
+            if CLAUDE:
+                result["agentInfo"] = {"name": "@agentclientprotocol/claude-agent-acp", "title": "Claude Agent"}
+            send({"id": rid, "result": result})
         elif method == "session/new":
             count += 1
             sid = f"fake-{os.getpid()}-{count}"

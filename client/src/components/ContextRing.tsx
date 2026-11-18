@@ -120,7 +120,9 @@ export function ContextRing({
             <>
               <ContextBreakdown usage={usage} />
               <p className="context-note">
-                The agent summarizes the old turns at {Math.round(compactAt * 100)}% of the context. {contextSourceText(source ?? usage.source)}
+                {/* An ACP agent with no known compaction point gives compact_at 1: no such sentence. */}
+                {compactAt < 1 && `The agent summarizes the old turns at ${Math.round(compactAt * 100)}% of the context. `}
+                {contextSourceText(usage.source ?? source)}
               </p>
             </>
           )}

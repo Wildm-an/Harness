@@ -140,6 +140,14 @@ def _tool_list(agent: "AcpAgent") -> list[dict[str, Any]]:
     return tools
 
 
+def tool_tokens(agent: "AcpAgent") -> int:
+    """An estimate of the tokens of the tool definitions of the Harness MCP server, for the context view."""
+    from .context import estimate_tokens  # Here: the MCP bridge process (run_bridge) does not need it.
+
+    tools = _tool_list(agent)
+    return estimate_tokens(tools) if tools else 0
+
+
 def _content(output: str, image: str | None) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = [{"type": "text", "text": output or "Done."}]
     m = re.match(r"data:([\w/+.-]+);base64,(.*)", image or "", re.S)
