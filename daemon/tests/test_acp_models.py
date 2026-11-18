@@ -64,6 +64,21 @@ def test_opencode_gets_an_inline_config():
     assert acp_models.session_model_id("goose", target()) == "qwen3-coder:30b"
 
 
+def test_omp_gets_an_extension_and_the_provider_in_the_environment():
+    args, env = acp_models.launch_options("omp", target())
+    assert args == ["-e", str(acp_models.OMP_EXTENSION)] and acp_models.OMP_EXTENSION.is_file()
+    assert "--model" not in args  # OMP reads ":30b" of "qwen3-coder:30b" as a thinking level.
+    assert json.loads(env["HARNESS_OMP_PROVIDER"]) == {"baseUrl": "http://127.0.0.1:11434/v1",
+                                                       "model": "qwen3-coder:30b", "context": 32768}
+    assert env[KEY_ENV] == "sk-1" and "sk-1" not in env["HARNESS_OMP_PROVIDER"]
+    # The extension reads the variable name of the key.
+    assert f'apiKey: "{KEY_ENV}"' in acp_models.OMP_EXTENSION.read_text(encoding="utf-8")
+    env = acp_models.launch_options("omp", target(key=None, context=None))[1]
+    assert env[KEY_ENV] == "none" and "context" not in json.loads(env["HARNESS_OMP_PROVIDER"])
+    assert acp_models.session_model_id("omp", target()) == "harness/qwen3-coder:30b"
+    assert acp_models.supports("omp")
+
+
 def test_the_setting():
     assert acp_models.supports("goose") and not acp_models.supports("gemini")
     settings = {"harness_models": {"goose": "local/qwen", "gemini": "local/qwen"}}

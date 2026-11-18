@@ -36,6 +36,8 @@ datas = [
     # The bundled skills (skills.py). The agent runs their scripts with the Python of the user.
     (os.path.join(DAEMON, "harness_daemon", "builtin_skills"), "harness_daemon/builtin_skills"),
     (os.path.join(DAEMON, "harness_daemon", "agent_icons"), "harness_daemon/agent_icons"),
+    # The extension that gives Oh My Pi the model of a Harness provider (acp_models.py).
+    (os.path.join(DAEMON, "harness_daemon", "agent_extensions"), "harness_daemon/agent_extensions"),
     # The empty Word and PowerPoint documents that office_edit uses for a new file (documents.py).
     *collect_data_files("docx"),
     *collect_data_files("pptx"),
