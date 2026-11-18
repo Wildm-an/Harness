@@ -55,6 +55,7 @@
   --ctx-tools: #f07443;
   --ctx-mcp-tools: #9ccdf0;
   --ctx-messages: #60a7f0;
+  --ctx-agents: #b49cf0;
   /* The pull request and work colors (lib/pr.ts). Orange: uncommitted work. Purple: a merged pull
      request. Blue (--info): commits that are not pushed. Green (--success): pushed work and an open
      pull request. Vermilion (--danger): a closed pull request. */
@@ -154,6 +155,7 @@
   --ctx-tools: #d55e00;
   --ctx-mcp-tools: #3a9fd6;
   --ctx-messages: #0072b2;
+  --ctx-agents: #7a5cc4;
   --orange: #995200;
   --orange-mark: #cf6a08;
   --orange-soft: rgba(207, 106, 8, 0.12);
@@ -1865,6 +1867,9 @@ textarea:focus-visible {
 
 /* The colors of the context parts. The free space is empty, and the buffer has stripes. */
 .ctx-system { background: var(--text-muted); }
+/* An ACP agent: its system prompt and tools, in one part (an estimate). The hue of the system prompt. */
+.ctx-agent { background: var(--text-muted); }
+.ctx-agents { background: var(--ctx-agents); }
 .ctx-instructions { background: var(--ctx-instructions); }
 .ctx-skills { background: var(--ctx-skills); }
 .ctx-plugins { background: var(--ctx-plugins); }

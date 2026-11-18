@@ -53,6 +53,7 @@ from .acp_harnesses import HarnessError, HarnessSpec, launch_argv
 from .acp_terminal import TerminalError, TerminalHost
 from .agent import INTERRUPTED, Agent, user_message
 from .config import load_settings
+from .context import estimate_tokens
 from .created import before_call, created_files
 from .files import file_hash, relpath
 from .permissions import PLAN_BLOCK
@@ -430,6 +431,68 @@ AUTO_NO_MODEL = ("Auto mode has no model to check the actions of {name}: its own
                  "an \"Auto mode model\" on Settings > Agents, then Harness checks these actions for you.")
 
 
+# The ACP adapters of Claude Code (agentInfo.name of initialize). Their /context is a local command: it gives the
+# parts of the context, as the /context view of Claude Code, with no model call.
+CLAUDE_ADAPTERS = ("@agentclientprotocol/claude-agent-acp", "@zed-industries/claude-agent-acp",
+                   "@zed-industries/claude-code-acp")
+CONTEXT_TIMEOUT = 15.0  # Seconds for the /context command.
+
+# The rows of the /context table of Claude Code -> the part kinds of the context view (client lib/context.ts).
+# The deferred rows are not in the context window. Free space and the buffer are not parts.
+_CONTEXT_ROWS = {
+    "system prompt": "system", "system tools": "tools", "mcp tools": "mcp_tools",
+    "mcp server instructions": "mcp_tools", "memory files": "instructions", "skills": "skills",
+    "custom agents": "agents", "messages": "messages",
+}
+
+
+def _count(text: str) -> int | None:
+    """A token count of /context: "711", "2.8k", "1m", "~160", "< 20"."""
+    m = re.fullmatch(r"[~<\s]*([\d.,]+)\s*([kKmM]?)", text.strip())
+    if not m:
+        return None
+    try:
+        value = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    return round(value * {"": 1, "k": 1000, "m": 1_000_000}[m.group(2).lower()])
+
+
+def parse_context_markdown(text: str) -> dict[str, Any] | None:
+    """The parts of the context from the /context output of Claude Code (a Markdown table "Estimated usage by
+    category"): {"parts": {kind: tokens}, "buffer": tokens}. None: the text has no such table."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if "usage by category" in line.lower()), None)
+    if start is None:
+        return None
+    parts: dict[str, int] = {}
+    buffer = 0
+    found = False
+    for line in lines[start + 1:]:
+        line = line.strip()
+        if not line:
+            if found:
+                break
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 2 or set(cells[0]) <= set("-: ") or cells[0].lower() == "category":
+            continue
+        name, tokens = cells[0].lower(), _count(cells[1])
+        if tokens is None:
+            continue
+        found = True
+        if "deferred" in name or name == "free space":
+            continue
+        if "buffer" in name:
+            buffer += tokens
+            continue
+        kind = _CONTEXT_ROWS.get(name, "system")
+        parts[kind] = parts.get(kind, 0) + tokens
+    return {"parts": parts, "buffer": buffer} if found else None
+
+
 class _GateTool:
     """The tool of a permission request of the harness, for the permission gate (permissions.PermissionGate)."""
 
@@ -510,6 +573,12 @@ class AcpAgent(Agent):
         self.acp_effort: str | None = None
         self._effort_option: str | None = None
         self._usage_known: tuple[int, int] | None = None  # usage_update: (used tokens, context size).
+        self._agent_name = ""  # agentInfo.name of initialize, for example "@agentclientprotocol/claude-agent-acp".
+        # The parts of the context from /context (Claude Code), with the ACP session and the used tokens of that time.
+        self._context_detail: dict[str, Any] | None = None
+        self._context_key: tuple[str | None, int] | None = None
+        self._context_probe: asyncio.Task[dict[str, Any] | None] | None = None
+        self._probe_text: list[str] | None = None  # The text of the running /context command.
         self._provider_model: str | None = None  # The model id of a Harness provider in the harness (acp_models.py).
         self.requested_model: str | None = None  # A model of the harness that a switch of the agent chose.
         self.requested_effort: str | None = None  # A reasoning level that delegate_task chose (options.effort).
@@ -558,6 +627,8 @@ class AcpAgent(Agent):
                 raise
             result = result if isinstance(result, dict) else {}
             self._agent_caps = result.get("agentCapabilities") if isinstance(result.get("agentCapabilities"), dict) else {}
+            info = result.get("agentInfo")
+            self._agent_name = str(info.get("name") or "") if isinstance(info, dict) else ""
             methods = result.get("authMethods")
             self._auth_methods = [m for m in methods if isinstance(m, dict)] if isinstance(methods, list) else []
             self._conn = conn
@@ -903,7 +974,13 @@ class AcpAgent(Agent):
         if not isinstance(update, dict):
             return
         kind = update.get("sessionUpdate")
-        if await self._state_update(kind, update) or not self.in_turn:
+        if await self._state_update(kind, update):
+            return
+        if self._probe_text is not None:  # The output of /context goes to the context view, not to the chat.
+            if kind == "agent_message_chunk":
+                self._probe_text.append(_text_of(update.get("content")))
+            return
+        if not self.in_turn:
             return
         if kind == "agent_message_chunk":
             text = _text_of(update.get("content"))
@@ -1408,6 +1485,7 @@ class AcpAgent(Agent):
             if self._conn is None:
                 await self.emit({"type": "notice", "level": "info", "text": f"Starting {self.harness.name}."})
             conn, _ = await self._ensure_session()
+            await self._wait_context_probe()  # The /context output must not go into this turn.
             message["acp_session"] = self.acp_session
             message["acp_harness"] = self.harness.id
             if self.acp_model:
@@ -1527,9 +1605,90 @@ class AcpAgent(Agent):
         return f"{self.harness.name} · {name}" if name else self.harness.name
 
     def context_breakdown(self) -> dict[str, Any]:
+        """The parts of the context of the harness. The harness gives only the total (usage_update).
+
+        Claude Code: the parts of its /context command (refresh_context), as in the /context view of Claude Code.
+        Other harnesses: Harness estimates the messages and the tools of the Harness MCP server. The rest is the
+        system prompt and the tools of the harness ("agent").
+        """
         tokens = self.context_tokens()
-        return {"tokens": tokens, "length": self.context_length, "compact_at": 1.0, "source": "acp",
-                "parts": [{"kind": "messages", "tokens": tokens}] if tokens else []}
+        reply: dict[str, Any] = {"tokens": tokens, "length": self.context_length, "compact_at": 1.0, "source": "acp"}
+        if not tokens:
+            return {**reply, "parts": []}
+        detail = self._context_detail
+        key = self._context_key
+        if detail is not None and key is not None and key[0] == self.acp_session and key[1] > 0:
+            known = sum(detail["parts"].values())
+            sizes = {kind: round(t * key[1] / known) for kind, t in detail["parts"].items()} if known else {}
+            # The tokens after the /context command (a turn that runs now) are messages.
+            sizes["messages"] = sizes.get("messages", 0) + tokens - sum(sizes.values())
+            if sizes["messages"] < 0:  # The context got smaller (a compaction): no exact parts until the next read.
+                sizes = {}
+            if sizes:
+                length = max(self.context_length, 1)
+                compact_at = max(0.0, 1 - detail["buffer"] / length) if detail["buffer"] else 1.0
+                return {**reply, "compact_at": compact_at, "source": "acp-context",
+                        "parts": [{"kind": k, "tokens": t} for k, t in sizes.items()]}
+        # The estimates cannot be more than the total of the harness. The messages are the most certain part.
+        messages = min(estimate_tokens(self.messages()[1:]), tokens)
+        mcp = min(acp_mcp.tool_tokens(self) if self._mcp_secret is not None else 0, tokens - messages)
+        return {**reply, "parts": [{"kind": "agent", "tokens": tokens - mcp - messages},
+                                   {"kind": "mcp_tools", "tokens": mcp}, {"kind": "messages", "tokens": messages}]}
+
+    def _reads_context(self) -> bool:
+        """True: the harness is Claude Code, and its /context gives the parts of the context."""
+        return self._agent_name in CLAUDE_ADAPTERS
+
+    async def refresh_context(self) -> bool:
+        """Read the parts of the context with /context of Claude Code, after a change of the used tokens.
+        True: new parts for the context view. Not in a turn: the harness runs one prompt at a time."""
+        if not self._reads_context() or self.in_turn or self._usage_known is None:
+            return False
+        key = (self.acp_session, self._usage_known[0])
+        if self._context_key == key:
+            return False
+        if self._context_probe is None or self._context_probe.done():
+            self._context_probe = asyncio.create_task(self._read_context())
+        try:
+            detail = await asyncio.shield(self._context_probe)
+        except Exception:  # noqa: BLE001 - the estimate stays.
+            log.exception("%s did not give its context", self.harness.name)
+            return False
+        if detail is None:
+            return False
+        self._context_detail = detail
+        self._context_key = key
+        return True
+
+    async def _read_context(self) -> dict[str, Any] | None:
+        conn = self._conn
+        if conn is None or conn.closed or self.acp_session is None or not self._loaded:
+            return None
+        self._probe_text = []
+        try:
+            await conn.request("session/prompt", {"sessionId": self.acp_session,
+                                                  "prompt": [{"type": "text", "text": "/context"}]},
+                               timeout=CONTEXT_TIMEOUT)
+            text = "".join(self._probe_text)
+        except AcpError as e:
+            log.info("%s did not give its context: %s", self.harness.name, e)
+            if not conn.closed:  # A timeout: stop the command, so that the next prompt does not wait for it.
+                try:
+                    await conn.notify("session/cancel", {"sessionId": self.acp_session})
+                except AcpError:
+                    pass
+            return None
+        finally:
+            self._probe_text = None
+        detail = parse_context_markdown(text)
+        if detail is None:
+            log.info("%s gave no context table for /context", self.harness.name)
+        return detail
+
+    async def _wait_context_probe(self) -> None:
+        probe = self._context_probe
+        if probe is not None and not probe.done():
+            await asyncio.wait({probe}, timeout=CONTEXT_TIMEOUT + 1)
 
     def public_harness(self) -> dict[str, Any]:
         """The harness of the session for the client: its models and its / commands, when it has them."""

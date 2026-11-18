@@ -569,3 +569,73 @@ def test_the_delta_recap_names_the_other_agent():
                           None, "Codex", delta=True)
     assert recap.startswith("[Harness: After your last turn in this conversation, Codex continued it.")
     assert "User: Fix it" in recap and "Agent: Done" in recap
+
+
+def _parts(usage: dict) -> dict[str, int]:
+    return {p["kind"]: p["tokens"] for p in usage["parts"]}
+
+
+def test_acp_context_breakdown_estimates_the_parts(daemon, project, fake_acp, monkeypatch):
+    """A harness that gives only the total: the messages, the Harness MCP tools, and the rest of the harness."""
+    monkeypatch.setenv("FAKE_ACP_USED", "60000")
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "hello"})
+    c.until("turn.end", timeout=30)
+    c.send({"type": "context.get"})
+    usage = c.until("context.usage")[0]
+    parts = _parts(usage)
+    assert usage["tokens"] == 60000 and usage["length"] == 200000 and usage["source"] == "acp"
+    assert set(parts) == {"agent", "mcp_tools", "messages"}
+    assert sum(parts.values()) == 60000
+    assert 0 < parts["messages"] < 1000 and 0 < parts["mcp_tools"] < parts["agent"], parts
+    assert "/context" not in json.dumps(methods_params(fake_acp))  # Not Claude Code: no /context command.
+    c.close()
+
+
+def test_acp_context_breakdown_of_claude_code(daemon, project, fake_acp, monkeypatch):
+    """Claude Code: Harness runs its /context command, and the context view shows the parts of the table."""
+    monkeypatch.setenv("FAKE_ACP_CLAUDE", "1")
+    c = Client(daemon)
+    c.new_session(project)
+    c.send({"type": "prompt", "text": "hello"})
+    c.until("turn.end", timeout=30)
+    c.send({"type": "context.get"})
+    assert c.until("context.usage")[0]["source"] == "acp"  # The estimate at once.
+    usage, seen = c.until("context.usage", timeout=30)  # Then the parts of /context.
+    assert not any(m["type"] in ("token", "turn.end") for m in seen)  # The output is not in the chat.
+    assert usage["source"] == "acp-context"
+    parts = _parts(usage)
+    # The rows of the table, scaled to the total of usage_update. The deferred rows are not in the window.
+    assert set(parts) == {"system", "tools", "mcp_tools", "instructions", "skills", "messages"}
+    assert sum(parts.values()) == 1234
+    assert parts["tools"] > parts["system"] > parts["messages"] > parts["mcp_tools"] > parts["skills"]
+    assert usage["compact_at"] == pytest.approx(1 - 33000 / 200000)
+    # The same total: no second /context command.
+    c.send({"type": "context.get"})
+    assert c.until("context.usage")[0]["source"] == "acp-context"
+    c.send({"type": "prompt", "text": "blocks"})
+    end, seen = c.until("turn.end", timeout=30)
+    assert "".join(m["text"] for m in seen if m["type"] == "token") == "blocks=1"
+    prompts = [p for p in methods_params(fake_acp) if p[0] == "session/prompt"]
+    assert sum(1 for p in prompts if p[1]["prompt"][0]["text"] == "/context") == 1
+    c.close()
+
+
+def methods_params(log: Path) -> list[tuple[str, dict]]:
+    if not log.exists():
+        return []
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    return [(r.get("method") or "reply", r.get("params") or {}) for r in rows]
+
+
+def test_parse_context_markdown():
+    from harness_daemon.acp import parse_context_markdown
+    text = ("## Context Usage\n\n### Estimated usage by category\n\n| Category | Tokens | Percentage |\n"
+            "|---|---|---|\n| System prompt | 2.8k | 0.3% |\n| MCP tools (deferred) | 1.6k | 0.2% |\n"
+            "| MCP server instructions | 717 | 0.1% |\n| MCP tools | 711 | 0.1% |\n| Custom agents | < 20 | 0% |\n"
+            "| Something new | 1k | 0.1% |\n| Free space | 934.4k | 93.4% |\n| Autocompact buffer | 33k | 3.3% |\n\n"
+            "### MCP Tools\n\n| Tool | Server | Tokens |\n|---|---|---|\n| a | b | 161 |\n")
+    assert parse_context_markdown(text) == {
+        "parts": {"system": 3800, "mcp_tools": 1428, "agents": 20}, "buffer": 33000}
+    assert parse_context_markdown("Unknown command: /context") is None
