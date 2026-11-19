@@ -10243,6 +10243,103 @@ textarea.setting-textarea:disabled {
   overflow-wrap: anywhere;
 }
 
+/* "Update agents automatically" (AgentUpdatesToast.tsx): one row for each agent, stacked in one popup. */
+.agent-updates-done .update-toast-icon {
+  color: var(--success-mark);
+}
+
+.agent-updates-failed .update-toast-icon {
+  color: var(--warning);
+}
+
+.agent-updates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 280px;
+  margin: 6px 0 0;
+  padding: 0 6px 0 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.agent-update-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.agent-update-row > .agent-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+.agent-update-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The track has flex: 1 for a row. In this column, it keeps its 6px height. */
+.agent-update-main > .update-toast-track {
+  flex: none;
+}
+
+.agent-update-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.agent-update-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-update-version {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-update-stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.agent-update-stage svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.agent-update-done .agent-update-stage svg {
+  color: var(--success-mark);
+}
+
+.agent-update-failed .agent-update-stage {
+  color: var(--text);
+}
+
+.agent-update-failed .agent-update-stage svg {
+  color: var(--warning);
+}
+
 /* The session rail (SessionRail.tsx): a column at the right of a session, as in Claude Code. In a
    narrow window it covers the workspace. */
 .session-body {

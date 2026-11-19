@@ -453,6 +453,17 @@ export interface HarnessProgress {
   total: number;
 }
 
+/** An agent of "Update agents automatically" (harnesses.updating): the popup at the bottom right. */
+export interface AgentUpdateItem extends HarnessProgress {
+  id: string;
+  name: string;
+  icon?: string | null; // The logo of the agent (a data URL), or null.
+  from: string | null; // The version of the download before the update.
+  to: string | null; // The new version.
+  state: "waiting" | "running" | "done" | "failed";
+  error: string | null; // The reason of a failed update.
+}
+
 /** The harness of an ACP session. */
 export interface SessionHarness {
   id: string;
@@ -1441,6 +1452,8 @@ export type DaemonMessage =
   // Settings > Agents. auto_model: the model of Auto mode for the agents of other harnesses ("provider/model"), or null.
   | { type: "harnesses"; items: HarnessItem[]; current: string; path: string; auto_model?: string | null }
   | ({ type: "harnesses.progress"; id: string } & HarnessProgress) // A harness download runs.
+  // "Update agents automatically": all the agents of the update that runs now (or that ran last), to each window.
+  | { type: "harnesses.updating"; items: AgentUpdateItem[] }
   | ({ type: "usage.summary" } & UsageSummary) // The reply to usage.summary. Errors have the ref usage.summary.
   | { type: "usage.prices"; models: Record<string, UsageModelPrice> } // The reply to usage.prices.set.
   // The sign-in terminal of the agent runs. kind "update": the update command of the program (agents.update_program).

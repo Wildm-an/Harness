@@ -336,8 +336,9 @@ def remove(harness_id: str) -> None:
                            "then try again.") from None
 
 
-async def install(spec: "HarnessSpec", progress: Progress) -> dict[str, Any]:
-    """Download the newest version of the harness. Return the new install.json."""
+async def install(spec: "HarnessSpec", progress: Progress, refresh: bool = True) -> dict[str, Any]:
+    """Download the newest version of the harness. Return the new install.json. ``refresh`` False: the caller
+    read the registry just now (the automatic updates read it one time for all the agents)."""
     if spec.id in _running:
         raise InstallError(f"{spec.name} downloads now.")
     _running[spec.id] = {"stage": "Starting", "received": 0, "total": 0}
@@ -347,8 +348,9 @@ async def install(spec: "HarnessSpec", progress: Progress) -> dict[str, Any]:
         await progress(stage, received, total)
 
     try:
-        await report("Checking the registry")
-        await refresh_registry(force=True)
+        if refresh:
+            await report("Checking the registry")
+            await refresh_registry(force=True)
         chosen = plan(spec)
         if chosen is None:
             raise InstallError(f"Harness cannot download {spec.name} for this computer ({platform_key()}). "
