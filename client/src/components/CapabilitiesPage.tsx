@@ -187,6 +187,11 @@ function SkillView({ detail, onBack }: { detail: SkillDetail; onBack: () => void
 /** The two lists of the Skills tab: the skills that come with Harness, and the skills that the user added. */
 export type SkillGroup = "builtin" | "added";
 
+/** The saved group, or null for an unknown value. */
+export function toSkillGroup(value: string | null | undefined): SkillGroup | null {
+  return value === "builtin" || value === "added" ? value : null;
+}
+
 const SKILL_GROUPS: { id: SkillGroup; title: string; desc: string; icon: LucideIcon }[] = [
   { id: "builtin", title: "Built-in skills", desc: "Skills that come with Harness: documents, code review, debugging, and skill and MCP server tools.", icon: Package },
   { id: "added", title: "Added skills", desc: "Skills from your skill folders, the project, and the plugins.", icon: FolderPlus },
@@ -1015,6 +1020,24 @@ export function toCapTab(value: string): CapTab {
   return value === "mcp" || value === "plugins" || value === "connections" ? value : "skills";
 }
 
+/** The inner place of the page, for the back and forward history: the tab, the skill group, and the open skill. */
+export interface CapPlace {
+  tab: CapTab;
+  group: SkillGroup | null;
+  skill: string | null;
+}
+
+/** The inner place as text: "tab/group/skill". A skill name can have "/" in it: it is the last part. */
+export function capPlaceText(p: CapPlace): string {
+  return [p.tab, p.group ?? "", p.skill ?? ""].join("/");
+}
+
+/** The inner place of a text from capPlaceText. */
+export function parseCapPlace(text: string | undefined): CapPlace {
+  const [tab = "", group = "", ...skill] = (text ?? "").split("/");
+  return { tab: toCapTab(tab), group: toSkillGroup(group), skill: skill.join("/") || null };
+}
+
 export const CapabilitiesPage = memo(function CapabilitiesPage({
   tab,
   onTab,
@@ -1037,6 +1060,8 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   onConnector,
   onEditConfig,
   focusMcp = null,
+  skillGroup,
+  onSkillGroup,
 }: {
   tab: CapTab;
   onTab: (tab: CapTab) => void;
@@ -1060,6 +1085,9 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
   onEditConfig: () => void;
   // The MCP server row to open and show, after a click on its failure popup. `key` changes with each click.
   focusMcp?: { name: string; key: number } | null;
+  // The open group of the Skills tab, or null for the list of groups. The app keeps it in the back and forward history.
+  skillGroup: SkillGroup | null;
+  onSkillGroup: (group: SkillGroup | null) => void;
 }) {
   const [query, setQuery] = useState("");
   // A click on a failure popup: the filter must not hide the row.
@@ -1067,7 +1095,7 @@ export const CapabilitiesPage = memo(function CapabilitiesPage({
     if (focusMcp) setQuery("");
   }, [focusMcp]);
   const [clickedSkill, setClickedSkill] = useState<string | null>(null); // The skill that loads (M17).
-  const [skillGroup, setSkillGroup] = useState<SkillGroup | null>(null);
+  const setSkillGroup = onSkillGroup;
   const groupSkills = useMemo(() => (skills && skillGroup ? skillsOfGroup(skills, skillGroup) : []), [skills, skillGroup]);
   const shownSkills = useMemo(() => groupSkills.filter((i) => matches(query, i.name, i.description)), [groupSkills, query]);
   const group = SKILL_GROUPS.find((g) => g.id === skillGroup);

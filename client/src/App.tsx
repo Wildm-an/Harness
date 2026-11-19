@@ -61,7 +61,17 @@ import {
   type WebKeyProvider,
 } from "./lib/providerKeys";
 import { CookbookScreen } from "./cookbook/CookbookScreen";
-import { CapabilitiesPage, toCapTab, type CapTab, type ConnectorAction, type DeviceCode, type McpAuthAction } from "./components/CapabilitiesPage";
+import {
+  CapabilitiesPage,
+  capPlaceText,
+  parseCapPlace,
+  toCapTab,
+  type CapTab,
+  type ConnectorAction,
+  type DeviceCode,
+  type McpAuthAction,
+  type SkillGroup,
+} from "./components/CapabilitiesPage";
 import { PluginsScreen } from "./components/PluginsScreen";
 import { useCookbook } from "./cookbook/useCookbook";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
@@ -103,7 +113,7 @@ import {
   shortcutLabel,
   shortcutPane,
 } from "./layout/shortcuts";
-import { emptyHistory, forget, placeOf, samePlace, step, visit, type NavHistory, type Place } from "./layout/history";
+import { emptyHistory, forget, placeOf, replace, sameScreen, samePlace, step, visit, type NavHistory, type Place } from "./layout/history";
 import { TerminalPane, forgetSessionTerminals } from "./components/TerminalPane";
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
@@ -541,6 +551,8 @@ export default function App() {
   // The Capabilities page: the skills, the open skill, the project folder, and whether a session is open in it.
   const [skillItems, setSkillItems] = useState<CommandItem[] | null>(null);
   const [skillDetail, setSkillDetail] = useState<SkillDetail | null | "loading">(null);
+  const [skillName, setSkillName] = useState<string | null>(null); // The skill that the user opened last.
+  const [skillGroup, setSkillGroup] = useState<SkillGroup | null>(null); // The open group of the Skills tab.
   const [capsFolder, setCapsFolder] = useState<string | null>(null);
   const [capsLive, setCapsLive] = useState(false);
   const capsFallback = useRef(false); // An older daemon: the page asks for the skills and the MCP servers one at a time.
@@ -583,6 +595,7 @@ export default function App() {
   const [routines, setRoutines] = useState<RoutineItem[] | null>(null);
   const [routineRuns, setRoutineRuns] = useState<{ routine_id: string; items: RoutineRun[] } | null>(null);
   const [routineError, setRoutineError] = useState<string | null>(null);
+  const [routineOpen, setRoutineOpen] = useState<string | null>(null); // The open routine, or "new". null: the list.
   const [routinesFolder, setRoutinesFolder] = useState<string | null>(null); // ~/.harness/routines on the daemon computer.
   const [routineSaved, setRoutineSaved] = useState<{ id: string; key: number } | null>(null);
   // The new API token of a routine, shown one time on the Routines page.
@@ -2560,6 +2573,7 @@ export default function App() {
     capsFallback.current = false;
     setSkillItems(null);
     setSkillDetail(null);
+    setSkillGroup(null);
     setMcpStatus(null);
     setCapsLive(session !== null);
     setCapsFolder(session?.cwd ?? folder);
@@ -2576,6 +2590,7 @@ export default function App() {
   /** Opens the Routines page: the prompts that the daemon runs on a schedule. */
   const openRoutines = () => {
     setRoutineError(null);
+    setRoutineOpen(null);
     setSettingsPage(null);
     setScreen("routines");
     sendSafely({ type: "routines.list" });
@@ -2590,6 +2605,7 @@ export default function App() {
 
   const openSkill = useCallback(
     (name: string) => {
+      setSkillName(name);
       setSkillDetail("loading");
       const cwd = !capsLive && capsFolder ? { cwd: capsFolder } : {};
       if (!sendSafely({ type: "skills.get", name, ...cwd })) setSkillDetail(null);
@@ -3458,17 +3474,52 @@ export default function App() {
     if (narrow()) setSidebarOpen(false);
   };
   // Back and forward, as in Claude. Each new screen or session goes into the history.
+  // A place also has the inner place of the page (the open routine, the tab and the skill of the Capabilities
+  // page) and the open Settings page. The mouse Back button then steps back through each of them (the user asked
+  // for this).
   const [nav, setNav] = useState<NavHistory>(emptyHistory);
   const navTarget = useRef<Place | null>(null); // The place that a back or forward step opens.
+  const navReplace = useRef(false); // The next change replaces the current place (history.replace).
+  const shownSkill = skillDetail === null ? null : skillDetail === "loading" ? skillName : skillDetail.name;
+  const navSub =
+    screen === "routines"
+      ? routineOpen
+      : screen === "capabilities"
+        ? capPlaceText({ tab: capsTab, group: skillGroup, skill: shownSkill })
+        : null;
   useEffect(() => {
-    const place = placeOf(screen, session?.id);
+    const place = placeOf(screen, session?.id, { sub: navSub ?? undefined, settings: settingsPage ?? undefined });
     if (!place) return;
     const target = navTarget.current;
-    navTarget.current = null;
-    if (!samePlace(target ?? undefined, place)) setNav((h) => visit(h, place));
-  }, [screen, session?.id]);
+    if (target) {
+      if (samePlace(target, place)) {
+        navTarget.current = null;
+        return;
+      }
+      // A step to a session: the screen changes when the session opens. The places before that are not new places.
+      if (target.screen === "chat" && !sameScreen(target, place) && busy) return;
+      navTarget.current = null;
+    }
+    const swap = navReplace.current;
+    navReplace.current = false;
+    setNav((h) => (swap ? replace(h, place) : visit(h, place)));
+  }, [screen, session?.id, navSub, settingsPage, busy]);
 
+  /** Opens the screen of a place, then its inner place and its Settings page. */
   const openPlace = (place: Place) => {
+    if (!sameScreen(placeOf(screen, session?.id) ?? undefined, place)) openScreen(place);
+    if (place.screen === "routines") setRoutineOpen(place.sub ?? null);
+    if (place.screen === "capabilities") {
+      const inner = parseCapPlace(place.sub);
+      setCapsTab(inner.tab);
+      setSkillGroup(inner.group);
+      if (inner.skill) openSkill(inner.skill);
+      else setSkillDetail(null);
+    }
+    if (place.settings) openSettings(place.settings as SettingsPage);
+    else setSettingsPage(null);
+  };
+  const openScreen = (place: Place) => {
     switch (place.screen) {
       case "start":
         return newSession();
@@ -3491,12 +3542,19 @@ export default function App() {
     }
   };
   const canNav = status === "open" && !busy;
+  const settingsGuard = useRef<((title: string, after: () => void) => void) | null>(null);
   const goNav = (delta: -1 | 1) => {
     const next = canNav ? step(nav, delta) : null;
     if (!next) return;
-    navTarget.current = next.place;
-    setNav(next.history);
-    openPlace(next.place);
+    const go = () => {
+      navTarget.current = next.place;
+      setNav(next.history);
+      openPlace(next.place);
+    };
+    // A step that leaves the current Settings page asks first when a form has typed text.
+    const guard = settingsPage && (next.place.settings ?? null) !== settingsPage ? settingsGuard.current : null;
+    if (guard) guard(next.place.settings ? "Leave this page?" : "Close the settings?", go);
+    else go();
   };
   const goNavRef = useRef(goNav);
   goNavRef.current = goNav;
@@ -3903,12 +3961,19 @@ export default function App() {
             }}
             onTokenDone={() => setRoutineToken(null)}
             onOpenSession={resumeSession}
+            openId={routineOpen}
+            onOpenId={(id, swap) => {
+              navReplace.current = !!swap;
+              setRoutineOpen(id);
+            }}
           />
         )}
         {screen === "capabilities" && (
           <CapabilitiesPage
             tab={capsTab}
             onTab={setCapsTab}
+            skillGroup={skillGroup}
+            onSkillGroup={setSkillGroup}
             folder={capsFolder}
             live={capsLive && session !== null}
             skills={skillItems}
@@ -4068,6 +4133,7 @@ export default function App() {
             onPage={openSettings}
             onClose={() => setSettingsPage(null)}
             closeRef={settingsClose}
+            guardRef={settingsGuard}
             configPath={userSettingsInfo?.path ?? null}
             agentUpdates={agentUpdateCount(agents)}
             onOpenConfig={
