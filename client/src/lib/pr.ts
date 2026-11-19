@@ -311,6 +311,7 @@ export interface CiSummary {
   state: "pass" | "fail" | "pending" | "skip";
   text: string;
   tip: string;
+  count: string; // "2/4": the checks that passed or were skipped, of all checks (as in the Claude app).
 }
 
 /** The CI line of a pull request, else null: no checks, or a daemon with no checks. */
@@ -319,10 +320,11 @@ export function ciSummary(checks: PrChecks | null | undefined): CiSummary | null
   const { total, failed, pending, passed, skipped } = checks;
   const parts = [failed && `${failed} failed`, pending && `${pending} running`, passed && `${passed} passed`, skipped && `${skipped} skipped`].filter(Boolean).join(", ");
   const tip = `${plural(total, "check")}: ${parts}.`;
-  if (checks.state === "fail") return { state: "fail", text: failed === total ? `${plural(total, "check")} failed` : `${failed} of ${total} checks failed`, tip };
-  if (checks.state === "pending") return { state: "pending", text: pending === total ? `${plural(total, "check")} running` : `${pending} of ${total} checks running`, tip };
-  if (checks.state === "pass") return { state: "pass", text: "All checks passed", tip };
-  return { state: "skip", text: "Checks skipped", tip };
+  const count = `${passed + skipped}/${total}`;
+  if (checks.state === "fail") return { state: "fail", text: failed === total ? `${plural(total, "check")} failed` : `${failed} of ${total} checks failed`, tip, count };
+  if (checks.state === "pending") return { state: "pending", text: pending === total ? `${plural(total, "check")} running` : `${pending} of ${total} checks running`, tip, count };
+  if (checks.state === "pass") return { state: "pass", text: "All checks passed", tip, count };
+  return { state: "skip", text: "Checks skipped", tip, count };
 }
 
 /** The GitHub page of the checks of a pull request, else null. */

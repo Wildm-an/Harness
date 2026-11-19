@@ -17,29 +17,26 @@ const pr: PullRequest = { number: 78, state: "open", url: "https://github.com/o/
 const row = (info: PullRequest) => [{ url: info.url, number: info.number, repo: info.repo ?? null, info }];
 const noop = () => undefined;
 
-describe("the CI line of a rail PR row", () => {
-  it("shows the failed checks and Fix CI", () => {
+describe("the CI count of a rail PR row", () => {
+  it("shows the GitHub icon and the count of the checks, with the checks closed", () => {
     const html = renderToStaticMarkup(<RailPrList prs={row(pr)} onOpen={noop} onFixCi={noop} />);
-    expect(html).toContain("2 of 4 checks failed");
+    expect(html).toContain("rail-ci-count");
+    expect(html).toContain("<span>2/4</span>");
     expect(html).toContain("ci-icon ci-fail");
-    expect(html).toContain("Fix CI");
+    expect(html).toContain('aria-label="2 of 4 checks failed. Show the checks."');
+    expect(html).not.toContain("rail-ci-menu");
   });
 
-  it("hides Fix CI while a turn runs, with no connection, and for a merged pull request", () => {
-    expect(renderToStaticMarkup(<RailPrList prs={row(pr)} onOpen={noop} onFixCi={noop} running />)).not.toContain("Fix CI");
-    expect(renderToStaticMarkup(<RailPrList prs={row(pr)} onOpen={noop} onFixCi={null} />)).not.toContain("Fix CI");
-    expect(renderToStaticMarkup(<RailPrList prs={row({ ...pr, state: "merged" })} onOpen={noop} onFixCi={noop} />)).not.toContain("Fix CI");
-  });
-
-  it("shows no CI line with no checks", () => {
+  it("shows no count with no checks", () => {
     const html = renderToStaticMarkup(<RailPrList prs={row({ ...pr, checks: null })} onOpen={noop} onFixCi={noop} />);
     expect(html).not.toContain("rail-ci");
   });
 
-  it("shows passed checks with no Fix CI", () => {
-    const html = renderToStaticMarkup(<RailPrList prs={row({ ...pr, checks: { ...checks, state: "pass", passed: 4, failed: 0 } })} onOpen={noop} onFixCi={noop} />);
-    expect(html).toContain("All checks passed");
-    expect(html).not.toContain("Fix CI");
+  it("shows the running icon for running checks", () => {
+    const html = renderToStaticMarkup(<RailPrList prs={row({ ...pr, checks: { ...checks, state: "pending", failed: 0, pending: 2 } })} onOpen={noop} onFixCi={noop} />);
+    expect(html).toContain("ci-icon ci-pending");
+    expect(html).toContain("ci-icon-arc");
+    expect(html).toContain("<span>2/4</span>");
   });
 });
 

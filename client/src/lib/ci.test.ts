@@ -22,6 +22,12 @@ describe("ciSummary", () => {
     expect(ciSummary(checks({ state: null, passed: 0, skipped: 4 }))?.state).toBe("skip");
   });
 
+  it("counts the passed and the skipped checks of all checks", () => {
+    expect(ciSummary(checks({ state: "fail", passed: 2, failed: 2 }))?.count).toBe("2/4");
+    expect(ciSummary(checks({ state: "pending", passed: 1, skipped: 1, pending: 2 }))?.count).toBe("2/4");
+    expect(ciSummary(checks({}))?.count).toBe("4/4");
+  });
+
   it("is null with no checks", () => {
     expect(ciSummary(null)).toBeNull();
     expect(ciSummary(undefined)).toBeNull();

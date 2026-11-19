@@ -4,19 +4,14 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { CircleCheck, CircleDot, CircleMinus, CircleSlash, CircleX, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft } from "lucide-react";
-import type { CheckState, PrChecks, PrState, PullRequest } from "../daemon/protocol";
-import { PR_STATE_TEXT, ciSummary, groupNumber, prRefText, timeAgo, type CiSummary } from "../lib/pr";
+import { GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft } from "lucide-react";
+import type { PrChecks, PrState, PullRequest } from "../daemon/protocol";
+import { PR_STATE_TEXT, ciSummary, groupNumber, prRefText, timeAgo } from "../lib/pr";
+import { CiIcon } from "./CiIcon";
+
+export { CiIcon };
 
 const ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
-
-const CHECK_ICONS: Record<CheckState, typeof CircleCheck> = { pass: CircleCheck, fail: CircleX, pending: CircleDot, skip: CircleMinus, cancel: CircleSlash };
-
-/** The icon of a CI state in its color (Clear Sight): green passed, vermilion failed, yellow running, gray skipped. */
-export function CiIcon({ state, size = 13, className = "" }: { state: CheckState | CiSummary["state"]; size?: number; className?: string }) {
-  const Icon = CHECK_ICONS[state];
-  return <Icon size={size} aria-hidden className={`ci-icon ci-${state}${className ? ` ${className}` : ""}`} />;
-}
 
 const CARD_CHECKS = 5; // The failed or running checks that the hover card lists, at most.
 
