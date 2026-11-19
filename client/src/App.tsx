@@ -3325,7 +3325,7 @@ export default function App() {
     setSplit(id);
     setSplitFocus((k) => k + 1);
   };
-  // The Delegates cards of the chat (Delegates.tsx): the child agents of delegate_task, from the sidebar list. A click
+  // The Subagents cards of the chat (Delegates.tsx): the child agents of delegate_task, from the sidebar list. A click
   // opens the chat of a delegate in the split pane.
   const openSplitRef = useRef(openSplit);
   openSplitRef.current = openSplit;

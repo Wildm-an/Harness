@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectorItem, McpServerItem, SessionSummary, TaskItem } from "../daemon/protocol";
-import { RAIL_SECTIONS, splitDelegates, delegateCallTitle, delegateElapsed, delegateSessionId, delegateTip, railDelegates, connectorsHeadValue, contextLevel, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, percentText1, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
+import { RAIL_SECTIONS, splitDelegates, subagentCount, subagentSummary, subagentsElapsed, subagentsHeading, delegateCallTitle, delegateElapsed, delegateSessionId, delegateTip, railDelegates, connectorsHeadValue, contextLevel, contextShare, railConnectors, foldedValue, moveSection, parseOrder, stepSection, type RailSection, needsRailRoom, parseFolded, percentText, percentText1, prStateText, railAfterPanes, railShown, railTasks, sortTasks, splitTasks, taskDetailText, taskSummary, toggleFolded } from "./sessionRail";
 
 const task = (id: string, status: TaskItem["status"], started_at: number): TaskItem => ({
   id,
@@ -222,7 +222,7 @@ describe("the context color level", () => {
   });
 });
 
-describe("the Delegates section", () => {
+describe("the Subagents section", () => {
   const session = (id: string, extra: Partial<SessionSummary>): SessionSummary => ({
     id, cwd: "C:/p", provider: "fake", model: "fake/m", title: id, created_at: 100, updated_at: 100, ...extra,
   });
@@ -250,7 +250,18 @@ describe("the Delegates section", () => {
     expect(delegateTip(d, "Harness", 1000)).toBe(["a", "Agent: Harness", "Model: m", "Reasoning: high", "Failed after 1m"].join("\n"));
   });
 
-  it("puts the ended delegates in the Previous agents group", () => {
+  it("gives the lines of the Subagents card and heading", () => {
+    expect(subagentCount(1)).toBe("1 subagent");
+    expect(subagentCount(2)).toBe("2 subagents");
+    expect(subagentSummary(["working", "working"])).toBe("2 working");
+    expect(subagentSummary(["completed", "failed", "starting", "completed"])).toBe("1 starting · 1 failed · 2 completed");
+    expect(subagentsElapsed([{ startedAt: 100, endedAt: null }, { startedAt: 110, endedAt: 130 }], 113)).toBe("13s");
+    expect(subagentsElapsed([{ startedAt: 100, endedAt: 150 }, { startedAt: 110, endedAt: 190 }], 1000)).toBe("1m");
+    expect(subagentsHeading([{ state: "working" }, { state: "waiting" }, { state: "completed" }])).toBe("2 running");
+    expect(subagentsHeading([{ state: "completed" }])).toBe("1");
+  });
+
+  it("puts the ended delegates in the Previous subagents group", () => {
     const list = railDelegates(
       [
         session("a", { parent_id: "p", delegate: { ...run, ended_at: 150, status: "failed" } }),

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, GitMerge, Plus, Search, type LucideIcon } from "lucide-react";
 import type { ConnectionStatus } from "../daemon/connection";
 import type { PrStatus, ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
@@ -406,8 +406,14 @@ export function sessionsToShowFolded<T extends { id: string }>(
   return sessions.filter((s) => s.id === activeId || sessionState(running.get(s.id), unread.has(s.id)).kind !== "idle");
 }
 
+/** The sessions of the sidebar: not the child agents of delegate_task. The Subagents section of the rail and the
+ * Subagents card of the chat show them (UI_RULES V6c5). */
+export function sidebarSessions<T extends Pick<SessionSummary, "delegate">>(sessions: T[]): T[] {
+  return sessions.filter((s) => !s.delegate);
+}
+
 export function Sidebar({
-  sessions,
+  sessions: allSessions,
   projects,
   running,
   unread,
@@ -454,6 +460,7 @@ export function Sidebar({
   searchKey?: string; // "Ctrl+K".
 }) {
   const organization = useSidebarOrganization();
+  const sessions = useMemo(() => sidebarSessions(allSessions), [allSessions]);
   const [expanded, setExpanded] = useState(loadExpanded);
   const open = status === "open";
   const [view, setView] = useState<SidebarView>(loadView);

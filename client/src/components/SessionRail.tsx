@@ -25,6 +25,7 @@ import {
   foldedValue,
   railConnectors,
   railTasks,
+  subagentsHeading,
   taskDetailText,
   taskSummary,
   toggleFolded,
@@ -441,9 +442,10 @@ export function SessionRail({
                     </span>
                   </span>
                 )}
+                {/* "Subagents · 2 running", after the title, as the Lineage section of T3 Code (the user asked for this). */}
                 {s.id === "delegates" && (
-                  <span className="rail-head-value" aria-label={`Delegates of this session: ${delegateCount(delegates)}`}>
-                    {delegateCount(delegates)}
+                  <span className="rail-head-inline" aria-label={`Subagents of this session: ${subagentsHeading(delegates)}`}>
+                    · {subagentsHeading(delegates)}
                   </span>
                 )}
                 {s.id === "connectors" && connectorsValue && (
@@ -597,12 +599,6 @@ function RailBrowserView({
       {browser.agent && <span className="sr-only">The agent uses this page now.</span>}
     </div>
   );
-}
-
-/** The heading value of the Delegates section: "{working}/{all}" while some work, else the count. */
-function delegateCount(delegates: RailDelegate[]): string {
-  const working = delegates.filter((d) => d.state === "working" || d.state === "waiting").length;
-  return working > 0 ? `${working}/${delegates.length}` : String(delegates.length);
 }
 
 function RailRow({ label, title, children }: { label: string; title?: string; children: ReactNode }) {

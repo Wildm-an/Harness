@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectItem, SessionSummary } from "../daemon/protocol";
-import { ancestry, filterStatus, folderName, groupByProject, hiddenActivity, mergeOrder, moveKey, nestSessions, orderGroups, pathKey, sessionState, sessionsToShowFolded, sortSessions, topSessions } from "./Sidebar";
+import { ancestry, filterStatus, folderName, groupByProject, hiddenActivity, mergeOrder, moveKey, nestSessions, orderGroups, pathKey, sessionState, sessionsToShowFolded, sidebarSessions, sortSessions, topSessions } from "./Sidebar";
 import { activityLine, nestedLabel } from "./SessionRow";
 import { searchSessions } from "./SessionSearch";
 
@@ -85,6 +85,12 @@ describe("sidebar view", () => {
     expect(filterStatus(list, "active").map((x) => x.id)).toEqual(["a", "c"]);
     expect(filterStatus(list, "archived").map((x) => x.id)).toEqual(["b"]);
     expect(filterStatus(list, "all")).toHaveLength(3);
+  });
+
+  it("hides the child agents of delegate_task", () => {
+    const delegate = { agent: null, model: null, effort: null, ended_at: null, status: "running" as const };
+    const withChild = [...list, s("child", 40, 4, { parent_id: "a", delegate }), s("fork", 40, 4, { parent_id: "a" })];
+    expect(sidebarSessions(withChild).map((x) => x.id)).toEqual(["a", "b", "c", "fork"]);
   });
 
   it("sorts by the last activity or the creation time", () => {

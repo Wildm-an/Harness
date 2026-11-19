@@ -17,7 +17,7 @@ describe("groupTools", () => {
   });
 });
 
-describe("the Delegates card", () => {
+describe("the Subagents card", () => {
   const call = (id: string, name: string): ChatItem => ({ kind: "tool", id, name, input: {}, status: "done" });
 
   it("takes the delegate_task calls in a row out of the tool groups", () => {
