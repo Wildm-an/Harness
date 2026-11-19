@@ -265,11 +265,13 @@ async def lifespan(app: FastAPI):
     ROUTINES.scheduler.start()
     archiver = asyncio.create_task(_archive_loop(app.state.storage))
     serves = asyncio.create_task(_drop_stopped_local_serves())
+    agent_updater = asyncio.create_task(_auto_update_loop())  # "Update agents automatically".
     try:
         yield
     finally:
         archiver.cancel()
         serves.cancel()
+        agent_updater.cancel()
         await ROUTINES.scheduler.stop()
         ROUTINES.scheduler = None
         await HEADLESS.close_all()
@@ -981,6 +983,8 @@ class Connection:
         WINDOWS.add(self)
         if HEADLESS is not None and HEADLESS is not self:  # The sessions with no window that work now.
             await self.send(HEADLESS.background_message())
+        if _updating_active():  # The popup of the automatic agent updates.
+            await self.send(_updating_message())
         try:
             while True:
                 try:
@@ -4306,6 +4310,8 @@ async def on_user_settings_set(conn: Connection, msg: dict[str, Any]) -> None:
     await _send_user_settings(conn)
     if "auto_archive_days" in changes:
         await archive_inactive(conn.storage)
+    if changes.get("agents_auto_update") is True:
+        _start_auto_update()
 
 
 # Settings > Agents: the harnesses that can run the agent loop through ACP (acp_harnesses.py).
@@ -4386,9 +4392,9 @@ async def _refresh_harness_registry(conn: Connection) -> None:
     try:
         if await acp_install.refresh_registry():
             await _send_harnesses(conn)
-            await _auto_update_agents(conn)
     except Exception:  # noqa: BLE001 - the connection closed.
         log.debug("The harness list did not go to the client", exc_info=True)
+    _start_auto_update()  # Also when the registry did not change: the copy can have an update already.
 
 
 @handler("harnesses.list")
@@ -4405,8 +4411,8 @@ async def on_harnesses_list(conn: Connection, msg: dict[str, Any]) -> None:
     elif acp_install.registry_stale():
         asyncio.create_task(_refresh_harness_registry(conn))
     await _send_harnesses(conn)
-    if msg.get("refresh") is True:
-        await _auto_update_agents(conn)
+    if msg.get("refresh") is True or not acp_install.registry_stale():
+        _start_auto_update()
 
 
 async def _check_programs(conn: Connection, ids: list[str]) -> None:
@@ -4430,17 +4436,107 @@ def _download_updates(enabled_only: bool) -> list[acp_harnesses.HarnessSpec]:
     return found
 
 
-_AUTO_UPDATE: set[str] = set()  # An automatic update runs (one at a time for the daemon).
+# "Update agents automatically". The daemon checks at its start, every AUTO_UPDATE_SECONDS, when the user turns
+# the switch on, and when Settings > Agents reads the registry. The updates of one check run at the same time.
+# Each window gets harnesses.updating (the popup at the bottom right) and harnesses.progress (the rows of
+# Settings > Agents).
+AUTO_UPDATE_SECONDS = 30 * 60
+AUTO_UPDATE_FIRST_SECONDS = 20  # After the start of the daemon: the windows connect first.
+_AUTO_TASK: asyncio.Task | None = None  # The check or the updates that run now (one at a time).
+# The agents of the last automatic update, in order: {"id", "name", "from", "to", "state", "stage", "received",
+# "total", "error"}. state: "waiting", "running", "done", or "failed".
+_UPDATING: dict[str, dict[str, Any]] = {}
 
 
-async def _auto_update_agents(conn: Connection) -> None:
+def _start_auto_update() -> None:
+    """Start a check of "Update agents automatically", if none runs. It does nothing when the switch is off."""
+    global _AUTO_TASK
+    if _AUTO_TASK is None or _AUTO_TASK.done():
+        _AUTO_TASK = asyncio.create_task(_auto_update_agents())
+
+
+async def _auto_update_loop() -> None:
+    await asyncio.sleep(AUTO_UPDATE_FIRST_SECONDS)
+    while True:
+        _start_auto_update()
+        await asyncio.sleep(AUTO_UPDATE_SECONDS)
+
+
+def _enabled_downloads() -> bool:
+    """An enabled agent has a Harness download: only then the check reads the registry."""
+    enabled = acp_harnesses.enabled_ids(load_settings(None))
+    return any(acp_install.installed(i) for i in enabled if i != acp_harnesses.BUILTIN_ID)
+
+
+async def _broadcast(message: dict[str, Any]) -> None:
+    for window in list(WINDOWS):
+        try:
+            await window.send(message)
+        except Exception:  # noqa: BLE001 - the window closed: the updates go on.
+            pass
+
+
+async def _broadcast_harnesses() -> None:
+    for window in list(WINDOWS):
+        try:
+            await _send_harnesses(window)
+        except Exception:  # noqa: BLE001 - the window closed.
+            pass
+
+
+def _updating_message() -> dict[str, Any]:
+    return {"type": "harnesses.updating", "items": [dict(i) for i in _UPDATING.values()]}
+
+
+def _updating_active() -> bool:
+    return any(i["state"] in ("waiting", "running") for i in _UPDATING.values())
+
+
+async def _auto_update_agents() -> None:
     """"Update agents automatically": download the new versions of the enabled agents that Harness downloaded."""
-    if load_settings(None).get("agents_auto_update") is not True or _AUTO_UPDATE:
+    if load_settings(None).get("agents_auto_update") is not True:
         return
-    specs = await asyncio.to_thread(_download_updates, True)
-    if specs:
-        _AUTO_UPDATE.add("run")
-        asyncio.create_task(_install_all(conn, specs, done=lambda: _AUTO_UPDATE.discard("run")))
+    try:
+        if not await asyncio.to_thread(_enabled_downloads):
+            return
+        if acp_install.registry_stale() and await acp_install.refresh_registry():
+            await _broadcast_harnesses()
+        specs = await asyncio.to_thread(_download_updates, True)
+        if not specs:
+            return
+        items = await asyncio.to_thread(
+            lambda: [(spec, acp_install.summary(spec), acp_icons.icon(spec.id)) for spec in specs])
+        _UPDATING.clear()
+        for spec, info, icon in items:
+            _UPDATING[spec.id] = {"id": spec.id, "name": spec.name, "icon": icon,
+                                  "from": (info.get("download") or {}).get("version"), "to": info.get("latest"),
+                                  "state": "waiting", "stage": "Waiting", "received": 0, "total": 0, "error": None}
+        log.info("Updating the agents: %s", ", ".join(spec.id for spec in specs))
+        await _broadcast(_updating_message())
+        await asyncio.gather(*(_auto_install(spec) for spec in specs))
+        await _broadcast_harnesses()
+    except Exception:  # noqa: BLE001 - one failed check must not stop the next checks.
+        log.exception("The automatic update of the agents failed")
+
+
+async def _auto_install(spec: acp_harnesses.HarnessSpec) -> None:
+    item = _UPDATING[spec.id]
+
+    async def progress(stage: str, received: int, total: int) -> None:
+        item.update(state="running", stage=stage, received=received, total=total)
+        await _broadcast({"type": "harnesses.progress", "id": spec.id, "stage": stage,
+                          "received": received, "total": total})
+        await _broadcast(_updating_message())
+
+    try:
+        await acp_install.install(spec, progress, refresh=False)
+        item.update(state="done", stage="Updated")
+    except acp_install.InstallError as e:
+        item.update(state="failed", error=str(e))
+    except Exception as e:  # noqa: BLE001
+        log.exception("The automatic update of %s failed", spec.id)
+        item.update(state="failed", error=f"Could not download {spec.name}: {type(e).__name__}: {e}")
+    await _broadcast(_updating_message())
 
 
 @handler("harnesses.install")
@@ -4489,20 +4585,16 @@ async def _safe_error(conn: Connection, text: str, ref: str) -> None:
         pass
 
 
-async def _install_all(conn: Connection, specs: list[acp_harnesses.HarnessSpec], done: Any = None) -> None:
+async def _install_all(conn: Connection, specs: list[acp_harnesses.HarnessSpec]) -> None:
     """Download the updates one at a time, and send the list after each one."""
-    try:
-        for spec in specs:
-            if acp_install.busy(spec.id):
-                continue
-            await _install_one(conn, spec)
-            try:
-                await _send_harnesses(conn)
-            except Exception:  # noqa: BLE001 - the connection closed: the updates go on.
-                pass
-    finally:
-        if done is not None:
-            done()
+    for spec in specs:
+        if acp_install.busy(spec.id):
+            continue
+        await _install_one(conn, spec)
+        try:
+            await _send_harnesses(conn)
+        except Exception:  # noqa: BLE001 - the connection closed: the updates go on.
+            pass
 
 
 @handler("harnesses.update_all")

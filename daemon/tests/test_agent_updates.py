@@ -84,3 +84,71 @@ def test_the_update_requests(daemon):  # noqa: F811
     settings = c.until("user_settings")[0]
     assert settings["values"]["agents_auto_update"] is True
     c.close()
+
+
+class _Window:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, message: dict) -> None:
+        self.sent.append(message)
+
+
+def test_the_automatic_updates_run_together_and_report_to_each_window(monkeypatch):
+    from harness_daemon import acp_harnesses, acp_install, server
+
+    specs = [acp_harnesses.find("claude-acp"), acp_harnesses.find("codex-acp")]
+    assert all(specs)
+    monkeypatch.setattr(server, "load_settings", lambda cwd: {"agents_auto_update": True})
+    monkeypatch.setattr(server, "_enabled_downloads", lambda: True)
+    monkeypatch.setattr(acp_install, "registry_stale", lambda: False)
+    monkeypatch.setattr(server, "_download_updates", lambda enabled_only: specs)
+    monkeypatch.setattr(acp_install, "summary", lambda spec: {"download": {"version": "1.0.0"}, "latest": "1.1.0"})
+    lists: list[str] = []
+
+    async def send_harnesses(conn):
+        lists.append("list")
+
+    monkeypatch.setattr(server, "_send_harnesses", send_harnesses)
+    running: set[str] = set()
+    together: list[int] = []
+
+    async def install(spec, progress, refresh=True):
+        assert refresh is False  # The check read the registry one time for all the agents.
+        running.add(spec.id)
+        await progress("Downloading", 5, 10)
+        await asyncio.sleep(0.01)
+        together.append(len(running))
+        if spec.id == "codex-acp":
+            raise acp_install.InstallError("No network.")
+        return {}
+
+    monkeypatch.setattr(acp_install, "install", install)
+    window = _Window()
+    monkeypatch.setattr(server, "WINDOWS", {window})
+    server._UPDATING.clear()
+
+    asyncio.run(server._auto_update_agents())
+
+    states = [m for m in window.sent if m["type"] == "harnesses.updating"]
+    assert [i["state"] for i in states[0]["items"]] == ["waiting", "waiting"]
+    assert states[0]["items"][0]["from"] == "1.0.0" and states[0]["items"][0]["to"] == "1.1.0"
+    assert 2 in together  # The two downloads ran at the same time.
+    last = {i["id"]: i for i in states[-1]["items"]}
+    assert last["claude-acp"]["state"] == "done"
+    assert last["codex-acp"]["state"] == "failed" and last["codex-acp"]["error"] == "No network."
+    assert any(m["type"] == "harnesses.progress" for m in window.sent)  # The rows of Settings > Agents.
+    assert lists == ["list"]  # The new list after all the updates.
+    assert not server._updating_active()
+
+
+def test_no_automatic_update_when_the_switch_is_off(monkeypatch):
+    from harness_daemon import server
+
+    monkeypatch.setattr(server, "load_settings", lambda cwd: {})
+
+    def fail(*a):
+        raise AssertionError("The check must not run.")
+
+    monkeypatch.setattr(server, "_enabled_downloads", fail)
+    asyncio.run(server._auto_update_agents())

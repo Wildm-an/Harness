@@ -118,6 +118,7 @@ import { TerminalPane, forgetSessionTerminals } from "./components/TerminalPane"
 import { SideChat, useSideChat } from "./components/SideChat";
 import { MoreMenu } from "./components/MoreMenu";
 import { UpdateToast } from "./components/UpdateToast";
+import { AgentUpdatesToast } from "./components/AgentUpdatesToast";
 import { ToastStack } from "./components/ToastStack";
 import { availableVersion, checkWhenShown, useUpdateState } from "./lib/updater";
 import { AppearanceSettings, GeneralSettings, SETTINGS_SHORTCUT, SettingsDialog, busySend, isSettingsShortcut, type SettingsPage } from "./components/SettingsDialog";
@@ -4071,6 +4072,7 @@ export default function App() {
         <ToastStack>
           <ErrorToasts items={errorToasts} onClose={(id) => setErrorToasts((l) => l.filter((t) => t.id !== id))} />
           {!settingsPage && <UpdateToast currentVersion={appVersion} onView={() => openSettings("updates")} />}
+          <AgentUpdatesToast conn={conn} onOpen={() => openSettings("operating")} />{/* "Update agents automatically". */}
           {/* The X hides the warning for this daemon and these versions. It shows again for another daemon or another version. */}
           {appVersion &&
             daemonVersion &&
