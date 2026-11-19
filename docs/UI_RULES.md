@@ -29,7 +29,7 @@ Each rule shows the text of the Claude UI in quotes. Use the same words in Harne
 ## 2. Window and title bar
 
 - **W1.** The window has no system title bar. The app draws its own title row. The Windows caption buttons (minimize, maximize, close) are at the far right.
-- **W2.** The left end of the title row holds the sidebar toggle (Ctrl+B) and Back / Forward (Alt+Left, Alt+Right, and the Back and Forward side buttons of a mouse: the user asked for them).
+- **W2.** The left end of the title row holds the sidebar toggle (Ctrl+B) and Back / Forward (Alt+Left, Alt+Right, and the Back and Forward side buttons of a mouse: the user asked for them). The history has each screen and session, and also each step in a page (the user asked for this): the open routine, the tab, the skill group, and the open skill of Capabilities, and the open page of Settings. A step that leaves a Settings page with typed text asks first ("Leave this page?" or "Close the settings?").
 - **W3.** Alt alone or F10 opens the app menu at the top left. The app menu has these menus, in this order: File, Edit, View, Go, Help. See section 8 for the items.
 - **W4.** Claude has a "Chat / Cowork / Code" switch in the title row. Harness has only Code, so Harness does not show this switch.
 - **W5.** A line under the title row separates it from the chat and the panes. The new session screen has no line (the user asked for this).

@@ -117,6 +117,7 @@ export function SettingsDialog({
   onPage,
   onClose,
   closeRef,
+  guardRef,
   configPath,
   agentUpdates = 0,
   onOpenConfig,
@@ -126,6 +127,8 @@ export function SettingsDialog({
   onPage: (page: SettingsPage) => void;
   onClose: () => void;
   closeRef?: MutableRefObject<(() => void) | null>; // The guarded close, for the Ctrl+, key of the app.
+  // The question before typed text goes away, for the Back and Forward steps of the app. "after" runs on "Discard".
+  guardRef?: MutableRefObject<((title: string, after: () => void) => void) | null>;
   configPath: string | null; // ~/.harness/settings.json of the daemon. null: not connected.
   onOpenConfig: (() => void) | null; // null: the file is on another computer.
   children: ReactNode; // The current page.
@@ -233,6 +236,13 @@ export function SettingsDialog({
     closeRef.current = requestClose;
     return () => {
       closeRef.current = null;
+    };
+  });
+  useEffect(() => {
+    if (!guardRef) return;
+    guardRef.current = guard;
+    return () => {
+      guardRef.current = null;
     };
   });
 

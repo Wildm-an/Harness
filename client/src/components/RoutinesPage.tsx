@@ -900,6 +900,8 @@ export const RoutinesPage = memo(function RoutinesPage({
   onToken,
   onTokenDone,
   defaultMode = "default",
+  openId,
+  onOpenId,
 }: {
   routines: RoutineItem[] | null; // null: loading.
   folder: string | null; // The folder of the routine files on the daemon computer (~/.harness/routines).
@@ -926,8 +928,12 @@ export const RoutinesPage = memo(function RoutinesPage({
   onToken?: (id: string, action: "generate" | "delete") => void;
   onTokenDone?: () => void;
   defaultMode?: PermissionMode; // "Default permission mode" of Settings > General: the mode of a new routine.
+  // The open routine, "new" for the form of a new routine, or null for the list. The app keeps it in the
+  // back and forward history. replace: the change replaces the current place of the history.
+  openId: string | null;
+  onOpenId: (id: string | null, replace?: boolean) => void;
 }) {
-  const [openId, setOpenId] = useState<string | null>(null); // "new": the form of a new routine.
+  const setOpenId = onOpenId;
   const [saving, setSaving] = useState(false);
   const duplicating = useRef(false); // The save that runs now is "Duplicate".
   const [copyId, setCopyId] = useState<string | null>(null); // The new copy: its Name field gets the focus.
@@ -940,10 +946,11 @@ export const RoutinesPage = memo(function RoutinesPage({
     savedKey.current = saved.key;
     if (saving) {
       setSaving(false);
-      setOpenId(saved.id);
+      setOpenId(saved.id, openId === "new"); // A new routine: the form becomes the routine.
       setCopyId(duplicating.current ? saved.id : null);
       duplicating.current = false;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved, saving]);
   useEffect(() => {
     if (!error) return;
@@ -957,7 +964,8 @@ export const RoutinesPage = memo(function RoutinesPage({
   }, [item?.id, item?.last_run?.id, item?.last_run?.status]);
   // The open routine was deleted (also in another window).
   useEffect(() => {
-    if (openId && openId !== "new" && routines && !item) setOpenId(null);
+    if (openId && openId !== "new" && routines && !item) setOpenId(null, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId, routines, item]);
 
   let body: React.ReactNode;

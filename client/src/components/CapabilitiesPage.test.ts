@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectorSummary, matches, mcpSummary, providerOf, skillStatus, skillsOfGroup } from "./CapabilitiesPage";
+import { capPlaceText, connectorSummary, matches, mcpSummary, parseCapPlace, providerOf, skillStatus, skillsOfGroup } from "./CapabilitiesPage";
 import { placeOf } from "../layout/history";
 import { findGroupOf, parseLayout } from "../layout/model";
 import type { CommandItem, ConnectorItem, McpServerItem } from "../daemon/protocol";
@@ -139,5 +139,17 @@ describe("the Email connector", () => {
       accounts: [{ login: "pat@gmail.com", type: "gmail", read_only: true }],
     };
     expect(connectorSummary(item)).toBe("pat@gmail.com · Gmail · read-only");
+  });
+});
+
+describe("the inner place of the Capabilities page", () => {
+  it("keeps the tab, the group, and the skill", () => {
+    const place = { tab: "skills" as const, group: "added" as const, skill: "plugin:review/deep" };
+    expect(parseCapPlace(capPlaceText(place))).toEqual(place);
+  });
+
+  it("gives the Skills tab for no text", () => {
+    expect(parseCapPlace(undefined)).toEqual({ tab: "skills", group: null, skill: null });
+    expect(parseCapPlace(capPlaceText({ tab: "mcp", group: null, skill: null }))).toEqual({ tab: "mcp", group: null, skill: null });
   });
 });
