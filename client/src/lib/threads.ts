@@ -354,13 +354,16 @@ export function workingDuration(seconds: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-/** The status of a card row, in place of the time: "Working", "Approval" (awaits input), "Done" (unread). */
-export type ThreadStatus = "working" | "approval" | "done";
+/**
+ * The status of a card row, in place of the time: "Working", "Approval" (awaits input), "Done" (unread), or
+ * "Failed" (unread, and the turn or the routine run ended with an error, for example no provider answered).
+ */
+export type ThreadStatus = "working" | "approval" | "done" | "failed";
 
-export function threadStatus(running: RunningSession | undefined, unread: boolean): ThreadStatus | null {
+export function threadStatus(running: RunningSession | undefined, unread: boolean, failed = false): ThreadStatus | null {
   if (running?.waiting) return "approval";
   if (running) return "working";
-  if (unread) return "done";
+  if (unread) return failed ? "failed" : "done";
   return null;
 }
 

@@ -11,7 +11,7 @@
 // wake time or the settle age. On hover, "Wake thread now" or "Un-settle thread" takes the place of the time.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlarmClock, AlarmClockOff, Check, ChevronRight, CircleCheck, CircleDashed, Clock, Folder, GitBranch, Pin, PinOff, ShieldQuestion, Undo2 } from "lucide-react";
+import { AlarmClock, AlarmClockOff, CalendarClock, Check, ChevronRight, CircleCheck, CircleX, Clock, Folder, GitBranch, Pin, PinOff, ShieldQuestion, Undo2 } from "lucide-react";
 import type { HarnessItem, PullRequest, SessionSummary } from "../daemon/protocol";
 import { modelName } from "../lib/modelName";
 import { useOverlay } from "../lib/overlay";
@@ -30,11 +30,28 @@ export function sessionAgent(s: Pick<SessionSummary, "provider" | "model">, agen
   return { id: BUILTIN_AGENT, name: "Harness", icon: null, detail: `Harness · ${modelName(s.model)}` };
 }
 
-const STATUS: Record<ThreadStatus, { label: string; Icon: typeof Clock }> = {
-  working: { label: "Working", Icon: CircleDashed },
+/** The icon of "Working": a faint ring with an arc that turns (the user chose it from three choices). */
+function ArcSpinner({ size }: { size: number }) {
+  return (
+    <svg className="thread-spinner" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" opacity={0.25} />
+      <path d="M21 12a9 9 0 0 0-9-9" />
+    </svg>
+  );
+}
+
+const STATUS: Record<ThreadStatus, { label: string; Icon: React.ComponentType<{ size: number }> }> = {
+  working: { label: "Working", Icon: ArcSpinner },
   approval: { label: "Approval", Icon: ShieldQuestion },
   done: { label: "Done", Icon: CircleCheck },
+  failed: { label: "Failed", Icon: CircleX },
 };
+
+/** The icon before the project name: a folder, or the Routines icon for a session that a routine started. */
+function ProjectIcon({ routine, faded }: { routine: boolean; faded?: boolean }) {
+  const className = `thread-project-icon${faded ? " faded" : ""}`;
+  return routine ? <CalendarClock size={14} className={className} role="img" aria-label="Routine" /> : <Folder size={14} className={className} aria-hidden />;
+}
 
 /** The time of work, in its own render each second, so the row does not render again. */
 function WorkingTime({ since }: { since: number }) {
@@ -133,6 +150,7 @@ export function ThreadRow({
   canSnooze,
   drag,
   nested,
+  motion,
   children,
 }: {
   session: SessionSummary;
@@ -152,6 +170,9 @@ export function ThreadRow({
   canSnooze: boolean; // The clock button of a card row.
   drag?: ThreadRowDrag;
   nested?: NestedInfo;
+  // The move of a session that finished its work: "leave" slides the row out of Working to the left,
+  // then "arrive" slides it into its new place from the left (ThreadsList.tsx).
+  motion?: "leave" | "arrive";
   children?: React.ReactNode;
 }) {
   const [menu, setMenu] = useState<false | "button" | { x: number; y: number }>(false);
@@ -185,7 +206,7 @@ export function ThreadRow({
     run();
   };
 
-  const tooltip = [title, project, agent.detail, session.branch ? `Branch: ${session.branch}` : null].filter(Boolean).join("\n");
+  const tooltip = [title, project, agent.detail, session.branch ? `Branch: ${session.branch}` : null, session.routine_id ? "Started by a routine" : null].filter(Boolean).join("\n");
 
   const titleEl = renaming ? (
     <input
@@ -311,11 +332,16 @@ export function ThreadRow({
   const metaEmpty = !session.branch && !pr;
 
   return (
-    <li ref={drag?.ref} className={`thread-item${drag?.className ? ` ${drag.className}` : ""}`} onClickCapture={drag?.onClickCapture}>
+    <li
+      ref={drag?.ref}
+      className={`thread-item${drag?.className ? ` ${drag.className}` : ""}${motion ? ` thread-${motion}` : ""}`}
+      onClickCapture={drag?.onClickCapture}
+      inert={motion === "leave" || undefined}
+    >
       {variant === "card" ? (
         <div className={classes} {...rowProps}>
           <div className="thread-top">
-            <Folder size={14} className="thread-project-icon" aria-hidden />
+            <ProjectIcon routine={!!session.routine_id} />
             {pinEl}
             <span className="thread-project">{project}</span>
             <span className="thread-slot">
@@ -362,7 +388,7 @@ export function ThreadRow({
         </div>
       ) : (
         <div className={classes} {...rowProps}>
-          <Folder size={14} className="thread-project-icon faded" aria-hidden />
+          <ProjectIcon routine={!!session.routine_id} faded />
           {titleEl}
           {nestToggle}
           <span className="thread-slot">

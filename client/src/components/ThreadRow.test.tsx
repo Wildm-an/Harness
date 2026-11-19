@@ -74,6 +74,10 @@ describe("the time and status of a thread row (as T3 Code)", () => {
     expect(threadStatus({ session_id: "s1", waiting: false }, true)).toBe("working");
     expect(threadStatus(undefined, true)).toBe("done");
     expect(threadStatus(undefined, false)).toBeNull();
+    // An error: "Failed" in place of "Done", only while the response is unread and the session does not work.
+    expect(threadStatus(undefined, true, true)).toBe("failed");
+    expect(threadStatus(undefined, false, true)).toBeNull();
+    expect(threadStatus({ session_id: "s1", waiting: false }, true, true)).toBe("working");
   });
 
   it("uses the settle time for a settled row", () => {
@@ -109,6 +113,18 @@ describe("the card row", () => {
     expect(html).toContain("Working");
     expect(html).not.toContain('class="thread-time">5m<');
     expect(html).toContain('class="thread-branch">claude/fix<');
+  });
+
+  it("shows the arc spinner for Working, and Failed for an error", () => {
+    expect(render(session(), { status: "working", workingSince: NOW - 5 })).toContain("thread-spinner");
+    const html = render(session(), { status: "failed" });
+    expect(html).toContain("thread-status failed");
+    expect(html).toContain("Failed");
+  });
+
+  it("shows the Routines icon for a session that a routine started", () => {
+    expect(render(session({ routine_id: "r1" }))).toContain('aria-label="Routine"');
+    expect(render(session())).not.toContain('aria-label="Routine"');
   });
 
   it("shows the pin of a pinned thread, with Unpin", () => {

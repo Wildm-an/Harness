@@ -9,9 +9,10 @@
 // Settled header to settle it, and from Settled or Snoozed into Pinned or Active to un-settle or wake it.
 // A line shows the drop place. The pill of rule S9 follows the pointer and names the action.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import type { HarnessItem, PrStatus, ProjectItem, RunningSession, SessionSummary } from "../daemon/protocol";
+import { reducedMotion } from "../lib/motion";
 import { loadPref, savePref } from "../lib/prefs";
 import {
   DRAG_SECTIONS,
@@ -44,12 +45,22 @@ export interface ThreadsActions {
   retitle: (id: string) => void; // session.retitle.
   retitling: Set<string>; // The sessions with a title that is being made.
   agents: HarnessItem[] | null; // The agent list: the icon of the agent of each row.
+  failed: Set<string>; // The sessions whose last turn or routine run ended with an error: "Failed" in place of "Done".
 }
 
 const OPEN_PREF = "sidebar.threads.open"; // The shelves that the user opened: {"working": true, ...}.
 const SHELVES: ThreadSection[] = ["working", "snoozed", "settled"];
 const SHOWN_SETTLED = 20; // The Settled shelf shows this many rows, then "Show more".
 const START_DISTANCE = 4; // Pixels: a smaller move is a click.
+const LEAVE_MS = 250; // --thread-leave (styles.css): the row of a finished session slides out of Working to the left.
+const ARRIVE_MS = 400; // --thread-arrive (styles.css): then it slides into Pinned or Active from the left, the side it left from.
+
+/** A session that finished its work and moves out of Working, with its place in Working before the move. */
+interface FinishMove {
+  phase: "leave" | "arrive";
+  session: SessionSummary;
+  index: number;
+}
 
 interface Drag {
   id: string;
@@ -159,6 +170,57 @@ export function ThreadsList({
     savePref("sidebar.nested", JSON.stringify(next));
   };
   const stateOf = (id: string) => sessionState(running.get(id), unread.has(id));
+
+  // -- the move of a finished session ------------------------------------------------------------------
+  // A session that stops work leaves Working for Pinned or Active ("Done"). Its row slides out of Working to
+  // the left, then slides back into its new place from the left. A row that Working did not show only arrives.
+  const [moves, setMoves] = useState<Map<string, FinishMove>>(new Map());
+  const lastWorking = useRef<{ ids: string[]; shown: Set<string> } | null>(null);
+  const moveTimers = useRef(new Set<number>());
+  const workingIds = nested.working.top.map((s) => s.id);
+  const workingShown = new Set(open.working ? workingIds : workingIds.filter((id) => id === activeTop));
+  useLayoutEffect(() => {
+    const last = lastWorking.current;
+    lastWorking.current = { ids: workingIds, shown: workingShown };
+    if (!last || reducedMotion()) return;
+    const found: FinishMove[] = [];
+    last.ids.forEach((id, index) => {
+      if (workingIds.includes(id) || running.has(id) || moves.has(id)) return;
+      const s = sessions.find((x) => x.id === id);
+      if (!s || (!nested.pinned.top.includes(s) && !nested.active.top.includes(s))) return;
+      found.push({ phase: last.shown.has(id) ? "leave" : "arrive", session: s, index });
+    });
+    if (found.length === 0) return;
+    setMoves((m) => new Map([...m, ...found.map((f) => [f.session.id, f] as const)]));
+    const later = (ms: number, run: () => void) => {
+      const timer = window.setTimeout(() => {
+        moveTimers.current.delete(timer);
+        run();
+      }, ms);
+      moveTimers.current.add(timer);
+    };
+    for (const f of found) {
+      const id = f.session.id;
+      const done = () =>
+        setMoves((m) => {
+          const next = new Map(m);
+          next.delete(id);
+          return next;
+        });
+      if (f.phase === "arrive") later(ARRIVE_MS, done);
+      else
+        later(LEAVE_MS, () => {
+          setMoves((m) => (m.has(id) ? new Map(m).set(id, { ...f, phase: "arrive" }) : m));
+          later(ARRIVE_MS, done);
+        });
+    }
+  });
+  useEffect(() => {
+    const timers = moveTimers.current;
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, []);
+  const motionOf = (id: string) => moves.get(id)?.phase;
+  const leaving = [...moves.values()].filter((m) => m.phase === "leave");
 
   // -- the actions of a row --------------------------------------------------------------------------
   const titleOf = (id: string) => sessions.find((s) => s.id === id)?.title ?? null;
@@ -285,7 +347,7 @@ export function ThreadsList({
         variant={top && !shelf ? "card" : "slim"}
         action={section === "settled" ? "unsettle" : section === "snoozed" ? "wake" : "settle"}
         active={s.id === activeId}
-        status={shelf && top ? null : threadStatus(running.get(s.id), unread.has(s.id))}
+        status={shelf && top ? null : threadStatus(running.get(s.id), unread.has(s.id), threads.failed.has(s.id))}
         workingSince={starts.current.get(s.id) ?? null}
         unread={unread.has(s.id)}
         disabled={disabled}
@@ -309,6 +371,7 @@ export function ThreadsList({
               }
             : undefined
         }
+        motion={top ? (section === "working" ? (motionOf(s.id) === "leave" ? "leave" : undefined) : motionOf(s.id) === "arrive" ? "arrive" : undefined) : undefined}
         nested={
           children && {
             count: children.length,
@@ -329,7 +392,8 @@ export function ThreadsList({
   };
 
   /** The rows of Pinned or Active, with the drop line at the drop place. */
-  const renderList = (key: ThreadSection, rows: SessionSummary[], className: string) => {
+  const renderList = (key: ThreadSection, all: SessionSummary[], className: string) => {
+    const rows = all.filter((s) => motionOf(s.id) !== "leave"); // It shows in Working until it arrives.
     const lineAt = drag && drag.over === key && dragAction ? drag.index : -1;
     const others = drag ? rows.filter((s) => s.id !== drag.id) : rows;
     const out: React.ReactNode[] = [];
@@ -348,11 +412,14 @@ export function ThreadsList({
   const shelf = (key: ThreadSection) => {
     const rows = nested[key].top;
     const dropOnly = key === "settled" && drag !== null && drag.from !== "settled";
-    if (rows.length === 0 && !dropOnly) return null;
+    const ghosts = key === "working" ? leaving : [];
+    if (rows.length === 0 && !dropOnly && ghosts.length === 0) return null;
     const isOpen = !!open[key];
     const listId = `side-thread-${key}`;
     // A folded shelf still shows the open session (as rule S11).
-    const shown = isOpen ? (key === "settled" && !allSettled ? rows.slice(0, SHOWN_SETTLED) : rows) : rows.filter((s) => s.id === activeTop);
+    const shown = isOpen ? (key === "settled" && !allSettled ? rows.slice(0, SHOWN_SETTLED) : [...rows]) : rows.filter((s) => s.id === activeTop);
+    // A finished session stays at its old place in Working while it slides out.
+    for (const g of [...ghosts].sort((a, b) => a.index - b.index)) shown.splice(Math.min(g.index, shown.length), 0, g.session);
     return (
       <section key={key} ref={sectionRef(key)} className={`thread-section thread-shelf${isOpen ? " open" : ""}${overClass(key)}`} aria-label={SECTION_LABELS[key]}>
         <button type="button" className="thread-shelf-toggle" onClick={() => toggleShelf(key)} aria-expanded={isOpen} aria-controls={listId}>
