@@ -262,8 +262,7 @@ export function RailPrList({ prs, onOpen, onFixCi = null, running = false, autoF
       <ul className="rail-prs" aria-label="Pull requests">
         {prs.map((p) => (
           <li key={p.url ?? `#${p.number}`}>
-            <RailPr item={p} onOpen={onOpen} />
-            {p.info && <RailCi pr={p.info} url={p.info.url ?? p.url} onOpen={onOpen} onFixCi={running ? null : onFixCi} />}
+            <RailPr item={p} onOpen={onOpen} onFixCi={running ? null : onFixCi} />
           </li>
         ))}
       </ul>
@@ -290,67 +289,109 @@ export function RailPrList({ prs, onOpen, onFixCi = null, running = false, autoF
 }
 
 /**
- * The CI line of a pull request in the rail: the state icon and "2 of 4 checks failed". A click shows
- * or hides the checks. Each check opens its page. "Fix CI" asks the agent to fix the failed checks.
+ * The CI count of a pull request row, as in the Claude app: the GitHub state icon and "2/4" at the
+ * bottom right of the row. A click opens the checks under the row: the summary ("2 of 4 checks
+ * failed") with "Fix CI", then each check. A check opens its page.
  */
 function RailCi({ pr, url, onOpen, onFixCi }: { pr: PullRequest; url: string | null; onOpen: (url: string) => void; onFixCi: ((pr: PullRequest) => void) | null }) {
   const ci = ciSummary(pr.checks);
   const [open, setOpen] = useState(false);
   const [asked, setAsked] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   // A new CI state shows "Fix CI" again.
   const signature = `${pr.checks?.state}:${pr.checks?.failed}:${pr.checks?.total}`;
   useEffect(() => setAsked(false), [signature]);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
   if (!ci || !pr.checks) return null;
   const live = pr.state === "open" || pr.state === "draft";
   const all = checksUrl(url);
+  const go = (to: string) => {
+    setOpen(false);
+    onOpen(to);
+  };
   return (
-    <div className={`rail-ci ci-text-${ci.state}`}>
-      <div className="rail-ci-row">
-        <button type="button" className="rail-ci-summary" aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${ci.tip} Click to ${open ? "hide" : "show"} the checks.`}>
-          <CiIcon state={ci.state} size={13} />
-          <span className="rail-ci-text">{ci.text}</span>
-          <ChevronDown size={12} aria-hidden className={`rail-ci-chevron${open ? " open" : ""}`} />
-        </button>
-        {ci.state === "fail" && live && onFixCi && !asked && (
-          <button
-            type="button"
-            className="btn btn-small rail-ci-fix"
-            title="Ask the agent to read the failed checks, fix the cause, and push the fix"
-            onClick={() => {
-              setAsked(true);
-              onFixCi(pr);
-            }}
-          >
-            <Wrench size={12} aria-hidden /> {FIX_CI_LABEL}
-          </button>
-        )}
-      </div>
+    <div
+      className={`rail-ci ci-text-${ci.state}`}
+      ref={ref}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) {
+          e.stopPropagation();
+          setOpen(false);
+        } else if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+          e.preventDefault();
+          const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>(".rail-ci-menu button:not(:disabled)") ?? [])];
+          const at = items.indexOf(document.activeElement as HTMLButtonElement);
+          items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="rail-ci-count"
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-label={`${ci.text}. Show the checks.`}
+        title={`${ci.tip} Click to ${open ? "hide" : "show"} the checks.`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <CiIcon state={ci.state} size={12} />
+        <span>{ci.count}</span>
+      </button>
       {open && (
-        <ul className="rail-ci-list" aria-label="Checks">
-          {pr.checks.items.map((c) => (
-            <li key={`${c.workflow ?? ""}/${c.name}`}>
-              <button type="button" className="rail-ci-check" disabled={!c.url} onClick={() => c.url && onOpen(c.url)} title={`${CHECK_STATE_TEXT[c.state]}${c.url ? ". Click to open the check." : ""}`}>
-                <CiIcon state={c.state} size={12} />
-                <span className="rail-ci-name">{c.name}</span>
-                {c.workflow && <span className="rail-ci-workflow">{c.workflow}</span>}
+        <div className="menu rail-ci-menu" role="dialog" aria-label="Checks">
+          <div className="rail-ci-head">
+            <CiIcon state={ci.state} size={13} />
+            <span className="rail-ci-text">{ci.text}</span>
+            {ci.state === "fail" && live && onFixCi && !asked && (
+              <button
+                type="button"
+                className="btn btn-small rail-ci-fix"
+                title="Ask the agent to read the failed checks, fix the cause, and push the fix"
+                onClick={() => {
+                  setAsked(true);
+                  setOpen(false);
+                  onFixCi(pr);
+                }}
+              >
+                <Wrench size={12} aria-hidden /> {FIX_CI_LABEL}
               </button>
-            </li>
-          ))}
-          {all && pr.checks.total > pr.checks.items.length && (
-            <li>
-              <button type="button" className="rail-ci-check rail-ci-more" onClick={() => onOpen(all)}>
-                {pr.checks.total - pr.checks.items.length} more on GitHub
-              </button>
-            </li>
+            )}
+          </div>
+          <ul className="rail-ci-list" aria-label="Checks">
+            {pr.checks.items.map((c) => (
+              <li key={`${c.workflow ?? ""}/${c.name}`}>
+                <button type="button" className="rail-ci-check" disabled={!c.url} onClick={() => c.url && go(c.url)} title={`${CHECK_STATE_TEXT[c.state]}${c.url ? ". Click to open the check." : ""}`}>
+                  <CiIcon state={c.state} size={13} />
+                  <span className="rail-ci-name">{c.name}</span>
+                  {c.workflow && <span className="rail-ci-workflow">{c.workflow}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {all && (
+            <button type="button" className="rail-ci-check rail-ci-more" onClick={() => go(all)}>
+              <ListChecks size={13} aria-hidden />
+              {pr.checks.total > pr.checks.items.length ? `${pr.checks.total - pr.checks.items.length} more on GitHub` : "View checks"}
+            </button>
           )}
-        </ul>
+        </div>
       )}
     </div>
   );
 }
 
-/** One pull request: the icon, the title, "Harness #18", and ⋯ ("Open pull request", "View checks", "Copy link"). */
-function RailPr({ item, onOpen }: { item: ListedPr; onOpen: (url: string) => void }) {
+/**
+ * One pull request: the icon, the title, "Harness #18", and at the right ⋯ ("Open pull request",
+ * "View checks", "Copy link") over the CI count.
+ */
+function RailPr({ item, onOpen, onFixCi }: { item: ListedPr; onOpen: (url: string) => void; onFixCi: ((pr: PullRequest) => void) | null }) {
   const pr = item.info;
   const url = pr?.url ?? item.url;
   const [menu, setMenu] = useState(false);
@@ -381,9 +422,10 @@ function RailPr({ item, onOpen }: { item: ListedPr; onOpen: (url: string) => voi
   };
   const title = pr?.title ?? `Pull request #${item.number}`;
   const state = pr ? `, ${PR_STATE_TEXT[pr.state]}` : "";
+  const ci = pr ? ciSummary(pr.checks) : null;
   return (
     <div
-      className="rail-pr"
+      className={`rail-pr${ci ? " has-ci" : ""}`}
       ref={ref}
       onKeyDown={(e) => {
         if (e.key === "Escape" && menu) {
@@ -399,9 +441,12 @@ function RailPr({ item, onOpen }: { item: ListedPr; onOpen: (url: string) => voi
           <span className="rail-item-detail">{prShortRef({ number: item.number, repo: pr?.repo ?? item.repo, url })}</span>
         </span>
       </button>
-      <button type="button" className="rail-pr-more" aria-haspopup="menu" aria-expanded={menu} aria-label="Pull request actions" title="More actions" onClick={() => setMenu((v) => !v)}>
-        <Ellipsis size={14} aria-hidden />
-      </button>
+      <div className="rail-pr-side">
+        <button type="button" className="rail-pr-more" aria-haspopup="menu" aria-expanded={menu} aria-label="Pull request actions" title="More actions" onClick={() => setMenu((v) => !v)}>
+          <Ellipsis size={14} aria-hidden />
+        </button>
+        {pr && ci && <RailCi pr={pr} url={url} onOpen={onOpen} onFixCi={onFixCi} />}
+      </div>
       {menu && (
         <div className="menu rail-git-menu" role="menu" aria-label="Pull request">
           <button type="button" role="menuitem" disabled={!url} onClick={() => (setMenu(false), url && onOpen(url))}>

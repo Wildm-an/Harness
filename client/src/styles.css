@@ -12909,75 +12909,95 @@ body.sorting * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The CI line under a pull request row of the rail. */
+/* The running check of GitHub: the arc turns around the ring. */
+.ci-icon-arc {
+  transform-origin: 8px 8px;
+  animation: spin 1s linear infinite;
+}
+/* The right column of a pull request row: ⋯ over the CI count, as in the Claude app. */
+.rail-pr-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+}
+.rail-pr.has-ci .rail-pr-more {
+  height: 20px;
+}
 .rail-ci {
   display: flex;
-  flex-direction: column;
-  padding-left: 29px; /* Under the title of the row: the row padding, the icon, and the gap. */
 }
-.rail-ci-row {
-  display: flex;
+.rail-ci-count {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.rail-ci-summary,
-.rail-ci-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  min-height: 24px;
-  padding: 2px 6px;
+  gap: 4px;
+  height: 18px;
+  padding: 0 4px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font: 12px var(--font-sans);
-  text-align: left;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
-.rail-ci-summary {
-  flex: 1;
-  margin-left: -6px;
+.rail-ci-count:hover,
+.rail-ci-count[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
 }
-.rail-ci.ci-text-fail .rail-ci-summary {
+.rail-ci-count:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
+}
+/* The checks of a pull request: a dropdown under the row, as wide as the row. */
+.rail-ci-menu {
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  min-width: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.rail-ci-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 6px 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rail-ci.ci-text-fail .rail-ci-head {
   color: var(--danger);
 }
-.rail-ci-summary:hover,
-.rail-ci-check:hover:not(:disabled) {
-  background: var(--hover);
+.rail-ci-text {
+  flex: 1;
 }
-.rail-ci-summary:focus-visible,
-.rail-ci-check:focus-visible {
-  outline: 1px solid var(--focus);
-  outline-offset: -2px;
-}
-.rail-ci-check:disabled {
-  cursor: default;
-}
-.rail-ci-chevron {
+.menu .rail-ci-fix {
   flex: none;
-  transform: rotate(-90deg);
-  transition: transform 0.12s;
-}
-.rail-ci-chevron.open {
-  transform: none;
-}
-.rail-ci-fix {
-  flex: none;
+  width: auto;
   gap: 4px;
 }
 .rail-ci-list {
   display: flex;
   flex-direction: column;
-  margin: 0 0 4px -6px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
-.rail-ci-check {
-  width: 100%;
-  color: var(--text);
+.menu .rail-ci-check {
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+.menu .rail-ci-check:disabled {
+  opacity: 1;
+  cursor: default;
 }
 .rail-ci-workflow {
   flex: none;
@@ -12985,7 +13005,8 @@ body.sorting * {
   padding-left: 8px;
   color: var(--text-muted);
 }
-.rail-ci-more {
+.menu .rail-ci-more {
+  margin-top: 4px;
   color: var(--text-muted);
 }
 
