@@ -15391,6 +15391,10 @@ input.usage-price-input {
   color: var(--success);
 }
 
+.thread-status.failed {
+  color: var(--danger);
+}
+
 .thread-duration {
   font-weight: 400;
 }
@@ -15537,6 +15541,46 @@ input.usage-price-input {
 
 .thread-item.thread-dragging {
   opacity: 0.45;
+}
+
+/* The icon of "Working": the arc turns. */
+.thread-spinner {
+  flex: none;
+  animation: spin 800ms linear infinite;
+}
+
+/* A session that finished its work: the row slides out of Working to the left, then slides back into Pinned
+   or Active from the left, the side it left from (ThreadsList.tsx). The list clips the slide, so the sidebar gets no scroll bar. */
+.threads {
+  overflow-x: clip;
+  /* The user chose these times: the slide out is between --dur-base and --dur-sheet, the slide in
+     is between --dur-sheet and --dur-slow.
+     LEAVE_MS and ARRIVE_MS of ThreadsList.tsx use the same values. */
+  --thread-leave: 250ms;
+  --thread-arrive: 400ms;
+}
+
+.thread-item.thread-leave {
+  pointer-events: none;
+  animation: thread-leave var(--thread-leave) var(--ease-out) forwards;
+}
+
+.thread-item.thread-arrive {
+  animation: thread-arrive var(--thread-arrive) var(--ease-out);
+}
+
+@keyframes thread-leave {
+  to {
+    opacity: 0;
+    translate: -100% 0;
+  }
+}
+
+@keyframes thread-arrive {
+  from {
+    opacity: 0;
+    translate: -100% 0;
+  }
 }
 
 /* The Snooze menu of the clock button, and the detail column of a menu item (the wake time). */

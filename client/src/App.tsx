@@ -435,6 +435,17 @@ export default function App() {
   // The sessions with a "Regenerate title" request (the Threads sidebar), and the settles that wait for a
   // worktree question ("Archive session with uncommitted changes?").
   const [retitling, setRetitling] = useState<Set<string>>(() => new Set());
+  // The sessions whose last turn or routine run ended with an error (for example no provider answered). An
+  // unread one shows "Failed" in the Threads sidebar, in place of "Done".
+  const [failedSessions, setFailedSessions] = useState<Set<string>>(() => new Set());
+  const markFailed = (id: string, failed: boolean) =>
+    setFailedSessions((f) => {
+      if (f.has(id) === failed) return f;
+      const next = new Set(f);
+      if (failed) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   const pendingSettle = useRef(new Set<string>());
   // The popup of an MCP server that did not connect. A click opens its row on the MCP servers tab.
   const [mcpFocus, setMcpFocus] = useState<{ name: string; key: number } | null>(null);
@@ -568,7 +579,7 @@ export default function App() {
   // The saved projects of the daemon (the start screen).
   const [projects, setProjects] = useState<ProjectItem[] | null>(null);
   const projectWait = useRef<{ resolve: (id: string) => void; reject: (e: Error) => void } | null>(null);
-  // The routines of the daemon (the Routines page and the red dot of its nav item).
+  // The routines of the daemon, for the Routines page. It asks for the list when it opens.
   const [routines, setRoutines] = useState<RoutineItem[] | null>(null);
   const [routineRuns, setRoutineRuns] = useState<{ routine_id: string; items: RoutineRun[] } | null>(null);
   const [routineError, setRoutineError] = useState<string | null>(null);
@@ -1021,6 +1032,7 @@ export default function App() {
           return;
         case "turn.done": {
           const { type: _type, ...done } = msg;
+          markFailed(msg.session_id, msg.stop_reason === "error");
           void notifyTurnDone(done, {
             windowVisible: !document.hidden,
             windowFocused: document.hasFocus(),
@@ -1051,6 +1063,7 @@ export default function App() {
             ) ?? list,
           );
           listRecent(); // The new session of the run shows in the sidebar.
+          if (session_id) markFailed(session_id, runStatus === "failed"); // "Failed" in the Threads sidebar.
           if (session_id && runStatus !== "skipped") {
             void notifyRoutineRun(
               { name: msg.name, status: runStatus, session_id },
@@ -1346,7 +1359,6 @@ export default function App() {
     conn.send({ type: "providers.list" });
     conn.send({ type: "projects.list" });
     setRoutines(null);
-    conn.send({ type: "routines.list" }); // The red dot of the Routines nav item.
     conn.send({ type: "user_settings.get" }); // The effort level of the model menu on the start screen.
     setAgents(null); // Another computer can have other agents.
     conn.send({ type: "harnesses.list" }); // The rail of the agent picker.
@@ -1360,6 +1372,7 @@ export default function App() {
     setRunningSessions([]);
     setBackgroundSessions([]);
     setUnreadSessions(new Set());
+    setFailedSessions(new Set());
     startPicked.current = false;
     conn.send({ type: "session.list", limit: SIDEBAR_SESSIONS });
     // The Hugging Face token of the Cookbook, from the keychain.
@@ -1786,6 +1799,7 @@ export default function App() {
       seen.forEach((id) => next.delete(id));
       return next;
     });
+    seen.forEach((id) => markFailed(id, false)); // The user saw the error.
   }, [shownId, split]);
   // The split pane cannot show the session of the main view, for example after Back or a search.
   // A change of the daemon connection closes the split pane too.
@@ -3281,6 +3295,7 @@ export default function App() {
     },
     retitling,
     agents,
+    failed: failedSessions,
   };
 
   // Ctrl+Z runs the last "Undo" popup when the focus is not in a text field, the editor, or the terminal.
@@ -3582,15 +3597,14 @@ export default function App() {
     title: mcpFailed > 0 ? (mcpFailed === 1 ? "1 MCP server failed" : `${mcpFailed} MCP servers failed`) : "Skills and MCP servers",
     onClick: fromSidebar(() => openCapabilities()),
   };
-  // The "Routines" nav item. A red dot shows when the last run of a routine failed.
-  const routinesFailed = routines?.filter((r) => r.error || r.last_run?.status === "failed").length ?? 0;
+  // The "Routines" nav item. It has no dot for a failed run: the row of the run session in the Threads
+  // sidebar shows "Failed" (the user asked for this).
   const routinesNav: SessionTool = {
     key: "routines",
     icon: CalendarClock,
     label: "Routines",
     active: screen === "routines",
-    alert: routinesFailed > 0,
-    title: routinesFailed > 0 ? (routinesFailed === 1 ? "1 routine has a problem" : `${routinesFailed} routines have a problem`) : "Prompts that run on a schedule",
+    title: "Prompts that run on a schedule",
     onClick: fromSidebar(openRoutines),
   };
   // The "Usage" nav item, under "Capabilities".
