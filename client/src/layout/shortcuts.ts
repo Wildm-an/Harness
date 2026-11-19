@@ -54,6 +54,24 @@ export function isSideChatShortcut(e: KeyInfo): boolean {
   return e.code === "Semicolon" || e.key === ";";
 }
 
+/** The key that closes a pane, as in Claude. */
+export const CLOSE_PANE_SHORTCUT = "Ctrl+\\";
+
+/** Ctrl+\ (Cmd+\ on macOS) closes a pane. */
+export function isClosePaneShortcut(e: KeyInfo): boolean {
+  if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
+  return e.code === "Backslash" || e.key === "\\";
+}
+
+/**
+ * The panes that Ctrl+\ closes. With the focus in a pane that can close, only that pane closes.
+ * With the focus in the chat or in no pane, every open pane that can close closes.
+ */
+export function panesToClose(open: PaneId[], focused: PaneId | null, closable: (pane: PaneId) => boolean): PaneId[] {
+  if (focused && open.includes(focused) && closable(focused)) return [focused];
+  return open.filter(closable);
+}
+
 /** The key that shows or hides the sidebar. */
 export const SIDEBAR_SHORTCUT = "Ctrl+B";
 

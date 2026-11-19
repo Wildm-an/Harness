@@ -490,6 +490,7 @@ const SHORTCUTS: [string, string][] = [
   ["Browser", "Ctrl+Shift+B"],
   ["Changes", "Ctrl+Shift+D"],
   ["Files", "Ctrl+Shift+F"],
+  ["Close the pane, or all side panes from the chat", "Ctrl+\\"],
   ["Next permission mode", "Shift+Tab"],
   ["Add files to the prompt", "Ctrl+U"],
   ["Dictate in the prompt box", "Ctrl+Shift+Space"],

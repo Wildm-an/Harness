@@ -75,6 +75,7 @@ import {
   closePane,
   defaultLayout,
   findGroupOf,
+  groups,
   ideLayoutFor,
   layoutSignature,
   legacyIdeLayoutFor,
@@ -89,6 +90,8 @@ import {
 import {
   BACK_SHORTCUT,
   FORWARD_SHORTCUT,
+  isClosePaneShortcut,
+  panesToClose,
   SIDEBAR_SHORTCUT,
   SIDE_CHAT_SHORTCUT,
   VIEW_SHORTCUT,
@@ -3352,6 +3355,33 @@ export default function App() {
     // The saved state is the state of the Code view. The IDE view does not change it.
     if (!narrow() && viewRef.current !== "ide") savePref("sidebar.open", open ? "1" : "0");
   };
+
+  // Ctrl+\ closes the pane that has the focus. With the focus in the chat or in no pane, it closes every
+  // side pane and the floating side chat. The capture phase runs before the editor and the terminal get the key.
+  const closeKeyRef = useRef({ layout, panes, sideFloating });
+  closeKeyRef.current = { layout, panes, sideFloating };
+  useEffect(() => {
+    if (screen !== "chat") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isClosePaneShortcut(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      const { layout: now, panes: specs, sideFloating: floating } = closeKeyRef.current;
+      const target = document.activeElement instanceof Element ? document.activeElement : null;
+      if (floating && target?.closest(".side-chat.floating")) {
+        setSideFloating(false);
+        return;
+      }
+      const focused = (target?.closest("[data-pane]")?.getAttribute("data-pane") ?? null) as PaneId | null;
+      const open = groups(now).flatMap((g) => g.tabs);
+      const close = panesToClose(open, focused, (pane) => pane !== "chat" && specs[pane].closable);
+      if (close.length) setLayout((l) => close.reduce(closePane, l));
+      if (floating && (!focused || focused === "chat")) setSideFloating(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [screen]);
 
   // Ctrl+E switches between the Code view and the IDE view, only on the chat screen. On other screens
   // the key does nothing. The capture phase runs before the editor and the terminal get the key.

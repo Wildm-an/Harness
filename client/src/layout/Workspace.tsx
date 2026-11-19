@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Maximize2, Minimize2, X, type LucideIcon } from "lucide-react";
 import { useOverlay } from "../lib/overlay";
 import { loadPref, savePref } from "../lib/prefs";
+import { CLOSE_PANE_SHORTCUT } from "./shortcuts";
 import {
   canMove,
   closePane,
@@ -125,6 +126,7 @@ function GroupView({
     <section
       className={`pane-group${chatOnly ? " chat-only" : " pane-window"}${maximized ? " is-max" : ""}`}
       aria-label={`${spec.title} pane`}
+      data-pane={group.active}
     >
       {!chatOnly && (
         <div
@@ -191,7 +193,7 @@ function GroupView({
                 onChange(closePane(root, group.active));
               }}
               aria-label={`Close the ${spec.title} pane`}
-              title="Close"
+              title={`Close (${CLOSE_PANE_SHORTCUT})`}
             >
               <X size={14} aria-hidden />
             </button>
