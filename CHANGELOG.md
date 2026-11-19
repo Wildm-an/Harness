@@ -3,6 +3,42 @@
 The changes in each version of Harness. The newest version is first. The Settings dialog shows
 this file on its Updates page, under the update status.
 
+## 0.1.92 (2026-11-19)
+
+### Keyboard
+
+- Ctrl+\ (Cmd+\ on macOS) closes the pane that has the focus. With the focus in the chat, it closes
+  all side panes and the floating side chat. The X of each window and Settings show the key.
+- The mouse Back and Forward buttons now also step through the inner pages: an open routine, a
+  skill, a Capabilities tab, and a Settings page.
+
+### Agent updates
+
+- Automatic agent updates now install. Harness checks 20 seconds after the daemon starts, every
+  30 minutes, when you turn the switch on, and when Settings > Agents opens.
+- A popup shows one row for each agent that updates, with the versions, the stage, and a progress
+  bar.
+
+### Subagents
+
+- The sidebar no longer shows the child sessions of a delegated task. The session rail and the chat
+  show them.
+- The chat card is one row: the agent logos, "{n} subagents", the state, and the time. An arrow
+  opens the list. The rail section is "Subagents · {n} running", with a state dot on each logo.
+
+### Pull requests
+
+- The CI icons are the GitHub icons. Each PR row of the session rail shows the CI state and a count,
+  for example "2/4". A click on the count shows each check and "Fix CI".
+
+### Sidebar
+
+- A working session shows a turning spinner. When a turn ends, the row slides out of Working and
+  into Pinned or Active.
+- A turn or routine run that ended with an error shows a red "Failed" status in place of "Done".
+  The Routines item no longer shows a dot for a failed run.
+- A session that a routine started shows the Routines icon.
+
 ## 0.1.91 (2026-11-18)
 
 ### Codex
