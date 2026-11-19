@@ -24,7 +24,7 @@ import { formatDateTime } from "../lib/timeFormat";
 type NoticeItem = Extract<ChatItem, { kind: "notice" }>;
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 
-// "delegates": the delegate_task calls in a row, as one Delegates card (Delegates.tsx).
+// "delegates": the delegate_task calls in a row, as one Subagents card (Delegates.tsx).
 type Shown = ChatItem | { kind: "tools"; id: string; items: ToolItem[] } | { kind: "delegates"; id: string; items: ToolItem[] };
 
 const DELEGATE_TOOL = "delegate_task";

@@ -18,7 +18,7 @@ export type RailSection = "browser" | "environment" | "context" | "delegates" | 
 export const RAIL_SECTIONS: { id: RailSection; title: string }[] = [
   { id: "environment", title: "Environment" },
   { id: "context", title: "Context" },
-  { id: "delegates", title: "Delegates" },
+  { id: "delegates", title: "Subagents" },
   { id: "connectors", title: "Connectors" },
   { id: "changes", title: "Changes" },
   { id: "pullRequests", title: "Pull requests" },
@@ -338,10 +338,50 @@ export function delegateCallTitle(item: { input: unknown }): string {
   return task.slice(0, 60) || "Delegated task";
 }
 
-/** The delegates that work or wait (the rows of the section), and the ended ones (the "Previous agents" group). */
+/** The delegates that work or wait (the rows of the section), and the ended ones (the "Previous subagents" group). */
 export function splitDelegates(delegates: RailDelegate[]): { active: RailDelegate[]; previous: RailDelegate[] } {
   const live = (d: RailDelegate) => d.state === "working" || d.state === "waiting";
   return { active: delegates.filter(live), previous: delegates.filter((d) => !live(d)) };
+}
+
+/** The state of a subagent call in the chat card: the state of its child, or of the call before the child starts. */
+export type SubagentCallState = DelegateState | "starting" | "notStarted";
+
+const SUMMARY_ORDER: [SubagentCallState, string][] = [
+  ["working", "working"],
+  ["waiting", "waiting"],
+  ["starting", "starting"],
+  ["failed", "failed"],
+  ["notStarted", "did not start"],
+  ["stopped", "stopped"],
+  ["completed", "completed"],
+];
+
+/** The second line of the Subagents card of the chat: "2 working", "1 failed · 2 completed". */
+export function subagentSummary(states: SubagentCallState[]): string {
+  return SUMMARY_ORDER.map(([state, word]) => [states.filter((s) => s === state).length, word] as const)
+    .filter(([n]) => n > 0)
+    .map(([n, word]) => `${n} ${word}`)
+    .join(" · ");
+}
+
+/** "1 subagent", "3 subagents". */
+export function subagentCount(n: number): string {
+  return `${n} subagent${n === 1 ? "" : "s"}`;
+}
+
+/** The time of a group of subagents: from the first start to the last end, or to now while one works. */
+export function subagentsElapsed(delegates: Pick<RailDelegate, "startedAt" | "endedAt">[], now: number): string {
+  if (delegates.length === 0) return "";
+  const start = Math.min(...delegates.map((d) => d.startedAt));
+  const end = delegates.some((d) => d.endedAt === null) ? now : Math.max(...delegates.map((d) => d.endedAt ?? now));
+  return delegateElapsed({ startedAt: start, endedAt: end }, now);
+}
+
+/** The heading value of the Subagents section of the rail: "2 running" while some work, else the count. */
+export function subagentsHeading(delegates: Pick<RailDelegate, "state">[]): string {
+  const running = delegates.filter((d) => d.state === "working" || d.state === "waiting").length;
+  return running > 0 ? `${running} running` : String(delegates.length);
 }
 
 /** The time of a delegate: from its start to its end, or to now while it works. */
