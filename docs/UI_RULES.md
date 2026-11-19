@@ -388,7 +388,7 @@ Harness has no "+" button now. Add it.
   | "Files" | Ctrl+Shift+F | "Show files" |
 
 - **V2.** Buttons that do not fit go into the ⋮ overflow menu. The overflow menu also holds "Side chat" (Ctrl+;), "Background tasks" (with a count), "Plan", and "Artifacts".
-- **V3.** Ctrl+\ closes the focused pane.
+- **V3.** Ctrl+\ closes the focused pane. With the focus in the chat or in no pane, it closes all side panes and the floating side chat (the user asked for this). A pane that cannot close (the IDE editor) stays. The X of each window names the key.
 - **V4.** The diff pane is "Changes", as in Claude (the user asked for this): its title, its pane button, its shortcut row, and its texts. Files is a pane button with a folder icon, to the right of Browser (the user asked for this). The ⋮ menu has "Side chat" with its key Ctrl+; at the top, then "IDE view" (V6f), "Background tasks", and "Preview".
 - **V4a.** With no single change in review, the Changes pane shows all the changes of the branch, as in the Claude app (the user asked for this, `ChangesView.tsx`, daemon `git.diff`). The window header has "{base} → {branch}" with a ⌄ menu ("All changes of the branch", "Uncommitted changes"), then "Search" (it finds files and changed lines), the file list switch, and ⋯ ("Expand all files", "Collapse all files", "Refresh"). Each file has a section: a head that stays at the top while its lines scroll (the fold chevron, the file icon, the name, the folder, "+{added} −{removed}", "Viewed" (a viewed file folds), "Open file", and ⋯ with "Copy path" and "Open file"), then the lines with the old and the new line numbers. A removed line has a red tint and a striped bar at the left. An added line has a green tint and a solid green bar. The changed words of a changed line are marked, and the lines have the syntax colors of the code theme. A row "{n} unmodified lines" shows where the diff skips lines. The file list at the right shows each file with its counts: a click goes to its section. A pane narrower than 640px hides the list. The pane asks for the changes when it shows, and at the start and the end of each turn. A click on the Changes section of the session rail opens this view, not an older single change.
 
@@ -531,7 +531,7 @@ Use these keys. Do not give a key to a different command.
 | Browser | Ctrl+Shift+B | same |
 | Files | Ctrl+Shift+F | same |
 | Side chat | Ctrl+; | same |
-| Close pane | Ctrl+\ | missing |
+| Close pane | Ctrl+\ | same (V3) |
 | Close session or pane | Ctrl+W | browser tab only |
 | Reopen closed session | Ctrl+Shift+T | missing |
 | Dictate (Harness only, in the prompt box) | Ctrl+Shift+Space | same |

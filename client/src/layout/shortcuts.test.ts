@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNewSessionShortcut, isSideChatShortcut, isSidebarShortcut, isViewShortcut, navMouseButton, navShortcut, shortcutPane } from "./shortcuts";
+import { isClosePaneShortcut, isNewSessionShortcut, panesToClose, isSideChatShortcut, isSidebarShortcut, isViewShortcut, navMouseButton, navShortcut, shortcutPane } from "./shortcuts";
 import { chatHasFullHeight, defaultLayout, findGroupOf, group, movePane, normalize, togglePane, type LayoutNode } from "./model";
 
 const key = (code: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean; key?: string } = {}) => ({
@@ -143,5 +143,26 @@ describe("the side buttons of a mouse", () => {
     expect(navMouseButton({ button: 0 })).toBeNull();
     expect(navMouseButton({ button: 1 })).toBeNull();
     expect(navMouseButton({ button: 2 })).toBeNull();
+  });
+});
+
+describe("the close pane key", () => {
+  it("is Ctrl+\ or Cmd+\, with no other modifier", () => {
+    expect(isClosePaneShortcut(key("Backslash", { ctrl: true, key: "\\" }))).toBe(true);
+    expect(isClosePaneShortcut(key("Backslash", { meta: true, key: "\\" }))).toBe(true);
+    expect(isClosePaneShortcut(key("", { ctrl: true, key: "\\" }))).toBe(true);
+    expect(isClosePaneShortcut(key("Backslash", { key: "\\" }))).toBe(false);
+    expect(isClosePaneShortcut(key("Backslash", { ctrl: true, shift: true, key: "|" }))).toBe(false);
+    expect(isClosePaneShortcut(key("Backslash", { ctrl: true, alt: true, key: "\\" }))).toBe(false);
+  });
+
+  it("closes the focused pane, or every side pane from the chat", () => {
+    const canClose = (p: string) => p !== "chat" && p !== "editor";
+    const open = ["chat", "terminal", "browser", "editor"] as const;
+    expect(panesToClose([...open], "terminal", canClose)).toEqual(["terminal"]);
+    expect(panesToClose([...open], "chat", canClose)).toEqual(["terminal", "browser"]);
+    expect(panesToClose([...open], null, canClose)).toEqual(["terminal", "browser"]);
+    expect(panesToClose([...open], "editor", canClose)).toEqual(["terminal", "browser"]);
+    expect(panesToClose(["chat"], "chat", canClose)).toEqual([]);
   });
 });
